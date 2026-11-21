@@ -4,6 +4,8 @@ import type { BuiltOnHereDoors, ChainHereDoors, VaultAsTheWalletRead, VaultChain
 import { type CircuitNotThisBuilds, VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed } from './vault-start-stops.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import type { PayoutChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
+import { withoutTheAccount, type VaultsReadOnce } from './vaults-read-in-the-view.js';
+import { ViewEnded } from './company-view.js';
 
 /**
  * **THE VAULT IS ONE THE COMPANY'S ACCOUNT ADOPTED, AS THE CHAIN SHOWS IT, AND
@@ -48,6 +50,26 @@ export async function readHere(
     throw new VaultNotReadHere(vault, `this device could not read the vault from the chain (${(e as Error)?.message ?? e}).`, { cause: e });
   }
   return read;
+}
+
+/**
+ * The vault as `readHere` reads it, from the step's one read of its vaults (`vaultsReadInTheView`), with the account's
+ * circuits only when they were asked for. A read that fails is a `VaultNotReadHere`, worded as `readHere` words it;
+ * a read made after the step's view ended is that `ViewEnded`, unchanged.
+ */
+async function readInTheStep(
+  doors: ChainHereDoors & { readonly vaultsHere: VaultsReadOnce }, vault: Hex, withCircuits: boolean,
+): Promise<Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>>> {
+  const indexer = await theWalletsIndexer(doors, vault);
+  let read: Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>>;
+  try {
+    read = await doors.vaultsHere.read(vault, indexer, doors.account);
+  } catch (e) {
+    /* A read of the company that has ended is said as itself: the remedy is to open it again, not to read the chain. */
+    if (e instanceof ViewEnded) throw e;
+    throw new VaultNotReadHere(vault, `this device could not read the vault from the chain (${(e as Error)?.message ?? e}).`, { cause: e });
+  }
+  return withCircuits ? read : withoutTheAccount(read);
 }
 
 /** The indexer the person's own wallet reads the chain through, or a refusal by name: nothing is read anywhere else. */
@@ -187,10 +209,13 @@ export function circuitsOfARead(read: Extract<Awaited<ReturnType<VaultBuilderCli
  * asked only whether the account adopted the vault. A read that fails, or a
  * wallet that cannot say, throws `VaultNotReadHere` or `VaultNotTheCompanys`. `withCircuits` also reads the
  * company's account and whether the circuits of both are this app's: money and
- * a start read them, a rebuild reads neither.
+ * a start read them, a rebuild reads neither. Given the step's
+ * vaults read together (`vaultsHere`), the vault is read from that one read.
  */
 export async function vaultStandingHere(doors: ChainHereDoors, vault: Hex, withCircuits = false): Promise<VaultStandingHere> {
-  const read = await readHere(doors, vault, withCircuits ? doors.account : undefined);
+  const read = doors.vaultsHere === undefined
+    ? await readHere(doors, vault, withCircuits ? doors.account : undefined)
+    : await readInTheStep(doors as ChainHereDoors & { vaultsHere: VaultsReadOnce }, vault, withCircuits);
   if (!read.onChain) return { onChain: false, view: notesOfARead(vault, read) };
   /* The worker reports no account when the vault's state could not be read as a vault's; that is not a vault pinned elsewhere. */
   const layout = 'this vault is not laid out the way this version of the product reads one, so what it holds and whether it is started '

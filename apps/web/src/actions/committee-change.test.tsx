@@ -25,7 +25,12 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
   readHandover: vi.fn(async () => { state.reads += 1; return state.handover; }),
 }));
 vi.mock('../adapters/committee-change.js', () => ({
-  signChange: vi.fn(async (...args: unknown[]) => { state.acted.push(JSON.stringify(['sign-change', ...args])); return state.signed; }),
+  /* Written down by the company the screen's view is of, as the change is signed through it. */
+  signChange: vi.fn(async (person: string, view: { company: string }) => { state.acted.push(JSON.stringify(['sign-change', person, view.company])); return state.signed; }),
+}));
+vi.mock('../records/company-records.js', async (real) => ({
+  ...(await real<typeof import('../records/company-records.js')>()),
+  useCompanyView: (await import('../adapters/page-view.test-support.js')).useTheViewOfTheTest,
 }));
 
 const { CommitteeChange } = await import('./committee-change.js');

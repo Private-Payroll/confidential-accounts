@@ -421,8 +421,7 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         proposedBy: f.signerId,
       }, f.companyKey)),
     }, f.seat.signingSecret);
-    const answer = await ctx.call('POST', `/api/accounts/${encodeURIComponent(f.creation.accountId)}/creation/pay-key/proposal`,
-      JSON.stringify({ proposal: filing, proposalSalt: r.salt, ...(tx === undefined ? {} : { tx }) }));
+    const answer = await ctx.creation.payKeyProposal(f.creation.accountId, { proposal: filing, proposalSalt: r.salt, ...(tx === undefined ? {} : { tx }) });
     const id = (answer.body as { proposal?: { id?: unknown } } | null)?.proposal?.id;
     if (answer.status >= 200 && answer.status < 300 && typeof id === 'string' && PROPOSAL_ID.test(id)) return undefined;
     const told = answer.body as { error?: unknown; nothingWasSent?: unknown; code?: unknown; record?: unknown } | null;

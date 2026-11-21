@@ -11,7 +11,7 @@ const st = vi.hoisted(() => ({
   approvals: [] as unknown[], keptApprovals: [] as unknown[], noIndexer: false, keptThrows: null as unknown, held: null as string | null, rows: [] as unknown[], asked: [] as string[], walletAsked: 0, raiseThrows: null as unknown, superAdmins: null as unknown,
 }));
 /* Three keys a wallet could hold: the x of G, 2G and 3G on the curve. */
-let approveState: string | null = null;
+let approveState: string | readonly string[] | null = null;
 const A = { tag: 'schnorr', value: '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798' };
 const B = { tag: 'schnorr', value: 'c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5' };
 const C = { tag: 'schnorr', value: 'f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9' };
@@ -21,9 +21,18 @@ vi.mock('./super-admin-doors.js', () => ({
   superAdminService: () => ({ kept: async () => { if (st.keptThrows !== null) throw st.keptThrows; return st.kept; } }),
 }));
 vi.mock('vaults-web-shared/super-admin-ask.js', () => ({ superAdminSigned: async () => ({ key: A, headers: {} }) }));
-vi.mock('vaults-web-shared/keyring.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  api: async (path: string) => { st.asked.push(path); return { rows: st.rows }; },
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async (path: string) => {
+    st.asked.push(path);
+    if (path === '/api/accounts/c-1') return { id: 'c-1', companyLabel: `co_${'c1'.repeat(32)}`, contractAddress: 'c0'.repeat(32) };
+    return path.endsWith('/directory') ? { filings: [] } : { rows: st.rows };
+  },
+}));
+/* Who holds the company, as the signer's own wallet reads it for the view: asked once for the screen's opening. */
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
+  holdersFromTheWallet: async () => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], vaultThresholds: [], policyBar: null }, indexer: null }),
 }));
 vi.mock('vaults-web-shared/committee-here.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/committee-here.js')>()),
@@ -33,7 +42,7 @@ vi.mock('vaults-web-shared/committee-here.js', async (real) => ({
 vi.mock('vaults-web-shared/super-admin-change.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/super-admin-change.js')>()),
   raiseSuperAdminChange: async (_d: unknown, input: unknown) => { st.raised.push(input); return { file: { chainId: 'f' } }; },
-  approveSuperAdminChange: async (_d: unknown, file: unknown) => { st.approvals.push(file); return { file: { ...(file as object), signatures: [1] }, done: st.held === null, held: st.held, contracts: [{ state: approveState ?? (st.held === null ? 'sent' : 'moved') }] }; },
+  approveSuperAdminChange: async (_d: unknown, file: unknown) => { st.approvals.push(file); return { file: { ...(file as object), signatures: [1] }, done: st.held === null, held: st.held, contracts: [approveState ?? (st.held === null ? 'sent' : 'moved')].flat().map((state) => ({ state })) }; },
 }));
 vi.mock('vaults-web-shared/super-admins-on-the-service.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/super-admins-on-the-service.js')>()),
@@ -43,6 +52,7 @@ vi.mock('vaults-web-shared/super-admins-on-the-service.js', async (real) => ({
 
 const { approveChange, notYetAdopted, raiseChange, readSuperAdmins, SUPER_ADMIN_WHY } = await import('./super-admins.js');
 const { RaiserLeaves } = await import('vaults-web-shared/super-admins-on-the-service.js');
+const { aViewOf } = await import('./page-view.test-support.js');
 
 const REACH = { company: { accountId: 'c-1', label: `co_${'c0'.repeat(32)}`, account: 'b2'.repeat(32) }, asSuperAdmin: true } as never;
 const NOW = { committee: [A, B], threshold: 2 };
@@ -120,7 +130,7 @@ describe('RAISING A CHANGE', () => {
   });
 
   it('a super admin with no seat raises a change from the page, and the service keeps it', async () => {
-    expect(await raiseChange(REACH, { committee: [A, B, C], threshold: 2 }, NOW)).toEqual({ of: 'done', sent: false, held: null });
+    expect(await raiseChange(REACH, { committee: [A, B, C], threshold: 2 }, NOW)).toEqual({ of: 'done', sent: false, held: null, sentAny: false });
     expect(st.raised.at(-1)).toMatchObject({ change: { kind: 'super-admins', committee: [A, B, C], threshold: 2 } });
     /* RED WHEN: a raised change is not handed to the service, so no other super admin finds it. */
     expect(st.keptRaise).toEqual([{ chainId: 'f' }]);
@@ -146,7 +156,7 @@ describe('APPROVING A CHANGE', () => {
 
   it('approves the kept change and hands its new signatures to the service for the next super admin', async () => {
     st.kept = [keptAt('3', { joined: [{ key: C, signature: 'cd'.repeat(64) }] })];
-    expect(await approveChange(REACH, shown(true))).toEqual({ of: 'done', sent: true, held: null });
+    expect(await approveChange(REACH, shown(true))).toEqual({ of: 'done', sent: true, held: null, sentAny: true });
     /* RED WHEN: an approval's signatures stay on this device, so the next super admin's device never counts them. */
     expect(st.keptApprovals).toHaveLength(1);
     expect((st.keptApprovals[0] as [{ chainId: string }, { signatures: unknown[] }])[1].signatures).toEqual([1]);
@@ -159,7 +169,7 @@ describe('WHAT AN APPROVAL LEFT UNFINISHED', () => {
     st.held = 'a contract was changed by another change first, so nothing after it was sent';
     const shown = { chainId: '3'.padStart(64, '0'), committee: [A, B, C], threshold: 2, warning: null, raisedBy: A, raisedByMine: true, joining: [{ key: C, signed: true, mine: false }] };
     /* RED WHEN: a change spent, unsent or left for another device is told as waiting for signatures. */
-    expect(await approveChange(REACH, shown)).toEqual({ of: 'done', sent: false, held: st.held });
+    expect(await approveChange(REACH, shown)).toEqual({ of: 'done', sent: false, held: st.held, sentAny: false });
   });
 
   it('says nothing more than that it waits, when the change is only short of signatures', async () => {
@@ -167,7 +177,17 @@ describe('WHAT AN APPROVAL LEFT UNFINISHED', () => {
     st.held = 'not every contract still to move has enough of its super admins\' signatures, so nothing is sent yet';
     const shown = { chainId: '3'.padStart(64, '0'), committee: [A, B, C], threshold: 2, warning: null, raisedBy: A, raisedByMine: true, joining: [{ key: C, signed: true, mine: false }] };
     approveState = 'waiting';
-    expect(await approveChange(REACH, shown)).toEqual({ of: 'done', sent: false, held: null });
+    expect(await approveChange(REACH, shown)).toEqual({ of: 'done', sent: false, held: null, sentAny: false });
+    approveState = null;
+  });
+
+  it('says the change was sent to a contract when the account moved and a vault still waits for signatures', async () => {
+    st.kept = [keptAt('3', { joined: [{ key: C, signature: 'cd'.repeat(64) }] })];
+    st.held = 'not every contract still to move has enough of its super admins\' signatures, so nothing is sent yet';
+    const shown = { chainId: '3'.padStart(64, '0'), committee: [A, B, C], threshold: 2, warning: null, raisedBy: A, raisedByMine: true, joining: [{ key: C, signed: true, mine: false }] };
+    approveState = ['sent', 'waiting'];
+    /* RED WHEN: an approval that sent the account's update is told as sending nothing, so the page keeps reading who held the company before it. */
+    expect(await approveChange(REACH, shown)).toEqual({ of: 'done', sent: false, held: null, sentAny: true });
     approveState = null;
   });
 });
@@ -178,8 +198,8 @@ describe('A VAULT THE COMPANY CREATED THAT THE ACCOUNT DOES NOT LIST YET', () =>
     st.rows = [{ vault: listed }, { vault: created.toUpperCase() }, { vault: 'not a vault' }];
     st.asked = [];
     /* RED WHEN: a created vault the account does not list is not shown, or one it lists is shown as not yet adopted. */
-    expect(await notYetAdopted('c-1', ['b2'.repeat(32), listed])).toEqual([created]);
-    expect(st.asked).toEqual(['/api/accounts/c-1/vaults']);
+    expect(await notYetAdopted(aViewOf('c-1'), ['b2'.repeat(32), listed])).toEqual([created]);
+    expect(st.asked.filter((p) => p.endsWith('/vaults'))).toEqual(['/api/accounts/c-1/vaults']);
   });
 
   it('reads the contracts the account lists from the chain, to compare against', async () => {

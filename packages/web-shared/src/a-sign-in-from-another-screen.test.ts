@@ -8,6 +8,7 @@ import type { KeyringRequest } from 'midnight-identity/profile/request';
 import { unseal } from '../../../src/core/crypto.js';
 import { keyringAsk, KEYRING_PURPOSE } from '../../../src/core/wallet-unlock.js';
 import * as keyring from './keyring.js';
+import * as creation from './company-creation.js';
 import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import type { Openable } from './wallet-sign-in.js';
 
@@ -110,7 +111,7 @@ describe('a sign-in handed over by another screen', () => {
     expect(keyring.signedInByAnotherScreen(answerFor(SIGNED_IN))).toEqual(USER);
     expect(keyring.signedInWallet()).toBe(SIGNED_IN);
     const wallet = new WalletAtTheOtherEnd();
-    const { accountId } = await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    const { accountId } = await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(wallet.askedFor).toEqual([SIGNED_IN]);
     expect(sent('POST /api/accounts')).toHaveLength(1);
     const writes = sent('PUT /api/me/keys');
@@ -126,7 +127,7 @@ describe('a sign-in handed over by another screen', () => {
     const { sent } = nothingSavedYet();
     keyring.signedInByAnotherScreen(answerFor(SIGNED_IN));
     const elsewhere = new WalletAtTheOtherEnd((address) => address === ANOTHER);
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, elsewhere, US)).rejects.toThrow();
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, elsewhere, US)).rejects.toThrow();
     expect(elsewhere.askedFor).toEqual([SIGNED_IN]);
     expect(sent('POST /api/accounts')).toEqual([]);
     expect(sent('PUT /api/me/keys')).toEqual([]);
@@ -139,7 +140,7 @@ describe('a sign-in handed over by another screen', () => {
     keyring.signedInByAnotherScreen(answerFor(ANOTHER));
     keyring.signedInByAnotherScreen(answerFor(SIGNED_IN));
     const wallet = new WalletAtTheOtherEnd();
-    await keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
+    await creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, wallet, US);
     expect(wallet.askedFor).toEqual([SIGNED_IN]);
   });
 
@@ -162,7 +163,7 @@ describe('a sign-in handed over by another screen', () => {
   it('still refuses a person\'s first keys in a tab that was handed no sign-in, by a refusal a screen can name', async () => {
     const { sent } = nothingSavedYet();
     expect(await keyring.resumeSession()).toEqual(USER);
-    await expect(keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(keyring.FirstKeysNeedTheSignIn);
+    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(creation.FirstKeysNeedTheSignIn);
     expect(sent('POST /api/accounts')).toEqual([]);
   });
 });

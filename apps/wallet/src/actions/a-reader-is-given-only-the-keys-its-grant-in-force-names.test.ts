@@ -22,9 +22,10 @@ import { readerKeysHere } from '../../../../packages/web-shared/src/purpose-wrap
 import { readerDirectoryFor } from '../../../../packages/web-shared/src/reader-directory-here.js';
 import { heldFromRelease } from '../../../../packages/web-shared/src/reader-keys-released.js';
 import { keysByPurpose } from '../../../../packages/web-shared/src/keys-by-purpose.js';
+import { treeKeptInMemory } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import { acmeReads } from '../../../../src/server/a-company-of-two-seats.test-support.js';
 import {
-  aCompanyWhoseSignersChange, ADA, ADDRESS, apiAs, BO, CO, companyKeyDoorsOf, deviceOf, grantsKept, LABEL, sendAs, store,
+  aCompanyWhoseSignersChange, ADA, ADDRESS, BO, CO, companyKeyDoorsOf, deviceOf, grantsKept, LABEL, sendAs, store,
 } from '../../../../src/server/a-company-whose-signers-change-on-the-chain.test-support.js';
 import { grantsDoorsOf } from '../../../../src/server/a-read-grant.test-support.js';
 import { readerKeypairOfThisWallet } from '../screens/join-code-reader-key.js';
@@ -32,6 +33,8 @@ import { readFileSync } from 'node:fs';
 import type { StepContext, Words } from './definition.js';
 import { readerKeysAction } from './reader-keys.js';
 import { StepRefused } from './definition.js';
+import { NO_OWN_CHAIN_READS, viewsOfTheStep, stepOverItsCall } from './step-views.test-support.js';
+import type { AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
 
 aCompanyWhoseSignersChange(2);
 
@@ -40,10 +43,15 @@ const RHEAS_WALLET = identityFromSecret(new Uint8Array(32).fill(9));
 const RHEAS_KEY = readerKeypairOfThisWallet(RHEAS_WALLET, LABEL).publicKey;
 const intent: ActIntent = { name: 'reader-keys', fields: { record: CO, company: LABEL, account: ADDRESS } };
 const unused = (): never => { throw new Error('a reader\'s act uses no such door'); };
-const reads = {
-  holders: acmeReads.holders, leaves: acmeReads.leaves, anchored: acmeReads.anchored, invitedSeats: acmeReads.invitedSeats,
-  proposalIdentity: acmeReads.proposalIdentity,
+const chainReads = {
+  leaves: acmeReads.leaves, anchored: acmeReads.anchored, invitedSeats: acmeReads.invitedSeats, proposalIdentity: acmeReads.proposalIdentity,
 };
+const reads = { holders: acmeReads.holders, ...chainReads };
+const callAs = (as: string): AnsweredCall => async (method, path, body) => sendAs(as)(path, { method, ...(body === undefined ? {} : { body }) });
+/* A view of Acme through the page signed in as `as`, as a reader's act opens one: nothing held, no anchor read. */
+const viewAs = (as: string) => viewsOfTheStep(callAs(as)).viewFor(CO, {
+  holders: reads.holders, onChain: unused, builder: { anchorHeads: unused }, kept: () => treeKeptInMemory(), directory: unused, chain: NO_OWN_CHAIN_READS,
+}, unused).current();
 
 /**
  * Runs the act's one step as Rhea's wallet, through a page signed in as `as`: the keys it hands over, or the words it
@@ -52,13 +60,13 @@ const reads = {
  */
 async function rheaReads(as = 'ada'): Promise<ReadKeysReleased | Words | null> {
   let released: ReadKeysReleased | null = null;
-  const ctx: StepContext = {
+  const ctx = stepOverItsCall({
     intent, asker: { origin: 'https://payroll.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'rhea',
     held: { identity: RHEAS_WALLET, secret: new Uint8Array(32).fill(9) }, at: { step: 1, steps: 1 }, signal: new AbortController().signal,
-    relay: unused, call: async (method, path, body) => sendAs(as)(path, { method, ...(body === undefined ? {} : { body }) }),
+    relay: unused, call: callAs(as),
     sentByTheWallet: unused, seenOnTheChain: unused, tell: unused, show: unused, confirm: unused, keyring: null,
-    releaseReadKeys: (keys) => { released = keys; },
-  };
+    releaseReadKeys: (keys: ReadKeysReleased) => { released = keys; },
+  }) as unknown as StepContext;
   const [step] = readerKeysAction({ chain: unused, builder: unused, readsFor: () => reads }).steps(intent);
   try {
     await step!.run(ctx);
@@ -102,7 +110,7 @@ describe('A READER\'S WALLET HANDS ITS PAGE THE READ KEYS OF ONE COMPANY', () =>
     const pair = readerKeypairOfThisWallet(RHEAS_WALLET, LABEL);
     const inForce = await readerKeysHere({
       accountId: CO, versions: grantsKept, me: { recipient: pair.publicKey, wrappingSecret: pair.secret },
-      directoryFor: readerDirectoryFor({ accountId: CO, label: LABEL, account: ADDRESS, api: apiAs('ada'), ...reads }),
+      directoryFor: readerDirectoryFor({ view: viewAs('ada'), label: LABEL, account: ADDRESS, ...chainReads }),
     });
     expect(inForce.of === 'held' ? inForce.held.byEpoch : null).toEqual(held.byEpoch);
     /* RED WHEN: a limited reader's page is handed a key for what its role does not read. */

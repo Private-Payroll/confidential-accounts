@@ -5,18 +5,18 @@ import { fromHex, randomBytes, signingPublicKeyOf, toHex, type Hex } from '../..
 import { canonicalPeriod, legChoiceOf, legEmployees, legOf, listOfRun } from '../../../../src/core/run-legs.js';
 import type { Employee, PayrollRun, RunLeg, RunList } from '../../../../src/core/types.js';
 import { buildRetryRun, buildRun, rootOfPayments } from '../../../../src/midnight/payout-tree.js';
-import {
-  ApprovalNotOwed, approveOnDevice, governedCallServiceFor, nothingWasSentBy, raiseRetryOnDevice, raiseRunOnDevice, sendRaiseFromDevice,
-  sendRetryFromDevice, theRoundAsked, withCompanyKeys, type RoundOnThePage,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { fileRunDrawnHere, runDrawnHere, samePeopleAsDrawn, type RunDrawDoors } from '../../../../packages/web-shared/src/run-drawn-here.js';
+import { nothingWasSentBy, theRoundAsked, withCompanyKeys, type RoundOnThePage } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { raiseRetryOnDevice, raiseRunOnDevice, sendRaiseFromDevice, sendRetryFromDevice } from '../../../../packages/web-shared/src/payroll-run-on-device.js';
+import { ApprovalNotOwed, approveOnDevice } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import { drawnFromIn, fileRunDrawnHere, runDrawnHere, samePeopleAsDrawn, type RunDrawDoors } from '../../../../packages/web-shared/src/run-drawn-here.js';
+import type { RecordReadAt } from '../../../../packages/web-shared/src/company-view.js';
 import type { LegRaiseDoors } from '../../../../packages/web-shared/src/run-raised-here.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { keptRunHere, payrollRoundsHere, proposalsListedHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
-import {
-  companyReachFor, companyRecordsFor, enteredFor, keptReach, pureCircuits, type CompanyReach, type CompanyRecordsInTheWallet, type Handed,
-  type PureCircuits,
-} from './company-reach.js';
+import { companyReachFor, enteredFor, keptReach, type CompanyReach } from './company-reach.js';
+import { companyRecordsFor, pureCircuits, type CompanyRecordsInTheWallet, type PureCircuits } from './company-records-in-the-wallet.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { governedDoorsFor, oneOffNeeded, raiseDoorsFor, type OneOffPaymentReach } from './one-off-payment.js';
 import { onTheChain, type ApprovalStop, type ProposalKind } from './proposal-kinds.js';
@@ -214,12 +214,12 @@ export function raiseRunDoorsFor(
 
 /**
  * The doors a run is drawn and filed through: the company's records as this wallet reads them, sealed under the company
- * key when filed; nothing of it goes to the service in the clear. With them, this seat's filing key as a run it filed
+ * key when filed through the step's view; nothing of it goes to the service in the clear. With them, this seat's filing key as a run it filed
  * names it, so the run read back can be checked as this seat's own filing.
  */
 const drawnHere = (r: CompanyReach, reach: RaiseRunReach, records: CompanyRecordsInTheWallet): { readonly doors: RunDrawDoors; readonly filer: string } => ({
   doors: withCompanyKeys({
-    api: r.api, accountId: r.accountId, keyEpoch: r.companyKeys.epoch, signingSecret: r.seat.signingSecret as Hex,
+    view: r.stepView, accountId: r.accountId, keyEpoch: r.companyKeys.epoch, signingSecret: r.seat.signingSecret as Hex,
     company: { account: r.account, label: r.label }, records, by: r.leaf,
     registry: reach.assets ?? theAssets, now: () => new Date(reach.now()).toISOString(), entered: enteredFor(r),
   }, r.companyKeys),
@@ -230,6 +230,8 @@ const drawnHere = (r: CompanyReach, reach: RaiseRunReach, records: CompanyRecord
 interface DrawnAndConfirmed {
   readonly run: PayrollRun;
   readonly shown: RunShown;
+  /** The people's or vendors' records the draw read, at the versions it read them: the filing stops if any changed since. */
+  readonly drawnFrom: readonly RecordReadAt[];
 }
 
 /**
@@ -354,7 +356,7 @@ export function raiseRunAction(reach: RaiseRunReach): ActionDefinition {
             const shown: RunShown = { ...asked, run: run.id, payees: people.length, total: people.reduce((a, e) => a + e.amount, 0n) };
             const differs = runNotAsShown(run, { people, retry: false }, shown);
             if (differs !== null) throw new StepRefused(why('not-as-shown', { says: differs }));
-            here = { run, shown };
+            here = { run, shown, drawnFrom: drawnFromIn(r.stepView.current(), listOfRun(run)) };
           } catch (e) {
             return refusedAfter(e, { over: false });
           }
@@ -380,7 +382,7 @@ export function raiseRunAction(reach: RaiseRunReach): ActionDefinition {
             const pure = await pureCircuits();
             const records = companyRecordsFor(r, reach, pure);
             const drawing = drawn === null ? null : drawnHere(r, reach, records);
-            const runId = drawn === null || drawing === null ? asked.run! : (await fileRunDrawnHere(drawing.doors, drawn.run)).id;
+            const runId = drawn === null || drawing === null ? asked.run! : (await fileRunDrawnHere(drawing.doors, drawn.run, drawn.drawnFrom)).id;
             ctx.tell({ run: runId, ...(asked.proposal === undefined ? {} : { proposal: asked.proposal }) });
             const { sealed, run } = await keptRunHere(records, r.accountId, runId, r.companyKeys);
             /* A run drawn here is raised only as this seat filed it and the person confirmed it: the same people, each at the same pay. */
@@ -490,7 +492,7 @@ export function payrollKind(reach: RaiseRunReach): ProposalKind {
     approve: async (ctx, r, _intent, round, handed) => {
       const records = companyRecordsFor(r, reach, await pureCircuits());
       try {
-        const served = theRoundAsked(await governedCallServiceFor(r.api).standing(round.id), round.id, round.chainId);
+        const served = theRoundAsked(await governedCallServiceThrough(r.stepView).standing(round.id), round.id, round.chainId);
         await approveOnDevice(governedDoorsFor(ctx, r, reach, records, handed), withCompanyKeys({ round: { ...served, id: round.id, chainId: round.chainId } }, r.companyKeys));
       } catch (e) {
         if (e instanceof ApprovalNotOwed || e instanceof StepRefused || e instanceof ActionStopped) throw e;
@@ -508,7 +510,7 @@ export function payrollKind(reach: RaiseRunReach): ProposalKind {
  * and its salt make: the chain pays from this vault, whatever the run's record says.
  */
 async function proposalsVaultHere(r: CompanyReach, records: CompanyRecordsInTheWallet, pure: PureCircuits, proposal: string, chainId: string): Promise<string> {
-  const opened = await openTheRoundHere(governedCallServiceFor(r.api), r.accountId, proposal, r.companyKeys, false, records, r.judges.leavesFor(r.account));
+  const opened = await openTheRoundHere(governedCallServiceThrough(r.stepView), r.accountId, proposal, r.companyKeys, false, records, r.judges.leavesFor(r.account));
   const made = toHex(pure.account.proposalIdOf(fromHex(opened.digest as Hex), fromHex(opened.vault as Hex), fromHex(opened.salt as Hex))).toLowerCase();
   if (opened.chainId.toLowerCase() !== chainId.toLowerCase() || made !== chainId.toLowerCase()) {
     throw new StepRefused(payrollWhy('not-as-shown', { says: 'its identity on the chain is not the one its vault, payload and salt make' }));

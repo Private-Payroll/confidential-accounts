@@ -1,4 +1,6 @@
-import { AnotherPersonError, AuthError, CompanyStartedBySomebodyElse, FirstKeysNeedTheSignIn, SavedKeysDidNotOpen, ServiceRefused, SavedKeysWentBack } from 'vaults-web-shared/keyring.js';
+import { SavedKeysDidNotOpen, SavedKeysWentBack } from 'vaults-web-shared/keyring.js';
+import { AnotherPersonError, AuthError, ServiceRefused } from 'vaults-web-shared/service-transport.js';
+import { CompanyStartedBySomebodyElse, FirstKeysNeedTheSignIn } from 'vaults-web-shared/company-creation.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { WalletClosed, type WalletPaymentFailure } from 'vaults-web-shared/wallet-sign-in.js';
 

@@ -63,13 +63,15 @@ export const readersOf = (account: AccountWithReaders | null | undefined): reado
 
 /**
  * The reads a reader's device makes to read what its grant names, and nothing else: the account record, the company's
- * sealed records of a kind its grant reads (the kind is the path's first group), its sealed runs and proposals when its
- * grant reads them, its directory, and the manifest's reads that prove a version anchored (two of them POSTs that
- * read). Never the invitations, the people or any route that hands names or emails in plain.
+ * sealed records of a kind its grant reads (the kind is the path's first group; a list of them, read in one POST, is
+ * held to the grant's kinds entry by entry by its own route), its sealed runs and proposals when its grant reads them, its
+ * directory, and the manifest's reads that prove a version anchored (two of them POSTs that read). Never the
+ * invitations, the people, a vault's records or any route that hands names or emails in plain.
  */
 const READER_ROUTES: readonly { readonly method: string; readonly path: RegExp; readonly kind?: CompanyRecordKind }[] = [
   { method: 'GET', path: /^\/api\/accounts\/[^/]+$/u },
   { method: 'GET', path: /^\/api\/accounts\/[^/]+\/records\/([^/]+)\/[^/]+(?:\/versions|\/[0-9]+)?$/u },
+  { method: 'POST', path: /^\/api\/accounts\/[^/]+\/records\/read$/u },
   { method: 'GET', path: /^\/api\/accounts\/[^/]+\/runs$/u, kind: 'run' },
   { method: 'GET', path: /^\/api\/accounts\/[^/]+\/proposals$/u, kind: 'proposal' },
   { method: 'GET', path: /^\/api\/accounts\/[^/]+\/directory$/u },

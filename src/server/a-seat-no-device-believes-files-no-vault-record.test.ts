@@ -13,13 +13,14 @@ import { newWrappingKeypair, type Hex } from '../core/crypto.js';
 import { SealedNotePool } from '../midnight/vault-pool.js';
 import { recordsKeypairFrom } from '../midnight/company-nonce-secret.js';
 import type { WireRecord } from '../midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { directoryJudge } from 'vaults-web-shared/vault-page-doors.js';
 import { seatHereIn, vaultNotesHere, type RebuildDoors } from 'vaults-web-shared/vault-notes-here.js';
 import { vaultRecordsRoutes } from './vault-records-route.js';
 import {
   aCompanyOfTwoSeats, acmeDirectory, acmeDirectoryDeps, ADA, ADDRESS, BO, chains, CO, sendAs, vaultRecords, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { storeReachOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats((app) => {
   app.use('/api/vaults', express.json({ limit: '1mb' }));
@@ -29,7 +30,7 @@ aCompanyOfTwoSeats((app) => {
 const VAULT = 'd8'.repeat(32) as Hex;
 const wrapping = (s: Seat) => recordsKeypairFrom(new Uint8Array(32).fill(s.n + 100));
 const recordsOf = (s: Seat) => (r: WireRecord) =>
-  new HttpSealedPoolStore(r, sendAs(s.person) as unknown as WireSend, s.signingSecret as Hex, directoryJudge(acmeDirectoryDeps()), s.entered);
+  new HttpSealedPoolStore(r, storeReachOver(sendAs(s.person), CO), s.signingSecret as Hex, directoryJudge(acmeDirectoryDeps()));
 const CAROL = newWrappingKeypair();
 const seated = async () => [
   { id: ADA.seat, wrappingPublicKey: ADA.statement.wrappingKey },

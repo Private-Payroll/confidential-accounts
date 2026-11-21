@@ -7,7 +7,8 @@ import {
 } from 'vaults-ui';
 import { COLUMN_SIZE, DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import { isPending, PendingPill, useStandingSays, useVaultActions, VaultName } from '../records/vault-pending.js';
-import { canPay, legOfRetry, openOneOffsOf, retiredBy, type CompanyRecords, type OneOffRow, type VaultRow } from '../adapters/company-records.js';
+import { canPay, legOfRetry, openOneOffsOf, retiredBy, type CompanyRecords, type OneOffRow } from '../adapters/company-records.js';
+import { type VaultRow } from '../adapters/company-rows.js';
 import { ChangeThreshold } from '../actions/change-threshold.js';
 import { OneOffPayment } from '../actions/one-off.js';
 import { PayRun } from '../actions/pay-run.js';
@@ -110,7 +111,7 @@ function AdoptAgain({ company, vault, retired }: { company: string; vault: strin
   const t = useText();
   const { adoptAgain } = useVaultActions();
   const money = useVaultMoney(company, vault);
-  const onChain = useRetiredVaultOnChain(company, vault, true);
+  const onChain = useRetiredVaultOnChain(vault, true);
   if (!holdsMoney(money) && !retiredVaultShown(onChain)) return null;
   return (
     <>

@@ -1,3 +1,4 @@
+import { useCompanyView } from '../records/company-records.js';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, Button, formatDate, InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput,
@@ -10,7 +11,7 @@ import {
   putMoneyIn, PUT_IN, STOPPED, usualSecondsOf, watchDeposit,
   type AmountRefusal, type DepositMethod, type DepositNow, type DepositStep, type LastDepositChecked, type Stopped,
 } from '../adapters/deposit.js';
-import type { VaultStanding } from '../adapters/company-records.js';
+import type { VaultStanding } from '../adapters/company-rows.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
 import { ACT_REFUSAL, type ActRefusal } from '../adapters/refusals.js';
 import { useStandingSays } from '../records/vault-pending.js';
@@ -91,16 +92,17 @@ function useOpenDeposit(company: string, vault: string, standing?: VaultStanding
  * itself waits for the next press.
  */
 function useCheckMyLastDeposit(company: string, vault: string) {
+  const view = useCompanyView();
   const { person } = useSession();
   const [checking, setChecking] = useState(false);
   const going = useRef(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
   const run = (found: (answer: LastDepositChecked) => void): void => {
-    if (going.current) return;
+    if (view === null || going.current) return;
     going.current = true;
     setChecking(true);
-    void checkMyLastDeposit(person.id, company, vault).then((answer) => {
+    void checkMyLastDeposit(person.id, view, vault).then((answer) => {
       going.current = false;
       if (!alive.current) return;
       setChecking(false);
@@ -231,8 +233,10 @@ function AmountRefused({ why }: { why: AmountRefusal }) {
  * adapter at the press, before the wallet is asked; the windows the press opens are named before it. A vault the service's
  * answer (`standing`, read when the vault screen loaded) says it refuses stops the press the same way, in that answer's own words.
  */
-function AmountEntry({ company, vault, standing, chosen }: { company: string; vault: string; standing?: VaultStanding; chosen: TokenChosen }) {
+function AmountEntry({ vault, standing, chosen }: { vault: string; standing?: VaultStanding; chosen: TokenChosen }) {
   const t = useText();
+  /* The opening's view of the company: a private deposit takes where the company is on the chain from it at the press. */
+  const view = useCompanyView();
   const standingSays = useStandingSays();
   const { person } = useSession();
   const field = useId();
@@ -246,8 +250,8 @@ function AmountEntry({ company, vault, standing, chosen }: { company: string; va
   const press = usePayPress(side);
 
   const put = (): void => {
-    if (took.current) return;
-    const started = putMoneyIn(person.id, company, vault, { code: token.code, kind: side }, entry, token.held, undefined, standing);
+    if (took.current || view === null) return;
+    const started = putMoneyIn(person.id, view, vault, { code: token.code, kind: side }, entry, token.held, undefined, standing);
     if (started.of === PUT_IN.vaultRefused) { setRefused(null); setVaultRefused(started.standing); return; }
     if (started.of === PUT_IN.refused) { setVaultRefused(null); setRefused(started.why); return; }
     took.current = true;
@@ -577,7 +581,7 @@ export function Deposit({ company, vault, standing, leadTo, checked = null, nami
         <Button variant="ghost" size="sm" onClick={() => { setMethod(null); setChosen(null); }} data-action="deposit-methods">{t('deposit.methods.back')}</Button>
       </div>
       <AccountTokens choose={setChosen} onAnswered={() => setChosen(null)} />
-      {chosen === null ? null : <AmountEntry key={chosen.side + chosen.token.code} company={company} vault={vault} standing={standing} chosen={chosen} />}
+      {chosen === null ? null : <AmountEntry key={chosen.side + chosen.token.code} vault={vault} standing={standing} chosen={chosen} />}
     </div>
   );
 }

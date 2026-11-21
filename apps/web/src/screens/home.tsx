@@ -1,9 +1,10 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Activity01Icon, Add01Icon, ArrowDown01Icon, ArrowUp01Icon, CheckListIcon, Invoice01Icon, SafeIcon, UserAdd01Icon } from '@hugeicons/core-free-icons';
-import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, StatTiles, useText } from 'vaults-ui';
+import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
-import { READ, type CompanyRecords, type ProposalRow, type Read } from '../adapters/company-records.js';
+import { READ, type CompanyRecords, type Read } from '../adapters/company-records.js';
+import { type ProposalRow } from '../adapters/company-rows.js';
 import { browserKeep, keepFold, readFolds } from '../adapters/kept-folds.js';
 import { HOME, PAGE } from '../pages.js';
 import { go, PageLink } from '../router.js';
@@ -18,7 +19,7 @@ import { useSession } from '../session.js';
 import { useCompanyName } from '../shell/company-facts.js';
 import { EVERY_STEP, type SetupFacts } from '../setup/steps.js';
 import type { StepId } from '../setup/step-ids.js';
-import { Approvals, CheckFingerprint, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, useMonth, VaultTile, WaitingName, waitingRead, WithRecords } from '../records/parts.js';
+import { Approvals, CheckFingerprint, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, useMonth, VaultTiles, WaitingName, waitingRead, WithRecords } from '../records/parts.js';
 
 /** How many rows of a list Home shows before "View all". */
 const SHOWN = 3;
@@ -235,7 +236,7 @@ function Vaults({ records }: { records: CompanyRecords }) {
         <Section title={t('page.vaults.name')} count={rows.length} actions={rows.length === 0 ? undefined : create} list={false} box={false} data-part="vaults">
           {rows.length === 0
             ? <EmptyState icon={SafeIcon} action={create}>{t('vaults.none')}</EmptyState>
-            : <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} company={records.id} vault={v} index={i} />)}</StatTiles>}
+            : <VaultTiles company={records.id} rows={rows} />}
         </Section>
       )}
     </Part>

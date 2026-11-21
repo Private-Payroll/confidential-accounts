@@ -16,16 +16,25 @@
  * nothing.
  */
 
+/**
+ * The account this wallet offers the asking site, worked out once the wallet is open: what an ask that pays only a
+ * call's network fee pays from until the person picks another account.
+ */
+export const OFFERED = 'offered-to-the-site';
+
+/** An account picked by its number, or the account offered to the asking site. */
+export type PickedAccount = number | typeof OFFERED;
+
 /** What was picked: the wallet's place here, its fingerprint when one is on record, and the account in it. */
 export interface PayingPick {
   readonly walletId: string;
   readonly fingerprint: string | null;
-  readonly account: number;
+  readonly account: PickedAccount;
 }
 
 /** Which account the opened wallet pays from, or why it pays from none. */
 export type PaysFrom =
-  | { readonly of: 'picked'; readonly account: number }
+  | { readonly of: 'picked'; readonly account: PickedAccount }
   | { readonly of: 'not-picked' }
   | { readonly of: 'another-wallet' };
 

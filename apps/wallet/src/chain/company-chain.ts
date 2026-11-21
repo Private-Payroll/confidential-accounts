@@ -3,7 +3,6 @@ import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import { publicDataProviderFor } from '../../../../packages/web-shared/src/public-data.js';
 import { accountAtOneBlockOver, accountCallChainOf } from '../../../../packages/web-shared/src/one-block-read.js';
 import { deployFromIndexerAt, fromIndexerAt, holdersOnChain } from './company-label-on-chain.js';
-import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import type { CompanyChain } from '../actions/company-reach.js';
 
 /**
@@ -14,7 +13,7 @@ import type { CompanyChain } from '../actions/company-reach.js';
  * account's record of payments and of its roles that a payment out of a vault
  * is checked against.
  */
-export function liveCompanyChain(indexer = { indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL }): CompanyChain {
+export function liveCompanyChain(indexer: { readonly indexerUri: string; readonly indexerWsUri: string }): CompanyChain {
   let reader: ReturnType<typeof publicDataProviderFor> | null = null;
   return Object.freeze({
     indexer,

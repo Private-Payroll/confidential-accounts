@@ -19,6 +19,10 @@ const state = vi.hoisted(() => ({
   /* Who is told when the person's wallet releases a company's key to this tab. */
   released: new Set<(accountId: string) => void>(),
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   watchCompanyKeyReleased: (watch: (accountId: string) => void) => { state.released.add(watch); return () => { state.released.delete(watch); }; },
@@ -34,6 +38,9 @@ vi.mock('../adapters/creation-standing.js', async (real) => ({
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => { state.companyReads += 1; return state.company; },
+}));
+vi.mock('../adapters/company-vaults-read.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
   readVaultPublicMoney: async () => { state.publicReads += 1; return state.pub; },
   readVaultName: async () => null,
 }));

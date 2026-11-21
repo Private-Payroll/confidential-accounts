@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { privateAddressHere, publicAddressHere } from '../addresses-here.test-support.js';
 import { KitProvider, languagesFrom, publicAmount } from 'vaults-ui';
-import type { Company, ProposalRow, VendorRow } from '../adapters/company-records.js';
+import type { Company, VendorRow } from '../adapters/company-records.js';
+import type { ProposalRow } from '../adapters/company-rows.js';
 import { untilPageShown } from '../page-shown.test-support.js';
 import { ENGLISH } from '../english.test-support.js';
 
@@ -18,18 +19,25 @@ const kr = vi.hoisted(() => ({
   company: null as unknown, reads: 0, user: { id: 'u1' } as { id: string } | null,
   released: new Set<(accountId: string) => void>(),
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
   watchCompanyKeyReleased: (watch: (accountId: string) => void) => { kr.released.add(watch); return () => { kr.released.delete(watch); }; },
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     kr.acts.push(intent);
     if (kr.hold !== null) await kr.hold;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
 }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
@@ -38,6 +46,9 @@ vi.mock('../adapters/creation-standing.js', async (real) => ({
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => { kr.reads += 1; return kr.company; },
+}));
+vi.mock('../adapters/company-vaults-read.js', async (real) => ({
+  ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
   readVaultPublicMoney: async () => ({ amounts: [publicAmount(4_000_000n, 6, 'NIGHT')], unrecognised: 0 }),
   readVaultName: async () => null,
 }));

@@ -38,10 +38,14 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   keysFor: () => kr.keys,
   pendingSeatsFor: () => [],
   viewingKeyFor: () => 'vk',
-  openAccount: () => kr.roster,
-  companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) }),
+  companyKeysForVaults: async () => ({ companyKey: '11'.repeat(32), committeeKey: kr.walletKey, company: 'co_' + 'a1'.repeat(32), account: 'a0'.repeat(32) })}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   signCommitteeChangeFromTheWallet: async () => kr.signed,
-  holdersFromTheWallet: async () => ({ holders: { committee: kr.chainCommittee ?? [K(1)], threshold: kr.chainThreshold } }),
+  holdersFromTheWallet: async () => ({ holders: { committee: kr.chainCommittee ?? [K(1)], threshold: kr.chainThreshold, seats: [], approvals: 1, adoptedVaults: [], vaultThresholds: [], policyBar: null } }),
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
   api: async (path: string, opts?: RequestInit) => {
     kr.calls.push({ path, method: String(opts?.method ?? 'GET'), body: opts?.body === undefined ? undefined : JSON.parse(String(opts.body)) });
     if (!(path in kr.answers)) throw new Error(`no answer for ${path}`);
@@ -52,8 +56,8 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   },
 }));
 /* Offering and folding vault keys are their own tests' (`vault-keys-are-offered-and-folded.test.ts`); here each is written down, so a test can see that signing the change never calls either. */
-vi.mock('vaults-web-shared/roster-here.js', () => ({
-  offerVaultKeysHere: async (_api: unknown, id: string, keys: unknown) => { kr.calls.push({ path: `offer ${id}`, method: 'PUT', body: keys }); },
+vi.mock('vaults-web-shared/roster-filed-here.js', () => ({
+  offerVaultKeysHere: async (id: string, keys: unknown) => { kr.calls.push({ path: `offer ${id}`, method: 'PUT', body: keys }); },
   foldOffersHere: async (d: { accountId: string }) => {
     kr.calls.push({ path: `fold ${d.accountId}`, method: 'FOLD', body: undefined });
     if (kr.foldFails !== null) throw new Error(kr.foldFails);
@@ -70,8 +74,14 @@ const rosterWith = (mine: { tag: string; value: string }) => ({ id: 'c1', signer
 async function load() {
   vi.resetModules();
   vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
-  return { acts: await import('./committee-change.js'), state: await import('./handover-state.js') };
+  const acts = await import('./committee-change.js');
+  /* The company's view as the page opens it, over this test's service: what a change is signed through. */
+  const { aViewOf } = await import('./page-view.test-support.js');
+  return { acts, state: await import('./handover-state.js'), view: aViewOf('c1'), opened: () => aViewOf('c1') };
 }
+
+/* The company's record as the service keeps it: its label and its account on the chain. */
+const THE_COMPANY = { id: 'c1', companyLabel: `co_${'a1'.repeat(32)}`, contractAddress: 'a0'.repeat(32) };
 
 const AUTHORITY = (over: Record<string, unknown> = {}) => ({
   company: { address: 'a', label: null }, committee: { committee: [K(1)], threshold: 1 }, why: null,
@@ -110,8 +120,9 @@ describe('where a company stands, from the shape of the service\'s answer', () =
    * the company's state.
    */
   it('says each failure to read as what it is', async () => {
-    const { state } = await load();
-    const { AnotherPersonError, AuthError } = await import('vaults-web-shared/keyring.js');
+    const { state, opened } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
+    const { AnotherPersonError, AuthError } = await import('vaults-web-shared/service-transport.js');
     const cases: [unknown, string][] = [
       [new TypeError('fetch failed'), 'unreachable'],
       [new Error('the chain could not be read'), 'unreadable'],
@@ -122,11 +133,29 @@ describe('where a company stands, from the shape of the service\'s answer', () =
     ];
     for (const [answer, of] of cases) {
       kr.answers['/api/accounts/c1/authority'] = answer;
-      expect(await state.readHandover('u1', 'c1'), String(answer)).toEqual({ of });
+      expect(await state.readHandover('u1', opened()), String(answer)).toEqual({ of });
     }
     delete kr.answers['/api/accounts/c1/authority'];
     kr.user = 'somebody else';
-    expect(await state.readHandover('u1', 'c1')).toEqual({ of: 'not-signed-in' });
+    expect(await state.readHandover('u1', opened())).toEqual({ of: 'not-signed-in' });
+  });
+
+  /*
+   * RED WHEN: the authority and the change are read past the opening's view, or an opening an action has ended is read
+   * through (it reads nothing more) rather than a view opened for the read alone.
+   */
+  it('reads through the opening\'s view, and through a view of its own once the opening has ended', async () => {
+    const { state, view, opened } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
+    kr.answers['/api/accounts/c1/authority'] = AUTHORITY({ change: { possible: true } });
+    kr.answers['/api/accounts/c1/committee-change'] = { contracts: [{ signedIndexes: [0], required: 2 }] };
+    const owed = { of: 'change-owed', signed: [{ have: 1, required: 2 }] };
+    expect(await state.readHandover('u1', view)).toEqual(owed);
+    expect([view.counts()['authority'], view.counts()['committeeChange']]).toEqual([1, 1]);
+    const ended = opened();
+    ended.end('an action ran');
+    expect(await state.readHandover('u1', ended)).toEqual(owed);
+    expect(ended.counts()['authority'] ?? 0).toBe(0);
   });
 });
 
@@ -146,112 +175,133 @@ describe('signing a change', () => {
 
   /* RED WHEN: a change this person has already signed is asked of their account again, or said as a failure rather than nothing to sign. */
   it('says there is nothing to sign, and asks the account nothing, when this person has signed', async () => {
-    const { acts } = await load();
-    kr.answers['/api/accounts/c1'] = {};
+    const { acts, view } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = { ...OWED, contracts: [{ ...OWED.contracts[0], signedIndexes: [0] }] };
     kr.roster = rosterWith(K(1));
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'refused', why: 'nothing-to-sign' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
   /* RED WHEN: "nothing to sign" is told from a refusal by the check's sentence rather than its code. */
   it('reads the check\'s code, never its sentence', async () => {
-    const { acts } = await load();
+    const { acts, view } = await load();
     const { COMMITTEE_CHANGE_REFUSAL, nothingForMe } = await import('vaults-web-shared/committee-change-on-device.js');
-    kr.answers['/api/accounts/c1'] = {};
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.roster = rosterWith(K(1));
     const signed = { ...OWED, contracts: [{ ...OWED.contracts[0]!, signedIndexes: [0] }] } as never;
     kr.check = { code: COMMITTEE_CHANGE_REFUSAL.nothingToSign, why: 'words no sentence of the check has ever been' };
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'refused', why: 'nothing-to-sign' });
     kr.check = { code: COMMITTEE_CHANGE_REFUSAL.refused, why: nothingForMe(signed, K(1)) };
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'committee-disagrees' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'refused', why: 'committee-disagrees' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
   /* RED WHEN: the device stops asking the service to send a contract whose kept signatures reach its threshold - the service sends nothing on its own. */
   it('asks the service to send each contract whose kept signatures reach its threshold, and no other', async () => {
-    const { acts } = await load();
-    kr.answers['/api/accounts/c1'] = {};
+    const { acts, view } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     const VAULT_BEHIND = OWED.contracts[0]!.address;
     kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [{ address: VAULT_BEHIND, state: 'kept', have: 2, required: 2 }] };
     kr.answers['/api/accounts/c1/committee-change/send'] = { state: 'sent' };
     kr.roster = rosterWith(K(1));
     kr.signed = { signer: K(1), signatures: [{ address: VAULT_BEHIND, counter: '3', seat: 0, signature: K(7) }] };
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'done' });
     expect(kr.calls.filter((c) => c.method === 'POST').map((c) => [c.path, c.body])).toEqual([
       ['/api/accounts/c1/committee-change/signatures', { to: OWED.to, signatures: [{ address: VAULT_BEHIND, counter: '3', index: 0, signature: K(7) }] }],
       ['/api/accounts/c1/committee-change/send', { address: VAULT_BEHIND, counter: '3', to: OWED.to }],
     ]);
+    /* RED WHEN: the change, the signatures or the update pass by the opening's view, so no check runs before them. */
+    expect([view.counts()['committeeChange'], view.counts()['write']]).toEqual([1, 2]);
   });
 
   /* RED WHEN: a change is signed and sent when the key this person's wallet gives holds no place on any contract behind, or the signatures the account gave are not what is sent. */
   it('sends the account\'s signatures, and nothing when the wallet\'s key holds no place on any contract behind', async () => {
-    const { acts } = await load();
-    kr.answers['/api/accounts/c1'] = {};
+    const { acts, view } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
     kr.roster = rosterWith(K(1));
     kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'done' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([{ path: '/api/accounts/c1/committee-change/signatures', method: 'POST',
       body: { to: OWED.to, signatures: [{ address: 'a', counter: '3', index: 0, signature: K(7) }] } }]);
     kr.calls = [];
     kr.walletKey = K(2);
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'nothing-to-sign' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'refused', why: 'nothing-to-sign' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 
   /* RED WHEN: the change reads this person's roster entry, their seat or their keys for the company: a super admin with none cannot sign. */
   it('a super admin with no seat, no roster entry and no keys for the company on this device signs the change', async () => {
-    const { acts } = await load();
+    const { acts, view } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
     kr.keys = null;
     kr.roster = null;
     kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'done' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([{ path: '/api/accounts/c1/committee-change/signatures', method: 'POST',
       body: { to: OWED.to, signatures: [{ address: 'a', counter: '3', index: 0, signature: K(7) }] } }]);
   });
 
   /* RED WHEN: the signers' open vault-key offers are folded on the way to the change, so one the fold cannot take stops the super admins signing. */
   it('a signer\'s vault-key offer the fold cannot take does not stop the super admins signing', async () => {
-    const { acts } = await load();
-    kr.answers['/api/accounts/c1'] = {};
+    const { acts, view } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
     kr.roster = rosterWith(K(1));
     kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
     kr.foldFails = 'the offer did not verify';
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'done' });
     expect(kr.calls.some((c) => c.method === 'FOLD')).toBe(false);
     expect(kr.calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/accounts/c1/committee-change/signatures']);
   });
 
   /* RED WHEN: the committee a change installs is judged against anything but the one holding the account on the chain, as the wallet reads it: a threshold on the company's record or the roster is never read. */
+  it('a change on the chain since the screen read the company stops the signing, ends the screen\'s read, and sends nothing', async () => {
+    const { acts, view } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
+    kr.answers['/api/accounts/c1/committee-change'] = OWED;
+    kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
+    kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
+    kr.roster = rosterWith(K(1));
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'done' });
+    kr.calls = [];
+    kr.chainCommittee = [K(1), K(2)];
+    const again = await acts.signChange('u1', view);
+    /* RED WHEN: a signing pressed on a screen whose read of who holds the company is out of date goes ahead on that read. */
+    expect(again.of).toBe('refused');
+    expect(view.ended).not.toBeNull();
+    expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
   it('holds the change to the committee holding the account on the chain, as this person\'s wallet reads it, and to nothing on the company\'s record', async () => {
-    const { acts } = await load();
-    kr.answers['/api/accounts/c1'] = {};
+    const { acts, view, opened } = await load();
+    kr.answers['/api/accounts/c1'] = THE_COMPANY;
     kr.answers['/api/accounts/c1/committee-change'] = OWED;
     kr.answers['/api/accounts/c1/committee-change/signatures'] = { results: [] };
     kr.signed = { signer: K(1), signatures: [{ address: 'a', counter: '3', seat: 0, signature: K(7) }] };
     /* The company's record still says 5 from before a change carried out on the chain; the chain says 1. */
     kr.roster = { ...rosterWith(K(1)), policy: { threshold: 5 } };
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'done' });
+    expect(await acts.signChange('u1', view)).toEqual({ of: 'done' });
     /* And a service naming another committee than the chain's is refused, whatever the record says. */
     kr.calls = [];
     kr.roster = { ...rosterWith(K(1)), policy: { threshold: 1 } };
     kr.chainCommittee = [K(1), K(2)];
     kr.chainThreshold = 2;
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'committee-disagrees' });
+    /* Each signing after the chain changed is pressed on a screen opened since, so it reads the chain as it is now. */
+    expect(await acts.signChange('u1', opened())).toEqual({ of: 'refused', why: 'committee-disagrees' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
     /* RED WHEN: the threshold is taken from anywhere but the chain: the chain holds the service's one key at two. */
     kr.calls = [];
     kr.chainCommittee = [K(1)];
     kr.chainThreshold = 2;
-    expect(await acts.signChange('u1', 'c1')).toEqual({ of: 'refused', why: 'committee-disagrees' });
+    expect(await acts.signChange('u1', opened())).toEqual({ of: 'refused', why: 'committee-disagrees' });
     expect(kr.calls.filter((c) => c.method === 'POST')).toEqual([]);
   });
 });

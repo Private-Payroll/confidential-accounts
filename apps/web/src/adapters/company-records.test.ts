@@ -10,6 +10,7 @@ import { sealVendor, type VendorRecord } from '../../../../src/core/vendor-recor
 import { SEED_ASSETS, StaticAssetRegistry } from '../../../../src/core/assets.js';
 import { newProposalId, signProposalFiling } from '../../../../src/core/proposal-filing.js';
 import { publicAmount } from 'vaults-ui';
+import { aViewOf } from './page-view.test-support.js';
 import { newOneOffId } from '../../../../src/midnight/one-off-record.js';
 
 /*
@@ -79,12 +80,12 @@ vi.mock('./vault-builder.js', () => ({
       if (chain.paidAnswer !== null) return chain.paidAnswer;
       return Object.fromEntries(i.leaves.map((l) => [l, chain.paid[l] ?? false]));
     },
-    vaultOnChain: async (i: { vault: string; indexer: { indexerUri: string } }) => {
-      kr.readHere.push(`${i.vault} at ${i.indexer.indexerUri}`);
-      const v = kr.vaults[i.vault];
-      if (v === undefined) throw new Error('the indexer holds nothing for that vault');
-      return v;
-    },
+    /* The stand-in chain, one vault or many asked at once: each named as read, the ask refused when any is not held. */
+    vaultsOnChain: async (i: { vaults: readonly string[]; indexer: { indexerUri: string } }) => i.vaults.map((vault) => {
+      kr.readHere.push(`${vault} at ${i.indexer.indexerUri}`);
+      if (kr.vaults[vault] === undefined) throw new Error('the indexer holds nothing for that vault');
+      return kr.vaults[vault];
+    }),
     ...(kr.claimCheck ? { addressClaimRefusal: async (claim: unknown, f: unknown) => { kr.claims.push({ claim, f }); return kr.claimAnswer; } } : {}),
     /* A one-off's record, opened in the page's worker: it opens, under the company's key alone, to what `oneOffs.opened` holds for its id. */
     openOneOff: async (rec: { id: string }, key: string) => {
@@ -94,16 +95,15 @@ vi.mock('./vault-builder.js', () => ({
   }),
 }));
 /* Any anchor started on this page, recorded: entering a company starts none. */
-vi.mock('vaults-web-shared/records-anchored-here.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/records-anchored-here.js')>()),
-  anchoredOnTheWayIn: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); },
-  anchorTheRecordsHere: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); },
-}));
+vi.mock('vaults-web-shared/anchored-on-the-way-in.js', async (real) => ({ ...(await real<typeof import('vaults-web-shared/anchored-on-the-way-in.js')>()), anchoredOnTheWayIn: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); } }));
+vi.mock('vaults-web-shared/records-anchored-here.js', async (real) => ({ ...(await real<typeof import('vaults-web-shared/records-anchored-here.js')>()), anchorTheRecordsHere: (doors: { accountId: string }) => { kr.anchoring.push({ company: doors.accountId }); return new Promise(() => undefined); } }));
 /* The seat the chain says each proposal took, as the person's own indexer gives it, and the proposals it was asked about. */
 const chainSeats = vi.hoisted(() => ({ took: {} as Record<string, string | null>, asked: [] as string[][], fails: false }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
-  rosterReadsFor: () => ({
+  /* The company as this device opens it, stood in for: what `kr.account` holds, noted to the console report as the page's own read notes it. */
+  openedQuietly: async (_view: unknown, sealed: { id: string }) => (await import('vaults-web-shared/roster-here.js')).signersCheckNoted(async () => { if (kr.account instanceof Error) throw kr.account; return kr.account as never; }, sealed.id),
+  rosterReadsIn: () => ({
     invitedSeats: async (proposals: string[]) => { chainSeats.asked.push(proposals); if (chainSeats.fails) throw new Error('the indexer did not answer'); return chainSeats.took; },
   }),
   /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
@@ -169,22 +169,23 @@ vi.mock('vaults-web-shared/round-opened-here.js', async (real) => ({ ...(await r
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => ({ id: kr.user }),
-  companyNameKeptHere: (id: string) => kr.kept[id] ?? null,
-  companiesBeingCreated: () => Object.keys(kr.kept),
   forgetLocally: () => {},
   resumeSession: async () => null,
   /* This seat as the wallet read it for the tab: its public halves only. */
   seatHeldHere: () => (kr.keys ? { signerId: 's1', signingPublicKey: kr.ownKey, wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32) } : null),
   canOpenCompanies: () => kr.canOpen,
-  openAccount: () => {
-    if (kr.account instanceof Error) throw kr.account;
-    return kr.account;
-  },
   viewingKeyFor: () => VK,
   openKeysWithWallet: async (...a: unknown[]) => { kr.opened += 1; kr.openedWith.push(a[4] as string | undefined); },
+}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   /* Who holds the company, as the person's own wallet reads it with no press: the vaults its account has adopted, and its indexer. */
   /* `threshold` on this answer is the account's maintenance committee's, never the approvals the account asks for. */
-  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted, threshold: 1, seats: kr.seats, policyBar: kr.policyBar, vaultThresholds: kr.vaultThresholds, ...(kr.approvals === undefined ? {} : { approvals: kr.approvals, seatBar: Math.max(kr.approvals, kr.policyBar ?? 0) }) }, indexer: kr.indexer }),
+  holdersFromTheWallet: async () => ({ holders: { adoptedVaults: kr.adopted, threshold: 1, committee: [], seats: kr.seats, policyBar: kr.policyBar, vaultThresholds: kr.vaultThresholds, ...(kr.approvals === undefined ? {} : { approvals: kr.approvals, seatBar: Math.max(kr.approvals, kr.policyBar ?? 0) }) }, indexer: kr.indexer }),
+}));
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({ ...(await real<typeof import('vaults-web-shared/company-creation.js')>()), companyNameKeptHere: (id: string) => kr.kept[id] ?? null, companiesBeingCreated: () => Object.keys(kr.kept) }));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
   api: async (path: string) => {
     kr.asked.push(path);
     const a = kr.answers[path];
@@ -290,7 +291,7 @@ async function load() {
   const amounts = await import('vaults-ui/format/token-amount');
   ({ visibilityOf, formatTokenAmount } = amounts);
   isAmount = (v) => v instanceof amounts.PublicAmount || v instanceof amounts.PrivateAmount;
-  return import('./company-records.js');
+  return { ...(await import('./company-records.js')), ...(await import('./company-vaults-read.js')) };
 }
 
 /** Every string in an answer, with where it is. */
@@ -309,7 +310,7 @@ describe('opening a company', () => {
   /* RED WHEN: the name or signers are not the opened record's, or how many must approve is not what the wallet read off the chain. */
   it('opens the company with the keys saved for the person', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     expect(c.of).toBe('open');
     if (c.of !== 'open') return;
     expect([c.name, c.signers.map((s) => s.name), c.approvalsNeeded]).toEqual(['Northwind', ['Priya', 'Sam'], { of: 'read', value: 2 }]);
@@ -319,17 +320,17 @@ describe('opening a company', () => {
   it('says how many must approve as the wallet read it off the chain, and nothing when the wallet cannot say', async () => {
     const { readCompany } = await load();
     kr.approvals = 3;
-    const read = await readCompany('u1', 'c1');
+    const read = await readCompany('u1', aViewOf('c1'));
     expect(read.of === 'open' && read.approvalsNeeded).toEqual({ of: 'read', value: 3 });
     kr.approvals = undefined;
-    const unsaid = await readCompany('u1', 'c1');
+    const unsaid = await readCompany('u1', aViewOf('c1'));
     expect(unsaid.of === 'open' && unsaid.approvalsNeeded).toEqual({ of: 'unreadable' });
   });
 
   it('ENTERING THE COMPANY STARTS NO ANCHOR: ITS RECORDS ARE ANCHORED AT THE END OF A SEAT ACTION IN A SIGNER\'S WALLET', async () => {
     const { readCompany, readVaultName } = await load();
-    expect((await readCompany('u1', 'c1')).of).toBe('open');
-    await readVaultName('u1', 'c1', 'd1'.repeat(32));
+    expect((await readCompany('u1', aViewOf('c1'))).of).toBe('open');
+    await readVaultName('u1', aViewOf('c1'), 'd1'.repeat(32));
     /* RED WHEN: opening a company starts an anchor on the page, a transaction signed with no press and listed in no window. */
     expect(kr.anchoring).toEqual([]);
   });
@@ -348,7 +349,7 @@ describe('opening a company', () => {
     const was = kr.account;
     kr.account = new RosterNotBelieved('This device does not believe the company\'s roster it was given (x).');
     try {
-      expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-not-believed' });
+      expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'roster-not-believed' });
     } finally {
       kr.account = was;
     }
@@ -366,7 +367,7 @@ describe('opening a company', () => {
       check: ROSTER_CHECK.seatUnnamed, stoppedBy: ['SeatNotReadOnTheChain'],
     });
     try {
-      expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'roster-not-believed' });
+      expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'roster-not-believed' });
       /* RED WHEN: the page refuses a company's signers and its console report does not say which check refused, the error's class and what stopped it. */
       expect(warned).toContain('read checking the company\'s signers: refused at seat-unnamed (RosterNotBelieved); stopped by SeatNotReadOnTheChain');
       /* RED WHEN: the console report carries the refusal's message, which can name a seat or anything else the service served. */
@@ -386,8 +387,8 @@ describe('opening a company', () => {
     vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
     kr.account = new RosterNotBelieved('no account', null, null, { check: ROSTER_CHECK.noAccount });
     try {
-      await readCompany('u1', 'c1');
-      await readCompany('u1', 'c1');
+      await readCompany('u1', aViewOf('c1'));
+      await readCompany('u1', aViewOf('c1'));
       const said = warned.filter((l) => l.includes('checking the company\'s signers'));
       /* RED WHEN: a company with no account yet is logged as a refusal of its signers, or logged again at every read. */
       expect(said).toEqual(['read checking the company\'s signers: not checked, because the company has no account on the network yet']);
@@ -406,7 +407,7 @@ describe('opening a company', () => {
     vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
     kr.account = new RosterNotBelieved(`not believed (${'5e'.repeat(32)})`, null, null, { check: ROSTER_CHECK.filerNotBelieved, because: 'no-entry' });
     try {
-      await readCompany('u1', 'c1');
+      await readCompany('u1', aViewOf('c1'));
       /* RED WHEN: a roster refused for its filer is logged without the reason's code, or with the refusal's own words. */
       expect(warned).toContain('read checking the company\'s signers: refused at filer-not-believed (RosterNotBelieved); because no-entry');
       expect(warned.join('\n')).not.toContain('5e'.repeat(32));
@@ -419,18 +420,18 @@ describe('opening a company', () => {
   it('says whether the keys are locked, not here, or refused, each apart', async () => {
     const { readCompany } = await load();
     kr.keys = false; kr.canOpen = false;
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'locked' });
+    expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'locked' });
     kr.canOpen = true;
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'no-keys-here' });
+    expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'no-keys-here' });
     kr.keys = true; kr.account = null;
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'no-keys-here' });
+    expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'no-keys-here' });
     kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Sam' }] };
     kr.answers[ROUTE()] = new TypeError('fetch failed');
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'unreachable' });
+    expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'unreachable' });
     kr.answers[ROUTE()] = new Error('a sentence the service wrote');
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'did-not-finish' });
+    expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'did-not-finish' });
     kr.user = 'somebody else';
-    expect(await readCompany('u1', 'c1')).toEqual({ of: 'refused', why: 'not-signed-in' });
+    expect(await readCompany('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'not-signed-in' });
   });
 
   /* RED WHEN: opening the saved keys asks the account when this build does not know where it is, or a refusal is not handed on as a code. */
@@ -454,7 +455,7 @@ describe('opening a company', () => {
     /* RED WHEN: the open press on a company's pages does not name that company, so its vault balances need another window. */
     expect(kr.openedWith).toEqual([undefined, 'c1']);
     leave();
-    await readCompany('u1', 'c1');
+    await readCompany('u1', aViewOf('c1'));
     await openWithYourAccount('u1');
     /* RED WHEN: the open press away from a company's pages names the company last read, so its key is held while it is not open. */
     expect(kr.openedWith).toEqual([undefined, 'c1', undefined]);
@@ -467,7 +468,7 @@ describe('each read, on its own', () => {
     const { readCompany } = await load();
     kr.answers[ROUTE('/vaults')] = new Error('the chain could not be read');
     kr.answers[ROUTE('/people')] = new TypeError('fetch failed');
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open') throw new Error('not open');
     expect([c.proposals.of, c.runs.of, c.people.of, c.vaults.of, c.invitations.of]).toEqual(['read', 'read', 'unreadable', 'unreadable', 'read']);
   });
@@ -476,7 +477,7 @@ describe('each read, on its own', () => {
   it('hands on runs sealed under another key as unreadable, and still reads the proposals', async () => {
     const { readCompany } = await load();
     kr.answers[ROUTE('/runs')] = [sealedRun('r9', '2026-10', 'draft', [], {}, OTHER_VK)];
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open') throw new Error('not open');
     expect([c.runs.of, c.proposals.of]).toEqual(['unreadable', 'read']);
   });
@@ -484,7 +485,7 @@ describe('each read, on its own', () => {
   /* RED WHEN: the viewing key is sent to the service on any read - the people's included, which used to carry it in its address. */
   it('sends the viewing key on no read', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open') throw new Error('not open');
     expect(c.people.of).toBe('read');
     expect(kr.asked.filter((p) => p.includes(VK))).toEqual([]);
@@ -504,13 +505,13 @@ describe('each read, on its own', () => {
       ['a code for another company', { ...ana, ...payable(1, 'shielded', `co_${'c2'.repeat(32)}`) }],
     ] as const) {
       kr.answers[ROUTE('/people')] = { people: [filedPerson(p, false)] };
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error(`not read: ${what}`);
       expect(c.people.of, what).toBe('unreadable');
       expect(c.peopleBelief.value.notPayable.map((x) => [x.person.id, x.why !== '']), what).toEqual([['emp_e1', true]]);
     }
     kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...good }, false)] };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     expect(c.of === 'open' && c.people.of === 'read' && c.people.value.map((x) => x.id)).toEqual(['emp_e1']);
     expect(c.of === 'open' && c.peopleBelief?.of === 'read' && c.peopleBelief.value.notPayable).toEqual([]);
   });
@@ -523,7 +524,7 @@ describe('each read, on its own', () => {
       id: 'emp_e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-02-01', status: 'active', invitedAddress: typed,
       ...payable(2, 'unshielded'), addressClaim: { kind: 'unshielded', address: typed, signature: 'ff'.repeat(64) },
     }, false)] };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
     expect(c.people.of).toBe('unreadable');
     expect(c.peopleBelief.value.notPayable.map((x) => [x.person.id, /claim/u.test(x.why)])).toEqual([['emp_e2', true]]);
@@ -538,16 +539,16 @@ describe('each read, on its own', () => {
       id: 'emp_e2', name: 'Bo', title: 'Designer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-02-01', status: 'active', invitedAddress: typed,
       ...payable(2, 'unshielded'), addressClaim: claim,
     }, false)] };
-    const held = await readCompany('u1', 'c1');
+    const held = await readCompany('u1', aViewOf('c1'));
     expect(held.of === 'open' && held.people.of === 'read' && held.people.value.map((p) => p.id)).toEqual(['emp_e2']);
     expect(kr.claims).toEqual([{ claim, f: expect.objectContaining({ company: LABEL, person: 'emp_e2', payslipKey: '02'.repeat(32), address: typed }) }]);
     kr.claimAnswer = 'the claim\'s signature is not the address\'s';
-    const refused = await readCompany('u1', 'c1');
+    const refused = await readCompany('u1', aViewOf('c1'));
     if (refused.of !== 'open' || refused.peopleBelief?.of !== 'read') throw new Error('not read');
     expect(refused.people.of).toBe('unreadable');
     expect(refused.peopleBelief.value.notPayable.map((x) => [x.person.id, x.why.includes(kr.claimAnswer!)])).toEqual([['emp_e2', true]]);
     kr.claimCheck = false;
-    const unchecked = await readCompany('u1', 'c1');
+    const unchecked = await readCompany('u1', aViewOf('c1'));
     expect(unchecked.of === 'open' && [unchecked.people.of, unchecked.peopleBelief?.of]).toEqual(['unreadable', 'unreadable']);
   });
 
@@ -563,7 +564,7 @@ describe('each read, on its own', () => {
     kr.approvals = 2;
     kr.policyBar = 3;
     kr.vaultThresholds = [{ vault: 'ab'.repeat(32), threshold: 3 }];
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     kr.account = was;
     if (c.of !== 'open') throw new Error('not open');
     expect(c.signerStandings).toEqual({ of: 'read', value: [
@@ -588,14 +589,14 @@ describe('each read, on its own', () => {
     kr.seats = [leaf(1), leaf(2)];
     kr.entries = [leaf(1)];
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.signerStandings?.of !== 'read') throw new Error('not open');
       /* RED WHEN: the signer marked as you is chosen by name, by order or by anything but the signing key of the seat this device holds. */
       expect(c.signerStandings.value.map((s) => [s.name, s.you])).toEqual([['You', false], ['KC-Wallet 2', true]]);
       /* RED WHEN: a seated signer whose entry the company's directory does not hold is not told apart from one whose entry it holds. */
       expect(c.signerStandings.value.map((s) => s.entryFiled)).toEqual([true, false]);
       kr.entries = null;
-      const unread = await readCompany('u1', 'c1');
+      const unread = await readCompany('u1', aViewOf('c1'));
       if (unread.of !== 'open' || unread.signerStandings?.of !== 'read') throw new Error('not open');
       /* RED WHEN: a directory this device could not read is told as an entry not filed. */
       expect(unread.signerStandings.value.map((s) => s.entryFiled)).toEqual([null, null]);
@@ -615,7 +616,7 @@ describe('each read, on its own', () => {
     ] };
     kr.seats = [leaf(2), leaf(3)];
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.signerStandings?.of !== 'read') throw new Error('not open');
       /* RED WHEN: a row carrying this device's signing key under another id than this device's own seat is marked as you. */
       expect(c.signerStandings.value.map((s) => [s.id, s.you])).toEqual([['sX', false], ['s1', true]]);
@@ -629,7 +630,7 @@ describe('each read, on its own', () => {
     const { readCompany } = await load();
     kr.named = { person: ['emp_ghost'] };
     kr.unbelieved = ['emp_e1'];
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
     expect([...c.peopleBelief.value.notBelieved].sort()).toEqual(['emp_e1', 'emp_ghost']);
     /* RED WHEN: people not believed are dropped from the people read and the screens lose them without a word. */
@@ -641,14 +642,14 @@ describe('each read, on its own', () => {
     const { readCompany } = await load();
     const ana = { id: 'emp_e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'pending', address: null };
     kr.answers[ROUTE('/people')] = { people: [filedPerson(ana, false, VK, 'c2'), filedPerson({ ...ana, id: 'emp_e3', name: 'Cat' }, false)] };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
     expect(c.peopleBelief.value.refused.map((x) => x.id)).toEqual(['emp_e1']);
     /* RED WHEN: a refused id is listed again among those not believed. */
     expect(c.peopleBelief.value.notBelieved).toEqual([]);
     expect(c.people.of).toBe('unreadable');
     kr.answers[ROUTE('/people')] = { people: [filedPerson(ana, false, OTHER_VK)] };
-    const d = await readCompany('u1', 'c1');
+    const d = await readCompany('u1', aViewOf('c1'));
     if (d.of !== 'open') throw new Error('not open');
     expect([d.people.of, d.peopleBelief?.of === 'read' && d.peopleBelief.value.refused.map((x) => x.id), d.runs.of]).toEqual(['unreadable', ['emp_e1'], 'read']);
   });
@@ -658,7 +659,7 @@ describe('each read, on its own', () => {
     const { readCompany } = await load();
     peopleAre.answer = () => ({ people: [], notBelieved: [], notPayable: [], refused: [{ id: 'emp_e1', why: 'it is filed for another company' }] });
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
       expect(c.people.of).toBe('unreadable');
       /* RED WHEN: the page that names the refused record is not told which it is. */
@@ -670,7 +671,7 @@ describe('each read, on its own', () => {
     /* With nothing refused, left out or not payable, the same read is complete. */
     peopleAre.answer = () => ({ people: [], notBelieved: [], notPayable: [], refused: [] });
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       expect(c.of === 'open' && c.people).toEqual({ of: 'read', value: [] });
     } finally {
       peopleAre.answer = null;
@@ -689,7 +690,7 @@ describe('each read, on its own', () => {
     kr.answers[ROUTE('/records/vendor/ven_bb22bb22bb22bb22bb22/versions')] = vendor('ven_bb22bb22bb22bb22bb22', 'Wes');
     kr.answers[ROUTE('/vendors/ven_aa11aa11aa11aa11aa11/handover')] = { inbox: { sealed: 'x' } };
     kr.answers[ROUTE('/vendors/ven_bb22bb22bb22bb22bb22/handover')] = { inbox: null };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
     /* RED WHEN: a vendor this device does not believe is dropped from the vendors read without a word. */
     expect(c.vendors?.of).toBe('unreadable');
@@ -699,7 +700,7 @@ describe('each read, on its own', () => {
     expect(c.vendorsBelief.value.notBelieved).toEqual(['ven_ghost']);
     expect(c.vendorsBelief.value.notPayable).toEqual([]);
     kr.named = { vendor: ['ven_aa11aa11aa11aa11aa11', 'ven_bb22bb22bb22bb22bb22'] };
-    const d = await readCompany('u1', 'c1');
+    const d = await readCompany('u1', aViewOf('c1'));
     expect(d.of === 'open' && d.vendors?.of === 'read' && d.vendors.value.vendors.length).toBe(2);
   });
 
@@ -716,7 +717,7 @@ describe('each read, on its own', () => {
     });
     kr.answers[ROUTE('/records/vendor/ven_cc33cc33cc33cc33cc33/versions')] = vendor('ven_cc33cc33cc33cc33cc33', 'Cy', { status: 'active', admittedAt: '2026-10-02T00:00:00.000Z' });
     kr.answers[ROUTE('/vendors/ven_aa11aa11aa11aa11aa11/handover')] = { inbox: { sealed: 'x' } };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
     const { rows, vendors, notPayable } = c.vendorsBelief.value;
     expect(rows.map((v) => [v.id, v.name, v.standing, v.notPayable !== null && v.notPayable !== ''])).toEqual([
@@ -750,7 +751,7 @@ describe('each read, on its own', () => {
       for (const id of [ids.cy, ids.lee, ids.di]) kr.answers[ROUTE(`/vendors/${id}/handover`)] = { inbox: null };
     };
     set([ids.cy, ids.lee, ids.wes, ids.di]);
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
     expect(c.vendorsBelief.value.rows.map((v) => [v.name, v.standing, v.notPayable !== null])).toEqual([
       ['Cy', 'active', true], ['Di', 'invited', false], ['Lee', 'leaver', false], ['Wes', 'waiting-for-check', false],
@@ -758,7 +759,7 @@ describe('each read, on its own', () => {
     expect(c.vendorsBelief.value.notPayable.map((n) => n.vendor.name)).toEqual(['Cy']);
     expect(c.vendors?.of).toBe('unreadable');
     set([ids.lee, ids.wes, ids.di]);
-    const d = await readCompany('u1', 'c1');
+    const d = await readCompany('u1', aViewOf('c1'));
     if (d.of !== 'open' || d.vendorsBelief?.of !== 'read') throw new Error('not read');
     expect([d.vendors?.of, d.vendorsBelief.value.notPayable, d.vendorsBelief.value.rows.map((v) => v.notPayable)]).toEqual(['read', [], [null, null, null]]);
     /* RED WHEN: a vendor's row loses the address their entry holds, or invents one for a vendor whose entry holds none, so the payee list would offer an address nobody gave. */
@@ -777,7 +778,7 @@ describe('each read, on its own', () => {
     kr.answers[ROUTE('/records/vendor/ven_bb22bb22bb22bb22bb22/versions')] = vendor('ven_bb22bb22bb22bb22bb22', 'Bea', { ...payable(2, 'unshielded') });
     kr.answers[ROUTE('/records/vendor/ven_cc33cc33cc33cc33cc33/versions')] = vendor('ven_cc33cc33cc33cc33cc33', 'Cal', {});
     for (const id of ['ven_aa11aa11aa11aa11aa11', 'ven_bb22bb22bb22bb22bb22', 'ven_cc33cc33cc33cc33cc33']) kr.answers[ROUTE(`/vendors/${id}/handover`)] = { inbox: null };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.vendorsBelief?.of !== 'read') throw new Error('not read');
     expect(c.vendorsBelief.value.rows.map((v) => [v.name, v.paid, visibilityKnown(v.paid)])).toEqual([
       ['Ada', 'privately', true], ['Bea', 'publicly', true], ['Cal', 'not-set-up', false],
@@ -792,7 +793,7 @@ describe('each read, on its own', () => {
    */
   it('hands on codes, ids, dates and names, never the service\'s words', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     const all = strings(c);
     expect(all.filter((s) => /sentence|wrote/.test(s))).toEqual([]);
     expect(all.filter((s) => /\.(standing|paid|kind|status|of)=/.test(s)).map((s) => s.replace(/^.*=/, '')).sort().filter((v, i, a) => a.indexOf(v) === i)).toEqual([
@@ -813,7 +814,7 @@ describe('amounts, marked by how they are paid', () => {
    */
   it('marks each run amount by the address it is paid to, and never adds private and public together', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.runs.of !== 'read') throw new Error('not read');
     const [next, paid] = c.runs.value;
     expect([next!.id, paid!.id]).toEqual(['r1', 'r0']);
@@ -856,7 +857,7 @@ describe('amounts, marked by how they are paid', () => {
     ], { settledAt: '2026-11-30T12:00:00.000Z', payout: { [NIGHT_PUBLICLY]: { vault: 'ab'.repeat(32), payees: 2n, leaves } } });
     kr.answers[ROUTE('/runs')] = [run('r5', ['aa', 'bb'])];
     const stateOf = async () => {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.runs.of !== 'read') throw new Error('not read');
       const [r] = c.runs.value;
       return ['status' in r! || 'settledAt' in r!, r!.paidOnChain, r!.legs[0]!.paidOnChain];
@@ -899,7 +900,7 @@ describe('amounts, marked by how they are paid', () => {
       [NIGHT_PUBLICLY]: { vault: 'ab'.repeat(32), payees: 2n, leaves: ['b1', 'b2'], closesAt: 1_800_000_000n },
     } })];
     chain.paid = { a1: true, a3: true, b1: true, b2: true };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.runs.of !== 'read') throw new Error('not read');
     const run = c.runs.value[0]!;
     const wallet = (leg: string) => legEmployees({ employees } as never, leg as never).map((e) => [e.name, e.amount]);
@@ -915,7 +916,7 @@ describe('amounts, marked by how they are paid', () => {
     expect([publicly.unpaid, publicly.paidOnChain]).toEqual([[], 2]);
     /* A leg that lists other people than it was raised over names no amounts, so no place can be named for it. */
     kr.answers[ROUTE('/runs')] = [sealedRun('r5', '2026-11', 'proposed', employees, { payout: { [SHIELDED]: { vault: 'ab'.repeat(32), payees: 2n, leaves: ['a1', 'a2'], closesAt: 1n } } })];
-    const d = await readCompany('u1', 'c1');
+    const d = await readCompany('u1', aViewOf('c1'));
     if (d.of !== 'open' || d.runs.of !== 'read') throw new Error('not read');
     expect(d.runs.value[0]!.legs[0]!.amounts).toBeUndefined();
   });
@@ -937,7 +938,7 @@ describe('amounts, marked by how they are paid', () => {
       } },
     })];
     chain.paid = { aa: true, bb: true };
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.runs.of !== 'read' || c.proposals.of !== 'read') throw new Error('not read');
     const leg = c.runs.value[0]!.legs[0]!;
     expect(leg.paidOnChain).toBe(1);
@@ -950,7 +951,7 @@ describe('amounts, marked by how they are paid', () => {
   /* RED WHEN: a person's pay is marked private without a private address, where each stands is not their record's (waiting on us, waiting on them, active, left), or they are not listed by name. */
   it('marks a person\'s pay by their address, and says where each stands', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.people.of !== 'read') throw new Error('not read');
     expect(c.people.value.map((p) => [p.name, p.standing, p.paid, p.pay === null ? null : visibilityOf(p.pay)])).toEqual([
       ['Ana', 'active', 'privately', 'private'], ['Bo', 'active', 'publicly', 'public'], ['Eve', 'waiting-for-check', 'not-set-up', 'public'],
@@ -999,7 +1000,7 @@ describe('amounts, marked by how they are paid', () => {
   it('keeps the believed people in rows while the people read stays unreadable, and leaves the others out of them', async () => {
     const { readCompany } = await load();
     kr.unbelieved = ['emp_e1'];
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.peopleBelief?.of !== 'read') throw new Error('not read');
     expect(c.people.of).toBe('unreadable');
     expect(c.peopleBelief.value.notBelieved).toEqual(['emp_e1']);
@@ -1009,14 +1010,14 @@ describe('amounts, marked by how they are paid', () => {
     kr.unbelieved = [];
     const ana = { id: 'emp_e1', name: 'Ana', title: 'Engineer', asset: NIGHT.code, baseAmount: 1n, startDate: '2026-01-01', status: 'active' };
     kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...payable(1, 'shielded'), payeeCode: null }, false), filedPerson({ ...ana, id: 'emp_e3', name: 'Cat', status: 'pending', address: null }, true)] };
-    const d = await readCompany('u1', 'c1');
+    const d = await readCompany('u1', aViewOf('c1'));
     if (d.of !== 'open' || d.peopleBelief?.of !== 'read') throw new Error('not read');
     expect([d.people.of, d.peopleBelief.value.notPayable.map((x) => x.person.id), d.peopleBelief.value.rows.map((p) => p.id)]).toEqual(['unreadable', ['emp_e1'], ['emp_e1', 'emp_e3']]);
     /* The active person the check will not pay is a row marked with why, and the pending person is a row unmarked. */
     expect(d.peopleBelief.value.rows.map((p) => [p.id, p.notPayable !== null && p.notPayable !== ''])).toEqual([['emp_e1', true], ['emp_e3', false]]);
     expect(d.peopleBelief.value.rows[0]!.notPayable).toBe(d.peopleBelief.value.notPayable[0]!.why);
     kr.answers[ROUTE('/people')] = { people: [filedPerson({ ...ana, ...payable(1, 'shielded') }, false)] };
-    const e = await readCompany('u1', 'c1');
+    const e = await readCompany('u1', aViewOf('c1'));
     expect(e.of === 'open' && e.people.of === 'read' && e.peopleBelief?.of === 'read' && e.people.value).toEqual(e.of === 'open' && e.peopleBelief?.of === 'read' ? e.peopleBelief.value.rows : null);
   });
 
@@ -1049,7 +1050,7 @@ describe('proposals, vaults and invitations', () => {
    */
   it('reads each proposal from its opened record, where the chain holds it', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
     expect(c.proposals.value.map((p) => [p.id, p.kind, p.status, p.raisedBy, p.approvals, p.needed, p.pays])).toEqual([
       /* RED WHEN a payroll round is not tied to the token and the form its leg pays, or names its token to a screen by anything but its symbol. */
@@ -1087,7 +1088,7 @@ describe('proposals, vaults and invitations', () => {
       [secret.chainId]: { held: 'open', approvals: 1, needed: 1, raisedAt: at },
     };
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       /* RED WHEN: a proposal's status is the service's, its count the sealed list's, its bar not the chain's, its raiser matched by the sealed signer id, or any of the three kinds said as a change to the company. */
       expect(c.proposals.value.map((p) => [p.kind, p.status, p.approvals, p.needed, p.raisedBy, p.raisedAt])).toEqual([
@@ -1105,7 +1106,7 @@ describe('proposals, vaults and invitations', () => {
     const { readCompany } = await load();
     const statusWhen = async (round: unknown) => {
       chain.rounds = { cc: round };
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       return c.proposals.value[0]!.status;
     };
@@ -1130,7 +1131,7 @@ describe('proposals, vaults and invitations', () => {
       kr.named = { proposal: ['p1'] };
     };
     const read = async () => {
-      const c = await m.readCompany('u1', 'c1');
+      const c = await m.readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       return c.proposals;
     };
@@ -1175,7 +1176,7 @@ describe('proposals, vaults and invitations', () => {
     kr.leftOut = [older.id];
     kr.unbelieved = [unbelieved.id];
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       expect(c.proposals.value.map((p) => [p.id, p.kind, p.status, p.raisedBy])).toEqual([
         [kept.id, 'set-threshold', 'open', 'Priya'],
@@ -1199,15 +1200,15 @@ describe('proposals, vaults and invitations', () => {
     const was = kr.account;
     kr.account = { id: 'c1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], refused: [{ signerId: 's2', name: 'Sam', why: 'seat-not-on-the-chain' }] };
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       expect(c.proposals.value.map((p) => [p.id, p.raisedBy, p.raiserNotBelieved])).toEqual([['p1', 'Sam', 'seat-not-on-the-chain'], ['p2', null, null]]);
       kr.account = { ...(kr.account as object), refused: [{ signerId: 's2', name: 'Sam', why: 'no-entry-of-their-own' }] };
-      const opened = await readCompany('u1', 'c1');
+      const opened = await readCompany('u1', aViewOf('c1'));
       if (opened.of !== 'open' || opened.proposals.of !== 'read') throw new Error('not read');
       expect(opened.proposals.value[0]!.raiserNotBelieved).toBe('no-entry-of-their-own');
       kr.account = { ...(kr.account as object), refused: [{ signerId: 's2', name: 'Sam', why: 'not-their-signing-key' }] };
-      const signed = await readCompany('u1', 'c1');
+      const signed = await readCompany('u1', aViewOf('c1'));
       if (signed.of !== 'open' || signed.proposals.of !== 'read') throw new Error('not read');
       expect(signed.proposals.value[0]!.raiserNotBelieved).toBe('not-their-signing-key');
       /* RED WHEN: the name in a roster entry this device refused as not what its wallet signed is shown as who raised it. */
@@ -1222,22 +1223,22 @@ describe('proposals, vaults and invitations', () => {
     const m = await load();
     const readVaultName = m.readVaultName;
     info.answer = { state: 'none' };
-    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBeNull();
+    expect(await readVaultName('u1', aViewOf('c1'), 'v', m.NAME_NOT_READ)).toBeNull();
     info.answer = { state: 'unread', why: 'the record could not be opened', version: 1 };
-    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBe(m.NAME_NOT_READ);
-    expect(await readVaultName('u1', 'c1', 'v')).toBeNull();
+    expect(await readVaultName('u1', aViewOf('c1'), 'v', m.NAME_NOT_READ)).toBe(m.NAME_NOT_READ);
+    expect(await readVaultName('u1', aViewOf('c1'), 'v')).toBeNull();
     info.fails = true;
-    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBe(m.NAME_NOT_READ);
+    expect(await readVaultName('u1', aViewOf('c1'), 'v', m.NAME_NOT_READ)).toBe(m.NAME_NOT_READ);
     info.fails = false;
     info.answer = { state: 'named', name: 'Payroll', description: '', version: 1 };
-    expect(await readVaultName('u1', 'c1', 'v', m.NAME_NOT_READ)).toBe('Payroll');
+    expect(await readVaultName('u1', aViewOf('c1'), 'v', m.NAME_NOT_READ)).toBe('Payroll');
     info.answer = { state: 'none' };
   });
 
   /* RED WHEN: a vault standing the service names that is not in the set is handed on as it came, or the service's words about it are. */
   it('reads each vault, a standing not in the set as unknown', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.vaults.of !== 'read') throw new Error('not read');
     expect(c.vaults.value).toEqual([
       { vault: 'ab'.repeat(32), createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true, approvals: 2 },
@@ -1249,7 +1250,7 @@ describe('proposals, vaults and invitations', () => {
   it('reads the approvals each vault asks for: its own number, else the company\'s, and none where the chain gave none', async () => {
     const { readCompany } = await load();
     const numbers = async () => {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.vaults.of !== 'read') throw new Error('not read');
       return c.vaults.value.map((v) => [v.vault.slice(0, 2), v.approvals]);
     };
@@ -1276,7 +1277,7 @@ describe('proposals, vaults and invitations', () => {
       { vault: 'ef'.repeat(32), deployedAt: '2026-09-04T00:00:00.000Z', state: 'start-owed' },
       { vault: 'e1'.repeat(32), deployedAt: '2026-09-05T00:00:00.000Z', state: 'handover-owed' },
     ] };
-    const listed = await readCompany('u1', 'c1');
+    const listed = await readCompany('u1', aViewOf('c1'));
     if (listed.of !== 'open' || listed.vaults.of !== 'read') throw new Error('not read');
     /* A vault the service calls the company's that the account never adopted is not listed; one whose set-up is not finished is, as not finished. */
     expect(listed.vaults.value.map((v) => [v.vault.slice(0, 2), v.standing])).toEqual([['ab', 'held-by-committee'], ['cd', 'unknown'], ['ef', 'start-owed']]);
@@ -1284,7 +1285,7 @@ describe('proposals, vaults and invitations', () => {
     expect(listed.vaults.value.map((v) => v.adopted === true)).toEqual([true, true, false]);
     /* The service leaves out a vault the account holds: the list is unreadable, never shown one short. */
     kr.adopted = ['ab'.repeat(32), 'cd'.repeat(32), 'aa'.repeat(32)];
-    const short = await readCompany('u1', 'c1');
+    const short = await readCompany('u1', aViewOf('c1'));
     expect(short.of === 'open' && short.vaults.of).toBe('unreadable');
   });
 
@@ -1297,26 +1298,26 @@ describe('proposals, vaults and invitations', () => {
     const { readVaultName } = await load();
     const vault = 'ab'.repeat(32);
     info.answer = { state: 'named', name: 'Treasury', description: 'The reserve', version: 2 };
-    expect(await readVaultName('u1', 'c1', vault)).toBe('Treasury');
+    expect(await readVaultName('u1', aViewOf('c1'), vault)).toBe('Treasury');
     /* RED WHEN: the name is read through the judge that may open the wallet's window (`companyKeysFor`): the second count is its uses. */
     expect([info.asked, kr.asking]).toEqual([[{ vault, keys: expect.objectContaining({ key: VK }), account: 'c1' }], 0]);
     for (const answer of [{ state: 'none' }, { state: 'unread', why: 'not believed', version: 3 }, { state: 'named', name: '  ', description: '', version: 1 }]) {
       info.answer = answer;
-      expect(await readVaultName('u1', 'c1', vault), JSON.stringify(answer)).toBeNull();
+      expect(await readVaultName('u1', aViewOf('c1'), vault), JSON.stringify(answer)).toBeNull();
     }
     info.fails = true;
-    expect(await readVaultName('u1', 'c1', vault)).toBeNull();
+    expect(await readVaultName('u1', aViewOf('c1'), vault)).toBeNull();
     info.fails = false;
     info.answer = { state: 'named', name: 'Treasury', description: '', version: 1 };
     info.asked = [];
-    expect(await readVaultName('u2', 'c1', vault)).toBeNull();
+    expect(await readVaultName('u2', aViewOf('c1'), vault)).toBeNull();
     expect(info.asked).toEqual([]);
   });
 
   /* RED WHEN: a link used, withdrawn or expired is listed as waiting to be used, one that names nobody is given a name, a link for a vendor is left out, or one for a kind the page cannot send is listed. */
   it('lists only the links still waiting to be used, a vendor\'s among them', async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.invitations.of !== 'read') throw new Error('not read');
     expect(c.invitations.value.map((i) => [i.kind, i.name])).toEqual([['signer', 'Tom'], ['employee', null], ['vendor', 'Vik']]);
   });
@@ -1348,14 +1349,16 @@ describe('proposals, vaults and invitations', () => {
     kr.answers[ROUTE()] = { ...(kr.answers[ROUTE()] as object), contractAddress: 'c0'.repeat(32) };
     kr.indexer = { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' };
     kr.vaults['ab'.repeat(32)] = { onChain: true, publicBalances: [{ token, amount: '4000000' }] };
-    const held = await readVaultPublicMoney('u1', 'c1', 'ab'.repeat(32));
+    const held = await readVaultPublicMoney('u1', aViewOf('c1'), 'ab'.repeat(32));
     expect([held?.amounts.map((a) => formatTokenAmount(a, 'en')), held?.unrecognised]).toEqual([['4'], 0]);
-    expect(kr.readHere).toEqual([`${'ab'.repeat(32)} at https://indexer.wallet.example/api/v3/graphql`]);
+    /* Read with every vault the account adopted in one ask; the chain holds nothing for 'cd', so each is then read alone. */
+    const at = (vault: string) => `${vault.repeat(32)} at https://indexer.wallet.example/api/v3/graphql`;
+    expect(kr.readHere).toEqual([at('ab'), at('cd'), at('ab'), at('cd')]);
     expect(kr.asked.filter((p) => p.endsWith('/chain'))).toEqual([]);
-    expect(await readVaultPublicMoney('u1', 'c1', 'cd'.repeat(32))).toBeNull();
+    expect(await readVaultPublicMoney('u1', aViewOf('c1'), 'cd'.repeat(32))).toBeNull();
     kr.indexer = null;
     kr.readHere = [];
-    expect(await readVaultPublicMoney('u1', 'c1', 'ab'.repeat(32))).toBeNull();
+    expect(await readVaultPublicMoney('u1', aViewOf('c1'), 'ab'.repeat(32))).toBeNull();
     expect(kr.readHere).toEqual([]);
   });
 });
@@ -1489,7 +1492,7 @@ describe('what an open proposal carries for the wallet to approve it', () => {
   const ONE = newOneOffId();
   /* Written out, as the payees above are: the address encoder in this page's window reads another window's bytes. */
   const PAYEE = REAL_ADDRESSES['2 unshielded']!.bech32;
-  const oneOffAt = ROUTE(`/records/transfer/${ONE}/1`);
+  const oneOffAt = ROUTE(`/records/transfer/${ONE}/versions`);
   const fileTheOneOff = (proposalId: string) => {
     oneOffs.opened = { [ONE]: {
       vault: V, asset: NIGHT.code, token: NIGHT.ledger.unshielded, amount: '250',
@@ -1497,7 +1500,7 @@ describe('what an open proposal carries for the wallet to approve it', () => {
       proposal: { id: proposalId, chainId: 'cc' },
     } };
     const rec = { company: 'c1', kind: 'transfer' as const, id: ONE, version: 1, keyEpoch: 1, sealed: seal('{}', VK), wrapped: [] };
-    kr.answers[oneOffAt] = { kind: 'transfer', id: ONE, version: 1, filed: toCompanyWire(signCompanyFiling(rec, SEAT)) };
+    kr.answers[oneOffAt] = { kind: 'transfer', id: ONE, versions: [toCompanyWire(signCompanyFiling(rec, SEAT))] };
   };
   /* An invitation by address, as its sealed body carries it: signed terms naming the address it seats. */
   const BY_ADDRESS = { invited: { terms: { invite: { address: 'a7'.repeat(32) } } } };
@@ -1516,7 +1519,7 @@ describe('what an open proposal carries for the wallet to approve it', () => {
     kr.named = { proposal: proposals.map((p) => p.id) };
     const { readCompany } = await load();
     const { canApprove } = await import('./proposal-acts.js');
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
     return Object.fromEntries(c.proposals.value.map((r) => [r.id, { kind: r.kind, asks: r.asks, approvable: canApprove(r), ...(r.asksUnread === undefined ? {} : { unread: r.asksUnread }) }]));
   };
@@ -1621,7 +1624,7 @@ describe('what an open proposal carries for the wallet to approve it', () => {
       kr.named = { proposal: ['q-one'] };
       const { readCompany, openOneOffsOf } = await load();
       const { canApprove } = await import('./proposal-acts.js');
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       const row = c.proposals.value.find((r) => r.id === 'q-one')!;
       return { status: row.status, paidOnChain: row.paidOnChain, asks: row.asks, press: canApprove(row), listed: openOneOffsOf(c.proposals.value, V).map((o) => o.id) };
@@ -1729,7 +1732,7 @@ describe('who may withdraw a proposal, and its count', () => {
     kr.named = { proposal: [ours.id, theirs.id] };
     chain.rounds = { [ours.chainId]: { held: 'open', approvals: 1, needed: 2, raisedAt: 1 }, [theirs.chainId]: { held: 'open', approvals: 1, needed: 2, raisedAt: 1 } };
     try {
-      const c = await readCompany('u1', 'c1');
+      const c = await readCompany('u1', aViewOf('c1'));
       if (c.of !== 'open' || c.proposals.of !== 'read') throw new Error('not read');
       expect(c.proposals.value.map((p) => [p.id, p.raisedBy, p.raisedByYou, p.status, p.approvals])).toEqual([
         [ours.id, 'Priya', true, 'open', 1], [theirs.id, 'Priya', false, 'open', 1],
@@ -1744,7 +1747,7 @@ describe('the signers invited by address', () => {
   const body = (name: string) => ({ chainId: 'cc', summary: '', proposalSalt: 'aa', coinPublicKey: '0c'.repeat(32), invited: { terms: { name, role: 'approver', invite: { address: 'ab'.repeat(32), salt: 'cd'.repeat(32), scope: 'ef'.repeat(32) } } } });
   const open = async () => {
     const { readCompany } = await load();
-    const c = await readCompany('u1', 'c1');
+    const c = await readCompany('u1', aViewOf('c1'));
     if (c.of !== 'open') throw new Error('not open');
     return c;
   };

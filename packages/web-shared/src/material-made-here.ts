@@ -42,7 +42,7 @@ import {
   openedRunHere, payableFactsHere, payrollRoundsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere, type RoundIdentity,
 } from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
-import type { LegPaymentsOnTheWire, RaiseOrderOnTheWire, RetryOrderOnTheWire } from './governed-call-on-device.js';
+import type { LegPaymentsOnTheWire, RaiseOrderOnTheWire, RetryOrderOnTheWire } from './payroll-run-on-device.js';
 
 /** Why this device could not make what a raise, a retry or a seat is built from. Nothing is built without it. */
 export class NotMadeHere extends Error {

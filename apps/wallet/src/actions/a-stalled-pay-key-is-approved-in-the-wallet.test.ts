@@ -10,6 +10,7 @@ import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../../src
 import { ADOPT_VAULT, newProposalId, PAY_KEY, PAY_KEY_SUMMARY, sealGovernanceProposal, signProposalFiling } from '../../../../src/core/proposal-filing.js';
 import { payKeyRoundOf, type PayKeyPure } from '../../../../src/midnight/pay-key-round.js';
 import { openSealedPayKey } from '../../../../src/midnight/pay-key-commitment.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A PAY-RECORD KEY THE FOUNDING SEAT CANNOT COMMIT ALONE IS APPROVED AND CARRIED OUT BY A SECOND SIGNER IN THE
@@ -34,8 +35,8 @@ vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real)
   ...(await real<typeof import('../../../../packages/web-shared/src/round-opened-here.js')>()),
   believedFilerHere: async () => { if (t.believed !== null) throw t.believed; return 'aa'.repeat(32); },
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
   refuseARunALeaverRaisedHere: async () => { if (t.leaver !== null) throw t.leaver; },
 }));
 vi.mock('./upkeep.js', async (real) => {
@@ -86,23 +87,25 @@ let proposals: ReturnType<typeof recordOf>[];
 let chain: Record<string, { held: string; approvals: number; needed: number; approvedHere?: boolean }>;
 let called: string[];
 let built: Array<{ order: any; opened: any; material: any }>;
-const reachOf = () => ({
+/* The company's service as this test answers it, through the reach's own calls and the step's alike. */
+const api = async (path: string, init?: RequestInit): Promise<unknown> => {
+  const said = `${init?.method ?? 'GET'} ${path}`;
+  called.push(said);
+  if (said === 'GET /api/accounts/acc_1/proposals') return proposals;
+  if (said === 'POST /api/accounts/acc_1/creation/pay-key') {
+    /* The chain as the sent call leaves it: an approval counted as this seat's, or the proposal closed by the seal. */
+    const { call } = JSON.parse(String(init!.body)) as { call: string };
+    const c = chain[ROUND.proposal]!;
+    chain[ROUND.proposal] = call === 'approve' ? { ...c, approvals: c.approvals + 1, approvedHere: true } : { ...c, held: 'closed' };
+    return { txRef: 'r' };
+  }
+  throw new Error(`this test answers no ${said}`);
+};
+const reachOf = () => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT,
   seat: { signerId: 's2', signingSecret: '01'.repeat(32), wrappingSecret: WRAPPING.secret, blinding: '03'.repeat(32), scope: WIDE },
-  leaf: 'a2'.repeat(32), companyKey: COMPANY_KEY, stepTo: () => {},
-  api: async (path: string, init?: RequestInit) => {
-    const said = `${init?.method ?? 'GET'} ${path}`;
-    called.push(said);
-    if (said === 'GET /api/accounts/acc_1/proposals') return proposals;
-    if (said === 'POST /api/accounts/acc_1/creation/pay-key') {
-      /* The chain as the sent call leaves it: an approval counted as this seat's, or the proposal closed by the seal. */
-      const { call } = JSON.parse(String(init!.body)) as { call: string };
-      const c = chain[ROUND.proposal]!;
-      chain[ROUND.proposal] = call === 'approve' ? { ...c, approvals: c.approvals + 1, approvedHere: true } : { ...c, held: 'closed' };
-      return { txRef: 'r' };
-    }
-    throw new Error(`this test answers no ${said}`);
-  },
+  leaf: 'a2'.repeat(32), companyKey: COMPANY_KEY,
+  api,
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: ['a1'.repeat(32), 'a2'.repeat(32)], committee: [], approvals: 2, seatBar: 2, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }), leavesFor: () => async () => [], rosterReadsFor: () => ({}) },
@@ -119,14 +122,14 @@ const reachOf = () => ({
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_b',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('the pay-record key is approved through its calls, never a bare relay'); },
-    call: async () => ({ status: 404, body: {} }),
+    call: async (method: string, path: string, body?: string) => ({ status: 200, body: await api(path, { method, ...(body === undefined ? {} : { body }) }) }),
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = () => ({

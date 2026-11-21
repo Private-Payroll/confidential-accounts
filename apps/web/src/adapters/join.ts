@@ -5,8 +5,9 @@ import {
 import type { Sealed } from '../../../../src/core/crypto.js';
 import type { Role } from '../../../../src/core/types.js';
 import type { StepAt } from 'midnight-identity/profile/channel';
-import { pageWireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { claimIntentOf, InvitationRefused, openInvitationHere, type InvitationSend } from 'vaults-web-shared/invitation-on-device.js';
+import { invitationOnPage } from 'vaults-web-shared/asks-on-page.js';
+import { InvitationRefused } from 'vaults-web-shared/invitation-on-device.js';
+import { claimIntentOf, openInvitationThrough } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { joinByCodeInTheWallet } from 'vaults-web-shared/join-in-the-wallet.js';
 import { actOnACompanyInTheWallet } from 'vaults-web-shared/keyring.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -15,7 +16,7 @@ import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 
 /*
  * THE JOIN PAGE'S READS AND ACTS. The page holds the invitation's id and token in memory (`useHeldLink`). This opens the
- * offer with the device's own check (`openInvitationHere`), says which kind and which way it is, and runs the one wallet
+ * offer with the device's own check (`openInvitationThrough`), says which kind and which way it is, and runs the one wallet
  * act that kind and way need. The page is told nothing secret: the payee's fingerprint is shown in the wallet's window only.
  */
 
@@ -43,7 +44,7 @@ export type ClosedWhy = (typeof CLOSED)[keyof typeof CLOSED];
 
 const SERVICE_CLOSED: ReadonlySet<string> = new Set([CLOSED.notFound, CLOSED.withdrawn, CLOSED.expired, CLOSED.used, CLOSED.notAccepted]);
 
-type Opened = Awaited<ReturnType<typeof openInvitationHere>>;
+type Opened = Awaited<ReturnType<typeof openInvitationThrough>>;
 
 /** What the offer says, for the page to show, and the opened offer the act is run from. */
 export interface Offered {
@@ -129,14 +130,15 @@ export async function openTheInvitation(id: string, token: string, personId: str
   try {
     const link = invitationLink(window.location.origin, token as never);
     if (invitationIdOf(token as never) !== id) return closed(CLOSED.notOpened);
-    const wire = pageWireSend(() => personId);
-    const send: typeof wire = async (path, init) => {
-      const answer = await wire(path, init);
-      const b = answer.body as { offer?: Sealed } | null;
-      if (b !== null && typeof b === 'object' && b.offer !== undefined) sealed = b.offer;
-      return answer;
-    };
-    const opened = await openInvitationHere(link, send as InvitationSend);
+    const asks = invitationOnPage(() => personId);
+    const opened = await openInvitationThrough(link, {
+      offer: async (invitation) => {
+        const answer = await asks.offer(invitation);
+        const b = answer.body as { offer?: Sealed } | null;
+        if (b !== null && typeof b === 'object' && b.offer !== undefined) sealed = b.offer;
+        return answer;
+      },
+    });
     return offeredFrom(id, opened);
   } catch (e) {
     if (e instanceof InvitationRefused) {

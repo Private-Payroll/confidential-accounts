@@ -13,7 +13,7 @@ import { kindAsked, listedHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { rosterHere, type RosterDoors, type RosterReads } from './roster-here.js';
 import { seatsTakenAsked } from './seat-not-read-on-the-chain.js';
-import type { GovernanceDoors } from './governed-call-on-device.js';
+import type { GovernanceDoors } from './company-change-on-device.js';
 /** Why nobody is invited when the chain could not be read for the seat an earlier invitation of the address took. */
 const NOT_READ = 'this device could not read from the network which seat an earlier invitation of this address took, so it invites nobody. '
   + 'Reload the page and try again';

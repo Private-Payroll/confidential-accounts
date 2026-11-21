@@ -4,22 +4,20 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
-import { FilingNotBelieved } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { api, companyKeyReleasedFor, currentUser, holdersFromTheWallet, seatShownHere, watchCompanyKeyReleased, type OpenedAccount } from 'vaults-web-shared/keyring.js';
+import { FilingNotBelieved, type FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { companyKeyReleasedFor, seatShownHere, type OpenedAccount } from 'vaults-web-shared/keyring.js';
 import { browserInFlightRecords } from 'vaults-web-shared/in-flight-in-this-browser.js';
 import { deviceSignerFrom, readersIn, recordsReadHere, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
 import type { DeviceRecords, DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
-import { vaultNotesHere } from 'vaults-web-shared/vault-notes-here.js';
+import { unnamedKeptIn, vaultNotesHere } from 'vaults-web-shared/vault-notes-here.js';
 import { wireOf } from 'vaults-web-shared/vault-payment-in-flight.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
-import { ACCOUNT_ORIGIN } from './session.js';
 import { Fault, FAULT } from '../faults.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
-import { companyRoute } from './handover-state.js';
 import { keyringFor } from './keyring-person.js';
-import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, walletIndexerFor } from './filing-judge.js';
+import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, storeReachIn, sealedIn, vaultOnChainIn, walletIndexerIn, type PageView } from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultBuilder } from './vault-builder.js';
 
@@ -113,6 +111,8 @@ function readFailed(e: unknown): VaultPrivateMoney {
  * nothing, and a private deposit is made whole in the person's wallet.
  */
 export interface SeatAndRecordsHere {
+  /** The company's view every read here was made through, and every read that follows is. */
+  readonly view: PageView;
   readonly sealed: SealedAccount;
   readonly company: CompanyLabel;
   readonly account: AccountAddress;
@@ -127,13 +127,15 @@ export interface SeatAndRecordsHere {
   /** Every epoch of the company's key this signer's seat holds, as the company's own judges open them; the sealed records are read with it. */
   readonly viewingKey: CompanyKeyHere;
   readonly directory: DirectoryRead;
+  /** Who this device believes filed each of the company's records, asked afresh for each read. */
+  readonly judge: FreshJudge;
   readonly readers: ReturnType<typeof readersIn>;
   readonly records: DeviceRecords;
 }
 
 /**
  * THE SEAT, KEYS AND RECORDS A READ OF THE PERSON `personId` FOR THE COMPANY
- * `companyId` USES ON THIS DEVICE, or why not: nobody or somebody else is
+ * `view` READS USES ON THIS DEVICE, each read through that view, or why not: nobody or somebody else is
  * signed in, this device holds no keys for the company, the company did not
  * open here or has no account on the chain, or the believed directory names no
  * seat for this signer's public key. Without a company key released in this tab
@@ -142,13 +144,14 @@ export interface SeatAndRecordsHere {
  * vault's money passes no `release`, so it asks the wallet for nothing.
  */
 export async function seatAndRecordsHere(
-  personId: string, companyId: string, release?: () => Promise<unknown>,
+  personId: string, view: PageView, release?: () => Promise<unknown>,
 ): Promise<SeatAndRecordsHere | ActRefusal> {
+  const companyId = view.company;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  const sealed = await api(companyRoute(companyId)) as SealedAccount;
+  const sealed = await sealedIn(view);
   const shown = await seatShownHere(companyId);
   if (shown === null) return ACT_REFUSAL.noKeysHere;
-  const opened = await openedHere(sealed);
+  const opened = await openedHere(view, sealed);
   if (opened === null) return ACT_REFUSAL.didNotFinish;
   const builder = await theVaultBuilder();
   const company = (sealed.companyLabel ?? null) as CompanyLabel | null;
@@ -159,9 +162,9 @@ export async function seatAndRecordsHere(
   const companyKey = companyKeyReleasedFor(companyId);
   if (companyKey === null) return ACT_REFUSAL.noKeysHere;
   /* Believed only when a seat the directory names filed it, checked against a fresh read by this person's own wallet. */
-  const viewingKey = await companyKeysFor(companyId, sealed, shown);
-  const judge = filingJudgeFor(companyId, company, account, viewingKey, async () => opened);
-  const directory = directoryHereFor(companyId, company, account, viewingKey, async () => opened);
+  const viewingKey = await companyKeysFor(view, sealed, shown);
+  const judge = filingJudgeFor(view, company, account, viewingKey, async () => opened);
+  const directory = directoryHereFor(view, company, account, viewingKey, async () => opened);
   /* This signer's seat: the one the directory names for their public key, the only seat a vault's records are wrapped to them under. */
   let here: Awaited<ReturnType<DirectoryRead>>;
   try {
@@ -174,17 +177,9 @@ export async function seatAndRecordsHere(
   if (own === undefined) return ACT_REFUSAL.noSeat;
   const mine = deviceSignerFrom(own.seat, companyKey);
   const readers = readersIn(directory);
-  const records = recordsReadHere(judge, () => currentUser()?.id ?? null);
-  return { sealed, company, account, opened, builder, companyKey, mine, leaf: own.seat, viewingKey, directory, readers, records };
+  const records = recordsReadHere(judge, storeReachIn(view));
+  return { view, sealed, company, account, opened, builder, companyKey, mine, leaf: own.seat, viewingKey, directory, judge, readers, records };
 }
-
-/**
- * Calls `readable` each time the person's wallet releases `companyId`'s key to this tab, by any press that asks for it
- * (Check my last deposit among them): what a vault of the company holds privately can then be read, where before it
- * could not for want of that key. The answer stops it.
- */
-export const watchPrivateMoneyReadable = (companyId: string, readable: () => void): (() => void) =>
-  watchCompanyKeyReleased((accountId) => { if (accountId === companyId) readable(); });
 
 /**
  * WHAT THE VAULT `vault` OF THE COMPANY `companyId` HOLDS PRIVATELY, for the
@@ -196,27 +191,29 @@ export const watchPrivateMoneyReadable = (companyId: string, readable: () => voi
  * not be asked, the chain's ledger is not the shape this build reads, no
  * record of notes the chain holds, or anything else). What could not be read
  * is never shown as nothing held. A token it holds none of is not listed, and
- * a token the registry does not name is counted.
+ * a token the registry does not name is counted. `registry` names the tokens
+ * (the build's own when not given); `round` is 0, or a round the view handed
+ * out for a press to read the vault again (`vaultReadAgainIn`).
  */
 export async function readVaultPrivateMoney(
-  personId: string, companyId: string, vault: string, registry: AssetRegistry = assets,
+  personId: string, view: PageView, vault: string, { registry = assets, round = 0 }: { readonly registry?: AssetRegistry; readonly round?: number } = {},
 ): Promise<VaultPrivateMoney> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId);
+    const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') {
       return unreadable(here === ACT_REFUSAL.noKeysHere ? COULD_NOT_READ.noKeys
         : WALLET_DID_NOT_ANSWER.has(here) ? COULD_NOT_READ.walletRefused
         : here === ACT_REFUSAL.unreachable ? COULD_NOT_READ.chain : COULD_NOT_READ.other);
     }
-    const { builder, company: label, account: address, mine, readers, records } = here;
+    const { builder, account: address, mine, readers, records } = here;
     const poolStore = records(LEDGER.pool);
     const pool = new SealedNotePool(poolStore, { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }, readers.signers);
     const holdings = deviceVaultHoldings({
-      /* The vault's notes as the chain holds them, read in this device's vault worker at the indexer this person's own wallet names. */
+      /* The vault's notes as the chain holds them, read in this device's vault worker at the indexer this person's own wallet names, through the view with every vault the account adopted. */
       chain: async (v) => {
-        const indexer = await walletIndexerFor(label, address);
+        const indexer = await walletIndexerIn(view);
         /* A wallet that names no indexer has the vault read nowhere: the reader answers that the chain was not read. */
-        return indexer === null ? { onChain: false } : builder.vaultOnChain({ vault: v, indexer });
+        return indexer === null ? { onChain: false } : vaultOnChainIn(view, v, indexer, round);
       },
       /* The pool opened with this signer's key, or null when the company's records hold none for the vault: a pool that is filed and cannot be opened or is not believed throws, and is never null. */
       pool: async (v) => ((await poolStore.get(v)) === null ? null : (await pool.load(v)).notes),
@@ -231,10 +228,10 @@ export async function readVaultPrivateMoney(
         const rebuilt = await vaultNotesHere({
           account: address, builder, me: mine, records, signers: readers.signers,
           /* No seat is given: the read files nothing, and what it finds owed is filed by a seat action in the wallet. */
-          indexer: () => walletIndexerFor(label, address),
-          onChain: async () => ({
-            holders: (await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: label, account: address })).holders,
-          }),
+          indexer: () => walletIndexerIn(view),
+          onChain: async () => ({ holders: await view.holders() }),
+          /* A note nobody's records name is looked for once in the same records: the device's own store of the company keeps it. */
+          ...unnamedKeptIn(view),
           /* The coins this device keeps, in this browser's own storage; a browser with none keeps nothing and the rest still reads. */
           ...((globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined ? {} : {
             kept: coinsKeptOnThisDevice(browserInFlightRecords(), { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }),

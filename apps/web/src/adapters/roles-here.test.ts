@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
+import { aViewOf } from './page-view.test-support.js';
 import { privateAddressHere, publicAddressHere } from '../addresses-here.test-support.js';
 import { mayInvite, READER_PURPOSES, RIGHTS_PRESET, ROLES, type SignerRole } from '../../../../src/core/roles.js';
 import { ACT_REFUSAL } from './refusals.js';
@@ -23,8 +24,14 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => { kr.acts.push(intent); return kr.ended; },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
+}));
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
 }));
 vi.mock('./vault-private-money.js', async (real) => ({
   ...(await real<typeof import('./vault-private-money.js')>()),
@@ -60,7 +67,7 @@ describe('what the page reads of who holds a seat', () => {
   it('lists the seats with the roster\'s names, their roles and which is this person\'s own', async () => {
     reset();
     const { readRoles, ROLES_READ } = await load();
-    const read = await readRoles('u1', COMPANY);
+    const read = await readRoles('u1', aViewOf(COMPANY));
     expect(read).toMatchObject({ of: ROLES_READ.read, seats: [
       { leaf: leaf(1), name: 'Name 1', role: 'admin', you: false, leaving: false },
       { leaf: leaf(2), name: 'Name 2', role: 'approver', you: true, leaving: false },
@@ -73,7 +80,7 @@ describe('what the page reads of who holds a seat', () => {
     reset();
     kr.seat = hereWith([seat(1, { role: null }), seat(2)]);
     const { readRoles } = await load();
-    expect(await readRoles('u1', COMPANY)).toMatchObject({ seats: [{ leaf: leaf(1), role: null }, { leaf: leaf(2), role: 'approver' }] });
+    expect(await readRoles('u1', aViewOf(COMPANY))).toMatchObject({ seats: [{ leaf: leaf(1), role: null }, { leaf: leaf(2), role: 'approver' }] });
   });
 
   /* RED WHEN: a seat being removed is listed as one that stays, or a seat the network no longer holds is listed at all. */
@@ -81,7 +88,7 @@ describe('what the page reads of who holds a seat', () => {
     reset();
     kr.seat = hereWith([seat(1), seat(2), seat(3, { retired: { version: 4 } }), seat(4, { retired: { version: 3 } })], [leaf(1), leaf(2), leaf(3)]);
     const { readRoles } = await load();
-    const read = await readRoles('u1', COMPANY);
+    const read = await readRoles('u1', aViewOf(COMPANY));
     expect(read).toMatchObject({ seats: [{ leaf: leaf(1) }, { leaf: leaf(2) }, { leaf: leaf(3), leaving: true }] });
     expect(read).toMatchObject({ seats: { length: 3 } });
   });
@@ -91,14 +98,14 @@ describe('what the page reads of who holds a seat', () => {
     reset();
     kr.seat = hereWith([seat(9)], [leaf(9)]);
     const { readRoles } = await load();
-    expect(await readRoles('u1', COMPANY)).toMatchObject({ seats: [{ leaf: leaf(9), name: 'p9' }] });
+    expect(await readRoles('u1', aViewOf(COMPANY))).toMatchObject({ seats: [{ leaf: leaf(9), name: 'p9' }] });
   });
 
   /* RED WHEN: what a role change costs is read from anything but the approvals the account holds, or the seats held is miscounted. */
   it('reads the account\'s approvals as the holders of a change', async () => {
     reset();
     const { readRoles } = await load();
-    expect(await readRoles('u1', COMPANY)).toMatchObject({ holders: { approvals: 2, vaultThresholds: [], policyBar: null, seatBar: 2, seated: 3 } });
+    expect(await readRoles('u1', aViewOf(COMPANY))).toMatchObject({ holders: { approvals: 2, vaultThresholds: [], policyBar: null, seatBar: 2, seated: 3 } });
   });
 
   /* RED WHEN: a page that has no company key released reads the seats anyway, or a read that fails is shown as an empty company. */
@@ -106,9 +113,9 @@ describe('what the page reads of who holds a seat', () => {
     reset();
     kr.seat = ACT_REFUSAL.noKeysHere;
     const { readRoles, ROLES_READ } = await load();
-    expect(await readRoles('u1', COMPANY)).toEqual({ of: ROLES_READ.refused, why: ACT_REFUSAL.noKeysHere });
+    expect(await readRoles('u1', aViewOf(COMPANY))).toEqual({ of: ROLES_READ.refused, why: ACT_REFUSAL.noKeysHere });
     kr.seat = hereWith(SEATS); kr.fail = new Error('withheld');
-    expect(await readRoles('u1', COMPANY)).toMatchObject({ of: ROLES_READ.refused });
+    expect(await readRoles('u1', aViewOf(COMPANY))).toMatchObject({ of: ROLES_READ.refused });
   });
 });
 
@@ -168,7 +175,7 @@ describe('what the page asks of the wallet', () => {
   it('sends the seat, the new role, the full address and the name, and no token', async () => {
     reset();
     const { changeRole } = await load();
-    await changeRole('u1', COMPANY, { ...ask, leaf: leaf(3).toUpperCase(), address: ` ${PRIVATE} ` });
+    await changeRole('u1', aViewOf(COMPANY), { ...ask, leaf: leaf(3).toUpperCase(), address: ` ${PRIVATE} ` });
     expect(kr.acts).toEqual([{ ...NAMED, leaf: leaf(3), role: 'approver', address: PRIVATE, personName: 'Name 3' }]);
   });
 
@@ -176,7 +183,7 @@ describe('what the page asks of the wallet', () => {
   it('asks nothing of the wallet for a change it can see is not one', async () => {
     reset();
     const { changeRole, CHANGE_ACTED } = await load();
-    const problem = (over: Record<string, unknown>) => changeRole('u1', COMPANY, { ...ask, ...over });
+    const problem = (over: Record<string, unknown>) => changeRole('u1', aViewOf(COMPANY), { ...ask, ...over });
     expect(await problem({ leaf: ' ' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'no-seat' });
     expect(await problem({ name: ' ' })).toEqual({ of: CHANGE_ACTED.problem, problem: 'no-name' });
     expect(await problem({ address: publicAddressHere(0x22) })).toEqual({ of: CHANGE_ACTED.problem, problem: 'bad-address' });
@@ -193,8 +200,8 @@ describe('what the page asks of the wallet', () => {
     reset();
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'remove' } };
     const { changeRole, startedRoleChanges } = await load();
-    await changeRole('u1', COMPANY, ask);
-    await changeRole('u1', COMPANY, { ...ask, role: 'admin' });
+    await changeRole('u1', aViewOf(COMPANY), ask);
+    await changeRole('u1', aViewOf(COMPANY), { ...ask, role: 'admin' });
     expect(startedRoleChanges(COMPANY)).toEqual([{ leaf: leaf(3), name: 'Name 3', role: 'approver', address: PRIVATE }]);
   });
 
@@ -203,10 +210,10 @@ describe('what the page asks of the wallet', () => {
     reset();
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'remove' } };
     const { changeRole, startedRoleChanges } = await load();
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     expect(startedRoleChanges(COMPANY)).toHaveLength(1);
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'invite' } };
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     expect(startedRoleChanges(COMPANY)).toEqual([]);
   });
 
@@ -215,7 +222,7 @@ describe('what the page asks of the wallet', () => {
     reset();
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'remove' } };
     const { changeRole } = await load();
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(leaf(3));
     expect(JSON.stringify({ ...localStorage })).not.toContain(leaf(3));
     vi.resetModules();
@@ -227,17 +234,17 @@ describe('what the page asks of the wallet', () => {
   it('does not remember a change the wallet was never asked for', async () => {
     reset();
     const { changeRole, startedRoleChanges } = await load();
-    await changeRole('u1', COMPANY, { ...ask, name: '' });
+    await changeRole('u1', aViewOf(COMPANY), { ...ask, name: '' });
     kr.user = null;
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     kr.user = { id: 'u1' };
     for (const refused of ['removal-under-way', 'fewer-approvals-first', 'seat-not-held', 'not-an-address']) {
       kr.ended = stopped(`act.change-role.why.${refused}`);
-      await changeRole('u1', COMPANY, ask);
+      await changeRole('u1', aViewOf(COMPANY), ask);
     }
     expect(startedRoleChanges(COMPANY)).toEqual([]);
     kr.ended = stopped(undefined, { relayed: 1 });
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     expect(startedRoleChanges(COMPANY)).toHaveLength(1);
   });
 
@@ -246,12 +253,12 @@ describe('what the page asks of the wallet', () => {
     reset();
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'remove' } };
     const { changeRole, continueRoleChange } = await load();
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'invite', state: 'waiting-for-approvals', approvals: 0, needed: 2 } };
-    const ended = await continueRoleChange('u1', COMPANY, leaf(3).toUpperCase());
+    const ended = await continueRoleChange('u1', aViewOf(COMPANY), leaf(3).toUpperCase());
     expect(kr.acts[1]).toEqual(kr.acts[0]);
     expect(ended).toEqual({ of: 'done', stage: 'invite', state: 'waiting-for-approvals', approvals: 0, needed: 2 });
-    expect(await continueRoleChange('u1', COMPANY, leaf(3))).toEqual({ of: 'problem', problem: 'not-begun' });
+    expect(await continueRoleChange('u1', aViewOf(COMPANY), leaf(3))).toEqual({ of: 'problem', problem: 'not-begun' });
   });
 
   /* RED WHEN: the page is not told which step ran, where it stands, or the approvals it has of those it needs. */
@@ -259,16 +266,16 @@ describe('what the page asks of the wallet', () => {
     reset();
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { stage: 'remove', state: 'waiting-for-approvals', approvals: 1, needed: 2 } };
     const { changeRole } = await load();
-    expect(await changeRole('u1', COMPANY, ask)).toEqual({ of: 'done', stage: 'remove', state: 'waiting-for-approvals', approvals: 1, needed: 2 });
+    expect(await changeRole('u1', aViewOf(COMPANY), ask)).toEqual({ of: 'done', stage: 'remove', state: 'waiting-for-approvals', approvals: 1, needed: 2 });
     kr.ended = { of: 'done', steps: 1, relayed: 0 };
-    expect(await changeRole('u1', COMPANY, ask)).toEqual({ of: 'done', stage: null, state: null, approvals: null, needed: null });
+    expect(await changeRole('u1', aViewOf(COMPANY), ask)).toEqual({ of: 'done', stage: null, state: null, approvals: null, needed: null });
   });
 
   /* RED WHEN: a wallet's stop is shown as the wrong reason, or a stop that may have part-filed is not marked so. */
   it('says why the wallet stopped, and whether part of it may have gone through', async () => {
     reset();
     const { changeRole } = await load();
-    const why = async (refused?: string, over: Record<string, unknown> = {}) => { kr.ended = stopped(refused, over); return changeRole('u1', COMPANY, ask); };
+    const why = async (refused?: string, over: Record<string, unknown> = {}) => { kr.ended = stopped(refused, over); return changeRole('u1', aViewOf(COMPANY), ask); };
     expect(await why('act.change-role.why.removal-under-way')).toEqual({ of: 'stopped', why: 'removal-under-way', partial: false, handedOver: false });
     expect(await why('act.change-role.why.fewer-approvals-first')).toMatchObject({ why: 'fewer-approvals-first' });
     expect(await why('act.change-role.why.not-as-started')).toMatchObject({ why: 'not-as-started' });
@@ -286,9 +293,9 @@ describe('what the page asks of the wallet', () => {
     reset();
     const { changeRole } = await load();
     kr.user = null;
-    expect(await changeRole('u1', COMPANY, ask)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await changeRole('u1', aViewOf(COMPANY), ask)).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' }; kr.named = null;
-    expect(await changeRole('u1', COMPANY, ask)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await changeRole('u1', aViewOf(COMPANY), ask)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.acts).toEqual([]);
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
   });
@@ -301,17 +308,17 @@ describe('dropping a change begun', () => {
     reset();
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'remove' } };
     const { changeRole, dropRoleChange, startedRoleChanges } = await load();
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     kr.acts = [];
     kr.ended = stopped('act.change-role.why.no-saved-keys');
-    expect(await dropRoleChange('u1', COMPANY, leaf(3))).toEqual({ of: 'stopped', why: 'seat', partial: false, handedOver: false });
+    expect(await dropRoleChange('u1', aViewOf(COMPANY), leaf(3))).toEqual({ of: 'stopped', why: 'seat', partial: false, handedOver: false });
     expect(startedRoleChanges(COMPANY)).toHaveLength(1);
     kr.user = null;
-    expect(await dropRoleChange('u1', COMPANY, leaf(3))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await dropRoleChange('u1', aViewOf(COMPANY), leaf(3))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' };
     expect(startedRoleChanges(COMPANY)).toHaveLength(1);
     kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'dropped' } };
-    expect(await dropRoleChange('u1', COMPANY, leaf(3).toUpperCase())).toEqual({ of: 'dropped', state: 'dropped' });
+    expect(await dropRoleChange('u1', aViewOf(COMPANY), leaf(3).toUpperCase())).toEqual({ of: 'dropped', state: 'dropped' });
     expect(kr.acts.at(-1)).toMatchObject({ name: 'drop-role-change', leaf: leaf(3) });
     expect(kr.acts.at(-1)).toHaveProperty('record');
     expect(startedRoleChanges(COMPANY)).toEqual([]);
@@ -322,12 +329,12 @@ describe('dropping a change begun', () => {
     reset();
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { stage: 'remove' } };
     const { changeRole, dropRoleChange, startedRoleChanges } = await load();
-    await changeRole('u1', COMPANY, ask);
+    await changeRole('u1', aViewOf(COMPANY), ask);
     kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: {} };
-    expect(await dropRoleChange('u1', COMPANY, leaf(3))).toEqual({ of: 'dropped', state: null });
+    expect(await dropRoleChange('u1', aViewOf(COMPANY), leaf(3))).toEqual({ of: 'dropped', state: null });
     expect(startedRoleChanges(COMPANY)).toHaveLength(1);
     kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'not-kept' } };
-    expect(await dropRoleChange('u1', COMPANY, leaf(3))).toEqual({ of: 'dropped', state: 'not-kept' });
+    expect(await dropRoleChange('u1', aViewOf(COMPANY), leaf(3))).toEqual({ of: 'dropped', state: 'not-kept' });
     expect(startedRoleChanges(COMPANY)).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@
  */
 import type { ApproverRoster, SeatRights } from '../../../../src/core/vault-approvers.js';
 import { activeSeatsOnTheChain, approversFrom, rightsBelievedIn, unnamedSeatsRefusal } from '../../../../packages/web-shared/src/approvers-read.js';
-import { governedCallServiceFor } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
 import type { CompanyReach } from './company-reach.js';
 
 type DirectoryReach = Pick<CompanyReach, 'roster' | 'judges' | 'accountId' | 'label' | 'account' | 'companyKeys'>;
@@ -61,7 +61,7 @@ export const runsOutrunHere = async (r: CompanyReach): Promise<{ readonly remova
   for (const [chainId, removals] of Object.entries(runs)) if (removals > most.removals) most = { removals, chainId: chainId.toLowerCase() };
   const first = Object.keys(runs).map((x) => x.toLowerCase()).sort()[0] ?? null;
   if (most.chainId === null && first === null) return { removals: 0, run: null, open: null };
-  const listed = await governedCallServiceFor(r.api).sealedProposals!(r.accountId).catch(() => [] as readonly { id: string; chainId: string }[]);
+  const listed = await governedCallServiceThrough(r.stepView).sealedProposals!(r.accountId).catch(() => [] as readonly { id: string; chainId: string }[]);
   const nameOf = (chainId: string): string => {
     const named = (listed as readonly { id: string; chainId: string }[]).find((p) => String(p.chainId).toLowerCase() === chainId);
     return named === undefined ? chainId : `${named.id} (${chainId})`;

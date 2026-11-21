@@ -4,7 +4,7 @@ import type { HoldersRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { RecordsKeyRefused, holdersAnswerFor, type AccountHolders } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { deployFromIndexerAt, fromIndexerAt, holdersOnChain, type HoldersOnChain } from '../chain/company-label-on-chain.js';
+import { deployFromIndexerAt, fromIndexerAt, holdersOnChain, type HoldersOnChain } from '../chain/view-doors.js';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 import { StatusAlert } from '../components/status.js';
 import type { Consent } from '../framing.js';

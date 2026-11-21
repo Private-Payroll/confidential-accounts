@@ -35,7 +35,7 @@ import type {
 } from './vault-worker-client.js';
 import type { GovernanceOnTheWire, OpenedRound, RoundOnChain, SignerMaterial } from './governed-call-builder.js';
 import { sameGovernance } from './governance-compared.js';
-import { ApprovalNotOwed } from './governed-call-on-device.js';
+import { ApprovalNotOwed } from './proposal-approved-on-device.js';
 import { PROPOSAL_FILE_FORMAT, proposalFileRefusal, type ProposalFile } from './proposal-file.js';
 import {
   approveSuperAdminChange, isSuperAdminFile, raiseSuperAdminChange,

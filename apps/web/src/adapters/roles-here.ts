@@ -4,7 +4,9 @@ import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import { isSignerRole, mayFile, mayInvite, READER_PURPOSES, RIGHTS_PRESET, ROLES, SIGNER_ROLES, type ReaderRole, type Role, type SignerRole } from '../../../../src/core/roles.js';
 import type { Purpose } from '../../../../src/core/sealed-records.js';
 import { changeHoldersOf, whatAChangeCosts, type ChangeHolders } from '../../../../src/core/change-costs.js';
-import { namedBefore, onStepOf } from './grants-here.js';
+import type { PageView } from './filing-judge.js';
+import { onStepOf } from './grants-here.js';
+import { namedBefore } from './named-before.js';
 import { addressIsPrivate } from './invite.js';
 import { CHANGE_ASKED, SEAT_CHANGE } from './change-asked.js';
 import { refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
@@ -67,9 +69,9 @@ export type RolesRead =
   | { readonly of: typeof ROLES_READ.refused; readonly why: ActRefusal };
 
 /** The seats a role change can be made on and the approvals the account holds, or why the directory was not read; nothing is read without the company key released on this visit. */
-export async function readRoles(personId: string, companyId: string): Promise<RolesRead> {
+export async function readRoles(personId: string, view: PageView): Promise<RolesRead> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId);
+    const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') return { of: ROLES_READ.refused, why: here };
     const { dir, holders } = await here.directory();
     const names = new Map(here.opened.signers.flatMap((s) => (s.leafCommitment === null ? [] : [[s.leafCommitment.toLowerCase(), s.name] as const])));
@@ -170,17 +172,17 @@ function actedOf(ended: ActOutcome): ChangeActed {
   return { of: CHANGE_ACTED.stopped, why, partial: PARTLY.has(why), handedOver: ended.relayed > 0 || ended.unconfirmed > 0 };
 }
 
-async function askWallet(personId: string, companyId: string, begun: BegunChange, onStep?: (step: number, steps: number) => void): Promise<ChangeActed> {
+async function askWallet(personId: string, view: PageView, begun: BegunChange, onStep?: (step: number, steps: number) => void): Promise<ChangeActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return { of: CHANGE_ACTED.refused, why: named };
     const key = seatOf(begun.leaf);
-    const kept = BEGUN.get(companyId)?.get(key);
+    const kept = BEGUN.get(view.company)?.get(key);
     const acted = actedOf(await changeRoleInTheWallet({ ...named, leaf: begun.leaf, role: begun.role, address: begun.address, personName: begun.name }, ACCOUNT_ORIGIN, onStepOf(onStep)));
     const stage = acted.of === CHANGE_ACTED.done ? acted.stage : null;
     const mayHaveBegun = acted.of === CHANGE_ACTED.done ? stage === ROLE_STAGE.remove : acted.of === CHANGE_ACTED.stopped && acted.partial;
-    if (stage === ROLE_STAGE.invite) BEGUN.get(companyId)?.delete(key);
-    else if (mayHaveBegun && (kept === undefined || sameAs(kept, begun))) begunFor(companyId).set(key, begun);
+    if (stage === ROLE_STAGE.invite) BEGUN.get(view.company)?.delete(key);
+    else if (mayHaveBegun && (kept === undefined || sameAs(kept, begun))) begunFor(view.company).set(key, begun);
     return acted;
   } catch (e) {
     return { of: CHANGE_ACTED.refused, why: refusalOf(e) };
@@ -193,7 +195,7 @@ async function askWallet(personId: string, companyId: string, begun: BegunChange
  * a signer's, or is the seat's own, is refused here and the wallet is asked nothing.
  */
 export async function changeRole(
-  personId: string, companyId: string, asked: { readonly leaf: string; readonly current: string | null; readonly role: string; readonly address: string; readonly name: string },
+  personId: string, view: PageView, asked: { readonly leaf: string; readonly current: string | null; readonly role: string; readonly address: string; readonly name: string },
   onStep?: (step: number, steps: number) => void,
 ): Promise<ChangeActed> {
   if (asked.leaf.trim() === '') return { of: CHANGE_ACTED.problem, problem: ROLE_PROBLEM.noSeat };
@@ -203,14 +205,14 @@ export async function changeRole(
   if (!isSignerRole(asked.role)) return { of: CHANGE_ACTED.problem, problem: ROLE_PROBLEM.noRole };
   if (asked.role === (asked.current ?? 'admin')) return { of: CHANGE_ACTED.problem, problem: ROLE_PROBLEM.sameRole };
   if (!addressIsPrivate(address)) return { of: CHANGE_ACTED.problem, problem: ROLE_PROBLEM.badAddress };
-  return askWallet(personId, companyId, { leaf: asked.leaf.toLowerCase(), name, role: asked.role, address }, onStep);
+  return askWallet(personId, view, { leaf: asked.leaf.toLowerCase(), name, role: asked.role, address }, onStep);
 }
 
 /** Asks the second step of a change begun on this visit, with exactly what the first was asked with. */
-export async function continueRoleChange(personId: string, companyId: string, leaf: string, onStep?: (step: number, steps: number) => void): Promise<ChangeActed> {
-  const kept = BEGUN.get(companyId)?.get(seatOf(leaf));
+export async function continueRoleChange(personId: string, view: PageView, leaf: string, onStep?: (step: number, steps: number) => void): Promise<ChangeActed> {
+  const kept = BEGUN.get(view.company)?.get(seatOf(leaf));
   if (kept === undefined) return { of: CHANGE_ACTED.problem, problem: ROLE_PROBLEM.notBegun };
-  return askWallet(personId, companyId, { leaf: kept.leaf, name: kept.name, role: kept.role, address: kept.address }, onStep);
+  return askWallet(personId, view, { leaf: kept.leaf, name: kept.name, role: kept.role, address: kept.address }, onStep);
 }
 
 
@@ -220,14 +222,14 @@ export async function continueRoleChange(personId: string, companyId: string, le
  * raised. The page forgets its own note of the change only once the wallet says it holds none (dropped, or not kept), never on a
  * refusal, so a change the wallet still keeps stays listed and can still be continued.
  */
-export async function dropRoleChange(personId: string, companyId: string, leaf: string, onStep?: (step: number, steps: number) => void): Promise<ChangeActed> {
+export async function dropRoleChange(personId: string, view: PageView, leaf: string, onStep?: (step: number, steps: number) => void): Promise<ChangeActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return { of: CHANGE_ACTED.refused, why: named };
     const ended = await actOnACompanyInTheWallet({ name: DROP_ROLE_CHANGE.act, ...named, leaf: leaf.toLowerCase() }, ACCOUNT_ORIGIN, onStepOf(onStep));
     if (ended.of !== CHANGE_ACTED.done) return { of: CHANGE_ACTED.stopped, why: whyOf(ended.refused), partial: false, handedOver: false };
     const state = ended.outcome?.[DROP_ROLE_CHANGE.state];
-    if (state === 'dropped' || state === 'not-kept') BEGUN.get(companyId)?.delete(seatOf(leaf));
+    if (state === 'dropped' || state === 'not-kept') BEGUN.get(view.company)?.delete(seatOf(leaf));
     return { of: CHANGE_ACTED.dropped, state: typeof state === 'string' ? state : null };
   } catch (e) {
     return { of: CHANGE_ACTED.refused, why: refusalOf(e) };

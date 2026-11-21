@@ -14,14 +14,16 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { accountPresenceAt, accountAtOneBlockOver, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
+import { accountPresenceAt, accountAtOneBlockOver, contractStatesAt, STATES_AT_ONCE, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultAsDeployed } from './vault-as-deployed.js';
 import { newestTimeToLive, readTransaction } from './vault-builder.js';
-import { vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
+import { everyVaultAnswered, vaultBuilderOver, type VaultAnswer } from './vault-worker-client.js';
 import { existsSync, readFileSync } from 'node:fs';
 import * as accountModule from '../../../contracts/managed/contract/index.js';
 import { DEPLOYED_CIRCUITS } from '../../../src/midnight/deferral.js';
+import { contractStateAt } from '../../../src/midnight/contract-state-at.js';
+import * as L from '@midnightntwrk/ledger-v9';
 
 const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32);
@@ -631,5 +633,97 @@ describe('WHETHER THE COMPANY\'S ACCOUNT IS ON THE CHAIN, READ ON THIS DEVICE BY
     expect(await client.accountPresence!({ account: 'ab'.repeat(32), indexer, transactions: [Buffer.from('x').toString('base64')] }))
       .toEqual({ held: false, blockHeight: 7, blockTime: 99_000, ttl: 42_000 });
     expect(at).toEqual([indexer]);
+  });
+});
+
+describe('EVERY VAULT A STEP READS, READ TOGETHER ON THIS DEVICE', () => {
+  const OTHER = 'ad'.repeat(32);
+  const NONE = 'ae'.repeat(32);
+  /* The indexer standing in, answering many states at once: each request named in `asked`, and no state read alone. */
+  const together = (states: Record<string, { serialize(): Uint8Array } | null>, asked: string[]): VaultChainSource => ({
+    ...anIndexer(null, asked),
+    contractState: async (address) => { asked.push(`state of ${address.slice(0, 4)} alone`); return states[address] ?? null; },
+    contractStates: async (addresses) => { asked.push(`states of ${addresses.map((a) => a.slice(0, 4)).join(' ')}`); return addresses.map((a) => states[a] ?? null); },
+  });
+  const states = { [VAULT]: aVault({ notes: [NOTE], started: true }), [OTHER]: aVault({ notes: [], started: false }), [ACCOUNT]: aVault({ notes: [], started: false }) };
+
+  it('THE STATES OF EVERY VAULT AND OF THE ACCOUNT GO IN ONE REQUEST, AND EACH VAULT IS ANSWERED AS A READ OF IT ALONE ANSWERS IT', async () => {
+    const asked: string[] = [];
+    const reads = await aClient(() => together(states, asked), []).vaultsOnChain({ vaults: [VAULT, OTHER, NONE], account: ACCOUNT, indexer: INDEXER });
+    /* RED WHEN: each vault's state, or the account's, is read in a request of its own. */
+    expect(asked.filter((a) => a.startsWith('state'))).toEqual([`states of ${VAULT.slice(0, 4)} ${OTHER.slice(0, 4)} ${NONE.slice(0, 4)} ${ACCOUNT.slice(0, 4)}`]);
+    const alone = (vault: string) => readVaultOnChain(d, together(states, []), vault, ACCOUNT);
+    /* RED WHEN: a vault read together is answered otherwise than a read of it alone, or one the indexer holds no state for is read as a vault. */
+    expect(reads).toEqual([await alone(VAULT), await alone(OTHER), { onChain: false }]);
+    expect(reads[0]).toMatchObject({ notes: [NOTE], started: true });
+  });
+
+  it('A STATE READ TOGETHER IS THE STATE THE SDK\'S OWN READ OF IT ALONE GIVES, FROM THE SAME ANSWER OF THE INDEXER', async () => {
+    const hexOf = (u: Uint8Array) => Array.from(u, (b) => b.toString(16).padStart(2, '0')).join('');
+    const state = hexOf(states[VAULT]!.serialize());
+    const block = { protocolVersion: 2_000_000, ledgerParameters: hexOf(L.LedgerParameters.initialParameters().serialize()) };
+    /* The SDK's provider, its client answering its one query for a state alone as the indexer answers it. */
+    const { IndexerPublicDataProvider } = await import('@midnight-ntwrk/midnight-js-indexer-public-data-provider');
+    const client = { query: async () => ({ data: { block, contract: { state } } }) };
+    const alone = await contractStateAt(new IndexerPublicDataProvider({ client } as never, 1_000), VAULT);
+    const answering = (async () => new Response(JSON.stringify({ data: { block, c0: { state } } }), { status: 200 })) as unknown as typeof fetch;
+    const [together] = await contractStatesAt(INDEXER.indexerUri, [VAULT], answering);
+    /* RED WHEN: the batched read dates or decodes a state otherwise than the SDK's read of one state does. */
+    expect(Array.from(together!.serialize())).toEqual(Array.from(alone!.serialize()));
+  });
+
+  it('AN ANSWER THAT LEAVES A VAULT OUT, OR ANSWERS FOR ANOTHER, IS REFUSED, NEVER READ AS NO VAULT', () => {
+    const read = { onChain: false } as const;
+    expect(everyVaultAnswered([VAULT, OTHER], [{ vault: VAULT, read }, { vault: OTHER, read }])).toEqual([read, read]);
+    /* RED WHEN: a vault missing from the worker's answer is taken as no vault there. */
+    expect(() => everyVaultAnswered([VAULT, OTHER], [{ vault: VAULT, read }])).toThrow(/did not answer for every vault/u);
+    expect(() => everyVaultAnswered([VAULT, OTHER], [{ vault: VAULT, read }, { vault: NONE, read }])).toThrow(/did not answer for every vault/u);
+  });
+
+  it('THE INDEXER IS ASKED FOR THE STATES IN AS FEW REQUESTS AS ITS QUERY COMPLEXITY ALLOWS, DATED BY THE NEWEST BLOCK, AND AN ADDRESS THAT IS NOT ONE, OR AN ANSWER LEAVING ONE OUT OR REFUSING, IS A THROW', async () => {
+    const sent: string[] = [];
+    const params = Array.from(L.LedgerParameters.initialParameters().serialize(), (b) => b.toString(16).padStart(2, '0')).join('');
+    const B = { protocolVersion: 2_000_000, ledgerParameters: params };
+    const answering = (data: unknown, o: { status?: number; errors?: unknown } = {}) => (async (_u: unknown, init?: { body?: unknown }) => {
+      sent.push(String(init?.body));
+      return new Response(JSON.stringify({ data, ...(o.errors === undefined ? {} : { errors: o.errors }) }), { status: o.status ?? 200 });
+    }) as typeof fetch;
+    const hex = Array.from(states[VAULT]!.serialize(), (b) => b.toString(16).padStart(2, '0')).join('');
+    const got = await contractStatesAt(INDEXER.indexerUri, [VAULT, NONE], answering({ block: B, c0: { state: hex }, c1: null }));
+    /* RED WHEN: the states are asked one request at a time, or not beside the block and its parameters that date them. */
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!).query).toMatch(/block \{ protocolVersion ledgerParameters \} c0: contract\(address: \$a0\) \{ state \} c1: contract\(address: \$a1\)/u);
+    /* RED WHEN: the served state is not decoded as the state the indexer holds, or a contract it holds none of is read as one. */
+    expect(Array.from(got[0]!.serialize())).toEqual(Array.from(states[VAULT]!.serialize()));
+    expect(got[1]).toBeNull();
+    /* RED WHEN: a contract left out of the answer, a refusal, a failed request or an undated state is read as no contract there. */
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT, NONE], answering({ block: B, c0: null }))).rejects.toThrow(/left a contract out/u);
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT], answering(null, { errors: [{ message: 'no' }] }))).rejects.toThrow(/refused/u);
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT], answering(null, { status: 502 }))).rejects.toThrow(/502/u);
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT], answering({ c0: { state: hex } }))).rejects.toThrow(/no block to date it/u);
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT], answering({ block: { ...B, protocolVersion: 9_000_000 }, c0: { state: hex } }))).rejects.toThrow();
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT], answering({ block: B, c0: { state: 'zz' } }))).rejects.toThrow(/not hex/u);
+    /* RED WHEN: a block's ledger parameters are not read, so a block of another era than its parameters dates the states. */
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT], answering({ block: { protocolVersion: 2_000_000 }, c0: { state: hex } }))).rejects.toThrow(/no ledger parameters/u);
+
+    /* RED WHEN: an address that is not a contract's is named in a request, which the indexer refuses whole. */
+    sent.length = 0;
+    await expect(contractStatesAt(INDEXER.indexerUri, [VAULT, 'zz'.repeat(31)], answering({ block: B, c0: { state: hex }, c1: null }))).rejects.toThrow(/not a contract's address/u);
+    expect(sent).toEqual([]);
+
+    /* 150 contracts, each answered by its own alias: every even one holds a state, every odd one none. */
+    const many = Array.from({ length: 150 }, (_, i) => i.toString(16).padStart(64, '0'));
+    sent.length = 0;
+    const eachPart = (async (_u: unknown, init?: { body?: unknown }) => {
+      sent.push(String(init?.body));
+      const { variables } = JSON.parse(String(init?.body)) as { variables: Record<string, string> };
+      const data = Object.fromEntries(Object.entries(variables).map(([k, a]) => [`c${k.slice(1)}`, parseInt(a, 16) % 2 === 0 ? { state: hex } : null]));
+      return new Response(JSON.stringify({ data: { block: B, ...data } }), { status: 200 });
+    }) as typeof fetch;
+    const read = await contractStatesAt(INDEXER.indexerUri, many, eachPart);
+    /* RED WHEN: the contracts are asked in one request past the indexer's query complexity, which it refuses whole. */
+    expect(sent.map((b) => Object.keys((JSON.parse(b) as { variables: object }).variables).length)).toEqual([STATES_AT_ONCE, 150 - STATES_AT_ONCE]);
+    /* RED WHEN: a part's answers are put back out of the order asked. */
+    expect(read.map((r) => r !== null)).toEqual(many.map((_, i) => i % 2 === 0));
   });
 });

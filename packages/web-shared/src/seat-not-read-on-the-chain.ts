@@ -6,9 +6,29 @@
  * chain shows two seats under one proposal, or a seating this device cannot read as one invitation and one seat, and
  * reading again does not change it.
  */
+import { JoinedAsks } from './company-view-batch.js';
 
 /** The seat each proposal asked about took on the chain, by its identity, null where none: the door every reader asks through. */
 export type InvitedSeatsRead = (proposals: readonly string[]) => Promise<Readonly<Record<string, string | null>>>;
+
+const LEFT_OUT = 'the chain\'s read of the seats invitations took left a proposal out, so none of its answers is kept';
+
+/**
+ * `read` with the proposals asked through it joined: every proposal asked in one turn goes in one ask of at most 256,
+ * and each answer is kept for as long as the read this returns is, so a proposal is asked once. A read that fails, or
+ * that leaves a proposal out, keeps nothing, and its failure reaches every reader that asked, as it was thrown.
+ */
+export const seatsAskedTogether = (read: InvitedSeatsRead): InvitedSeatsRead => {
+  const joined = new JoinedAsks<string, string | null>((p) => p, async (part) => {
+    const answered = await read(part);
+    if (typeof answered !== 'object' || answered === null || part.some((p) => !Object.hasOwn(answered, p))) throw new Error(LEFT_OUT);
+    return part.map((p) => answered[p] ?? null);
+  });
+  return async (proposals) => {
+    const seats = await joined.many(proposals);
+    return Object.freeze(Object.fromEntries(proposals.map((p, i) => [p, seats[i] ?? null])));
+  };
+};
 
 /** The names each stop is noted under; a name crosses the vault worker with its words, where a class does not. */
 export const SEAT_READ_STOP = {

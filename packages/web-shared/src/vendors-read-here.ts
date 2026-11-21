@@ -16,8 +16,8 @@ import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { readAddressClaim, typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
 import { judgeIn, kindAsked, namedHere, type DirectoryRead } from './vault-page-doors.js';
-import { InvitationRefused, type InvitingCompany } from './invitation-on-device.js';
-import { claimFor, type ClaimRefusal } from './people-read-here.js';
+import type { InvitingCompany } from './invitation-on-device.js';
+import { claimFor, everyVersionAsked, versionsAskedTogether, type ClaimRefusal, type ListsReach } from './people-read-here.js';
 
 /** One vendor as this device read them: the newest version of their entry, and its version number. */
 export interface VendorHere {
@@ -38,35 +38,24 @@ export interface VendorsHere {
   readonly notPayable: readonly { readonly here: VendorHere; readonly why: string }[];
 }
 
-/** The service's answer as a body, or the refusal it gave when it did not answer `ok`. */
-export const answered = (r: { status: number; body: unknown }, ok: number): Record<string, unknown> => {
-  const b = (r.body ?? {}) as Record<string, unknown>;
-  if (r.status !== ok) {
-    throw new InvitationRefused(r.status, typeof b.refused === 'string' ? b.refused : null,
-      typeof b.error === 'string' ? b.error : `the service answered ${r.status} and said nothing, so nothing is known to have been filed.`);
-  }
-  return b;
-};
-/** A path under the company on the service. */
-export const at = (d: { readonly company: { readonly id: string } }, path: string) => `/api/accounts/${encodeURIComponent(d.company.id)}${path}`;
-
 /**
- * What reading the company's vendors needs of a device, and no more: the company and the keys it holds, a way to send
- * reads to the service, the company's records as this device believes them, the network addresses are read on, and
- * where a wallet's signed claim of an address is checked. A seat's device passes itself (`PeopleDevice`); a page, or a
- * wallet that only checks a payment against a vendor, passes this.
+ * What reading the company's vendors needs of a device, and no more: the company and the keys it holds, the company's
+ * view its reads go through (`ListsReach`), the company's records as this device believes them, the network addresses are
+ * read on, and where a wallet's signed claim of an address is checked. A seat's device passes itself (`PeopleDevice`);
+ * a page, or a wallet that only checks a payment against a vendor, passes this. Through the company's view, every
+ * vendor's versions are read in one request, and whether a hand-over waits is asked through it too.
  */
-interface VendorsReader {
+interface VendorsReadWith {
   readonly company: Pick<InvitingCompany, 'id' | 'label' | 'viewingKey'>;
-  readonly send: (path: string, init: { readonly method: 'GET' }) => Promise<{ readonly status: number; readonly body: unknown }>;
   readonly directory: DirectoryRead;
   readonly network: NetworkName;
   readonly claimRefusal: ClaimRefusal;
 }
+type VendorsReader = VendorsReadWith & ListsReach;
 
 /** Every version of the vendor `id` the service gives, oldest first, each read as the record it says it is. */
 async function versionsOf(d: VendorsReader, id: string): Promise<SealedCompanyRecord[]> {
-  const b = answered(await d.send(at(d, `/records/vendor/${encodeURIComponent(id)}/versions`), { method: 'GET' }), 200);
+  const b = await everyVersionAsked(d, 'vendor', id);
   if (!Array.isArray(b.versions)) throw new Error('the service did not send the vendor\'s versions');
   return b.versions.map((w) => fromCompanyWire(w, { company: d.company.id, kind: 'vendor', id }).sealed);
 }
@@ -124,10 +113,10 @@ const addressOfRecordRefusalHere = async (d: VendorsReader, versions: readonly V
   return whyVendorNotPayable({ ...v, status: 'active' }, d.company.label) ?? await claimRefusalHere(d, v);
 };
 
-/** Whether the service holds a hand-over for this vendor (one GET); undefined when it did not answer. */
+/** Whether the service holds a hand-over for this vendor, asked through the company's view; undefined when it did not answer. */
 async function handoverWaitsHere(d: VendorsReader, id: string): Promise<boolean | undefined> {
   try {
-    return answered(await d.send(at(d, `/vendors/${encodeURIComponent(id)}/handover`), { method: 'GET' }), 200).inbox != null;
+    return ((await d.view.vendorHandovers([id]))[0] as { readonly inbox?: unknown } | null)?.inbox != null;
   } catch {
     return undefined;
   }
@@ -140,7 +129,8 @@ async function handoverWaitsHere(d: VendorsReader, id: string): Promise<boolean 
  * in `notPayable` with why; so is one who is pending or has left whose address is not their address of record
  * (`addressOfRecordRefusalHere`), so nothing ever pays them at an address the rules do not fix. Given a period, a
  * vendor outside their dates for all of it is not payable either. Given `handedOver`, each pending vendor with no code
- * is also asked of the service whether a hand-over waits (one GET each); callers that do not ask send nothing more.
+ * is also asked of the service whether a hand-over waits: one request for all of them through the company's view;
+ * callers that do not ask send nothing more.
  */
 export async function readVendorsHere(d: VendorsReader, period?: string, options?: { readonly handedOver?: boolean }): Promise<VendorsHere> {
   const here = await d.directory(kindAsked('company', 'vendor'));
@@ -148,7 +138,11 @@ export async function readVendorsHere(d: VendorsReader, period?: string, options
   const vendors: VendorHere[] = [];
   const notBelieved: string[] = [];
   const notPayable: { here: VendorHere; why: string }[] = [];
-  for (const id of namedHere(here, 'company', 'vendor')) {
+  const named = namedHere(here, 'company', 'vendor');
+  await versionsAskedTogether(d, 'vendor', named);
+  /* Whether a hand-over waits is asked for every vendor named in one request, and each vendor's answer is then read from it. */
+  if (options?.handedOver === true && named.length > 0) await Promise.allSettled([d.view.vendorHandovers(named)]);
+  for (const id of named) {
     const versions = await believedVersionsOf(d, id, judge);
     if (versions === null) { notBelieved.push(id); continue; }
     const vendor = versions.at(-1)!;
@@ -168,5 +162,5 @@ export async function readVendorsHere(d: VendorsReader, period?: string, options
  * key it already holds and sends nothing of it anywhere.
  */
 export const readVendorsWithKeys = (
-  company: Pick<InvitingCompany, 'id' | 'label'>, keys: KeysHeld, reads: Omit<VendorsReader, 'company'>, period?: string, options?: { readonly handedOver?: boolean },
+  company: Pick<InvitingCompany, 'id' | 'label'>, keys: KeysHeld, reads: Omit<VendorsReadWith, 'company'> & ListsReach, period?: string, options?: { readonly handedOver?: boolean },
 ): Promise<VendorsHere> => readVendorsHere({ ...reads, company: { ...company, viewingKey: keys } }, period, options);

@@ -1,15 +1,15 @@
 import { privateAmount, publicAmount, type PrivateAmount, type PublicAmount } from 'vaults-ui';
 import { assets, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { fromHex, type Hex } from '../../../../src/core/crypto.js';
-import type { SealedAccount } from '../../../../src/core/types.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import {
-  api, companyKeyReleasedFor, companyKeysForVaults, holdersFromTheWallet, payIntoAVaultFromTheWallet, privateDepositInTheWallet,
-} from 'vaults-web-shared/keyring.js';
+import { companyKeyReleasedFor, companyKeysForVaults, privateDepositInTheWallet } from 'vaults-web-shared/keyring.js';
+import { payIntoAVaultFromTheWallet } from 'vaults-web-shared/wallet-asks.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-sign-in.js';
 import { browserDepositsInFlight, browserInFlightRecords } from 'vaults-web-shared/in-flight-in-this-browser.js';
-import { vaultServiceFor } from 'vaults-web-shared/vault-page-doors.js';
+import type { Roster } from 'vaults-web-shared/handover-check.js';
+import { keysCheckedAgainst } from 'vaults-web-shared/vault-service-doors.js';
+import type { VaultService } from 'vaults-web-shared/vault-service.js';
+import { vaultServiceThrough } from 'vaults-web-shared/vault-service-through-the-view.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
 import { privateTokenFromTheWallet, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
 import { checkWhatThisBrowserDeposited, sayWhatTheCheckFound, type JournalledDeposit, type WhatThisBrowserDeposited } from 'vaults-web-shared/check-what-this-browser-sent.js';
@@ -19,9 +19,9 @@ import { type VaultStage } from 'vaults-web-shared/vault-doors.js';
 import type { DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { ProofInProgress } from 'vaults-web-shared/vault-worker-client.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { companyRoute } from './handover-state.js';
 import { keyringFor } from './keyring-person.js';
 import { proofsRunning } from './proofs-running.js';
+import { onTheChainIn, readThroughAViewOf, walletIndexerIn, type PageView } from './filing-judge.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 import { Fault, FAULT } from '../faults.js';
 import { DEPOSIT_USUAL_SECONDS } from './usual-times.js';
@@ -328,36 +328,34 @@ function failedWith(e: unknown, began: { readonly sending: boolean }, kind: Depo
 const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 /**
- * WHO HOLDS THE COMPANY AND THE INDEXER ITS WALLET READS THROUGH, ASKED OF THE
- * PERSON'S WALLET ONCE FOR ONE DEPOSIT'S OWN READS OF THE VAULT AND THE INDEXER
- * and kept for that deposit only. An ask that fails is not kept, so the next
- * read asks again.
+ * WHO HOLDS THE COMPANY AND THE INDEXER ITS WALLET READS THROUGH, as `view` asked the person's wallet once for them:
+ * the reads of the vault and the indexer a deposit, or the check of one, makes.
  */
-function holdersOnce(company: CompanyLabel, account: AccountAddress) {
-  let kept: ReturnType<typeof holdersFromTheWallet> | null = null;
-  const read = (): ReturnType<typeof holdersFromTheWallet> => {
-    if (kept !== null) return kept;
-    const asking = holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account });
-    kept = asking;
-    asking.catch(() => { if (kept === asking) kept = null; });
-    return asking;
-  };
-  return {
-    onChain: async () => ({ holders: (await read()).holders }),
-    indexer: async () => (await read()).indexer,
-  };
-}
+const holdersIn = (view: PageView) => ({
+  onChain: async () => ({ holders: await view.holders() }),
+  indexer: () => walletIndexerIn(view),
+});
+
+/**
+ * THE VAULT ROUTES A DEPOSIT, OR THE CHECK OF ONE, REACHES THROUGH `view`: each send is a write of the view, so its
+ * check reads who holds the company again immediately before the send and refuses a deposit into a vault the company
+ * no longer adopts. The vault keys are read through the view too, refused when a reader is not one `roster` names.
+ */
+const vaultServiceIn = (view: PageView, roster: () => Promise<Roster>): VaultService => ({
+  ...vaultServiceThrough({ current: () => view }),
+  keys: () => keysCheckedAgainst(async () => await view.vaultKeys() as Awaited<ReturnType<VaultService['keys']>>, roster),
+});
 
 /**
  * What checking this browser's last private deposit is given, from this signer's seat here: records that file
  * nothing, the coins and the deposit kept in this browser, and no way to pay.
  */
-function checkDoorsOf(companyId: string, here: SeatAndRecordsHere, me: DeviceSigner): DepositDoors {
-  const holders = holdersOnce(here.company, here.account);
+function checkDoorsOf(here: SeatAndRecordsHere, me: DeviceSigner): DepositDoors {
+  const holders = holdersIn(here.view);
   const opener = { signerId: me.signerId, wrappingSecret: me.wrappingSecret };
   return {
     sleep, progress: () => {},
-    service: vaultServiceFor(api, companyId, async () => here.opened),
+    service: vaultServiceIn(here.view, async () => here.opened),
     company: here.company, account: here.account,
     onChain: holders.onChain, indexer: holders.indexer,
     builder: here.builder,
@@ -436,14 +434,17 @@ type Run = (step: (to: DepositStep) => void, progress: (stage: VaultStage) => vo
  * A private deposit of `units` of `code`, asked of the person's wallet by intent and made there whole: the wallet's
  * window is the first step, the deposit it makes, sends and records the second.
  */
-function privately(personId: string, companyId: string, vault: string, code: AssetId, units: bigint, amount: PrivateAmount | PublicAmount, registry: AssetRegistry): Run {
+function privately(personId: string, opening: PageView, vault: string, code: AssetId, units: bigint, amount: PrivateAmount | PublicAmount, registry: AssetRegistry): Run {
+  const companyId = opening.company;
+  /* Where the company is on the chain, as the screen's view read it at the press: the wallet reads the rest itself. */
+  const at = onTheChainIn(opening);
+  at.catch(() => { /* said when the deposit reads it */ });
   return async (step) => {
     const failed = (refusal: ActRefusal): Ended => ({ of: DEPOSITED.failed, kind: DEPOSIT_KIND.private, amount, mayHaveBeenSent: false, refusal, reasons: [] });
     if (!(await keyringFor(personId))) return failed(ACT_REFUSAL.notSignedIn);
-    const sealed = await api(companyRoute(companyId)) as SealedAccount;
-    const company = (sealed.companyLabel ?? null) as CompanyLabel | null;
-    const account = (sealed.contractAddress ?? null) as AccountAddress | null;
-    if (company === null || account === null) return failed(ACT_REFUSAL.didNotFinish);
+    const where = await at;
+    if (where === null) return failed(ACT_REFUSAL.didNotFinish);
+    const { company, account } = where;
     const money = privateTokenFromTheWallet(async () => { throw new Fault(FAULT.privateDepositPaidHere); }, registry)
       .money({ code, value: units });
     const ended = await privateDepositInTheWallet({
@@ -455,26 +456,31 @@ function privately(personId: string, companyId: string, vault: string, code: Ass
 
 /** A public deposit of `units` of `code`: the vault's public deposit, given only what a public deposit needs. */
 function publicly(personId: string, companyId: string, vault: string, code: AssetId, units: bigint, amount: PrivateAmount | PublicAmount, registry: AssetRegistry): Run {
-  return async (_step, progress) => {
+  return (_step, progress) => readThroughAViewOf(companyId, async (view) => {
     const failed = (refusal: ActRefusal): Ended => ({ of: DEPOSITED.failed, kind: DEPOSIT_KIND.public, amount, mayHaveBeenSent: false, refusal, reasons: [] });
     if (!(await keyringFor(personId))) return failed(ACT_REFUSAL.notSignedIn);
-    const sealed = await api(companyRoute(companyId)) as SealedAccount;
-    const company = (sealed.companyLabel ?? null) as CompanyLabel | null;
-    const account = (sealed.contractAddress ?? null) as AccountAddress | null;
-    if (company === null || account === null) return failed(ACT_REFUSAL.didNotFinish);
-    const holders = holdersOnce(company, account);
+    const where = await onTheChainIn(view);
+    if (where === null) return failed(ACT_REFUSAL.didNotFinish);
+    const { company, account } = where;
+    const holders = holdersIn(view);
+    /*
+     * The indexer is kept once read (the vault is read through it before anything is built): the send ends the view, and
+     * the chain is still watched through this indexer after it. A read that failed is asked again when next needed.
+     */
+    let named: Awaited<ReturnType<typeof holders.indexer>> | undefined;
+    const indexer = async () => (named ??= await holders.indexer());
     const pay: PublicDepositDoors['pay'] = (ask) => payIntoAVaultFromTheWallet(ACCOUNT_ORIGIN, ask);
     const doors: PublicDepositDoors = {
       sleep, progress,
       /* A public deposit never asks for the vault's keys, so no roster is read for it: an ask for them would find no readers and be refused. */
-      service: vaultServiceFor(api, companyId, async () => ({ id: companyId, signers: [], notBelieved: [] })),
+      service: vaultServiceIn(view, async () => ({ id: companyId, signers: [], notBelieved: [] })),
       builder: await theVaultBuilder(),
-      company, account, onChain: holders.onChain, indexer: holders.indexer, pay,
+      company, account, onChain: holders.onChain, indexer, pay,
     };
     const money = publicTokenFromTheWallet(pay, registry).money({ code, value: units });
     const done = await depositPubliclyIntoCompanyVault(doors, vault as Hex, money);
     return { of: DEPOSITED.done, kind: DEPOSIT_KIND.public, amount, chainTransaction: done.transactionHash, notYetSpendable: false, earlier: null };
-  };
+  });
 }
 
 /** What a press of Put money in came to: started (with the deposit's end), refused before anything (the amount's reason, or the service's own answer that it refuses the vault), or one already running for this vault, so nothing was sent. */
@@ -485,23 +491,27 @@ export type PutMoneyIn =
   | { readonly of: typeof PUT_IN.alreadyRunning };
 
 /**
- * PUTS `entry` OF THE PICKED TOKEN INTO THE VAULT `vault` OF THE COMPANY
- * `companyId`, for the person `personId`, the way the picked row names and no
+ * PUTS `entry` OF THE PICKED TOKEN INTO THE VAULT `vault` OF THE COMPANY OF
+ * `opening` (the screen's view), for the person `personId`, the way the picked row names and no
  * other. While a deposit into this vault runs in this tab, a press sends
  * nothing. A `standing` that says the service refuses the vault stops the press
  * before the amount is read and before the wallet is asked; a missing or
  * unreadable one stops nothing. Then the amount is checked (`amountToPutIn`). The deposit is held here
  * from the press, before anything is awaited, and runs to its end whatever
- * the screen does; `depositNow` and `watchDeposit` follow it.
+ * the screen does. A private deposit takes where the company is on the chain
+ * from the screen's view at the press, and the wallet reads the rest itself; a
+ * public one reads the company through a view of its own, held for the deposit
+ * and ended with it. `depositNow` and `watchDeposit` follow it.
  */
 export function putMoneyIn(
-  personId: string, companyId: string, vault: string, pick: DepositPick, entry: string | typeof MAX, held: bigint | null,
+  personId: string, opening: PageView, vault: string, pick: DepositPick, entry: string | typeof MAX, held: bigint | null,
   registry: AssetRegistry = assets, standing?: VaultStanding,
 ): PutMoneyIn {
   if (DEPOSITS.get(keyOf(vault))?.of === DEPOSITED.running) return { of: PUT_IN.alreadyRunning };
   if (standing !== undefined && serviceRefusesVault(standing)) return { of: PUT_IN.vaultRefused, standing };
   const checked = amountToPutIn(entry, pick, held, registry);
   if (checked.of === PUT_IN.refused) return checked;
+  const companyId = opening.company;
   const { units, amount } = checked;
   const kind = pick.kind;
   const steps = depositSteps(kind, kind === DEPOSIT_KIND.public || companyKeyHeldHere(companyId));
@@ -518,7 +528,7 @@ export function putMoneyIn(
   };
   step(steps[0]!);
   const run = kind === DEPOSIT_KIND.private
-    ? privately(personId, companyId, vault, pick.code, units, amount, registry)
+    ? privately(personId, opening, vault, pick.code, units, amount, registry)
     : publicly(personId, companyId, vault, pick.code, units, amount, registry);
   const ended = run(step, progress).catch((e: unknown): Ended => ({ of: DEPOSITED.failed, kind, amount, ...failedWith(e, began, kind) }))
     .then((end) => { setNow(vault, end); return end as DepositNow; });
@@ -583,11 +593,11 @@ export type LastDepositChecked =
  * asked to release it, in a window of its own.
  * A public deposit leaves nothing in this browser to check.
  */
-export async function checkMyLastDeposit(personId: string, companyId: string, vault: string, registry: AssetRegistry = assets): Promise<LastDepositChecked> {
+export async function checkMyLastDeposit(personId: string, view: PageView, vault: string, registry: AssetRegistry = assets): Promise<LastDepositChecked> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId, releaseTheCompanyKey(companyId));
+    const here = await seatAndRecordsHere(personId, view, releaseTheCompanyKey(view.company));
     if (typeof here === 'string') return { of: CHECKED.refused, why: here, reasons: [] };
-    const found = await checkWhatThisBrowserDeposited(checkDoorsOf(companyId, here, here.mine), vault as Hex, { files: false });
+    const found = await checkWhatThisBrowserDeposited(checkDoorsOf(here, here.mine), vault as Hex, { files: false });
     const d = found.deposit;
     const judged = found.checked ?? null;
     const deposited = judged === null ? null : privateAmountOf(judged.token, judged.value, registry);

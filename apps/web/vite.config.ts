@@ -39,7 +39,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * page's characters need. A build whose first download is larger than the
  * budget stops, and so does one with any file other than a font over the
  * size at which the bundler warns. The budget is the first download as it
- * was last measured (701,168 bytes, from the built application, on 13 Nov IST); a
+ * was last measured (705,082 bytes, from the built application, on 21 Nov IST); a
  * test holds it within a kilobyte of what is built, so when the download falls
  * the budget is lowered with it.
  *
@@ -47,7 +47,19 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * page loads whole and which carries every page's words. As measured on 13 Nov
  * IST, no curve library is in the first download.
  *
- * The budget is the measured 701,168 bytes (13 Nov IST). It fell by 5,779 bytes from 706,947 when the super admins'
+ * The budget is the measured 705,082 bytes (21 Nov IST). It grew by 2,337 bytes from 702,745 when signing in, asking
+ * who is signed in and signing out began to go through the page's one service transport rather than a request of
+ * their own: the first download now carries that transport and the refusal it gives when the service cannot be
+ * reached (service-transport.ts, hand-over.ts) and the person's own asks (person-asks.ts, person-on-page.ts). The
+ * company's records, their tree and their manifest stay out of it. Earlier: the budget was the measured 702,745 bytes
+ * (19 Nov IST). It grew by 629 bytes from 702,116 when the frame that reads
+ * the shown company began to open one view of it for each opening of a page, hand it to every tile and action, and
+ * end it when the keyring says the sign-in changed or an action in the wallet ran on the company: the code that
+ * opens the view is loaded with the company's records, not in the first download. Earlier: it grew by 1,008 bytes from 701,108, measured beside it,
+ * when the keyring's service transport, its wallet asks and the company's creation became modules of their own: no
+ * code moved into the first download. The sign-in adapter's two new imports of them are 155 bytes; the rest is the lists of
+ * files the bundler preloads, which now name those modules and the crypto and records-key chunks the bundler cut
+ * out on its own. Earlier: the budget was the measured 701,168 bytes (13 Nov IST). It fell by 5,779 bytes from 706,947 when the super admins'
  * page stopped loading the ledger, the contract runtime and the account's compiled contract and asked the vault worker
  * instead: in a build measured beside it, tslib and the bundler's own runtime chunk then left the first download. Earlier:
  * it fell from 730,766 when the companies a reader opened this
@@ -71,7 +83,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
  * they use. Earlier: it grew by 46 bytes from 724,929 when apps/web/src/records/parts.tsx, records/counts.ts and screens/proposals.tsx
  * changed.
  */
-export const FIRST_DOWNLOAD_BUDGET = 701_168;
+export const FIRST_DOWNLOAD_BUDGET = 705_082;
 
 /**
  * THE WORKERS THIS APPLICATION STARTS, by their entry's path from this folder,

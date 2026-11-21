@@ -22,7 +22,6 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   currentUser: () => ({ id: 'u1' }),
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
   actOnACompanyInTheWallet: async (intent: Record<string, string>, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
@@ -30,7 +29,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     return kr.ended;
   },
 }));
-vi.mock('../adapters/filing-judge.js', async (real) => ({ ...(await real<typeof import('../adapters/filing-judge.js')>()), walletIndexerFor: async () => ({ indexerUri: 'http://i', indexerWsUri: 'ws://i' }) }));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
+}));
+vi.mock('../adapters/filing-judge.js', async (real) => ({ ...(await real<typeof import('../adapters/filing-judge.js')>()), walletIndexerIn: async () => ({ indexerUri: 'http://i', indexerWsUri: 'ws://i' }) }));
 vi.mock('../adapters/vault-builder.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-builder.js')>()),
   theVaultBuilder: async () => ({ roundsOnChain: async () => { kr.standings += 1; return { ['aa'.repeat(32)]: kr.round }; } }),

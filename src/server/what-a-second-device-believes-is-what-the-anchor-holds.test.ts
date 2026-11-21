@@ -13,6 +13,7 @@
  * account run by its own circuits. What is the test's: the chain an anchor
  * lands on, which moves only as the account's circuit would.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { describe, expect, it, vi } from 'vitest';
 import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
 vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
@@ -21,9 +22,9 @@ import { fromHex, toHex } from '../core/crypto.js';
 
 import { theNetwork } from '../midnight/network.js';
 import { toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
 import { newestAnchored } from '../midnight/records-held.js';
-import { anchorServiceFor, anchorTheRecordsHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
 import { readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
@@ -35,8 +36,8 @@ import { pureCircuits } from '../../contracts/managed/contract/index.js';
 import type { PolicyOpening } from '../../contracts/src/witnesses.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeDirectoryWithItsFold, ACME, ADA, ADDRESS, aRecordFiledBy, apiAs, BO, CO,
-  fromAda, ORIGIN, personVersions, sendAs, store, type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  fromAda, ORIGIN, personVersions, sendAs, store, type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, foundingRecordsOver } from '../testing/writes-over-a-send.js';
 /** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
 const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
@@ -45,8 +46,8 @@ aCompanyOfTwoSeats();
 const NETWORK = theNetwork();
 
 /** One seat's device anchoring what is waiting, on the test's chain; `send` is how its proven call reaches the chain. */
-const anchoringOn = (s: Seat, send: (tx: string) => Promise<unknown> = async (tx) => landed(tx)): AnchorDoors => ({
-  accountId: CO, manifest: manifestServiceFor(apiAs(s.person)), tree: treeServiceFor(apiAs(s.person)),
+const anchoringOn = (s: Seat, send: (tx: string) => Promise<unknown> = async (tx) => landed(tx)): AnchorDoorsBare => ({
+  accountId: CO, manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)), tree: treeServiceOf(serviceSource(apiAs(s.person), CO)),
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
   directory: () => acmeDirectoryWithItsFold(), directoryFilings: async () => store.directoryFilingsOf(CO),
   onChain: acmeChain.onChain,
@@ -54,7 +55,7 @@ const anchoringOn = (s: Seat, send: (tx: string) => Promise<unknown> = async (tx
     callState: async () => ({ account: ADDRESS, accountState: acmeChain.head(), parameters: '', blockHash: 'b' }) as never,
     sendProven: async (_c, tx) => send(tx),
     sealedProposals: async (c) => store.listProposals(c),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
   /* The account's history read again at once while a send has not answered. */
@@ -71,6 +72,7 @@ const peopleOn = (
   s: Seat, serve: (body: unknown) => unknown = (b) => b, manifest: (m: any) => any = (m) => m,
 ): PeopleDevice => ({
   company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, network: NETWORK, claimRefusal: signedClaimRefusal, entered: s.entered,
+  writes: writesOver(sendAs(s.person)),
   directory: (asked) => directoryHere({
     ...acmeDirectoryDeps(),
     anchored: anchoredOver(async (path, init) => {
@@ -78,10 +80,10 @@ const peopleOn = (
       return path.includes('/manifest/tree/headers') ? manifest(r) : r;
     }, CO, acmeChain.read),
   }, asked),
-  send: async (path, init) => {
+  view: listsOver(async (path, init) => {
     const r = await sendAs(s.person)(path, init);
     return path.endsWith('/people') && init.method === 'GET' ? { ...r, body: serve(r.body) } : r;
-  },
+  }, ACME.id),
 });
 /** The service's list with `id`'s record replaced by `version` of it. */
 const serving = (id: string, version: SealedCompanyRecord) => (body: unknown) => ({
@@ -97,11 +99,11 @@ const pay = { name: 'Pat', email: 'pat-e2e@acme.co', title: 'Engineer', asset: T
 describe('WHAT A SECOND DEVICE BELIEVES OF THE COMPANY\'S RECORDS IS WHAT THE ANCHOR HOLDS', () => {
   it('STALE, WITHHELD AND REORDERED ARE REFUSED ON BO\'S DEVICE, NEWER IS HELD AS NOT YET ANCHORED, AND A DROPPED ANCHOR FINISHES', async () => {
     /* Ada's device invites Pat, anchors, marks Pat a leaver, and anchors again. */
-    const pat = (await inviteHere(ACME, ADA, 'employee', pay, ORIGIN, fromAda)).person!;
-    await anchorTheRecordsHere(anchoringOn(ADA));
+    const pat = (await inviteHere(ACME, ADA, 'employee', pay, ORIGIN, writesOver(fromAda))).person!;
+    await anchorTheRecordsHere(throughAView(anchoringOn(ADA)));
     const atFirst = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === pat)!;
     await setStatusHere(peopleOn(ADA), atFirst, 'leaver', LEFT);
-    await anchorTheRecordsHere(anchoringOn(ADA));
+    await anchorTheRecordsHere(throughAView(anchoringOn(ADA)));
     const [first, second] = await personVersions(pat);
     /* Bo's device believes the anchored newest version. */
     expect((await readPeopleHere(peopleOn(BO))).people.find((p) => p.person.id === pat)?.version).toBe(2);
@@ -135,12 +137,12 @@ describe('WHAT A SECOND DEVICE BELIEVES OF THE COMPANY\'S RECORDS IS WHAT THE AN
     const dropped = anchoringOn(BO, async (tx) => {
       sends += 1;
       if (sends > 1) return landed(tx);
-      await anchorTheRecordsHere(anchoringOn(ADA));
+      await anchorTheRecordsHere(throughAView(anchoringOn(ADA)));
       /* The node dropped Bo's call for Ada's, which named the same head, and nothing ever answers it. */
       return new Promise(() => {});
     });
     /* RED WHEN: a send the chain dropped without a word is waited on for good - Bo's device never finishes, and nothing it filed is anchored by it. */
-    await expect(anchorTheRecordsHere(dropped)).resolves.toMatchObject({ anchored: 0 });
+    await expect(anchorTheRecordsHere(throughAView(dropped))).resolves.toMatchObject({ anchored: 0 });
     expect(sends).toBe(1);
     /* What Bo's device filed is held by the anchor Ada's device made. */
     const boFiled = { store: 'company' as const, kind: 'proposal', id: 'prp_e2e_bo' };

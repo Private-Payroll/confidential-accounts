@@ -21,6 +21,7 @@
  *   - **the service's list of a company's proposals and the account's call
  *     state**: read straight from the store, and fixed.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { beforeAll, expect } from 'vitest';
 import type express from 'express';
 import { identityFromSecret } from 'midnight-identity';
@@ -46,7 +47,8 @@ import { signCompanyFiling, type SealedCompanyRecord } from '../midnight/sealed-
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { sealSpendingPolicy } from '../midnight/spending-policy-record.js';
 import { signedStateHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
-import { spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { spendingPolicyHere } from 'vaults-web-shared/spending-policy-read-here.js';
+import { VAULT as VAULT_STANDING } from 'vaults-web-shared/vault-standing.js';
 import { HttpCompanyRecordStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import type { OneOffsHere } from 'vaults-web-shared/one-off-here.js';
 import { openOneOff } from '../midnight/one-off-record.js';
@@ -58,21 +60,24 @@ import { proposalRelayRoutes } from './proposal-relays.js';
 import { runRoutes } from './run-routes.js';
 import { anchorFunctions, anchorSentInATest, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { leavesOfTheContract } from '../testing/directory-seats.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import {
-  anchorServiceFor, anchorTheRecordsHere, directoryChangeFiledHere, recordsHeldHere, type AnchorDoors,
-} from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { recordsHeldHere } from 'vaults-web-shared/records-held-here.js';
+import { directoryChangeFiledHere } from 'vaults-web-shared/anchored-on-the-way-in.js';
 import { attestedIn, directoryHere, directoryWithItsRecordsHere, judgeIn, leaversStatementIn, type DirectoryHere } from 'vaults-web-shared/vault-page-doors.js';
-import { foldOffersHere, offerVaultKeysHere, rosterHere, seatsAdmittedHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { rosterHere, seatsAdmittedHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { grantsHere, policyReadersIn, revokedAtHere } from 'vaults-web-shared/purpose-wraps.js';
 import { GRANTS_RECORD } from '../midnight/grants-record.js';
-import { governedCallServiceFor, type RemovalDoors } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
+import type { RemovalDoors } from 'vaults-web-shared/signer-removed-on-device.js';
 import type { GovernedCallOrder } from 'vaults-web-shared/governed-call-builder.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeReads, ACME_STATE, seatsTakenByInvitation, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, peopleRecords, seatBoAs, seatOf, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { viewOver, viewOpenedEachTime, foundingRecordsOver, storeReachOver } from '../testing/writes-over-a-send.js';
 
 /* Bo holds an admin's seat here, as his invitation gave it. */
 seatBoAs('admin');
@@ -255,7 +260,7 @@ export const api = (person: string) => apiAs(person);
 
 /** One seat's device reading and filing the roster under the filing key its entry names. */
 export const rosterDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>): RosterDoors => ({
-  api: api(s.person), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
+  view: viewOver(api(s.person), CO), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
   reads: acmeReads, entered: s.entered,
 });
 /** The records-key statements the roster this device believes holds, as the page reads them (`attestedIn`). */
@@ -268,12 +273,12 @@ export const directoryOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'
 export const grantsKept = (): Promise<readonly SealedCompanyRecord[]> => peopleRecords.versions(CO, GRANTS_RECORD.kind, GRANTS_RECORD.id);
 
 /** What `s`'s device anchors and files a directory change through, against the test's chain. */
-export const anchorDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>, kept = treeKeptInMemory()): AnchorDoors => ({
+export const anchorDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>, kept = treeKeptInMemory()): AnchorDoorsBare => ({
   accountId: CO,
   changes: kept.changes,
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(api(s.person)),
-  tree: treeServiceFor(api(s.person)),
+  manifest: manifestServiceOf(serviceSource(api(s.person), CO)),
+  tree: treeServiceOf(serviceSource(api(s.person), CO)),
   directory: () => directoryWithItsRecordsHere({ ...acmeDirectoryDeps(), attested: attestedByTheRoster(s) }),
   directoryFilings: async () => store.directoryFilingsOf(CO),
   fileDirectory: async (filing) => {
@@ -291,7 +296,7 @@ export const anchorDoorsOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entere
       events.push('anchored');
     },
     sealedProposals: async (c) => store.listProposals(c),
-    foundingRecords: anchorServiceFor(api(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(api(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
 });
@@ -305,7 +310,7 @@ export const recordsReadBy = (s: Pick<Seat, 'person' | 'signingSecret' | 'entere
  * roster admitted, and its filing of the change.
  */
 export const companyKeyDoorsOf = (
-  s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'n' | 'seat'>, anchor: AnchorDoors = anchorDoorsOf(s),
+  s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 'n' | 'seat'>, anchor: AnchorDoorsBare = anchorDoorsOf(s),
 ): NonNullable<RemovalDoors['companyKey']> => ({
   filings: async () => store.directoryFilingsOf(CO),
   served: async () => KEY,
@@ -315,12 +320,12 @@ export const companyKeyDoorsOf = (
   waiting: async () => (store.getAccount(CO)?.pendingSigners ?? []).map((p) => p.sealed as SealedAnswer),
   admitted: async () => {
     const d = rosterDoorsOf(s);
-    return seatsAdmittedHere(await d.api(`/api/accounts/${CO}`), d.viewingKey, {
+    return seatsAdmittedHere(await api(s.person)(`/api/accounts/${CO}`), d.viewingKey, {
       accountId: CO, label: LABEL, account: ADDRESS, reads: d.reads, own: { signingPublicKey: signingPublicKeyOf(s.signingSecret as Hex) },
-      proposals: async () => d.api(`/api/accounts/${CO}/proposals`),
+      proposals: async () => api(s.person)(`/api/accounts/${CO}/proposals`),
     });
   },
-  file: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
+  file: (change, signedFor) => directoryChangeFiledHere(throughAView(anchor), change, signedFor),
   /* The read grants as the service keeps them, judged by this device as a seat: the key epoch a taking-away was filed at. */
   revoked: () => revokedAtHere({
     accountId: CO, versions: grantsKept, directory: directoryOf(s),
@@ -338,7 +343,7 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
   const anchor = anchorDoorsOf(s, kept);
   return {
     ...(o.changesTheKey === true ? { companyKey: companyKeyDoorsOf(s, anchor) } : {}),
-    service: { ...governedCallServiceFor(api(s.person)), callState: async () => ({ account: ADDRESS, blockHash: 'b', accountState: 'AS', parameters: 'PP' }) as never },
+    service: { ...governedCallServiceThrough(viewOpenedEachTime(api(s.person), CO)), callState: async () => ({ account: ADDRESS, blockHash: 'b', accountState: 'AS', parameters: 'PP' }) as never },
     builder: {
       governedCall: async ({ order, opened }) => {
         refuseWhatThisDeviceDidNotOpen({ accountPure: pureCircuits as never }, order, opened);
@@ -371,9 +376,9 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
     vaultName: () => 'company-wide runs',
     leaves: leavesOfTheContract,
     sleep: async () => {}, waitMs: 40, everyMs: 1,
-    anchorDirectory: () => anchorTheRecordsHere(anchor),
+    anchorDirectory: () => anchorTheRecordsHere(throughAView(anchor)),
     leaversStatement: async (seat) => leaversStatementIn(await attestedByTheRoster(s)(), seat, LABEL, ADDRESS),
-    directoryChange: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
+    directoryChange: (change, signedFor) => directoryChangeFiledHere(throughAView(anchor), change, signedFor),
     kept: kept.changes,
     signatures: {
       keep: async (_c, id, given) => {
@@ -391,7 +396,7 @@ export const deviceOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered' | 
  * vault keys and Ada's device folds them into the roster, every version is anchored from Ada's device while the
  * account asks one approval, and the test's chain then holds the three seats at `seatBar`.
  */
-export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] = []): void {
+export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] = [], served: { readonly vaultRows?: boolean } = {}): void {
   more = after;
   for (const s of after) ID[s.person] = `sgn_${s.person}`;
   aCompanyOfTwoSeats((app: express.Express, deps) => {
@@ -406,6 +411,12 @@ export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] =
       res.json({ ...store.getAccount(id), roster: store.newestRoster(id) });
     });
     app.get('/api/accounts/:id/proposals', deps.signedIn, deps.member, (req, res) => { res.json(store.listProposals(String(req.params.id))); });
+    /* The company's vault rows as the service lists them, where a file asks for them: each vault the store holds, held by the committee. */
+    if (served.vaultRows === true) {
+      app.get('/api/accounts/:id/vaults', deps.signedIn, deps.member, (req, res) => {
+        res.json({ rows: store.listCompanyVaults(String(req.params.id)).map((v) => ({ vault: v.vault, deployedAt: v.deployedAt, state: VAULT_STANDING.held, why: null })) });
+      });
+    }
     app.use(signerRoutes({
       signedIn: deps.signedIn, member: deps.member, store, records: () => deps.records, directoryOf: deps.directoryOf,
       ledger: { status, holdsSigner: async (_a, seat) => seatsOnTheChain().includes(String(seat)) },
@@ -431,12 +442,12 @@ export function aCompanyWhoseSignersChange(seatBar = 2, after: readonly Seat[] =
       expect(r.status, JSON.stringify(r.body)).toBe(201);
     }
     for (const s of [BO, CY, ...more]) {
-      await offerVaultKeysHere(api(s.person), CO, {
+      await offerVaultKeysHere(CO, {
         signerId: ID[s.person]!, signingSecret: s.signingSecret as Hex, committeeKey: s.committeeKey as never,
         ...walletOf(s), entry: s.statement, viewingKey: KEY,
-      });
+      }, viewOver(api(s.person), CO));
     }
-    await anchorTheRecordsHere(anchorDoorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(anchorDoorsOf(ADA)));
     expect(await foldOffersHere(rosterDoorsOf(ADA))).toEqual({ folded: [BO.seat, CY.seat, ...more.map((m) => m.seat)], refused: [] });
     chains.set(CO, holdingOf([ADA, BO, CY, ...more], 1, seatBar));
     events.length = 0;
@@ -523,7 +534,7 @@ export const ledgerViewNow = () => ({
 });
 const judgeOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>) => async (asked?: RecordsAsked) => judgeIn(await directoryOf(s)(asked));
 const oneOffStoreOf = (s: Pick<Seat, 'person' | 'signingSecret' | 'entered'>, signs: boolean) =>
-  new HttpCompanyRecordStore(CO, (path, init) => sendAs(s.person)(path, init as never), signs ? s.signingSecret as Hex : null, judgeOf(s));
+  new HttpCompanyRecordStore(CO, storeReachOver((path, init) => sendAs(s.person)(path, init as never), CO), signs ? s.signingSecret as Hex : null, judgeOf(s));
 /**
  * `s`'s device's company records, with its one-off payments read with the company's key, the vault's spending policies, and
  * what its wallet reads of the account's record of payments from the test's chain.
@@ -557,6 +568,6 @@ export const oneOffRaiseDoorsOf = (s: Seat): OneOffRaiseDoors => {
       runPayload: (...a) => pureCircuits.runPayload(...a), proposalIdOf: (...a) => pureCircuits.proposalIdOf(...a),
       retrySaltOf: (...a) => pureCircuits.retrySaltOf(...a), noVault: () => pureCircuits.noVault(),
     },
-    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(anchorDoorsOf(s)) },
+    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(throughAView(anchorDoorsOf(s))) },
   };
 };

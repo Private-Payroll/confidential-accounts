@@ -6,7 +6,8 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { MidnightCommitments } from '../../../../src/midnight/commitments.js';
 import { SeatKeyNotFromTheInvitee } from '../../../../src/core/seat-invite-proof.js';
 import { StepRefused, type StepContext } from './definition.js';
-import { InvitationOutrun } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { InvitationOutrun } from '../../../../packages/web-shared/src/company-change-on-device.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SIGNER INVITED BY ADDRESS IS APPROVED, AND THEN ADMITTED, FROM ANOTHER SEAT'S WALLET, ONE WINDOW EACH.** What the
@@ -29,13 +30,16 @@ const t = vi.hoisted(() => ({
   body: undefined as unknown,
   onChain: null as unknown,
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/seat-invited-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/seat-invited-on-device.js')>()),
   approveSeatInvitationOnDevice: async (...a: any[]) => { t.calls.push('approve'); const done = await t.approve!(...a); t.approved += 1; return done; },
+}));
+vi.mock('../../../../packages/web-shared/src/roster-filed-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/roster-filed-here.js')>()),
+  admitSignerHere: (...a: any[]) => { t.calls.push('admit'); return t.admit!(...a); },
 }));
 vi.mock('../../../../packages/web-shared/src/roster-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/roster-here.js')>()),
-  admitSignerHere: (...a: any[]) => { t.calls.push('admit'); return t.admit!(...a); },
   rosterHere: async () => { t.calls.push('roster'); return { account: { signers: t.rosterSigners }, opened: { signers: [...t.rosterSigners, ...t.waitingSigners] } }; },
 }));
 /* The checked reading of a listed add-signer record: by default it names this proposal's identity. */
@@ -59,7 +63,8 @@ const { approveProposalAction } = await import('./approve-proposal.js');
 const AFTER_A_REMOVAL = { afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); } };
 const { addSignerKind } = await import('./add-signer-kind.js');
 const { admitSignerAction, ADMIT_STATE } = await import('./admit-signer.js');
-const { ApprovalNotOwed, InvitationNotBound, NothingToApprove } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
+const { InvitationNotBound } = await import('../../../../packages/web-shared/src/company-change-on-device.js');
+const { ApprovalNotOwed, NothingToApprove } = await import('../../../../packages/web-shared/src/proposal-approved-on-device.js');
 const { runAction } = await import('./run.js');
 const { FiledNotEntered } = await import('../../../../packages/web-shared/src/record-entered-here.js');
 const { WaitingIdTaken } = await import('../../../../packages/web-shared/src/roster-here.js');
@@ -85,9 +90,9 @@ const CHAIN_ID = 'dd'.repeat(32);
 /* Another add-signer proposal's identity, already at its bar. */
 const OTHER = 'de'.repeat(32);
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
-const reachOf = (signers: unknown[] = [], notBelieved: string[] = []) => ({
+const reachOf = (signers: unknown[] = [], notBelieved: string[] = []) => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: ALL },
-  leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
   api: async (path: string, init?: RequestInit) => {
     t.called.push(`${init?.method ?? 'GET'} ${path}`);
     return path === '/api/accounts/acc_1/proposals' ? [t.filed ?? { id: APPROVE.proposal, chainId: CHAIN_ID, accountId: 'acc_1' }] : [];
@@ -108,13 +113,13 @@ const reachOf = (signers: unknown[] = [], notBelieved: string[] = []) => ({
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('an approval and an admission are sent through their calls, never a bare relay'); },
     call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 404, body: {} }; }, tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = (signers: unknown[] = [], notBelieved: string[] = []) => ({

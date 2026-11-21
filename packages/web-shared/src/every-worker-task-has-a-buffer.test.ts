@@ -52,6 +52,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'public-deposit': { vault: 'ab'.repeat(32), token: '00', amount: '1', state: '', parameters: '' },
   commitments: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' } },
   'vault-on-chain': { vault: 'ab'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
+  'vaults-on-chain': { vaults: ['ab'.repeat(32)], indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'chain-at-one-block': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'account-presence': { account: 'ab'.repeat(32), transactions: [], indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'events-of': { transactionHash: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },

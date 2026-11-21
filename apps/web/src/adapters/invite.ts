@@ -7,10 +7,11 @@ import { EMPLOYEE_CLASSIFICATIONS, tokenOfLink } from '../../../../src/core/invi
 import { READER_ROLES, ROLES, SIGNER_ROLES, type Role } from '../../../../src/core/roles.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { ACCOUNT_ORIGIN } from './session.js';
-import { namedFor } from './create-vault.js';
 import { seatThresholdRefusedOnThePage } from './approvers-on-page.js';
 import { keyringFor } from './keyring-person.js';
 import { READ, type Read } from './reads.js';
+import { namedIn } from './filing-judge.js';
+import type { PageView } from './filing-judge.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 import type { SignersApprovals } from './signers.js';
 
@@ -243,18 +244,18 @@ const ALREADY_FILED = 'already-filed';
  * or null when it did not.
  */
 export async function sendInvite(
-  personId: string, companyId: string, draft: InviteDraft, token?: string, onStep?: (step: number, steps: number) => void, seated: number | null = null,
+  personId: string, view: PageView, draft: InviteDraft, token?: string, onStep?: (step: number, steps: number) => void, seated: number | null = null,
 ): Promise<Invited> {
   try {
     if (ACCOUNT_ORIGIN === '') return { of: INVITED.refused, why: ACT_REFUSAL.notSetUp };
     if (!(await keyringFor(personId))) return { of: INVITED.refused, why: ACT_REFUSAL.notSignedIn };
-    const named = await namedFor(companyId);
+    const named = await namedIn(view);
     if (named === null) return { of: INVITED.refused, why: ACT_REFUSAL.didNotFinish };
     const made = askOf(draft, named, undefined, undefined, seated);
     if (made.of === MADE.problem) return { of: INVITED.problem, problem: made.problem, field: made.field, ...(made.most === undefined ? {} : { most: made.most }) };
     if (made.ask.kind === INVITE_KIND.signer && made.ask.threshold !== undefined) {
       /* The wallet's own per-vault check, made here first: a threshold that would leave a vault short is refused at its field, in the sentence that names the vault. */
-      const says = await seatThresholdRefusedOnThePage(companyId, { role: made.ask.role, threshold: made.ask.threshold });
+      const says = await seatThresholdRefusedOnThePage(view, { role: made.ask.role, threshold: made.ask.threshold });
       if (says !== null) return { of: INVITED.problem, problem: PROBLEM.thresholdRefused, field: FIELD.threshold, says };
     }
     const signer = made.ask.kind === INVITE_KIND.signer;

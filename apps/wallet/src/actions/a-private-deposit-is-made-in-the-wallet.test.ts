@@ -10,6 +10,7 @@ import { ActionStopped } from './run.js';
 import { readFileSync } from 'node:fs';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
+import { callOf, viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A PRIVATE DEPOSIT IS MADE WHOLE IN THE WALLET, AND NOTHING THE PAGE ANSWERS CAN MAKE IT LOSE TRACK OF ONE IT
@@ -74,7 +75,7 @@ const kept = () => {
 const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, { status: number; body: unknown }> } = {}) => {
   const calls: string[] = [];
   const told: Record<string, unknown> = {};
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0, wallet: { drewTheLabel: () => true, pinnedFor: () => null, pin: async () => {} } },
     at: { step: 2, steps: 2 }, signal: new AbortController().signal,
@@ -86,14 +87,12 @@ const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, { statu
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); },
     keyring: null,
     ...over,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, calls, told };
 };
 
-const reachOf = (over: Record<string, unknown> = {}) => ({
+const reachOf = (over: Record<string, unknown> = {}) => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32),
-  /* A read kept for a later step is handed to it; this one reaches no page, so there is nothing to hand over. */
-  stepTo: () => {},
   api: async (path: string, init?: RequestInit) => { throw Object.assign(new Error(`no answer for ${init?.method ?? 'GET'} ${path}`), { status: 404 }); },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: [LEAF], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [VAULT], account: ACCOUNT }),
@@ -217,7 +216,7 @@ describe('the deposit is paid only as the wallet built it, from its own account'
 describe('a page that answers the send wrongly never makes the wallet let go of a deposit it built', () => {
   it('a send answered "nothing was sent" is still a deposit that may be on its way', async () => {
     const { ctx, calls } = ctxWith({ answers: { [`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]: { status: 500, body: { error: 'Nothing was sent: the network refused it.' } } } });
-    const reach = reachOf({ api: (await import('./company-reach.js')).apiOver(ctx) });
+    const reach = reachOf({ api: (await import('./step-views.js')).serviceCallOver(callOf(ctx)) });
     const doors = depositDoorsFor(ctx, reach, {
       chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
     }, VAULT as never, MONEY);
@@ -229,7 +228,7 @@ describe('a page that answers the send wrongly never makes the wallet let go of 
 
   it('a send answered with a forged transaction name is kept as no name, and the chain is read for the deposit itself', async () => {
     const { ctx } = ctxWith({ answers: { [`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]: { status: 200, body: { txRef: 'x'.repeat(5000), transactionHash: 'not a hash' } } } });
-    const reach = reachOf({ api: (await import('./company-reach.js')).apiOver(ctx) });
+    const reach = reachOf({ api: (await import('./step-views.js')).serviceCallOver(callOf(ctx)) });
     const doors = depositDoorsFor(ctx, reach, {
       chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
     }, VAULT as never, MONEY);

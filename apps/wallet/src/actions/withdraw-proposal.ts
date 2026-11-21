@@ -18,13 +18,15 @@
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { RoundOnChain, OpenedRound } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import {
-  governedCallServiceFor, nothingWasSentBy, SentAndNotYetSeen, withCompanyKeys, WithdrawalRefused, withdrawOnDevice, type WithdrawalOutcome,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy, SentAndNotYetSeen, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { WithdrawalRefused, withdrawOnDevice, type WithdrawalOutcome } from '../../../../packages/web-shared/src/proposal-withdrawn-on-device.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { KINDS_IN_THE_WALLET, kindInTheWallet, neverWithdrawn, type KindInTheWallet } from '../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js';
 import { chainTimeOf } from './chain-time.js';
-import { companyReachFor, companyRecordsFor, keptReach, pureCircuits, type Handed } from './company-reach.js';
+import { companyReachFor, keptReach } from './company-reach.js';
+import { companyRecordsFor, pureCircuits } from './company-records-in-the-wallet.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { governedDoorsFor, type OneOffPaymentReach } from './one-off-payment.js';
 import { ActionStopped } from './run.js';
@@ -102,7 +104,7 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
           try {
             const records = companyRecordsFor(r, reach, await pureCircuits());
             const doors = governedDoorsFor(ctx, r, reach, records, handed);
-            const service = governedCallServiceFor(r.api);
+            const service = governedCallServiceThrough(r.stepView);
             const done = await withdrawOnDevice({
               ...doors,
               service: {

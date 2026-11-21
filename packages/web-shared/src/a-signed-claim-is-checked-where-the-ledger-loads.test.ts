@@ -20,6 +20,7 @@ import { newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../src/co
 import { sealPerson } from '../../../src/core/person-record.js';
 import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 import { signJoinCode } from 'midnight-identity/profile/join-code';
+import { serviceCallOf, serviceSource } from './records-source.js';
 
 /* The company's records believe every filing here, so a read turns only on the claim's check. */
 vi.mock('./vault-page-doors.js', async (real) => ({
@@ -87,7 +88,7 @@ const filed = toCompanyWire(signCompanyFiling(sealPerson(bo as never, 1, 1, VK),
 const readerWith = (claimRefusal: ClaimRefusal) => ({
   company: { id: 'c1', label: LABEL, viewingKey: KEYS }, network: 'stagenet', claimRefusal,
   directory: async () => ({}),
-  send: async (path: string) => (path.endsWith('/people') ? { status: 200, body: { people: [{ filed, handedOver: false }] } } : { status: 404, body: {} }),
+  view: serviceSource(serviceCallOf(async (path: string) => (path.endsWith('/people') ? { status: 200, body: { people: [{ filed, handedOver: false }] } } : { status: 404, body: {} })), 'c1'),
 }) as never;
 
 describe('a read of the people, with the claim check as its door', () => {

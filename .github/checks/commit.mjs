@@ -228,6 +228,12 @@ export function subjectProblem(subject, also) {
     }
     return `a subject line reads "kind: what changed", where kind is one of ${SUBJECT_KINDS.join(', ')}`;
   }
+  // A SUBJECT NAMES THE PART OF THE PROJECT IT CHANGES. Without it a log of
+  // one-liners says what happened but not where, and a reader has to open the
+  // change to find out which part it touched.
+  if (parts[3] === undefined) {
+    return 'a subject line names the part it changes in brackets: "kind(part): what changed"';
+  }
   const description = parts[4] ?? '';
   if (description.endsWith('.')) {
     return 'a subject line does not end with a full stop';

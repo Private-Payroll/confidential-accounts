@@ -68,7 +68,7 @@ export function repairCompanyKeyAction(reach: RepairCompanyKeyReach): ActionDefi
           }
           let rotated: Awaited<ReturnType<typeof rotateTheCompanyKeyHere>>;
           try {
-            rotated = await rotateTheCompanyKeyHere(await rotationDoorsIn(r, r.api), { repair: true });
+            rotated = await rotateTheCompanyKeyHere(await rotationDoorsIn(r), { repair: true });
           } catch (e) {
             if (e instanceof ActionStopped) throw e;
             throw new StepRefused(why('not-repaired', { says: said(e) }), codeOfError(e));

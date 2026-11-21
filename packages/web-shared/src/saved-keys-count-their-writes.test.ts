@@ -10,6 +10,7 @@ import { seal, unseal } from '../../../src/core/crypto.js';
 import { keyringAsk, KEYRING_PURPOSE } from '../../../src/core/wallet-unlock.js';
 import { sealKeyring, withNewSeat } from './keyring-blob.js';
 import * as keyring from './keyring.js';
+import * as creation from './company-creation.js';
 import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
 import type { Openable } from './wallet-sign-in.js';
 
@@ -102,14 +103,14 @@ function aService() {
 
 const started = async () => {
   keyring.signedInByAnotherScreen(answerFor);
-  return keyring.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US);
+  return creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US);
 };
 
 describe('every write of saved keys this page keeps counts itself inside the seal', () => {
   it('a person\'s first write is count 1, and each write after is one more', async () => {
     const service = aService();
     await started();
-    await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, new WalletAtTheOtherEnd(), US);
+    await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, new WalletAtTheOtherEnd(), US);
     const counts = service.puts.map((put) => JSON.parse(unseal((put as { keyBundle: never }).keyBundle, KEY)).counter);
     /* RED WHEN: saved keys are kept with no count, so the wallet cannot tell a write from an older copy;
      * or a later write does not count on from the keys it was made from, so the wallet refuses it as older. */
@@ -128,7 +129,7 @@ describe('every write of saved keys this page keeps counts itself inside the sea
     const before = service.puts.length;
     keyring.signedInByAnotherScreen(answerFor);
     await keyring.openKeysWithWallet(WALLET, new WalletAtTheOtherEnd(), US);
-    await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, new WalletAtTheOtherEnd(), US);
+    await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, new WalletAtTheOtherEnd(), US);
     expect(service.opened().counter).toBe(70 + service.puts.length - before);
   });
 });
@@ -153,7 +154,7 @@ describe('the page hands the wallet the saved keys and keeps what it sealed agai
     expect(service.saved().bundle).toEqual(sealedAgain);
     /* RED WHEN: this tab opens what the wallet sealed: the seat it holds is known here only once the wallet reads it. */
     expect(keyring.seatHeldHere('acc_FROMTHEWALLET')).toBeNull();
-    await keyring.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, new WalletAtTheOtherEnd(), US);
+    await creation.startCompanyHeldFromTheStart({ ...A_COMPANY, name: 'Second Ltd' }, WALLET, new WalletAtTheOtherEnd(), US);
     expect(Object.keys(service.opened().accounts)).toEqual(expect.arrayContaining([first.accountId, 'acc_FROMTHEWALLET']));
   });
 

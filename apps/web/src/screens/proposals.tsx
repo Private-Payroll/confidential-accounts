@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { CheckListIcon } from '@hugeicons/core-free-icons';
 import { EmptyState, PageHeader, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
-import { ASKS_UNREAD, type ProposalRow } from '../adapters/company-records.js';
+import { ASKS_UNREAD, type ProposalRow } from '../adapters/company-rows.js';
 import { Details } from '../records/details.js';
 import { Approvals, Day, ProposalStatus, ProposalsNotRead, ProposalWhat, ReadOf, WithRecords } from '../records/parts.js';
 import { Approve } from '../actions/approve.js';

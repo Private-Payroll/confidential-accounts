@@ -9,11 +9,10 @@ import { withOwedEntry, withoutOwedEntry } from '../../../../packages/web-shared
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import { seatInviterIn } from '../../../../src/core/proposal-filing.js';
-import { inviterForTheWallet } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import { inviterForTheWallet } from '../../../../packages/web-shared/src/invitation-taken-on-device.js';
 import type { Inviter } from '../../../../src/core/invitation.js';
-import type { SealedProposal } from '../../../../src/core/types.js';
 import { liveLeafReader, type LeafReader } from '../chain/seat-leaf.js';
-import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, enteredFor, keptReach, proposalsInTheView, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps, type UpkeepReach } from './upkeep.js';
 
@@ -53,8 +52,7 @@ export interface KeysGiven {
 const inviterOf = async (r: CompanyReach, onTheChain: readonly string[]): Promise<Inviter | undefined> => {
   let carried: Inviter | null = null;
   try {
-    const listed: unknown = await r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/proposals`);
-    carried = seatInviterIn(Array.isArray(listed) ? listed as SealedProposal[] : [], r.accountId, r.companyKeys, r.leaf);
+    carried = seatInviterIn(await proposalsInTheView(r)(), r.accountId, r.companyKeys, r.leaf);
   } catch {
     /* Proposals not read leave only the kept inviter, which the wallet then judges against the network's seats. */
     carried = null;
@@ -137,10 +135,10 @@ export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?
         ...(r.seat.invited === undefined ? {} : { invited: r.seat.invited }),
       };
       await ctx.keyring!.keep((k) => withOwedEntry(k, r.accountId, owed as never));
-      const filed = await ownEntryFiled(r.api, r.accountId, {
+      const filed = await ownEntryFiled(r.accountId, {
         read: () => ctx.keyring!.open().read().directoryEntriesOwed?.[r.accountId] ?? null,
         settle: () => ctx.keyring!.keep((k) => withoutOwedEntry(k, r.accountId)),
-      }, { signingSecret: r.seat.signingSecret, companyKeys: r.companyKeys }, async () => (await r.holders()).founding ?? null);
+      }, { signingSecret: r.seat.signingSecret, companyKeys: r.companyKeys }, async () => (await r.holders()).founding ?? null, r.stepView);
       if (typeof filed === 'object') {
         throw new StepRefused(why('entry-not-filed', { says: 'notYet' in filed ? filed.notYet : filed.waitingForItsInvitation }));
       }
@@ -150,12 +148,14 @@ export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?
   const offered: ActionStep = {
     title: { key: `${titles}.step.offer` },
     run: async (ctx) => {
-      const { reach: r, signed } = await sign(ctx);
+      /* The answer the wallet signed is kept from the step before; the company is this step's own read of it. */
+      const { signed } = await sign(ctx);
+      const r = await company(ctx);
       await vaultKeysOfferedAndFolded({
-        api: r.api, accountId: r.accountId, label: r.label, account: r.account, signerId: r.seat.signerId,
+        accountId: r.accountId, label: r.label, account: r.account, signerId: r.seat.signerId,
         signingSecret: r.seat.signingSecret, companyKey: r.companyKey, companyKeys: r.companyKeys,
         committeeKey: signed.committeeKey as never, recordsKey: signed.statement, entry: signed.entry!,
-        reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account), entered: enteredFor(r),
+        reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account), entered: enteredFor(r), view: r.stepView,
       });
     },
   };

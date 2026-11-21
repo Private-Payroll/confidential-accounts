@@ -14,10 +14,12 @@ import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import {
   POLICY_BANDS, policyTermsFromWire, policyTermsToWire, SPENDING_POLICY_KIND, type PolicyOpeningOnTheWire,
 } from '../../../../src/midnight/spending-policy-record.js';
-import { nothingWasSentBy, withCompanyKeys, type GovernedOutcome } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import type { GovernedOutcome } from '../../../../packages/web-shared/src/company-change-on-device.js';
 import { mayFileHere } from '../../../../packages/web-shared/src/may-file-here.js';
 import { PolicyNotOpenedHere, setSpendingPolicyOnDevice } from '../../../../packages/web-shared/src/spending-policy-here.js';
-import { companyReachFor, keptReach, type CompanyChain, type CompanyReach, type Handed } from './company-reach.js';
+import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { policyBarKind, policyBarOnDevice, policyDoorsFor, spendingPolicyKind, termsShown, type PolicyKindsReach } from './policy-kinds.js';
 import { approving, onTheChain, type ProposalKind } from './proposal-kinds.js';

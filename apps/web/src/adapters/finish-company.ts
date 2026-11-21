@@ -1,8 +1,8 @@
 import { lane } from './sends.js';
+import { canOpenCompanies, type CompanyCreationState } from 'vaults-web-shared/keyring.js';
 import {
-  canOpenCompanies, companyAwaitingItsSecondPress, finishCompanyInTheWallet, forgetAFinishedCreation,
-  takeUpACreationSetAside, type CompanyCreationState,
-} from 'vaults-web-shared/keyring.js';
+  companyAwaitingItsSecondPress, finishCompanyInTheWallet, forgetAFinishedCreation, takeUpACreationSetAside,
+} from 'vaults-web-shared/company-creation.js';
 import { CREATION_STANDINGS, READ_FAILURE, STAGE, creationChanged, creationOf, type Stage } from './creation-standing.js';
 import { keyringFor } from './keyring-person.js';
 import { ACCOUNT_ORIGIN } from './session.js';

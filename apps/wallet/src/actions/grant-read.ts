@@ -22,12 +22,11 @@ import { canonical } from '../../../../src/core/crypto.js';
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import { VaultPoolVersionAlreadyFiled } from '../../../../src/midnight/vault-pool.js';
 import { rotateTheCompanyKeyHere } from '../../../../packages/web-shared/src/company-key-here.js';
-import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
-import { grantsHere, grantsServedBy } from '../../../../packages/web-shared/src/purpose-wraps.js';
+import { HttpCompanyRecordStore, readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { grantsHere, grantsReadWith } from '../../../../packages/web-shared/src/purpose-wraps.js';
 import {
   grantsChangeFiledHere, grantsWrappedAgainHere, GrantsNotFiled, type GrantsAsked, type GrantsChangeFiled, type GrantsFilingDoors,
 } from '../../../../packages/web-shared/src/grants-filed-here.js';
-import type { WireSend } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { deviceSignerFrom, readersIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
@@ -85,18 +84,21 @@ export const grantAskedOf = (intent: ActIntent): GrantsAsked | Words => {
   return { give: grantEntryOf({ recipient: code.parts.readerKey, person: code.person, role }) };
 };
 
-/** What filing and reading the grants needs, from this wallet's own reach: the grants served, the directory, this seat's keys and its filing. */
-export const grantsFilingDoorsIn = (r: CompanyReach, api: CompanyReach['api'], send: WireSend): GrantsFilingDoors => {
+/**
+ * What filing and reading the grants needs, from this wallet's own reach: every version of the grants and its filing,
+ * both through the step's view, the directory, and this seat's keys.
+ */
+export const grantsFilingDoorsIn = (r: CompanyReach): GrantsFilingDoors => {
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   const secret = r.seat.signingSecret as Hex;
   return {
-    accountId: r.accountId, versions: grantsServedBy(api, r.accountId), directory,
+    accountId: r.accountId, versions: grantsReadWith((asked) => r.stepView.current().records(asked), r.accountId), directory,
     me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex }, signingSecret: secret, keys: r.companyKeys,
     seats: () => readersIn(directory).signers(),
     file: async (rec) => {
-      await new HttpCompanyRecordStore(r.accountId, send, secret, r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)).put(rec);
-      await enteredFor(r, api).enter([companyRecordEntry(rec)]);
+      await new HttpCompanyRecordStore(r.accountId, readsJoinedIn(r.stepView), secret, r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)).put(rec);
+      await enteredFor(r).enter([companyRecordEntry(rec)]);
     },
   };
 };
@@ -104,7 +106,7 @@ export const grantsFilingDoorsIn = (r: CompanyReach, api: CompanyReach['api'], s
 /** The change filed, in this act's words when it is not. */
 async function filedHere(r: CompanyReach, asked: GrantsAsked): Promise<GrantsChangeFiled> {
   try {
-    return await grantsChangeFiledHere(grantsFilingDoorsIn(r, r.api, r.send), asked);
+    return await grantsChangeFiledHere(grantsFilingDoorsIn(r), asked);
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     if (e instanceof VaultPoolVersionAlreadyFiled) throw new StepRefused(why('filed-meanwhile'), codeOfError(e));
@@ -117,11 +119,11 @@ async function filedHere(r: CompanyReach, asked: GrantsAsked): Promise<GrantsCha
 async function keyChangedAfter(ctx: StepContext, read: ReturnType<typeof keptReach>): Promise<boolean> {
   try {
     const r = await read.at(ctx);
-    const rotated = await rotateTheCompanyKeyHere(await rotationDoorsIn(r, r.api));
+    const rotated = await rotateTheCompanyKeyHere(await rotationDoorsIn(r));
     if (rotated.state !== 'rotated' && rotated.state !== 'rotated-elsewhere') return false;
     read.renew();
     const now = await read.at(ctx);
-    return (await grantsWrappedAgainHere(grantsFilingDoorsIn(now, now.api, now.send))).state !== 'not-wrapped';
+    return (await grantsWrappedAgainHere(grantsFilingDoorsIn(now))).state !== 'not-wrapped';
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     /* Not done here is said to the page; the next act of a signer who stays repairs the key and wraps the grants in its upkeep. */
@@ -132,7 +134,7 @@ async function keyChangedAfter(ctx: StepContext, read: ReturnType<typeof keptRea
 /** The readers in force handed to the service, which keeps them only as the signatures reach the bar; true when it kept them. */
 async function readersHandedIn(r: CompanyReach, filed: GrantsChangeFiled): Promise<boolean> {
   try {
-    await r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/readers`, { method: 'POST', body: JSON.stringify(filed.readers) });
+    await r.stepView.current().write([{ to: 'readers', body: filed.readers }]);
     return true;
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
@@ -165,7 +167,7 @@ export async function confirmWhatAGiveReplaces(ctx: Pick<StepContext, 'confirm'>
 /** The entries of the grants in force as this seat believes them; refused with the read's own words when they cannot be read. */
 async function inForceHere(r: CompanyReach): Promise<readonly GrantEntry[]> {
   try {
-    return (await grantsHere(grantsFilingDoorsIn(r, r.api, r.send))).inForce?.grants.entries ?? [];
+    return (await grantsHere(grantsFilingDoorsIn(r))).inForce?.grants.entries ?? [];
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     throw new StepRefused(why('not-filed', { says: said(e) }), codeOfError(e));

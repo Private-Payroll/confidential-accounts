@@ -9,14 +9,19 @@
 import { describe, it, expect } from 'vitest';
 import { OUR_SERVICE, type CompanyService } from '../../../../src/midnight/company-service-record.js';
 import { handedOver, notThroughOurService, ServiceNotReached, serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
-import { governedCallServiceFor, nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { vaultServiceFor } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { holdersAdopting, vaultServiceOver, viewOver } from '../../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../../src/testing/service-routes-in-memory.js';
+
 import WORDS from '../locales/en.json';
-import { apiOver, handOverFor } from './company-reach.js';
+import { serviceCallOver } from './step-views.js';
+import { handOverFor } from './hand-over-in-the-wallet.js';
 import { FELL_ORDER, fellBackLine, type FellBack } from './fall-back-line.js';
 import type { StepContext } from './definition.js';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
+import { viewsOfTheStep } from './step-views.test-support.js';
 
 const ACCOUNT = 'ac'.repeat(32);
 const OWN: CompanyService = { service: 'own', at: 'https://relay.example.com' };
@@ -26,7 +31,9 @@ const APPROVE = { kind: 'account-call', contract: ACCOUNT, circuit: 'approve' } 
 const anAct = (shown: unknown[]) => ({
   intent: { name: 'approve-proposal', fields: {} }, held: { identity: {} as never, account: 0 }, signal: new AbortController().signal,
   show: (words: unknown) => { shown.push(words); },
-}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show'>;
+  /* The runner's door for a call this wallet sends itself, with no read of the company to check here. */
+  sendStraight: viewsOfTheStep(async () => { throw new Error('a hand-over reads nothing of the company here'); }).sendStraight,
+}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show' | 'sendStraight'>;
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64');
 const CALL = b64({ circuit: 'approve', to: ACCOUNT });
 const intentOf = (actions: readonly unknown[]) =>
@@ -96,7 +103,7 @@ const aChain = (log: unknown[], w: World = {}) => {
         revert: async () => undefined,
       }) as never,
     }),
-    fetch: (async (url: string) => {
+    ownServiceSend: (async (url: string) => {
       log.push(`handed to ${url}`);
       if (w.ownService === 'unreached') throw new TypeError('Failed to fetch');
       return new Response('{}', { status: w.ownService === 'answers-500' ? 500 : 200 });
@@ -284,12 +291,12 @@ describe('THE CALL SENT AROUND IS THE VERY CALL THAT WAS PROVEN', () => {
 });
 
 describe('A SERVICE THAT GIVES NO ANSWER IS SEEN AS THAT THROUGH EVERY ROUTE A MONEY CALL TAKES', () => {
-  /* The service's routes as the window reaches them: every call goes out through the page, which heard nothing back. */
-  const silent = apiOver({ call: async () => { throw new ServiceNotReached('the company\'s service could not be reached', false); } });
+  /* The service's routes as the window reaches them: every write goes out through the page, which heard nothing back; the reads the view makes before a write are answered. */
+  const silent = readRoutesOver(serviceCallOver(async () => { throw new ServiceNotReached('the company\'s service could not be reached', false); }), { directory: 'empty', newest: 'none-entered' });
   const roster = async () => ({ signers: [] }) as never;
   it('approve, send, file, carry, charge, cancel, payout, merge and deposit each carry the mark through', async () => {
-    const governed = governedCallServiceFor(silent);
-    const vaults = vaultServiceFor(silent, 'acc_1', roster);
+    const governed = governedCallServiceThrough(viewOver(silent, 'acc_1'));
+    const vaults = vaultServiceOver(silent, 'acc_1', roster, holdersAdopting('ab'.repeat(32)));
     const calls: [string, () => Promise<unknown>][] = [
       ['approve', () => governed.approve('p1', { tx: CALL } as never)],
       ['send', () => governed.send('p1', { tx: CALL } as never)],
@@ -314,7 +321,7 @@ describe('A SERVICE THAT GIVES NO ANSWER IS SEEN AS THAT THROUGH EVERY ROUTE A M
     const shown: unknown[] = [];
     const over = handOverFor(anAct(shown), aChain(log, { onChain: [false] }), { choice: OUR_SERVICE }, Date.now, sponsorship(log));
     const e = await handedOver(over, {
-      tx: CALL, call: APPROVE, viaService: () => governedCallServiceFor(silent).approve('p1', { tx: CALL } as never), after: async () => 'kept' as never,
+      tx: CALL, call: APPROVE, viaService: () => governedCallServiceThrough(viewOver(silent, 'acc_1')).approve('p1', { tx: CALL } as never), after: async () => 'kept' as never,
     }).then((x) => x, (x: unknown) => x);
     /* RED WHEN: an approval our service gave no answer to stops instead of being read for and sent straight. */
     expect(e).toBe('kept');

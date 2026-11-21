@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, SafeIcon } from '@hugeicons/core-free-icons';
-import { Button, EmptyState, PageHeader, StatTiles, useText } from 'vaults-ui';
+import { Button, EmptyState, PageHeader, useText } from 'vaults-ui';
 import { CreateVault } from '../actions/create-vault.js';
 import { useVaultActions, VaultsPending } from '../records/vault-pending.js';
-import { ReadOf, VaultTile, WithRecords } from '../records/parts.js';
+import { ReadOf, VaultTiles, WithRecords } from '../records/parts.js';
 
 /**
  * VAULTS: Create a vault on the title line, opening the one create-a-vault
@@ -33,7 +33,7 @@ export function Vaults({ children }: { children?: ReactNode }) {
                 <div data-part="vaults" data-count={rows.length}>
                   {rows.length === 0
                     ? <EmptyState icon={SafeIcon}>{t('vaults.none')}</EmptyState>
-                    : <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} company={records.id} vault={v} index={i} />)}</StatTiles>}
+                    : <VaultTiles company={records.id} rows={rows} />}
                 </div>
               </>
             )}

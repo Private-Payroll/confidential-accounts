@@ -2,15 +2,15 @@ import { authorityHere, committeeWarning, EVERY_SUPER_ADMIN_NEEDED, ONE_SUPER_AD
 import type { ProposalFile } from 'vaults-web-shared/proposal-file.js';
 import { approveSuperAdminChange, joinFromAFile, joiningKeys, raiseSuperAdminChange } from 'vaults-web-shared/super-admin-change.js';
 import { countOf } from 'vaults-web-shared/proposal-in-the-wallet.js';
-import { api, ServiceRefused } from 'vaults-web-shared/keyring.js';
-import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { ServiceRefused } from 'vaults-web-shared/service-transport.js';
 import { whyNotInstallable } from 'midnight-identity/profile/request';
 import { sameCommittee, sameCommitteeKey } from '../../../../src/midnight/vault-committee.js';
 import { superAdminSigned } from 'vaults-web-shared/super-admin-ask.js';
 import {
   keepApproval, keepJoin, keepRaisedChange, keptChangeFile, RaiserLeaves, type KeptChange,
 } from 'vaults-web-shared/super-admins-on-the-service.js';
-import { companyRoute, SERVICE } from './handover-state.js';
+import { onTheChainIn, type PageView } from './filing-judge.js';
+import { LIST } from './view-asks.js';
 import { READ } from './reads.js';
 import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -29,8 +29,11 @@ export const SUPER_ADMIN_WHY = {
 export type SuperAdminWhy = (typeof SUPER_ADMIN_WHY)[keyof typeof SUPER_ADMIN_WHY];
 
 export type SuperAdminActed =
-  /** Done: `sent` once the change reached every contract; otherwise `held` says why it has not finished, or is null while it waits for signatures. */
-  | { readonly of: typeof ACTED.done; readonly sent: boolean; readonly held: string | null }
+  /**
+   * Done: `sent` once the change reached every contract; otherwise `held` says why it has not finished, or is null while
+   * it waits for signatures. `sentAny` is true when this act sent the change to at least one contract.
+   */
+  | { readonly of: typeof ACTED.done; readonly sent: boolean; readonly held: string | null; readonly sentAny: boolean }
   | { readonly of: typeof ACTED.refused; readonly why: SuperAdminWhy; readonly act?: undefined }
   | { readonly of: typeof ACTED.refused; readonly act: ActRefusal; readonly why?: undefined };
 
@@ -158,7 +161,7 @@ export async function raiseChange(
       company: reach.company.label, account: reach.company.account, summary: '',
     });
     await keepRaisedChange(doors, superAdminService(reach), raised.file);
-    return { of: ACTED.done, sent: false, held: null };
+    return { of: ACTED.done, sent: false, held: null, sentAny: false };
   } catch (e) {
     return refusedBy(e);
   }
@@ -173,7 +176,7 @@ export async function joinChange(reach: SuperAdminReach, chainId: string): Promi
     if (doors === null) return NO_DOORS;
     const joined = await joinFromAFile(doors, file);
     await keepJoin(superAdminService(reach), file, joined, await doors.wallet.key({ company: reach.company.label, account: reach.company.account }));
-    return { of: ACTED.done, sent: false, held: null };
+    return { of: ACTED.done, sent: false, held: null, sentAny: false };
   } catch (e) {
     return refusedBy(e);
   }
@@ -194,7 +197,8 @@ export async function approveChange(reach: SuperAdminReach, change: ChangeShown)
     await keepApproval(superAdminService(reach), file, approved.file);
     /* Short of signatures only, it waits for the next super admin; anything else that held it back is said as it is. */
     const waitsOnly = approved.contracts.every((c) => c.state === 'current' || c.state === 'sent' || c.state === 'waiting');
-    return { of: ACTED.done, sent: approved.done, held: approved.done || waitsOnly ? null : approved.held };
+    const sentAny = approved.contracts.some((c) => c.state === 'sent' || c.state === 'not-shown');
+    return { of: ACTED.done, sent: approved.done, held: approved.done || waitsOnly ? null : approved.held, sentAny };
   } catch (e) {
     return refusedBy(e);
   }
@@ -207,9 +211,9 @@ const VAULT_ADDRESS = /^[0-9a-f]{64}$/u;
  * of vaults (a member's read), less every contract the account lists on the chain. No change of the super admins
  * names them, since the service sends only for a vault the account lists; each is moved once the account lists it.
  */
-export async function notYetAdopted(accountId: string, listed: readonly string[]): Promise<readonly string[]> {
-  const got = await api(companyRoute(accountId, SERVICE.vaults)) as { rows?: unknown };
-  const rows = Array.isArray(got.rows) ? got.rows as ReadonlyArray<{ vault?: unknown }> : [];
+export async function notYetAdopted(view: PageView, listed: readonly string[]): Promise<readonly string[]> {
+  const got = await view.list(LIST.vaults) as { rows?: unknown } | null;
+  const rows = Array.isArray(got?.rows) ? got.rows as ReadonlyArray<{ vault?: unknown }> : [];
   const known = new Set(listed.map((a) => a.toLowerCase()));
   return rows.flatMap((r) => {
     const vault = typeof r.vault === 'string' ? r.vault.toLowerCase() : '';
@@ -217,12 +221,10 @@ export async function notYetAdopted(accountId: string, listed: readonly string[]
   });
 }
 
-/** The company a signer has chosen, named by its label and account as the service lists them; null when it names neither yet. */
-export async function reachOfTheCompany(companyId: string): Promise<SuperAdminReach | null> {
-  const named = await api(companyRoute(companyId, SERVICE.change)) as { label?: unknown; company?: unknown };
-  const label = readCompanyLabel(named.label);
-  const account = readAccountAddress(named.company);
-  return label === null || account === null ? null : { company: { accountId: companyId, label, account }, asSuperAdmin: false };
+/** The company a signer has chosen, named by its label and account as the screen's view reads its record; null when it names neither yet. */
+export async function reachOfTheCompany(view: PageView): Promise<SuperAdminReach | null> {
+  const where = await onTheChainIn(view);
+  return where === null ? null : { company: { accountId: view.company, label: where.company, account: where.account }, asSuperAdmin: false };
 }
 
 /** How many approvals a change asks for, as typed or as read: a whole number, or null for anything else. */

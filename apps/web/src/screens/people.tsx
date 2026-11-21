@@ -1,7 +1,8 @@
 import { UserGroupIcon } from '@hugeicons/core-free-icons';
 import { Badge, EmptyState, PageHeader, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn } from 'vaults-ui/data-table';
-import { READ, type PeopleBelief, type PersonRow } from '../adapters/company-records.js';
+import { READ, type PeopleBelief } from '../adapters/company-records.js';
+import { type PersonRow } from '../adapters/company-rows.js';
 import { InvitePeople } from '../actions/invite.js';
 import { PersonPanel } from '../actions/person-panel.js';
 import { BELIEF, BeliefLeftOut, PaidWords, PayOf, ReadOf, StandingBadge, WithRecords } from '../records/parts.js';

@@ -56,11 +56,11 @@ let standing: { state: 'none' | 'not-for-this-currency' | 'set' } = { state: 'se
 let runs: PayrollRun[] = [];
 /* The identity on chain of every proposal the device believes, by the company's name for it. */
 let onChain = new Map<string, string>();
-vi.mock('./spending-policy-here.js', () => ({
+vi.mock('./spending-policy-read-here.js', () => ({
   spendingPolicyHere: async () => (standing.state === 'set' ? { state: 'set', policy: POLICY, opening: OPENING, keys: {}, commitment: '', version: 1 } : standing),
 }));
 /* Who raised the run holds nothing up here: a seat under no removal raised every run this file charges. */
-vi.mock('./governed-call-on-device.js', () => ({ refuseARunALeaverRaisedHere: async () => undefined }));
+vi.mock('./seats-leaving-here.js', () => ({ refuseARunALeaverRaisedHere: async () => undefined }));
 vi.mock('./run-rebuilt-here.js', () => ({
   believedRunsHere: async () => runs,
   believedProposalIdsOnChainHere: async () => onChain,

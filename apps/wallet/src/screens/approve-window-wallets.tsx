@@ -10,9 +10,16 @@ import { subwalletsOnRecord } from '../accounts/subwallet-record.js';
 import { MAIN_ACCOUNT } from '../accounts/subwallets.js';
 import { pickedHere, signedInWalletHere } from '../lib/signed-in-here.js';
 import { StatusAlert } from '../components/status.js';
-import { isPayingAsk } from './approve-slot.js';
-import type { PayingPick } from './paying-pick.js';
-import { AccountChoices } from './approve-pays-from.js';
+import { isPayingAsk, paysCoins } from './approve-slot.js';
+import { OFFERED } from './paying-pick.js';
+import type { PayingPick, PickedAccount } from './paying-pick.js';
+import { AccountChoices, paidWords } from './approve-pays-from.js';
+
+/**
+ * The account an ask that pays pays from until the person picks another: for coins, the main account of the wallet
+ * that opens; for only a call's network fee, the account that wallet offers this site, read once it is open.
+ */
+export const firstPickOf = (request: Ask): PickedAccount => (paysCoins(request) ? MAIN_ACCOUNT : OFFERED);
 
 /**
  * Which wallet the window's Approve opens, and the list it is picked from when the page has none kept. For a paying
@@ -41,8 +48,7 @@ export function useWalletThatOpens(request: Ask, port: Port, cannotOpen: string 
     const index = wallets.findIndex((wallet) => wallet.id === id);
     return walletNameOnRecord(id) ?? t('ask.wallet.unnamed', { n: index + 1 });
   };
-  /* The account an ask that pays pays from: the main account of the wallet that opens until the person picks another. */
-  const [account, setAccount] = useState<number>(MAIN_ACCOUNT);
+  const [account, setAccount] = useState<PickedAccount>(() => firstPickOf(request));
   const payingWallets = fixed !== null ? [fixed] : offerList ? wallets.map((wallet) => wallet.id) : [walletId];
   const fingerprintOf = (id: string): string | null =>
     held.find((wallet) => wallet.id === id)?.fingerprint ?? subwalletsOnRecord(id)?.fingerprint ?? null;
@@ -69,7 +75,7 @@ export function WhichWalletOpens({ request, which, busy }: {
   const { wallets } = useSession();
   const origin = request.requester.origin;
   const { remembered, fixed, offerList, picked, setPicked, nameOf } = which;
-  if (isPayingAsk(request)) return <PayingAccounts origin={origin} which={which} busy={busy} />;
+  if (isPayingAsk(request)) return <PayingAccounts request={request} which={which} busy={busy} />;
   return (
     <>
       {fixed !== null && <p className="m-0 text-sm text-muted-foreground" data-opens-wallet>{t('ask.wallet.opens', { wallet: nameOf(fixed) })}</p>}
@@ -113,14 +119,16 @@ function RememberedWalletGone({ origin }: { readonly origin: string }): ReactNod
  * open are listed: the one the page's sign-in kept, or every wallet here when the page has none. Balances are not
  * shown: they need the wallet open.
  */
-function PayingAccounts({ origin, which, busy }: {
-  readonly origin: string; readonly which: WalletThatOpens; readonly busy: string | null;
+function PayingAccounts({ request, which, busy }: {
+  readonly request: Ask; readonly which: WalletThatOpens; readonly busy: string | null;
 }): ReactNode {
   const t = useText();
+  const origin = request.requester.origin;
   const { remembered, opens, account, payingWallets, accountNamesOf, pickToPay, nameOf } = which;
   return (
-    <Section list={false} box={false} aria-label={t('ask.pays.choose')} title={t('ask.pays.choose')} description={t('ask.pays.choose-why')}>
+    <Section list={false} box={false} aria-label={t('ask.pays.choose')} title={t('ask.pays.choose')} description={t(paidWords(request, 'ask.pays.choose-why'))}>
       {remembered.of === 'gone' && <RememberedWalletGone origin={origin} />}
+      {account === OFFERED && <p className="m-0 text-sm" data-pays-from-offered>{t('ask.pays.offered')}</p>}
       <ul className="plain" data-accounts-to-choose>
         {payingWallets.map((id) => {
           const names = accountNamesOf(id);

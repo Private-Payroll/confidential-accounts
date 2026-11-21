@@ -9,17 +9,25 @@ import { rosterVaultKeys } from '../../../../src/core/vault-keys.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import { rosterRefusalOf } from '../../../../src/midnight/secret-readers.js';
 import type { SealedPool } from '../../../../src/midnight/vault-pool.js';
-import { governedCallServiceFor } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
 import type { CreateVaultDoors, SecretKeptHere } from '../../../../packages/web-shared/src/vault-doors.js';
 import type { VaultService } from '../../../../packages/web-shared/src/vault-service.js';
+import type { RecordWrite, VaultStartStep } from '../../../../packages/web-shared/src/records-source.js';
 import { vaultInfoRecordsFor } from '../../../../packages/web-shared/src/vault-info-here.js';
-import { deviceRecordsFor, deviceSignerFrom, readersIn, seatNotBelievedHere, vaultServiceFor } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { deviceRecordsFor, deviceSignerFrom, readersIn, seatNotBelievedHere } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { unnamedKeptIn } from '../../../../packages/web-shared/src/vault-notes-here.js';
+import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { stopsFor } from './leaving-read-in-the-wallet.js';
+import { vaultServiceThrough } from '../../../../packages/web-shared/src/vault-service-through-the-view.js';
 import type { DeviceRecords } from '../../../../packages/web-shared/src/deposit-on-device.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
-import { vaultOnChain, fromIndexerAt } from '../chain/company-label-on-chain.js';
+import { vaultOnChain, fromIndexerAt } from '../chain/view-doors.js';
 import { chainTimeOf } from './chain-time.js';
-import { approversHere, enteredFor, runsOutrunHere, type CompanyReach } from './company-reach.js';
+import { approversHere, runsOutrunHere } from './approvers-here.js';
+import { enteredFor, writesOfTheStep, proposalsInTheView, type CompanyReach } from './company-reach.js';
 import { StepRefused, type StepContext, type Words } from './definition.js';
+import { adopted, CARRIED_BY } from './holders-moved-here.js';
+import type { MovingSend } from './step-views.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /** Where a vault's secret is kept in this wallet, how the doors pause between reads, and the indexer they read vaults at. */
@@ -74,6 +82,17 @@ export const recordsKeepingTheSecret = (records: DeviceRecords, kept: SecretKept
   });
 };
 
+/**
+ * The sends a vault's adoption may go by, declared as one move: the account's call of the vault's start written through
+ * the view, or, when the service took nothing of it, the account's own adopt sent straight to the chain.
+ */
+export const adoptionSends = (account: string, vault: string): readonly MovingSend[] => [
+  { start: vault }, { circuit: CARRIED_BY['adopt-vault'].circuit, contract: account.toLowerCase() },
+];
+
+/* What the service answered for one write through the step's view, refused as the service refused it. */
+const writtenThrough = async <T>(r: CompanyReach, w: RecordWrite): Promise<T> => await writesOfTheStep(r)(r.accountId, w) as T;
+
 /** The doors `createCompanyVault` runs on in the wallet: every read the wallet's own or judged, every write signed here. */
 export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoorsReach): CreateVaultDoors {
   const person = ctx.person ?? (() => { throw new StepRefused(why('no-person')); })();
@@ -81,17 +100,20 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const entered = enteredFor(r);
-  const at = (vault: string, route: string) => `/api/accounts/${encodeURIComponent(r.accountId)}/vaults/${vault}${route}`;
-  const post = (path: string, body: unknown) => r.api(path, { method: 'POST', body: JSON.stringify(body) });
-  const base = vaultServiceFor(r.api, r.accountId, r.roster);
+  type Started = Awaited<ReturnType<NonNullable<VaultService['startSecret']>>>;
+  const started = (vault: string, step: VaultStartStep, body: unknown) => writtenThrough<Started>(r, { to: 'vault-start', vault, step, body });
+  const base = vaultServiceThrough(r.stepView);
   const service: VaultService = {
     ...base,
     keys: async () => ({ committee: null, why: null, readers: await readersFrom(r) }),
-    startAccountCall: (vault, body) => post(at(vault, '/start/account'), body),
-    startSecret: (vault, tx) => post(at(vault, '/start/secret'), { tx }),
-    startCopy: (vault, tx, place) => post(at(vault, '/start/copy'), { tx, place }),
+    startAccountCall: (vault, body) => {
+      if (body.call === 'adopt') ctx.movesWhoHolds(adoptionSends(r.account, vault), adopted(vault));
+      return started(vault, 'account', body);
+    },
+    startSecret: (vault, tx) => started(vault, 'secret', { tx }),
+    startCopy: (vault, tx, place) => started(vault, 'copy', { tx, place }),
   };
-  const proposals = governedCallServiceFor(r.api);
+  const proposals = governedCallServiceThrough(r.stepView);
   const builder = {
     ...r.builder,
     bornHeldVault: async (input: Parameters<NonNullable<typeof r.builder.bornHeldVault>>[0]) => {
@@ -110,19 +132,16 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
     me: deviceSignerFrom(r.leaf, r.companyKey),
     myRecordsKey: recordsKeypairFrom(fromHex(r.companyKey)).publicKey as Hex,
     signers: readersIn(directory).signers,
-    records: recordsKeepingTheSecret(deviceRecordsFor(r.seat.signingSecret, judge, () => person, entered, r.send), kept),
-    vaultInfo: vaultInfoRecordsFor(r.accountId, r.seat.signingSecret, judge, () => person, r.send),
+    records: recordsKeepingTheSecret(deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))), kept),
+    vaultInfo: vaultInfoRecordsFor(r.accountId, r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
     secretKeptHere: kept,
+    ...unnamedKeptIn(r.stepView.current()),
     proposals: {
       accountId: r.accountId, directory, companyKeys: r.companyKeys, signingSecret: r.seat.signingSecret, entered,
-      carried: (id, body) => post(`/api/proposals/${encodeURIComponent(id)}/carried`, body),
+      carried: (id, body) => writtenThrough(r, { to: 'carried', id, body }),
       service: {
-        callState: async () => {
-          const chain = await r.chain.callState(r.account);
-          if (chain === null) throw new Error('this wallet could not read the company\'s account at one block.');
-          return { ...chain, account: r.account };
-        },
-        send: proposals.send, file: proposals.file!, sealedProposals: proposals.sealedProposals!,
+        callState: proposals.callState,
+        send: proposals.send, file: proposals.file!, sealedProposals: proposalsInTheView(r),
         ...(proposals.cancel === undefined ? {} : { cancel: proposals.cancel }),
       },
     },
@@ -130,6 +149,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
     chainTime: chainTimeOf(r),
     onChain: async () => ({ holders: await r.holders() }),
     indexer: async () => r.chain.indexer,
+    vaultsHere: r.vaultsHere,
     secretReaders: {
       company: r.label,
       read: async (vault) => {

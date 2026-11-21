@@ -5,6 +5,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { signingPublicKeyOf, toHex, wrapKey, type Hex } from '../../../../src/core/crypto.js';
 import type { StepContext } from './definition.js';
+import { firstReadsAnswered, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SEAT TAKEN BY ADDRESS AND ADMITTED BEFORE ITS OWN WALLET KEPT IT IS KEPT BY THE NEXT ACT ON THE COMPANY.** The
@@ -53,18 +54,18 @@ const world = (o: { seats?: string[]; account?: { status: number; body: unknown 
   };
   const builder = { ownSeat: async (s: { signingSecret: string }) => (s.signingSecret === SIGNING ? LEAF : 'cc'.repeat(32)) } as never;
   const answer = o.account ?? { status: 200, body: SEALED([wrapTo(OTHERS, 'sgn_ada'), wrapTo(WRAPPING, 'sgn_dee')]) };
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: { name: 'give-vault-keys', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT } } as ActIntent,
     asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'dee',
     held: { identity, secret }, at: { step: 1, steps: 3 }, signal: new AbortController().signal,
     relay: async () => {},
-    call: async () => answer,
+    call: firstReadsAnswered(async () => answer),
     tell: () => {},
     keyring: {
       open: () => ({ read: () => structuredClone(keys) }),
       keep: async (change: (k: any) => any) => { order.push('kept'); keys = change(structuredClone(keys)); },
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   const reached = () => { t.roster = roster; return companyReachFor(ctx, chain as never, builder, why); };
   return { ctx, chain, builder, keysNow: () => keys, order, reached };
 };

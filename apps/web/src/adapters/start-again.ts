@@ -1,4 +1,4 @@
-import { NoCreationKeptHere, startAnUnfinishedCreationAgain, type StartedAgain } from 'vaults-web-shared/keyring.js';
+import { NoCreationKeptHere, startAnUnfinishedCreationAgain, type StartedAgain } from 'vaults-web-shared/company-creation.js';
 import { creationChanged } from './creation-standing.js';
 import { whileNothingIsSent } from './sends.js';
 import { theCreationBuilder } from './vault-builder.js';

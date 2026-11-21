@@ -89,12 +89,13 @@ describe('THE FULL CHECK', () => {
     expect((await checked.read(COMPANY))!.heads).toEqual([d.landed[0]!.head]);
   });
 
-  it('ON A DEVICE THAT STARTED FROM A LATER HEAD, keeps what that start gave it while the check runs, and holds the check in its place only once it reaches the head on chain', async () => {
+  it('ON A DEVICE THAT STARTED FROM A LATER HEAD, keeps what that start gave it, and the heads before it it found, while the check runs, and holds the check in its place only once it reaches the head on chain', async () => {
     const c = await aCompanyOf(5);
     const checked = checkedHeadsInMemory();
     const started: CheckedHeads = {
       latest: c.head, fromZero: null, heads: [c.landed[3]!.head, c.landed[4]!.head], base: 3,
       from: { by: 'vouched', seq: 3, head: c.landed[3]!.head, run: 'ee'.repeat(32), at: 1 },
+      before: [{ from: 1, heads: [c.landed[1]!.head, c.landed[2]!.head], tied: { seq: 3, head: c.landed[3]!.head } }],
     };
     await checked.write(COMPANY, started);
     const withholding: TreeService = {
@@ -110,10 +111,12 @@ describe('THE FULL CHECK', () => {
     expect(await checked.read(COMPANY)).toEqual(started);
     const again = await fullCheckHere(doorsOf(c, checked));
     expect(again.stop).toBeNull();
-    /* RED WHEN: a check that reached the head on chain from the first is not held in place of the start. */
-    expect(await checked.read(COMPANY)).toEqual({
-      latest: c.head, fromZero: c.head, heads: c.landed.map((l) => l.head), recent: c.landed.map((_, i) => c.checkedAt(i)),
-    });
+    /* RED WHEN: a check that reached the head on chain from the first is not held in place of the start, or keeps the heads before a start it no longer has. */
+    const fromTheFirst = { latest: c.head, fromZero: c.head, heads: c.landed.map((l) => l.head), recent: c.landed.map((_, i) => c.checkedAt(i)) };
+    expect(await checked.read(COMPANY)).toEqual(fromTheFirst);
+    /* RED WHEN: a read that began from the start before the check from the first was held writes the start back over it. */
+    await checked.write(COMPANY, started);
+    expect(await checked.read(COMPANY)).toEqual(fromTheFirst);
   });
 
   it('nothing anchored yet is the empty head, checked at once', async () => {
@@ -164,6 +167,16 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(heads(3));
     expect(await treeKeptHere(db).checked.read('acct_other')).toBeNull();
   });
+  it('keeps one row for each unnamed note, holding what it was last looked for in, overwritten by the next look', async () => {
+    const db = new IDBFactory();
+    await treeKeptHere(db).unnamed.keep(COMPANY, ['v:n1', 'v:n2'], 'ada:1:1:0:1');
+    /* RED WHEN: a note kept is not read back, or is read back for another note or another company. */
+    expect(await treeKeptHere(db).unnamed.lookedIn(COMPANY, ['v:n1', 'v:n2', 'v:n3'])).toEqual(['ada:1:1:0:1', 'ada:1:1:0:1', null]);
+    await treeKeptHere(db).unnamed.keep(COMPANY, ['v:n1'], 'ada:2:1:0:1');
+    /* RED WHEN: a later look adds a row beside the first rather than overwriting it. */
+    expect(await treeKeptHere(db).unnamed.lookedIn(COMPANY, ['v:n1', 'v:n2'])).toEqual(['ada:2:1:0:1', 'ada:1:1:0:1']);
+    expect(await treeKeptHere(db).unnamed.lookedIn('acct_other', ['v:n1'])).toEqual([null]);
+  });
   it('KEEPS THE HEADS IT CHECKED LAST WHOLE, FOR A RECOVERY RESUMING FROM ONE, AND DROPS ANY THAT ARE NOT HEADS CHECKED', async () => {
     const db = new IDBFactory();
     const two = heads(2);
@@ -180,13 +193,30 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
     const db = new IDBFactory();
     const started: CheckedHeads = {
       ...heads(1500), fromZero: null, base: 900, from: { by: 'vouched', seq: 900, head: head(901), run: 'ee'.repeat(32), at: 1_800_000_000_000 },
+      before: [{ from: 10, heads: [head(7010), head(7011)], tied: { seq: 12, head: head(7012) } }],
     };
     await treeKeptHere(db).checked.write(COMPANY, started);
-    /* RED WHEN: where the device started, or the seq its heads start from, is not kept, or not read back. */
+    /* RED WHEN: where the device started, the seq its heads start from, or the heads before it it found, are not kept, or not read back. */
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(started);
+    /* RED WHEN: heads before the start kept otherwise than whole are believed: a run with a head that is not one, or tied before its own end. */
+    for (const bad of [{ from: 10, heads: ['zz'], tied: { seq: 12, head: head(7012) } }, { from: 10, heads: [head(7010), head(7011)], tied: { seq: 10, head: head(7012) } }]) {
+      await treeKeptHere(db).checked.write(COMPANY, { ...started, before: [bad as never] });
+      const { before: _dropped, ...rest } = started;
+      expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(rest);
+    }
     /* RED WHEN: a check from the first written in its place keeps the rows the started heads wrote - other heads under the same seqs. */
+    await treeKeptHere(db).checked.write(COMPANY, started);
+    expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(started);
+    /* RED WHEN: a write that began before another on this device checked a newer head puts the older latest back. */
+    const older = { ...started, latest: { ...started.latest, seq: started.latest.seq - 1, head: head(9999) }, before: [{ from: 20, heads: [head(7020)], tied: { seq: 21, head: head(7021) } }] };
+    await treeKeptHere(db).checked.write(COMPANY, older);
+    expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual({ ...started, before: [...started.before!, ...older.before] });
+    await treeKeptHere(db).checked.write(COMPANY, started);
     const whole = { ...heads(1600), heads: Array.from({ length: 1600 }, (_, i) => head(i + 5000)) };
     await treeKeptHere(db).checked.write(COMPANY, whole);
+    expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(whole);
+    /* RED WHEN: a start is written back over a check from the first. */
+    await treeKeptHere(db).checked.write(COMPANY, started);
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(whole);
   });
   it('keeps more heads than one row holds, a row at a time, and reads every one back in order', async () => {

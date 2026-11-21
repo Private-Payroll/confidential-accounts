@@ -58,7 +58,7 @@ import { seatDirectoryRoutes } from '../../src/server/seat-directory-route.js';
 import { filedAsIn, recordManifestRoutes } from '../../src/server/record-manifest-route.js';
 import { companyRecordsRoutes, MemoryCompanyRecordStore } from '../../src/server/company-records-route.js';
 import { companyRecordEntry } from '../../src/midnight/record-manifest.js';
-import { manifestServiceFor, recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
 import { readTransaction } from 'vaults-web-shared/vault-builder.js';
 import { ChainLedger } from '../../src/wiring/chain.js';
 import { companyVaultRoutes, type VaultChain } from '../../src/server/company-vaults.js';
@@ -66,11 +66,12 @@ import { mountVaultRecords, vaultAccountFromTheIndexer } from '../../src/server/
 import { MemorySealedPoolStore, SealedNotePool } from '../../src/midnight/vault-pool.js';
 import { PaymentJournalInStore } from '../../src/midnight/vault-journal.js';
 import type { WireRecord } from '../../src/midnight/sealed-record-wire.js';
-import { HttpSealedPoolStore, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
 import { recordsReaderOf, type DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import { answerVaultAsk, checkedAccountKeys } from 'vaults-web-shared/vault-worker-entry.js';
 import { vaultBuilderOver, type VaultAnswer } from 'vaults-web-shared/vault-worker-client.js';
-import { chainReadThroughTheWallet, setSpendingPolicyOnDevice, spendingPolicyHere } from 'vaults-web-shared/spending-policy-here.js';
+import { chainReadThroughTheWallet, setSpendingPolicyOnDevice } from 'vaults-web-shared/spending-policy-here.js';
+import { spendingPolicyHere } from 'vaults-web-shared/spending-policy-read-here.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../../src/midnight/sealed-record-wire.js';
 import { rolesInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { periodTotalHere, type ChargeInFlight } from 'vaults-web-shared/run-charged-here.js';
@@ -123,9 +124,12 @@ import { runRoutes } from '../../src/server/run-routes.js';
 import { openSealedRun } from '../../src/core/run-legs.js';
 import { proposalRelayRoutes } from '../../src/server/proposal-relays.js';
 import { directoryOf } from '../../src/server/seat-directory-route.js';
-import { attestedIn, deviceSignerFrom, directoryFilingsFrom, directoryHere, directoryJudge, readersIn } from 'vaults-web-shared/vault-page-doors.js';
+import { attestedIn, deviceSignerFrom, directoryHere, directoryJudge, readersIn } from 'vaults-web-shared/vault-page-doors.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
-import { approveOnDevice, governedCallServiceFor, openTheRoundHere, raiseRunOnDevice, type GovernedCallDoors } from 'vaults-web-shared/governed-call-on-device.js';
+import { openTheRoundHere, type GovernedCallDoors } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
+import { raiseRunOnDevice } from 'vaults-web-shared/payroll-run-on-device.js';
+import { approveOnDevice } from 'vaults-web-shared/proposal-approved-on-device.js';
 import type { LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import type { PeopleHere } from 'vaults-web-shared/people-on-device.js';
@@ -134,6 +138,11 @@ import { anchoredOver, headsCheckedHere, onChainOf, roundsOnATestChain } from '.
 import type { DirectoryChainRead } from '../../src/server/seat-directory-route.js';
 import { noOneOffsHere } from '../../src/testing/no-one-offs.js';
 import { countedRightsOf } from '../../src/core/seat-rights.js';
+import { companyViewFor, viewHeldOver } from '../../packages/web-shared/src/company-view.js';
+import { manifestServiceOf, serviceSource } from '../../packages/web-shared/src/records-source.js';
+import { treeKeptInMemory } from '../../packages/web-shared/src/tree-kept-here.js';
+import { viewOver, storeReachOver } from '../../src/testing/writes-over-a-send.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -690,15 +699,15 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   const api = async (path: string, init?: RequestInit) =>
     http(path, { method: String(init?.method ?? 'GET'), ...(init?.body === undefined ? {} : { body: JSON.parse(String(init.body)) }) });
   /* The page's one filing call over the service's own manifest route, signed by this device's seat. */
-  const enteredThrough = () => recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret as Hex);
+  const enteredThrough = () => recordsEnteredFor(manifestServiceOf(serviceSource(api, ACCOUNT_ID)), ACCOUNT_ID, signing.secret as Hex);
   /* Who filed each version, judged afresh for every read: the directory read again and the account read off the chain. */
-  const records = (record: WireRecord) => new HttpSealedPoolStore(record, wire, signing.secret, directoryJudge({
-    accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
+  const records = (record: WireRecord) => new HttpSealedPoolStore(record, storeReachOver(wire, ACCOUNT_ID), signing.secret, directoryJudge({
+    accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => viewOver(api, ACCOUNT_ID).current().filings(),
     holders: async () => withoutWhoHolds('a device\'s read of the account', { ...holdersRead(), account: company as never }),
     attested: async () => attestedIn(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
     anchored: anchoredOver(api, ACCOUNT_ID, () => onChainOf([], { approvals: 1, seats: [] }, deployRead())),
     leaves: leavesOfTheContract,
-  }), enteredThrough());
+  }));
   /* Who holds the company and which vaults it adopted, as the signer's own wallet reads them off the chain for each step. */
   /** Who holds the company, its seats and the vaults it adopted, as the signer's own wallet reads them off the chain. */
   const holdersRead = () => {
@@ -747,9 +756,9 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
           api, accountId: ACCOUNT_ID, label: LABEL, account: company, accountState: () => chain.contract(company), deployed: () => deployed,
           roster: async () => openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey),
         }),
-        entered: recordsEnteredFor(manifestServiceFor(api), ACCOUNT_ID, signing.secret as Hex),
+        entered: recordsEnteredFor(manifestServiceOf(serviceSource(api, ACCOUNT_ID)), ACCOUNT_ID, signing.secret as Hex),
         service: { callState, send, file: file!, sealedProposals: sealedProposals! },
-      }))(governedCallServiceFor(api)),
+      }))(governedCallServiceThrough(viewOver(api, ACCOUNT_ID))),
       secretReaders: {
         company: LABEL,
         read: async (v: Hex) => ({
@@ -882,7 +891,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     return {
       oneOffs: noOneOffsHere(),
       directory: (asked) => directoryHere({
-        accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
+        accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => viewOver(api, ACCOUNT_ID).current().filings(),
         holders: async () => withoutWhoHolds('a device\'s read of the account', { ...holdersRead(), account: company as never }),
         attested: async () => attestedIn(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
         leaves: leavesOfTheContract,
@@ -949,7 +958,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   };
   /** The founding signer's device raising a leg: the proving is the account's own call, built from their private state with the device's order. */
   const raisingOn = (here: ReturnType<typeof recordsHere>): LegRaiseDoors => ({
-    service: { ...governedCallServiceFor(api), callState: async () => ({ account: company, accountState: '', parameters: '' }) as never },
+    service: { ...governedCallServiceThrough(viewOver(api, ACCOUNT_ID)), callState: async () => ({ account: company, accountState: '', parameters: '' }) as never },
     builder: {
       governedCall: async ({ order, opened }: { order: { run: { root: string; payees: string; opensAt: string; closesAt: string; vault: string; required?: string }; half: Record<string, string> }; opened: { raiseBy: string } }) => {
         const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(randomBytes(32)));
@@ -1005,7 +1014,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   /** The founding signer's device setting a policy: the governance doors over the product's routes and this chain. */
   const governingOn = (here: ReturnType<typeof recordsHere>) => ({
     service: {
-      ...governedCallServiceFor(api),
+      ...governedCallServiceThrough(viewOver(api, ACCOUNT_ID)),
       callState: async () => ({
         account: company, blockHash: '00'.repeat(32), accountState: base64FromBytes(chain.contract(company).serialize()),
         parameters: base64FromBytes(L.LedgerParameters.initialParameters().serialize()),
@@ -1022,7 +1031,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   const aSecondDevice = () => ({
     ...pacing, service, me, myRecordsKey: recordsReaderOf(me.companyKey).publicKey, signers, records, account: readAccountAddress(company)!,
     onChain: walletReads, builder: builder(), inFlight: paymentsInFlight(), paidYet: async () => null,
-    charge: (id: string, body: { tx: string; filer: string }) => governedCallServiceFor(api).charge!(id, body),
+    charge: (id: string, body: { tx: string; filer: string }) => governedCallServiceThrough(viewOver(api, ACCOUNT_ID)).charge!(id, body),
     filer: signing.publicKey,
     chargesInFlight: sealedOnThisDevice<ChargeInFlight>(inFlightRecordsInMemory(), { signerId: 'ada', wrappingSecret: newWrappingKeypair().secret }, 'charge'),
   });
@@ -1034,7 +1043,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   const drawnAndRaised = async (people: readonly RosterEmployee[], period: string, vault: Hex, opensAt: bigint, closesAt: bigint) => {
     const here = recordsHere(people);
     const drawn: PayrollRun = await drawRunHere({
-      api, accountId: ACCOUNT_ID, viewingKey, keyEpoch: 0, signingSecret: signing.secret as Hex, company: { account: company, label: LABEL },
+      view: viewOver(api, ACCOUNT_ID), accountId: ACCOUNT_ID, viewingKey, keyEpoch: 0, signingSecret: signing.secret as Hex, company: { account: company, label: LABEL },
       records: here, by: 'ada', registry: here.registry!, entered: enteredThrough(),
     }, { period });
     const round = raiseRunOnDevice(raisingOn(here), { runId: drawn.id, viewingKey, vault, opensAt: String(opensAt), closesAt: String(closesAt) });
@@ -1046,7 +1055,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
    */
   const approved = async (roundId: string, here: CompanyRecordsHere, vault: Hex) => {
     const proposal = store.getProposal(roundId)!;
-    const opened = await openTheRoundHere({ ...governedCallServiceFor(api), sealedProposals: async () => store.listProposals(ACCOUNT_ID) },
+    const opened = await openTheRoundHere({ ...governedCallServiceThrough(viewOver(api, ACCOUNT_ID)), sealedProposals: async () => store.listProposals(ACCOUNT_ID) },
       ACCOUNT_ID, roundId, viewingKey, false, here);
     expect(toHex(accountCircuits.proposalIdOf(fromHex(opened.digest), fromHex(vault), fromHex(opened.salt)))).toBe(proposal.chainId.toLowerCase());
     return proposal;
@@ -1055,7 +1064,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   /** The approving device: the company's records it reads, the service's routes, and its signer's own call built from their private state. */
   const approvingOn = (here: CompanyRecordsHere): GovernedCallDoors => ({
     service: {
-      ...governedCallServiceFor(api),
+      ...governedCallServiceThrough(viewOver(api, ACCOUNT_ID)),
       callState: async () => ({ account: company, accountState: '', parameters: '' }) as never,
       sealedProposals: async () => store.listProposals(ACCOUNT_ID),
     },
@@ -1096,7 +1105,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       const raised = openSealedRun(store.listRuns(ACCOUNT_ID).find((r) => r.id === first.drawn.id)!, viewingKey);
       const leg = Object.values(raised.payout ?? {})[0]!;
       const second = recordsHere([dana]);
-      const shown = await governedCallServiceFor(api).standing(round.id);
+      const shown = await governedCallServiceThrough(viewOver(api, ACCOUNT_ID)).standing(round.id);
       /* Each step's refusal is kept rather than thrown, so every assertion below says what it found. */
       const approval = await approveOnDevice(approvingOn(second), { round: shown, viewingKey }).catch((e: Error) => e);
       const readsBeforePaying = [...committeeReads];
@@ -1161,7 +1170,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   /* The wallet's own reach into the company as the founding signer's wallet holds it: the chain as a wallet reads it, the service's routes and the device's builder. */
   const theWalletsReach = (here: ReturnType<typeof recordsHere>, leaf: string) => {
     const judge = directoryJudge({
-      accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => directoryFilingsFrom(api, ACCOUNT_ID),
+      accountId: ACCOUNT_ID, label: LABEL, viewingKey, filings: () => viewOver(api, ACCOUNT_ID).current().filings(),
       holders: async () => ({ ...holdersRead(), account: company as never }),
       attested: async () => attestedIn(openAccount(store.getAccount(ACCOUNT_ID)!, viewingKey)),
       anchored: anchoredOver(api, ACCOUNT_ID, () => onChainOf([], { approvals: 1, seats: [] }, deployRead())),
@@ -1173,7 +1182,16 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       seat === undefined ? undefined : { account: company, signingSecret: seat },
     ));
     const keys = { epoch: 0, key: viewingKey, newest: 0, keyAt: () => viewingKey, sealing: () => ({ key: viewingKey, epoch: 0 }), seeds: [] };
+    /* The step's view of the company, over the same service routes, holding who holds it as the chain does. */
+    const noRead = (what: string) => async (): Promise<never> => { throw new Error(`this wallet's view here reads no ${what}`); };
+    const stepView = viewHeldOver((from) => companyViewFor(serviceSource(api, ACCOUNT_ID), {
+      holders: async () => ({ ...holdersRead(), account: company }) as never, onChain: noRead('anchors'), builder: { anchorHeads: noRead('heads') },
+      kept: () => treeKeptInMemory(),
+    }, noRead('held records'), from));
     const reach = {
+      stepView,
+      /* The company's records read through the step's view, as the wallet's reach reads them. */
+      records: (asked: Parameters<ReturnType<typeof stepView.current>['records']>[0]) => stepView.current().records(asked),
       accountId: ACCOUNT_ID, label: LABEL, account: company, leaf, companyKey: toHex(me.companyKey),
       seat: { signerId: 'ada', signingSecret: signing.secret, wrappingSecret: wrapping.secret, blinding: hex(founder.blinding), scope: hex(founder.scope) },
       api, send: wire, stepTo: () => {}, holders: async () => holdersRead(), sealed: store.getAccount(ACCOUNT_ID), served: () => viewingKey, companyKeys: keys,
@@ -1181,7 +1199,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
       judges: {
         directoryHereFor: () => here.directory, filingJudgeFor: () => judge, leavesFor: () => leavesOfTheContract,
         rosterReadsFor: () => ({
-          filings: () => directoryFilingsFrom(api, ACCOUNT_ID), holders: async () => ({ ...holdersRead(), account: company as never }),
+          filings: () => viewOver(api, ACCOUNT_ID).current().filings(), holders: async () => ({ ...holdersRead(), account: company as never }),
           anchored: anchoredOver(api, ACCOUNT_ID, () => onChainOf([], { approvals: 1, seats: [] }, deployRead())), leaves: leavesOfTheContract,
         }),
       },
@@ -1210,6 +1228,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
   const oneOffInTheWallet = async () => {
     /* Named through a variable so the scripts' typecheck, which does not resolve the wallet's own packages, does not follow it. */
     const walletAction = '../../apps/wallet/src/actions/one-off-payment.js';
+    const walletSteps = '../../apps/wallet/src/actions/step-views.test-support.js';
+    const { stepOverItsCall } = await import(walletSteps) as { stepOverItsCall: <T extends object>(ctx: T) => T };
     const { oneOffPaymentAction } = await import(walletAction) as { oneOffPaymentAction: (reach: Record<string, unknown>) => {
       check(intent: unknown, held: unknown): Promise<unknown>; steps(intent: unknown): ReadonlyArray<{ run(ctx: unknown): Promise<void> }>;
     } };
@@ -1235,7 +1255,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
     const intent = { name: 'one-off-payment', fields: {
       record: ACCOUNT_ID, company: LABEL, account: company, vault, token: TOKEN, amount: '250', payee, payeeName: 'Acme Printing', reason: 'Business cards',
     } } as never;
-    const ctx = {
+    const ctx = stepOverItsCall({
       intent, asker: { origin: 'https://payroll.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'ada', held: {},
       at: { step: 1, steps: 6 }, signal: new AbortController().signal,
       relay: async () => { throw new Error('the one-off hands nothing over but through its calls'); },
@@ -1246,7 +1266,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         return { status: r.status, body: await r.json().catch(() => ({})) };
       },
       tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
-    } as never;
+    }) as never;
     const before = chain.applied.length;
     const known = new Set(store.listProposals(ACCOUNT_ID).map((p) => p.id));
     const refused = await (async () => {
@@ -1366,6 +1386,8 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         return { status: r.status, body: await r.json().catch(() => ({})) };
       },
       tell: (o: Record<string, unknown>) => { told.push(o); }, keyring: null,
+      /* What carrying the change out moves is pinned in the wallet's own tests; this case reads the chain itself after. */
+      movesWhoHolds: () => {},
     } as never;
     const refused = await (async () => {
       if (await action.check(intent, {} as never) !== null) return 'checked';

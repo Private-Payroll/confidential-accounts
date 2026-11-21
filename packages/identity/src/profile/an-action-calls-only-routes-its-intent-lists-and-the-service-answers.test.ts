@@ -5,17 +5,24 @@
  * what its intent lists, every listed route is answered by the service and its router is mounted, and a listed route is
  * marked `sends` exactly when its handler hands a transaction to the chain.
  *
- * What it does not cover, on purpose. Only three actions name their calls in the action file; the others reach the
- * service through shared page code, so for them it checks only that every `/api/` path an action file names is listed
- * (the one path ending in a variable vault step is checked up to that step). Whether a handler hands a transaction to the
+ * An action asks the service in its own file in two ways: a call written there (`ctx.call('POST', `...`)`), or a named
+ * ask the runner hands the step over its call (`ctx.invitations.offer(...)`, `ctx.creation.payKey(...)`). The route of
+ * a named ask is never read from its text: each ask is run here against a stand-in that records the one route it
+ * sends, so an ask whose route changes is held to the list with it. A proposal kind's file is held to the list of the
+ * action that runs it.
+ *
+ * What it does not cover, on purpose. Only four actions ask for everything in the action file; the others reach the
+ * service through shared page code too, so for them it checks only that every route asked in the file is listed, and
+ * that every `/api/` path an action file names is listed (the one path ending in a variable vault step is checked up to
+ * that step). Whether a handler hands a transaction to the
  * chain is read by the name of the helper it calls: a helper renamed to something this list does not hold makes a
  * `sends` route read as not sending, so that direction is weaker than the other. And that a listed route answers
  * something other than "not found" needs the running service, which is not built here.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { ACT_INTENTS, FINISH_COMPANY_RELAYS, type CallRoute } from './act-intents.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -132,15 +139,56 @@ const listedBy = (name: string): Map<string, { sends: boolean }> => {
 
 const read = (file: string): string => codeOf(readFileSync(file, 'utf8'));
 
+/* The id every ask is run with here, read back as a route's variable step. */
+const SAMPLE = 'sample_id';
+const sampled = (method: string, sent: string): string =>
+  key(method, shapeOf(sent.split('?')[0]!.split('/').map((s) => (s === SAMPLE ? ':' : s)).join('/')));
+
+/* The shared files an action's named asks live in, loaded as the wallet loads them (outside this package's sources). */
+const shared = (file: string): Promise<Record<string, any>> =>
+  import(pathToFileURL(path.join(REPO, 'packages', 'web-shared', 'src', file)).href) as Promise<Record<string, any>>;
+const { invitationSource, creationSource } = await shared('records-source.ts');
+
+/** The one route `run` sends through a stand-in call that records it; refused when it sends none, or more than one. */
+const routeOfAsk = async (what: string, run: (seen: string[]) => Promise<unknown>): Promise<string> => {
+  const seen: string[] = [];
+  await run(seen).catch(() => undefined);
+  if (seen.length !== 1) throw new Error(`${what} sent ${seen.length} routes where one was expected, so this check cannot read it`);
+  return seen[0]!;
+};
+/* A stand-in call that records the route it is asked, answering as the service answers a read it takes. */
+const recorder = (seen: string[]) => (method: string, sent: string) => { seen.push(sampled(method, sent)); return Promise.resolve({ status: 200, body: {} }); };
+const invitationAsk = (name: string): Promise<string> => routeOfAsk(`invitationSource().${name}`, (seen) => invitationSource(recorder(seen))[name](SAMPLE, {}));
+const creationAsk = (name: string): Promise<string> => routeOfAsk(`creationSource().${name}`, (seen) => creationSource(recorder(seen))[name](SAMPLE, {}));
+
+/* Every ask an action makes over the step's call, by its name: a call written there, or a named ask the runner handed it (an invitation's call to take a seat names the send to the gate, and asks nothing). */
+const ASKS = /\bctx\.(?:call\b|invitations\.(?!seatCall\b)\w+\(|creation\.\w+\()/gu;
+
+/** Every route an action file asks for: each call written there, then each named ask made over its call, by the route the ask sends. */
+const askedIn = async (code: string): Promise<{ readonly literal: string[]; readonly all: string[] }> => {
+  const literal = [...code.matchAll(/\bctx\.call\(\s*['"`](GET|PUT|POST)['"`]\s*,\s*`([^`]*)`/gu)].map((m) => key(m[1]!, asked(m[2]!)));
+  const invited = [...code.matchAll(/\bctx\.invitations\.(?!seatCall\b)(\w+)\(/gu)].map((m) => invitationAsk(m[1]!));
+  const created = [...code.matchAll(/\bctx\.creation\.(\w+)\(/gu)].map((m) => creationAsk(m[1]!));
+  return { literal, all: [...literal, ...await Promise.all([...invited, ...created])] };
+};
+
 describe('an action asks the service only for the routes its intent lists', () => {
-  const files = readdirSync(ACTIONS).filter((f) => /\.tsx?$/u.test(f) && !/\.test\./u.test(f));
+  const files = readdirSync(ACTIONS).filter((f) => /\.tsx?$/u.test(f) && !/\.test[.-]/u.test(f));
   const sources = new Map(files.map((f) => [f, read(path.join(ACTIONS, f))] as const));
+  /* Each file's calls written there (`WRITTEN`), and every route it asks for, those and its named asks' (`CALLED`). */
+  const WRITTEN = new Map<string, string[]>();
   const CALLED = new Map<string, string[]>();
-  for (const [file, code] of sources) {
-    const sites = [...code.matchAll(/\bctx\.call\(\s*['"`](GET|PUT|POST)['"`]\s*,\s*`([^`]*)`/gu)];
-    if (sites.length > 0) CALLED.set(file, sites.map((m) => key(m[1]!, asked(m[2]!))));
-  }
+  beforeAll(async () => {
+    for (const [file, code] of sources) {
+      const { literal, all } = await askedIn(code);
+      if (literal.length > 0) WRITTEN.set(file, literal);
+      if (all.length > 0) CALLED.set(file, all);
+    }
+  });
   const NAMED_IN_THE_ACTION = ['claim-by-address', 'join-by-code', 'seat-invited', 'finish-company'];
+  /* The action a file's asks are made for: its own name, or, for a proposal kind's file, the action that runs the kind. */
+  const KIND_OF: Readonly<Record<string, string>> = { 'pay-key-kind': 'approve-proposal' };
+  const actionOf = (file: string): string => KIND_OF[file.replace(/\.tsx?$/u, '')] ?? file.replace(/\.tsx?$/u, '');
 
   it('claims, joins, seats by invitation and finishing a company ask for exactly the routes they list, no more and no fewer', () => {
     /* RED WHEN: a wallet action asks the service for a route its list does not name, or its list names one it never asks. */
@@ -150,13 +198,22 @@ describe('an action asks the service only for the routes its intent lists', () =
       expect(listed.length, `${name} lists no calls`).toBeGreaterThan(0);
       expect([...new Set(calls)].sort(), name).toEqual(listed);
       const code = sources.get(`${name}.ts`)!;
-      expect((code.match(/\bctx\.call\(/gu) ?? []).length, `${name} asks through a call this check cannot read`).toBe(calls.length);
+      /* Every use of the step's call is one this check read: a call written there, or one named ask made over it. */
+      expect((code.match(ASKS) ?? []).length, `${name} asks through a call this check cannot read`).toBe(calls.length);
     }
   });
 
-  it('no other action names a call in its own file, since only these are held to their file', () => {
+  it('no other action writes a call in its own file, since only these are held to their file', () => {
     /* RED WHEN: an action starts asking the service by a call written in its own file and no check holds it to its list. */
-    expect([...CALLED.keys()].filter((f) => !NAMED_IN_THE_ACTION.includes(f.replace(/\.tsx?$/u, ''))).sort()).toEqual([]);
+    expect([...WRITTEN.keys()].filter((f) => !NAMED_IN_THE_ACTION.includes(f.replace(/\.tsx?$/u, ''))).sort()).toEqual([]);
+  });
+
+  it('every other action that asks through a named ask in its own file asks only for routes its intent lists', () => {
+    /* RED WHEN: an action asks the service, through a named ask, for a route its intent's list does not name. */
+    const unlisted = [...CALLED].filter(([f]) => !NAMED_IN_THE_ACTION.includes(f.replace(/\.tsx?$/u, '')))
+      .flatMap(([f, calls]) => calls.filter((c) => !listedBy(actionOf(f)).has(c)).map((c) => `${f}: ${c}`));
+    expect(unlisted).toEqual([]);
+    expect(CALLED.size).toBeGreaterThan(NAMED_IN_THE_ACTION.length);
   });
 
   it('every service path an action file names is a route some intent lists', () => {

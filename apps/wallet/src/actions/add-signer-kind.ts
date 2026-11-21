@@ -12,14 +12,17 @@ import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import { invitationThresholdRefusal } from '../../../../src/core/invitation.js';
 import { addSignerByAddressIn } from '../../../../src/core/proposal-filing.js';
 import { SeatKeyNotFromTheInvitee } from '../../../../src/core/seat-invite-proof.js';
-import {
-  approveSeatInvitationOnDevice, governedCallServiceFor, InvitationNotBound, InvitationOutrun, NothingToApprove, withCompanyKeys,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { InvitationNotBound, InvitationOutrun } from '../../../../packages/web-shared/src/company-change-on-device.js';
+import { NothingToApprove } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import { approveSeatInvitationOnDevice } from '../../../../packages/web-shared/src/seat-invited-on-device.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { WaitingIdTaken } from '../../../../packages/web-shared/src/roster-here.js';
 import { approveSeatByLeafOnDevice, seatByLeafToConfirmHere } from '../../../../packages/web-shared/src/signer-by-link.js';
 import { chainTimeOf } from './chain-time.js';
-import { governanceDoorsFor, type CompanyReach, type Handed } from './company-reach.js';
+import { governanceDoorsFor, type CompanyReach } from './company-reach.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { said, type ApprovalStop, type OpenedRound, type ProposalKind } from './proposal-kinds.js';
 import { anchorDirectoryDoorIn } from './upkeep.js';
@@ -169,7 +172,7 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
     opened: async (ctx, r, intent) => {
       if (byLeaf(intent)) return openedByLeaf(reach, ctx, r, intent);
       const id = intent.fields['proposal']!;
-      const rec = ((await governedCallServiceFor(r.api).sealedProposals!(r.accountId)) as readonly SealedProposal[]).find((p) => p.id === id);
+      const rec = ((await governedCallServiceThrough(r.stepView).sealedProposals!(r.accountId)) as readonly SealedProposal[]).find((p) => p.id === id);
       /* The identity is the one the signed filing and the signed invitation both name, checked here (`addSignerByAddressIn`). */
       const body = rec === undefined ? null : addSignerByAddressIn(rec, r.accountId, r.companyKeys);
       if (body === null) {

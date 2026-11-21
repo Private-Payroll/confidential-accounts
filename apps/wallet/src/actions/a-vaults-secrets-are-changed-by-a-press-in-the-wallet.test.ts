@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { NO_VIEW_OPENED } from './step-views.test-support.js';
 
 /*
  * **A COMPANY'S VAULT SECRETS ARE CHANGED FROM THE WALLET: BY THE HOOK ONCE A REMOVAL IS CARRIED OUT, AND BY A SIGNER WHO
@@ -56,7 +57,7 @@ const intent = (fields: Record<string, string>): ActIntent => ({ name: 'rotate-v
 
 let adopted: string[] = VAULTS;
 const companyRead = () => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, stepTo: () => {},
+  accountId: 'acc_1', label: LABEL, account: ACCOUNT, stepView: NO_VIEW_OPENED,
   api: async () => { throw new Error('the change of the vault secrets calls nothing outside the rotation'); },
   holders: async () => ({ seats: [], adoptedVaults: adopted }),
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] } }) },

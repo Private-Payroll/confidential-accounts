@@ -12,9 +12,8 @@ import { canonical, newSigningKeypair, newSymmetricKey, seal } from '../../../sr
 import { signedFoundingState } from '../../../src/core/founding-state.js';
 import { approverRosterFrom, EVERY_RIGHT } from '../../../src/core/vault-approvers.js';
 import type { SealedProposal } from '../../../src/core/types.js';
-import {
-  changeThresholdOnDevice, changeVaultThresholdOnDevice, governOnDevice, type GovernanceDoors, type RoundOnThePage,
-} from './governed-call-on-device.js';
+import type { RoundOnThePage } from './governed-call-on-device.js';
+import { changeThresholdOnDevice, changeVaultThresholdOnDevice, governOnDevice, type GovernanceDoors } from './company-change-on-device.js';
 import type { GovernanceOnTheWire, GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import { FiledNotEntered } from './record-entered-here.js';
 import { directoryNotYetAnchored } from './vault-page-doors.js';

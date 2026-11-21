@@ -10,6 +10,7 @@
  * them. The chain is the test's: one head, moved on only by a call naming the
  * head it holds, with the account's own `anchorHeadOf`.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { describe, expect, it } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import { signRecordsKey, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
@@ -18,21 +19,23 @@ import type { Role } from '../core/types.js';
 import type { ManifestEntryBody } from '../midnight/record-manifest.js';
 import { anchoredEntering, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { directoryChangeMessage, type DirectoryChange, type DirectoryFiling } from '../midnight/seat-directory.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import { anchorServiceFor, anchorTheRecordsHere, recordsHeldHere, seatAsAnchoredHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere, seatAsAnchoredHere } from 'vaults-web-shared/records-anchored-here.js';
+import { recordsHeldHere } from 'vaults-web-shared/records-held-here.js';
 import type { RecordsHeld } from '../midnight/records-held.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeReads, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, chains, CO, heldByMoreThanOneKey, LABEL, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { directoryHere } from 'vaults-web-shared/vault-page-doors.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
-const doorsOf = (s: Seat): AnchorDoors => ({
+const doorsOf = (s: Seat): AnchorDoorsBare => ({
   accountId: CO,
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(apiAs(s.person)),
-  tree: treeServiceFor(apiAs(s.person)),
+  manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)),
+  tree: treeServiceOf(serviceSource(apiAs(s.person), CO)),
   directory: () => acmeDirectoryWithItsFold(),
   directoryFilings: async () => store.directoryFilingsOf(CO),
   onChain: acmeChain.onChain,
@@ -43,7 +46,7 @@ const doorsOf = (s: Seat): AnchorDoors => ({
       acmeChain.move(previous, batch, held, tag);
     },
     sealedProposals: async (company) => store.listProposals(company),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
 });
@@ -75,9 +78,9 @@ describe('A SIGNER REMOVED OR RETIRED AFTER IT ANCHORED AND FILED', () => {
     const bos = await filed(BO, 'prp_filed_by_bo');
     const adas = await filed(ADA, 'pol_filed_by_ada');
     /* After the batch Ada's seat founded Acme with: Bo, an approver, anchors the next batch; Ada, an admin, the one after. */
-    expect((await anchorTheRecordsHere(doorsOf(BO))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(doorsOf(BO)))).anchored).toBeGreaterThan(0);
     const later = await filed(ADA, 'pol_filed_by_ada_later');
-    expect((await anchorTheRecordsHere(doorsOf(ADA))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(doorsOf(ADA)))).anchored).toBeGreaterThan(0);
     const opensBoth = async (why: string) => {
       const f = await heldNow();
       expect(f.stopped, why).toBeNull();

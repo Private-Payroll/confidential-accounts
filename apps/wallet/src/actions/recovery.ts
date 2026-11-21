@@ -23,10 +23,10 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import type { Hex } from '../../../../src/core/crypto.js';
-import { ApprovalNotOwed } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import type { RoundOnChain, SignerMaterial } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { standingNow, type ProposalFile } from '../../../../packages/web-shared/src/governance-from-the-chain.js';
-import { anchorsOnChainAt } from '../../../../packages/web-shared/src/records-anchored-here.js';
+import { companyAnchorsOnChain } from '../chain/view-doors.js';
 import {
   approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, recoveryFileOf, recoveryPartsOf, RecoveryNotCarriedOut, RecoveryWindowNotRead, type RecoveryDoors,
   type RecoveryParts,
@@ -135,7 +135,7 @@ function doorsFor(ctx: StepContext, r: ChainOnlyReach, reach: RecoveryReach, cir
   const kept = reach.kept();
   return {
     accountId: r.accountId, account: r.account, material: r.material, indexer: r.chain.indexer, builder: r.builder,
-    onChain: () => anchorsOnChainAt(r.builder, r.account, r.chain.indexer),
+    onChain: () => companyAnchorsOnChain(r.builder, r.account, r.chain.indexer),
     checked: kept.checked, headers: kept.headers, window: () => kept.windows.read(r.accountId),
     send: {
       ownWallet: {
@@ -270,7 +270,7 @@ async function givenUpShown(reach: RecoveryReach | undefined, intent: ActIntent)
       if (head === undefined || !HEX64.test(head) || !Number.isSafeInteger(seq)) return unread;
       from = { head, seq };
     }
-    const { landed } = await anchorsOnChainAt(reach.builder(), account, reach.chain().indexer);
+    const { landed } = await companyAnchorsOnChain(reach.builder(), account, reach.chain().indexer);
     const at = landed.findIndex((l) => l.head.toLowerCase() === from.head.toLowerCase());
     if (at < 0) return unread;
     return { key: 'act.recovery.shown.given-up', values: { count: landed.length - 1 - at, seq: from.seq }, from: 'wallet' };

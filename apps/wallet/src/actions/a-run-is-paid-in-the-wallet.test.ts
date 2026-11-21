@@ -6,6 +6,7 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { PUBLIC_PAYMENT_SAYS } from '../../../../src/core/movement.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **AN APPROVED PAYROLL RUN IS PAID IN THE WALLET, IN ONE WINDOW, FROM ITS OWN READS, THROUGH THE ONE PAYMENT PATH.**
@@ -66,7 +67,8 @@ vi.mock('./upkeep.js', async (real) => {
   };
 });
 
-const { payRunAction, walletHoldsTheMergeKey } = await import('./pay-run.js');
+const { payRunAction } = await import('./pay-run.js');
+const { walletHoldsTheMergeKey } = await import('../chain/key-material.js');
 const { LegStopped } = await import('../../../../packages/web-shared/src/leg-paid-here.js');
 const { PaymentLandedUnrecorded, PaymentNotYetSeen, PaymentStillInFlight } = await import('../../../../packages/web-shared/src/vault-payment-in-flight.js');
 const { PublicPaymentNotYetSeen } = await import('../../../../packages/web-shared/src/vault-public-payout.js');
@@ -115,18 +117,17 @@ const roundOf = (id = 'prp_leg', form = 'shielded') => ({ id, runId: 'run_1', as
 
 const ctxWith = (i: ActIntent) => {
   const told: Record<string, unknown> = {};
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a run is paid through its calls, never a bare relay'); },
     call: async () => ({ status: 200, body: {} }),
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
-const reachOf = () => ({
+const reachOf = () => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
-  stepTo: () => {},
   api: async (path: string) => (path.endsWith('/standing') ? { id: 'prp_leg', chainId: OPENED(VAULT).chainId, status: 'open' } : []),
   send: async () => ({ status: 200, body: {} }),
   holders: async () => ({ seats: ['aa'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [{ vault: VAULT, threshold: 2 }], adoptedVaults: [VAULT], account: ACCOUNT }),

@@ -14,11 +14,13 @@ import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import {
   filedRecordEnteredHere, firstAskRefusal, INVITATION_UNDER_THIS_LINK_CLOSED, InvitationNotMade, InvitationRaisedNotFiled, InvitationRefused, inviteHere, SeatMayNotInvite,
-  openTheFiledOffer, type InvitationSend, type InviteOptions, type InviteSpecs, type InvitingCompany, type InvitingSeat, type KeptSeatInvitation,
+  openTheFiledOffer, type InviteOptions, type InviteSpecs, type InvitingCompany, type InvitingSeat, type KeptSeatInvitation,
 } from '../../../../packages/web-shared/src/invitation-on-device.js';
-import { InvitationNotBound, nothingWasSentBy, signerByAddressDoorsOf, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { InvitationNotBound } from '../../../../packages/web-shared/src/company-change-on-device.js';
+import { signerByAddressDoorsOf } from '../../../../packages/web-shared/src/seat-invited-on-device.js';
 import { keptSeatInvitationForAddress, withoutSeatInvitationsKept, withSeatInvitationKept } from '../../../../packages/web-shared/src/kept-seat-invitations.js';
-import { FiledNotEntered, manifestServiceFor } from '../../../../packages/web-shared/src/record-entered-here.js';
+import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { seatHereIn } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
@@ -28,10 +30,10 @@ import { addressFor } from 'midnight-identity';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 import { chainTimeOf } from './chain-time.js';
-import {
-  approversHere, companyReachFor, enteredFor, governanceDoorsFor, keptReach, runsOutrunHere, type CompanyChain, type CompanyReach,
-  type Handed,
-} from './company-reach.js';
+import { approversHere, runsOutrunHere } from './approvers-here.js';
+import { companyReachFor, enteredFor, governanceDoorsFor, keptReach, listsOfTheStep, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
+import type { CompanyWrites } from '../../../../packages/web-shared/src/records-source.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { watchFor } from '../keyring/nothing-secret-crosses.js';
@@ -254,9 +256,9 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
           const asked = askedOf(intent, network, registry);
           if ('key' in asked) throw new StepRefused(asked);
           if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
-          const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
+          const writes = writesOfTheStep(r);
           const vendors = () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
-            send: r.send, directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster), network, claimRefusal: signedClaimRefusal,
+            view: listsOfTheStep(r), directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster), network, claimRefusal: signedClaimRefusal,
           });
           /*
            * A press again under a token already used goes on only with the first press's ask, judged before anything
@@ -266,7 +268,7 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
           const notTheFirstAsk = (no: string): StepRefused => new StepRefused(why('not-made', { says: said(new InvitationNotMade(no)) }));
           const notEntered = (e: FiledNotEntered): StepRefused => new StepRefused(why('filed-not-entered', { says: e.why }));
           const given = asked.kind === 'signer' ? own?.token ?? null : intent.fields['token']!.toLowerCase() as Hex;
-          const found = await keptInvitationFor(ctx, r, reach.now(), send, asked, given);
+          const found = await keptInvitationFor(ctx, r, reach.now(), asked, given);
           if ('refused' in found) throw notTheFirstAsk(found.refused);
           const { kept, token } = found;
           watchFor(token);
@@ -278,7 +280,7 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
             const no = firstAskRefusal(kept.offer.offer.for, asked.kind, asked.spec as never);
             if (no !== null) throw notTheFirstAsk(no);
           }
-          const filedAlready = await send(`/api/invites/${id}/offer`, { method: 'GET' });
+          const filedAlready = await ctx.invitations.offer(id);
           if (filedAlready.status === 200) {
             const opened = openTheFiledOffer((filedAlready.body as { offer?: unknown } | null)?.offer, token, r.accountId, asked.kind, asked.spec as never,
               kept === undefined ? {} : { kept });
@@ -289,7 +291,7 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
               try {
                 no = await filedRecordEnteredHere(withCompanyKeys({ id: r.accountId }, r.companyKeys), asked.kind, opened.filed, asked.spec as never,
                   { signingSecret: r.seat.signingSecret, entered: enteredFor(r) },
-                  { send, newest: (names) => manifestServiceFor(r.api).newest(r.accountId, names) });
+                  { records: (asked) => r.stepView.current().records(asked), newest: (names) => r.stepView.current().newest(names) });
               } catch (e) {
                 if (e instanceof FiledNotEntered) throw notEntered(e);
                 throw e;
@@ -310,11 +312,11 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
           const handed: Handed = { over: false };
           try {
             if (asked.kind === 'employee') {
-              await inviteHere(company, inviting, 'employee', asked.spec, ctx.asker.origin, send, undefined, { token });
+              await inviteHere(company, inviting, 'employee', asked.spec, ctx.asker.origin, writes, undefined, { token });
             } else if (asked.kind === 'vendor') {
-              await inviteHere(company, inviting, 'vendor', asked.spec, ctx.asker.origin, send, { vendors }, { token });
+              await inviteHere(company, inviting, 'vendor', asked.spec, ctx.asker.origin, writes, { vendors }, { token });
             } else {
-              await inviteASigner(ctx, r, reach, company, inviting, asked.spec, token, send, handed);
+              await inviteASigner(ctx, r, reach, company, inviting, asked.spec, token, writes, handed);
             }
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
@@ -379,14 +381,14 @@ const holdsTheCoinKeyOf = (identity: Identity, network: NetworkName, address: st
  * a new one made here.
  */
 async function keptInvitationFor(
-  ctx: StepContext, r: CompanyReach, now: number, send: InvitationSend, asked: Asked, given: Hex | null,
+  ctx: StepContext, r: CompanyReach, now: number, asked: Asked, given: Hex | null,
 ): Promise<{ readonly kept: KeptSeatInvitation | undefined; readonly token: Hex } | { readonly refused: string }> {
   const keyring = ctx.keyring!;
   const byToken = given === null ? undefined : keyring.open().read().seatInvitationsKept?.[invitationIdOf(given)];
   if (asked.kind !== 'signer') return { kept: byToken, token: given ?? newInvitationToken() };
   if (given !== null && byToken !== undefined) return { kept: byToken, token: given };
   const stillOpen = async (x: KeptSeatInvitation): Promise<boolean> => {
-    const answer = await send(`/api/invites/${x.id}/offer`, { method: 'GET' });
+    const answer = await ctx.invitations.offer(x.id);
     if (answer.status === 410) return false;
     if (answer.status !== 200 && answer.status !== 404) throw new StepRefused(why('offer-not-read', { status: answer.status }));
     const forWhom = x.offer.offer.for;
@@ -408,7 +410,7 @@ async function keptInvitationFor(
 
 async function inviteASigner(
   ctx: StepContext, r: CompanyReach, reach: InviteReach, company: InvitingCompany, inviting: InvitingSeat,
-  spec: InviteSpecs['signer'] & { readonly address: string }, token: Hex, send: InvitationSend, handed: Handed,
+  spec: InviteSpecs['signer'] & { readonly address: string }, token: Hex, writes: CompanyWrites, handed: Handed,
 ): Promise<void> {
   const network = reach.network ?? (NETWORK as NetworkName);
   if (holdsTheCoinKeyOf(ctx.held.identity, network, spec.address)) throw new StepRefused(why('own-address'));
@@ -432,7 +434,7 @@ async function inviteASigner(
   };
   const resume = ctx.keyring?.open().read().seatInvitationsKept?.[invitationIdOf(token)];
   const opts: InviteOptions = { token, ...(resume === undefined ? {} : { resume }) };
-  await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, send, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep, chainTimeOf(r)), opts);
+  await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, writes, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep, chainTimeOf(r)), opts);
 }
 
 /** The vaults of `vaults` the company's account does not hold among `adopted`; none where `vaults` names every vault. */

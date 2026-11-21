@@ -15,7 +15,7 @@ import {
 } from '../adapters/super-admins.js';
 import { PAGE } from '../pages.js';
 import { addressOf, useCurrentPage } from '../router.js';
-import { useSession } from '../session.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 
 type Words = ReturnType<typeof useText>;
 type Key = { readonly tag: string; readonly value: string };
@@ -125,15 +125,16 @@ function RaiseForm({ now, busy, run }: { now: { committee: readonly Key[]; thres
  * The vaults the company created that its account does not list yet, left out of every change until it does: named to a
  * signer from the company's own list; a super admin with no seat cannot read that list, and is told so.
  */
-function NotYetAdopted({ accountId, contracts, member }: { accountId: string; contracts: readonly string[]; member: boolean }) {
+function NotYetAdopted({ contracts, member }: { contracts: readonly string[]; member: boolean }) {
   const t = useText();
+  const view = useCompanyView();
   const [vaults, setVaults] = useState<readonly string[]>([]);
   useEffect(() => {
-    if (!member) return undefined;
+    if (!member || view === null) return undefined;
     let alive = true;
-    void notYetAdopted(accountId, contracts).then((v) => { if (alive) setVaults(v); }, () => { if (alive) setVaults([]); });
+    void notYetAdopted(view, contracts).then((v) => { if (alive) setVaults(v); }, () => { if (alive) setVaults([]); });
     return () => { alive = false; };
-  }, [accountId, contracts, member]);
+  }, [view, contracts, member]);
   if (!member) return <p className="text-sm text-muted-foreground" data-not-adopted-unseen>{t('superAdmins.notAdopted.unseen')}</p>;
   if (vaults.length === 0) return null;
   return (
@@ -143,8 +144,12 @@ function NotYetAdopted({ accountId, contracts, member }: { accountId: string; co
   );
 }
 
-/** Who holds the company, read from the chain, with the person's own key and the change in progress. */
-function SuperAdminsOf({ from, member }: { from: SuperAdminReach; member: boolean }) {
+/**
+ * Who holds the company, read from the chain, with the person's own key and the change in progress. `reopen`, given
+ * where the page holds a view of the company, is called once an act may have sent the change to a contract, so the
+ * next step on the page reads who holds the company afresh.
+ */
+function SuperAdminsOf({ from, member, reopen }: { from: SuperAdminReach; member: boolean; reopen?: () => void }) {
   const t = useText();
   const [reach, setReach] = useState(from);
   const [read, setRead] = useState<Read>({ of: NOT_YET.reading });
@@ -155,7 +160,7 @@ function SuperAdminsOf({ from, member }: { from: SuperAdminReach; member: boolea
   const run = (act: Act): void => {
     if (busy) return;
     setBusy(true); setActed(null);
-    void act(reach).then(async (r) => { setActed(r); await again(); }).finally(() => setBusy(false));
+    void act(reach).then(async (r) => { setActed(r); if (r.of === ACTED.done && r.sentAny) reopen?.(); await again(); }).finally(() => setBusy(false));
   };
   if (read.of === NOT_YET.reading) return <p className="text-sm" data-super-admins="reading">{t('superAdmins.reading')}</p>;
   if (read.of !== READ.read) return <ActRefused why={read.act} />;
@@ -175,7 +180,7 @@ function SuperAdminsOf({ from, member }: { from: SuperAdminReach; member: boolea
         </Section>
       )}
       {read.changes.map((c) => <KeptChange key={c.chainId} change={c} iAmOne={read.iAmOne} busy={busy} run={run} />)}
-      <NotYetAdopted accountId={reach.company.accountId} contracts={read.contracts} member={member} />
+      <NotYetAdopted contracts={read.contracts} member={member} />
       {read.iAmOne ? <RaiseForm now={{ committee: read.committee.map((k) => k.key), threshold: read.threshold }} busy={busy} run={run} /> : null}
       <Acted acted={acted} />
     </div>
@@ -189,21 +194,22 @@ function SuperAdminsOf({ from, member }: { from: SuperAdminReach; member: boolea
  */
 export function SuperAdmins() {
   const t = useText();
-  const { company } = useSession();
+  const { reload } = useCompanyRecords();
+  const view = useCompanyView();
   const [reach, setReach] = useState<SuperAdminReach | null | typeof NOT_YET.unnamed>(null);
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let alive = true;
-    void reachOfTheCompany(company).then((r) => { if (alive) setReach(r ?? NOT_YET.unnamed); }, () => { if (alive) setReach(NOT_YET.unnamed); });
+    void reachOfTheCompany(view).then((r) => { if (alive) setReach(r ?? NOT_YET.unnamed); }, () => { if (alive) setReach(NOT_YET.unnamed); });
     return () => { alive = false; };
-  }, [company]);
+  }, [view]);
   return (
     <div className="flex flex-col gap-6" data-screen="super-admins">
       <p className="text-sm text-muted-foreground">{t('superAdmins.intro')}</p>
       {reach === NOT_YET.unnamed ? <p className="text-sm" data-super-admins="unnamed">{t('superAdmins.unnamed')}</p> : null}
       {reach !== null && reach !== NOT_YET.unnamed ? (
         <>
-          <SuperAdminsOf from={reach} member />
+          <SuperAdminsOf from={reach} member reopen={reload} />
           <Section title={t('superAdmins.link.title')} description={t('superAdmins.link.what')} list={false} data-super-admin-link>
             <CopyText text={window.location.origin + addressOf(PAGE.superAdminsByLink, { id: reach.company.accountId, label: reach.company.label, account: reach.company.account })}
               label={t('superAdmins.link.copy')} copied={t('invite.link.copied')} refused={t('invite.link.refused')} />

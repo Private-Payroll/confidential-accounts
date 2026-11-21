@@ -14,14 +14,14 @@ import type { Hex } from '../../src/core/crypto.js';
 import { directoryOf, filerSeatNow, type DirectoryChainRead, type DirectoryStore } from '../../src/server/seat-directory-route.js';
 import type { MayFileUnder } from '../../src/server/vault-records-authority.js';
 import type { FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
-import {
-  attestedIn, directoryFilingsFrom, directoryHere, directoryJudge, fileTheOwedDirectoryEntry, readersIn, type DirectoryHereDeps, type DirectoryRead,
-  type OwedDirectoryEntry,
-} from 'vaults-web-shared/vault-page-doors.js';
+import { attestedIn, directoryHere, directoryJudge, readersIn, type DirectoryHereDeps, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
+import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/directory-filed-here.js';
+import { type OwedDirectoryEntry } from 'vaults-web-shared/keyring-blob.js';
 import { anchoredOver } from '../../src/testing/record-tree-double.js';
 import { leavesOfTheContract } from '../../src/testing/directory-seats.js';
 import { seatBlinding, type SeatOpening } from '../../src/core/seat-opening.js';
 import { pureCircuits } from '../managed/contract/index.js';
+import { viewOver } from '../../src/testing/writes-over-a-send.js';
 
 const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
@@ -83,7 +83,7 @@ type DeviceReads = {
 /** What a device reads to believe the company's directory: the directory read again, and the account read again off the chain. */
 const directoryDepsOver = (deps: DeviceReads): DirectoryHereDeps => ({
   accountId: deps.accountId, label: deps.label, viewingKey: deps.viewingKey,
-  filings: () => directoryFilingsFrom(deps.api, deps.accountId),
+  filings: () => viewOver(deps.api, deps.accountId).current().filings(),
   holders: async () => ({
     ...holdersAsTheWalletReads(deps.accountState, { state: deps.deployed, label: () => deps.label }), account: deps.account.toLowerCase() as never,
   }),
@@ -123,8 +123,8 @@ export const fileOwnEntry = async (deps: {
       entry: signDirectoryEntry(deps.identity, deps.label, deps.account.toLowerCase() as never, deps.companyKey, deps.signingKey.toLowerCase(), deps.seat.toLowerCase()),
     },
   };
-  const done = await fileTheOwedDirectoryEntry(deps.api, deps.accountId, { read: () => owed, settle: async () => { owed = null; } },
-    async () => ({ signingSecret: deps.signingSecret, viewingKey: deps.viewingKey }), async () => deps.founding);
+  const done = await fileTheOwedDirectoryEntry(deps.accountId, { read: () => owed, settle: async () => { owed = null; } },
+    async () => ({ signingSecret: deps.signingSecret, viewingKey: deps.viewingKey }), async () => deps.founding, viewOver(deps.api, deps.accountId));
   if (typeof done === 'object') throw new Error('notYet' in done ? done.notYet : done.waitingForItsInvitation);
   return done;
 };

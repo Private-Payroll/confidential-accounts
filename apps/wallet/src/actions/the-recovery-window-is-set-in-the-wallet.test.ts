@@ -8,6 +8,7 @@ import { fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler
 import { RECOVERY_WINDOW_RANGE, sealRecoveryWindow } from '../../../../src/midnight/recovery-window-record.js';
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **THE RECOVERY WINDOW IS SET IN THE WALLET: AN ADMIN OR THE FOUNDING SEAT STARTS A CHANGE, ANY SEAT SIGNS IT, AND IT
@@ -79,16 +80,17 @@ const reachOf = (me: Seat, s: Service, co: Company) => {
     at: () => ({ dir: { seats: co.directory } }),
   };
   const entries = () => s.entered.map((version) => ({ store: 'company', kind: 'policy', id: 'recovery-window', version, digest: s.digests.get(version) }));
-  return {
+  return viewOverItsApi({
     accountId: COMPANY, label: LABEL, account: ACCOUNT, leaf: me.leaf, opener: me.opener,
     seat: { signerId: me.leaf, signingSecret: me.signing.secret, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'cc'.repeat(32) },
     companyKeys: { epoch: 0, keyAt, sealing: () => ({ key: COMPANY_KEY, epoch: 0 }) },
-    roster: async () => ({}), stepTo: () => {},
+    roster: async () => ({}),
+    /* The window's versions as the step's view reads them: every version the service holds. */
+    records: async (asked: readonly { kind: string; id: string }[]) => {
+      if (s.versionsFail) throw Object.assign(new Error('the service answered 503'), { status: 503 });
+      return asked.map((r) => (r.kind === 'policy' && r.id === 'recovery-window' ? { versions: s.filed.map((v) => toCompanyWire(v)) } : null));
+    },
     api: async (path: string, init?: RequestInit) => {
-      if (path === `/api/accounts/${COMPANY}/records/policy/recovery-window/versions`) {
-        if (s.versionsFail) throw Object.assign(new Error('the service answered 503'), { status: 503 });
-        return { versions: s.filed.map((r) => toCompanyWire(r)) };
-      }
       if (path === `/api/accounts/${COMPANY}/manifest/entries` && init?.method === 'POST') {
         for (const e of (JSON.parse(String(init.body)) as { entries: { version: number; digest: string }[] }).entries) {
           s.entered.push(e.version);
@@ -96,35 +98,36 @@ const reachOf = (me: Seat, s: Service, co: Company) => {
         }
         return {};
       }
+      if (/^\/api\/accounts\/acc_window\/records\/policy\/recovery-window\/\d+$/u.test(path) && init?.method === 'PUT') {
+        const wire = JSON.parse(String(init.body));
+        const rec = fromCompanyWire(wire, { company: COMPANY, kind: 'policy', id: 'recovery-window' }).sealed;
+        if (rec.version !== s.filed.length + 1) {
+          throw Object.assign(new Error('version already filed'), { status: 409, body: { refused: 'version-already-filed' } });
+        }
+        s.filed.push(rec);
+        return { filed: true, version: rec.version, digest: wire.digest };
+      }
       throw Object.assign(new Error(`not served here: ${path}`), { status: 500 });
-    },
-    send: async (path: string, init: { method: string; body?: string }) => {
-      if (path.match(/^\/api\/accounts\/acc_window\/records\/policy\/recovery-window\/(\d+)$/u) === null || init.method !== 'PUT') return { status: 404, body: {} };
-      const wire = JSON.parse(String(init.body));
-      const rec = fromCompanyWire(wire, { company: COMPANY, kind: 'policy', id: 'recovery-window' }).sealed;
-      if (rec.version !== s.filed.length + 1) return { status: 409, body: { refused: 'version-already-filed' } };
-      s.filed.push(rec);
-      return { status: 201, body: { filed: true, version: rec.version, digest: wire.digest } };
     },
     judges: {
       directoryHereFor: () => async () => ({ ...here, records: { ...here.records, notYetAnchored: entries() } }),
       filingJudgeFor: () => async () => () => null,
     },
-  };
+  });
 };
 
 const intent = (seconds: number): ActIntent =>
   ({ name: 'set-recovery-window', fields: { record: COMPANY, company: LABEL, account: ACCOUNT, seconds: String(seconds) } }) as ActIntent;
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity: {}, account: 0 }, at: { step: 1, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('setting the window relays nothing'); },
     call: async () => ({ status: 404, body: {} }),
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: null,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const actionFor = (me: Seat, s: Service, co: Company) => setRecoveryWindowAction({

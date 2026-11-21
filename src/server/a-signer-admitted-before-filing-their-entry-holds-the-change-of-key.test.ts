@@ -15,12 +15,15 @@ import { identityFromSecret } from 'midnight-identity';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
-import { admitSignerHere, rosterHere } from 'vaults-web-shared/roster-here.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
+import { rosterHere } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere } from 'vaults-web-shared/roster-filed-here.js';
 import { FiledNotEntered, type RecordsEntered } from 'vaults-web-shared/record-entered-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
 import { ACME, ORIGIN, fromAda } from './a-company-of-two-seats.test-support.js';
+import { writesOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, BO, chains, CO, committeeKeyOfLeaf, CY, deviceOf, KEY, LABEL, rosterDoorsOf, sendAs, store,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
@@ -38,7 +41,7 @@ const EVES_SIGNS = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new 
 
 describe('A SIGNER ADMITTED BEFORE A SIGNER LEAVES, WITH NO ENTRY YET', () => {
   it('holds up the change of the company\'s key until they file their entry', async () => {
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, writesOver(fromAda));
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
@@ -62,7 +65,7 @@ describe('A SIGNER ADMITTED BEFORE A SIGNER LEAVES, WITH NO ENTRY YET', () => {
 
 describe('A ROSTER VERSION WHOSE ENTRY WAS LOST', () => {
   it('is entered by another seat\'s device with the entry its filer signed, and believed there', async () => {
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'eve', role: 'approver', person: 'eve' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'eve', role: 'approver', person: 'eve' }, ORIGIN, writesOver(fromAda));
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},

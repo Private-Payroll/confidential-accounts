@@ -9,7 +9,8 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { superAdminHeaderFor, SUPER_ADMIN_HEADER } from '../../../src/midnight/super-admin-request.js';
 import type { SuperAdminDoors } from './super-admin-change.js';
-import { currentUser, isSignedIn, showWaitingFor } from './keyring.js';
+import { currentUser, isSignedIn } from './keyring.js';
+import { showWaitingFor } from './wallet-asks.js';
 import { walletInThisPage } from './wallet-frame.js';
 import { openWalletDialog, US_TO_A_WALLET, type Openable, type WalletDialog } from './wallet-sign-in.js';
 import { askWalletToSignSuperAdminUpdates, askWalletToSignTheChange, askWalletToSignTheRequest } from './wallet-committee.js';

@@ -1,5 +1,5 @@
 import { Amount, AMOUNT_KIND, Section, SectionRow, useText } from 'vaults-ui';
-import type { RunLeg } from '../adapters/company-records.js';
+import type { RunLeg } from '../adapters/company-rows.js';
 
 /**
  * WHAT PAYING A LEG OR A SINGLE PAYMENT MAKES PUBLIC ON THE NETWORK, shown before the payment is made. Whatever the form, the network

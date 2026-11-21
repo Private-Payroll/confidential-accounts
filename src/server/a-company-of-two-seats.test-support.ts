@@ -7,6 +7,7 @@
  * company. Every entry is signed by a real wallet's committee key, and every
  * request a device sends is recorded.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -16,7 +17,7 @@ import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/re
 import { directoryHere, directoryWithItsRecordsHere, type DirectoryHere, type DirectoryHereDeps, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
 import type { RecordsAsked } from '../midnight/records-held.js';
 import { aChainAnchor, anchoredOver, anchorFunctions, heldBy, anchorSentInATest } from '../testing/record-tree-double.js';
-import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { sealRoster } from '../core/roster-record.js';
 import { signedFoundingState } from '../core/founding-state.js';
 import { newStateBlinding, sealState } from '../core/account.js';
@@ -33,7 +34,7 @@ import {
 } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry, type ManifestEntryBody } from '../midnight/record-manifest.js';
 import { invitationRoutes } from './invitations-route.js';
-import { ownsPersonIn, peopleRoutes } from './people-route.js';
+import { ownsPersonBy, peopleRoutes, personHeldIn } from './people-route.js';
 import type { ChainHolders, DirectoryEntry, DirectoryFiling } from '../midnight/seat-directory.js';
 import { directoryEntryMade } from '../midnight/seat-directory.js';
 import { invitationIdOf, newInvitationToken, type SeatByAddressChange } from '../core/invitation.js';
@@ -41,10 +42,12 @@ import { invitedAsRaised, invitedLeafOfTheTestChain } from '../testing/invitatio
 import { invitedSeatRightsOf, scopeOfRole } from '../core/seat-rights.js';
 import type { SignerRole } from '../core/roles.js';
 import type { InvitationSend, InvitingCompany, InvitingSeat } from 'vaults-web-shared/invitation-on-device.js';
-import { manifestServiceFor, recordsEnteredFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
 import { filedAsIn, recordManifestRoutes } from './record-manifest-route.js';
 import { MemorySealedPoolStore, type SealedPoolStore } from '../midnight/vault-pool.js';
 import { leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 export const CO = 'acc_invites';
 export const OTHER = 'acc_invites_other';
@@ -95,7 +98,7 @@ export const seatOf = (
       }, invitedBy.signingSecret as Hex) }),
     }),
     /* Every filing this seat makes is entered in its company's records, over the manifest route mounted below. */
-    entered: recordsEnteredFor(manifestServiceFor(apiAs(person)), company, signing.secret),
+    entered: recordsEnteredFor(manifestServiceOf(serviceSource(apiAs(person), company)), company, signing.secret),
   };
 };
 export const ADA = seatOf('ada', 1);
@@ -356,16 +359,16 @@ const foundAcme = async (founding: AcmeFounding): Promise<void> => {
   expect(store.fileRoster(roster)).toBeNull();
   await peopleRecords.put(founding.state?.() ?? ACME_STATE);
   await founding.beforeTheAnchor?.();
-  const anchoring = anchorTheRecordsHere({
+  const anchoring = anchorTheRecordsHere(throughAView({
     accountId: CO,
     material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-    manifest: manifestServiceFor(apiAs('ada')),
-    tree: treeServiceFor(apiAs('ada')),
+    manifest: manifestServiceOf(serviceSource(apiAs('ada'), CO)),
+    tree: treeServiceOf(serviceSource(apiAs('ada'), CO)),
     directory: () => acmeDirectoryWithItsFold({}, [ADA]),
     directoryFilings: async () => store.directoryFilingsOf(CO),
     onChain: acmeChain.onChain,
     service: {
-      foundingRecords: anchorServiceFor(apiAs('ada')).foundingRecords,
+      foundingRecords: foundingRecordsOver(apiAs('ada'), CO),
       sealedProposals: async (company) => store.listProposals(company),
       callState: async () => ({ account: ADDRESS }) as never,
       sendProven: async (_company, tx) => {
@@ -374,7 +377,7 @@ const foundAcme = async (founding: AcmeFounding): Promise<void> => {
       },
     },
     builder: { ...anchorFunctions, anchor: anchorSentInATest },
-  });
+  }));
   if (founding.anchored === undefined) {
     await anchoring;
     return;
@@ -399,7 +402,8 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
     const member: express.RequestHandler = (req, res, next) => (store.getAccount(String(req.params.id))?.memberUserIds.includes(req.userId!)
       ? next() : res.status(404).json({ error: 'account not found' }));
     /* The service's own person gate, over the company's records as this test keeps them. */
-    const ownsPerson = ownsPersonIn(() => peopleRecords, (company, person) => store.getAccount(company)?.memberUserIds.includes(person) ?? false);
+    const heldFor = personHeldIn(() => peopleRecords, (company, person) => store.getAccount(company)?.memberUserIds.includes(person) ?? false);
+    const ownsPerson = ownsPersonBy(heldFor);
     const records = withTheRosterIn(store, peopleRecords);
     app.use(seatDirectoryRoutes({ signedIn, member, store, chain: chainRead }));
     app.use(companyRecordsRoutes({ signedIn, member, records, accountOf: (id) => store.getAccount(id), directoryOf: (id) => directoryOf(store, chainRead, id) }));
@@ -409,10 +413,9 @@ export function aCompanyOfTwoSeats(beside?: (app: express.Express, deps: Mounted
       recordRefusal: (method, path, status, kind) => { refusals.push(`${status} ${method} ${path} ${kind}`); },
     }));
     app.use(peopleRoutes({
-      signedIn, member, ownsPerson, store, records: () => records, people: () => peopleRecords, directoryOf: (id) => directoryOf(store, chainRead, id),
+      signedIn, member, ownsPerson, heldFor, store, records: () => records, people: () => peopleRecords, directoryOf: (id) => directoryOf(store, chainRead, id),
     }));
-    /* The handover and the invitation list, as the whole server serves them, for an admitting device. */
-    app.get('/api/employees/:id/handover', signedIn, ownsPerson, (req, res) => { res.json({ inbox: store.handoverFor(String(req.params.id), 'employee') }); });
+    /* The invitation list, as the whole server serves it, for an admitting device. */
     app.get('/api/accounts/:id/invites', signedIn, member, (req, res) => {
       res.json(store.listInvites(String(req.params.id)).map(({ token: _t, acceptanceHash: _a, offer: _o, handover: _h, ...rest }) => rest));
     });

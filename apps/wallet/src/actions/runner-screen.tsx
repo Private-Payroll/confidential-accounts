@@ -125,6 +125,7 @@ export function ActWhatItDoes({ request, action, shown }: {
  */
 export function ActionRunner({
   request, action, channel, identity, secret, consent, atOnce, onDecline, now = Date.now, wallet, account, payingFrom, framing = FRAMING,
+  pressOnceOpen = payingFrom !== undefined,
 }: {
   readonly request: ActRequest;
   readonly action: ActionDefinition;
@@ -141,6 +142,8 @@ export function ActionRunner({
   readonly account?: number;
   /** For an action that pays: where the person chooses which of their accounts pays, shown before they approve. */
   readonly payingFrom?: ReactNode;
+  /** Whether the action waits for a press once the wallet is open even after the Approve before the passkey. */
+  readonly pressOnceOpen?: boolean;
   /** Where this wallet is drawn, the same as the window's own: what the Confirm's guard measures. */
   readonly framing?: Framing;
 }): ReactNode {
@@ -156,11 +159,12 @@ export function ActionRunner({
   const started = useRef(false);
   const mounted = useRef(true);
   /*
-   * An action that pays never starts on the press before the passkey: the wallet it pays from is chosen under
-   * `payingFrom`, after the wallet opens, and the run takes the wallet chosen when it starts (16 Nov, preprod: a deposit
-   * started at once paid from the last-used subwallet, which held nothing, while the person had picked Main wallet).
+   * An action that pays coins never starts on the press before the passkey: the account it pays from is named under
+   * `payingFrom` once the wallet is open, and it runs on a press there (a deposit that started on the press before
+   * the passkey paid from an account that held nothing, while the person had picked another). An action that pays only a call's network fee
+   * from the account picked before the passkey starts on that press.
    */
-  const go = (atOnce && payingFrom === undefined) || pressed;
+  const go = (atOnce && !pressOnceOpen) || pressed;
 
   useEffect(() => {
     mounted.current = true;

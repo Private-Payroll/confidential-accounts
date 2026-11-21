@@ -1,5 +1,4 @@
 import { NETWORK } from 'midnight-identity/network';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { checkShieldedAddress, checkUnshieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { assets, parseAmount, type Asset, type AssetRegistry } from '../../../../src/core/assets.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
@@ -10,9 +9,10 @@ import {
 } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import { actOnACompanyInTheWallet } from 'vaults-web-shared/keyring.js';
-import { canApprove, canPay, canWithdraw, oneOffLegOf, walletKindOf, type ProposalAsks, type ProposalRow, type RunLeg } from './company-records.js';
-import { namedFor } from './create-vault.js';
-import { keyringFor } from './keyring-person.js';
+import { canApprove, canPay, canWithdraw, oneOffLegOf, walletKindOf } from './company-records.js';
+import { type ProposalAsks, type ProposalRow, type RunLeg } from './company-rows.js';
+import { namedBefore } from './named-before.js';
+import type { PageView } from './filing-judge.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 
@@ -44,24 +44,18 @@ function actedOf(act: ProposalAct, ended: ActOutcome): ProposalActed {
 }
 
 
-async function namedBefore(personId: string, companyId: string): Promise<{ record: string; company: CompanyLabel; account: AccountAddress } | ActRefusal> {
-  if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
-  if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  const named = await namedFor(companyId);
-  return named === null ? ACT_REFUSAL.didNotFinish : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
-}
 
 
 /** What the row carries for the wallet to show, without the name of the kind, which is sent on its own. */
 const approvalFields = (row: ProposalRow): ProposalAsks => Object.fromEntries(Object.entries(row.asks ?? {}).filter(([k]) => k !== KIND_FIELD));
 
 async function ask(
-  act: ProposalAct, personId: string, companyId: string, row: ProposalRow, onStep?: (step: number, steps: number) => void,
+  act: ProposalAct, personId: string, view: PageView, row: ProposalRow, onStep?: (step: number, steps: number) => void,
 ): Promise<ProposalActed> {
   try {
     const kind = walletKindOf(row);
     if (kind === undefined) return refused(ACT_REFUSAL.didNotFinish);
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await proposalActInTheWallet({ act, ...named, proposal: row.id, kind, ...(act === PROPOSAL_ACT.approve ? { asked: approvalFields(row) } : {}) },
       ACCOUNT_ORIGIN, onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
@@ -74,17 +68,17 @@ async function ask(
 
 /** Ask the person's wallet to approve this proposal, by its id and kind. Nothing is asked of a row the list does not offer Approve on. */
 export function approveProposal(
-  personId: string, companyId: string, row: ProposalRow, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, row: ProposalRow, onStep?: (step: number, steps: number) => void,
 ): Promise<ProposalActed> {
-  return canApprove(row) ? ask(PROPOSAL_ACT.approve, personId, companyId, row, onStep) : Promise.resolve(refused(ACT_REFUSAL.didNotFinish));
+  return canApprove(row) ? ask(PROPOSAL_ACT.approve, personId, view, row, onStep) : Promise.resolve(refused(ACT_REFUSAL.didNotFinish));
 }
 
 
 /** Ask the person's wallet to withdraw this proposal, by its id and kind. The wallet decides who may; the list only offers it to those it expects. */
 export function withdrawProposal(
-  personId: string, companyId: string, row: ProposalRow, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, row: ProposalRow, onStep?: (step: number, steps: number) => void,
 ): Promise<ProposalActed> {
-  return ask(PROPOSAL_ACT.withdraw, personId, companyId, row, onStep);
+  return ask(PROPOSAL_ACT.withdraw, personId, view, row, onStep);
 }
 
 
@@ -103,12 +97,12 @@ export type ThresholdActed =
  * the ones the shared code lists for the wallet's reasons under this act's name.
  */
 export async function changeThreshold(
-  personId: string, companyId: string, wanted: number, known: ThresholdKnown, onStep?: (step: number, steps: number) => void, vault?: string,
+  personId: string, view: PageView, wanted: number, known: ThresholdKnown, onStep?: (step: number, steps: number) => void, vault?: string,
 ): Promise<ThresholdActed> {
   const wrong = thresholdProblem(wanted, known);
   if (wrong !== null) return { of: THRESHOLD_ACTED.problem, ...wrong };
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await changeThresholdInTheWallet({ ...named, threshold: wanted, ...(vault === undefined ? {} : { vault }) }, ACCOUNT_ORIGIN, onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
     return refusedTheNumber(ended) ? { of: THRESHOLD_ACTED.walletRefused } : actedOf(PROPOSAL_ACT.approve, ended);
@@ -127,9 +121,9 @@ const RETIRE_VAULT_ACT = 'retire-vault';
  * the company's threshold is met. The page names the company and the vault, and reads back where the retire got to; a
  * retire stops for the reasons an approval does.
  */
-export async function retireVault(personId: string, companyId: string, vault: string, onStep?: (step: number, steps: number) => void): Promise<ProposalActed> {
+export async function retireVault(personId: string, view: PageView, vault: string, onStep?: (step: number, steps: number) => void): Promise<ProposalActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await actOnACompanyInTheWallet({ name: RETIRE_VAULT_ACT, ...named, vault: vault.toLowerCase() }, ACCOUNT_ORIGIN,
       onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
@@ -161,12 +155,12 @@ export type PayRunActed =
  * what the run shows; the wallet compares the people and the total with its own count of the run and pays nothing if they differ.
  */
 export async function payRun(
-  personId: string, companyId: string, leg: PayRunLeg, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, leg: PayRunLeg, onStep?: (step: number, steps: number) => void,
 ): Promise<PayRunActed> {
   if (leg.form === null || leg.proposal === '' || leg.run === '' || !/^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(leg.period)
     || !Number.isSafeInteger(leg.payees) || leg.payees < 1 || leg.total < 1n) return refused(ACT_REFUSAL.didNotFinish);
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await payRunInTheWallet({
       ...named, proposal: leg.proposal, run: leg.run, period: leg.period, list: leg.list, vault: leg.vault, token: leg.token, form: leg.form, payees: leg.payees, total: leg.total,
@@ -220,12 +214,12 @@ export const runCurrencies = (): readonly Pick<Asset, 'code' | 'symbol' | 'name'
  * state and the approvals counted and needed where it gave them, or the reason it stopped.
  */
 export async function raiseRun(
-  personId: string, companyId: string, run: RunToRaise, onStep?: (step: number, steps: number) => void, nowMs: number = Date.now(),
+  personId: string, view: PageView, run: RunToRaise, onStep?: (step: number, steps: number) => void, nowMs: number = Date.now(),
 ): Promise<RaiseRunActed> {
   if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(run.period) || run.vault === '' || run.token === ''
     || run.opensAt <= BigInt(Math.floor(nowMs / 1000)) || run.closesAt <= run.opensAt) return refused(ACT_REFUSAL.didNotFinish);
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await raiseRunInTheWallet({
       ...named, period: run.period, list: run.list, vault: run.vault, token: run.token, form: run.form, opensAt: run.opensAt, closesAt: run.closesAt,
@@ -250,14 +244,14 @@ interface RetryToRaise {
  * a total below one, or a window that is not in the future and in order.
  */
 export async function retryRun(
-  personId: string, companyId: string, retry: RetryToRaise, onStep?: (step: number, steps: number) => void, nowMs: number = Date.now(),
+  personId: string, view: PageView, retry: RetryToRaise, onStep?: (step: number, steps: number) => void, nowMs: number = Date.now(),
 ): Promise<RaiseRunActed> {
   const places = new Set(retry.indices);
   if (retry.run === '' || !/^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(retry.period) || retry.vault === '' || retry.token === '' || retry.indices.length === 0
     || places.size !== retry.indices.length || retry.indices.some((i) => !Number.isSafeInteger(i) || i < 0) || retry.total < 1n
     || retry.opensAt <= BigInt(Math.floor(nowMs / 1000)) || retry.closesAt <= retry.opensAt) return refused(ACT_REFUSAL.didNotFinish);
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await retryRunInTheWallet({
       ...named, run: retry.run, period: retry.period, list: retry.list, vault: retry.vault, token: retry.token, form: retry.form,
@@ -350,13 +344,13 @@ export function oneOffProblem(
  * and pays it is the wallet's to decide from what the chain holds; the answer says which.
  */
 export async function raiseOneOff(
-  personId: string, companyId: string, draft: OneOffDraft, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, draft: OneOffDraft, onStep?: (step: number, steps: number) => void,
   registry: AssetRegistry = assets, network: NetworkName = NETWORK as NetworkName,
 ): Promise<ProposalActed> {
   if (draft.vault === '' || oneOffProblem(draft, registry, network) !== null) return refused(ACT_REFUSAL.didNotFinish);
   const typed = amountTyped(draft, registry) as { readonly units: bigint };
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const name = draft.payeeName.trim();
     const ended = await oneOffInTheWallet({

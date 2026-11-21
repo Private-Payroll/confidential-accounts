@@ -20,9 +20,9 @@
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import { keysByPurpose } from './keys-by-purpose.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { companyWirePaths, fromCompanyWire, type CompanyRecordKind, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { fromCompanyWire, type CompanyRecordKind, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { openVaultInfo, VAULT_INFO_KIND, VaultInfoRefused } from '../../../src/midnight/vault-info-record.js';
-import { FilingNotBelieved, HttpCompanyRecordStore, pageWireSend, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
+import { filesThrough, FilingNotBelieved, HttpCompanyRecordStore, type FreshJudge, type ReadsThroughTheView, type ThroughTheView } from './http-sealed-pool-store.js';
 import type { DirectoryRead } from './vault-page-doors.js';
 import type { RecordsEntered } from './record-entered-here.js';
 
@@ -100,23 +100,25 @@ export async function vaultInfoHere(doors: Pick<VaultInfoDoors, 'companyKeys' | 
 
 /**
  * The company's records as a device reads and files a vault's name: through
- * the one check (`judge`), signed with this seat's filing key, sent through
- * `send` (this page's own requests unless the caller gives another way). Given
- * no filing key (null), as on a page that holds no seat secret, it only reads.
+ * the one check (`judge`), signed with this seat's filing key, reached through
+ * `reach` (the company's view, whose every read and filing goes through it).
+ * Given no filing key (null), as on a page that holds no seat secret, it only
+ * reads, and may be given a reach that cannot file (`ReadsThroughTheView`).
  */
-export const vaultInfoRecordsFor = (
-  accountId: string, signingSecret: Hex | null, judge: FreshJudge, signedInAs: () => string | null,
-  send: WireSend = pageWireSend(signedInAs),
-): VaultInfoRecords => {
-  const store = new HttpCompanyRecordStore(accountId, send, signingSecret, judge);
+export function vaultInfoRecordsFor(accountId: string, signingSecret: Hex | null, judge: FreshJudge, reach: ThroughTheView): VaultInfoRecords;
+export function vaultInfoRecordsFor(accountId: string, signingSecret: null, judge: FreshJudge, reach: ReadsThroughTheView): VaultInfoRecords;
+export function vaultInfoRecordsFor(
+  accountId: string, signingSecret: Hex | null, judge: FreshJudge, reach: ThroughTheView | ReadsThroughTheView,
+): VaultInfoRecords {
+  const store = filesThrough(reach)
+    ? new HttpCompanyRecordStore(accountId, reach, signingSecret, judge)
+    : new HttpCompanyRecordStore(accountId, reach, null, judge);
   return {
     get: (kind, id) => store.get(kind, id),
     put: (rec) => store.put(rec),
     served: async (kind, id) => {
-      const r = await send(companyWirePaths.newest(accountId, kind, id), { method: 'GET' });
-      const b = r.body as { filed?: unknown } | null;
-      return r.status !== 200 || b?.filed === null || b?.filed === undefined
-        ? null : fromCompanyWire(b.filed, { company: accountId, kind, id }).sealed;
+      const b = await reach.companyRecord({ kind, id }) as { filed?: unknown } | null;
+      return b?.filed === null || b?.filed === undefined ? null : fromCompanyWire(b.filed, { company: accountId, kind, id }).sealed;
     },
   };
-};
+}

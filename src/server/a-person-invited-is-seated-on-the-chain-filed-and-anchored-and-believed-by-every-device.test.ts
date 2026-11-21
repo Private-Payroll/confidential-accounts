@@ -18,6 +18,7 @@
  * holder who is not the person invited could make: each must be refused. Each
  * assertion names the step whose loss turns it red.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor, committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
@@ -30,16 +31,21 @@ import { MidnightCommitments } from '../midnight/commitments.js';
 import { directoryEntryMade } from '../midnight/seat-directory.js';
 import { leafOfTheContract, leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { seatSignerOnDevice } from 'vaults-web-shared/signer-by-link.js';
 import { seatInvitationIn } from '../core/proposal-filing.js';
 import { proposalMadeByHere } from '../testing/invitation-approved.js';
-import { fileTheOwedDirectoryEntry, type OwedDirectoryEntry } from 'vaults-web-shared/vault-page-doors.js';
-import { admitSignerHere, foldOffersHere, offerVaultKeysHere, refuseASeatNotForTheInvited, rosterHere, seatingOf } from 'vaults-web-shared/roster-here.js';
-import { recordsEnteredFor, manifestServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/directory-filed-here.js';
+import { type OwedDirectoryEntry } from 'vaults-web-shared/keyring-blob.js';
+import { refuseASeatNotForTheInvited, rosterHere, seatingOf } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere, foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
+import { recordsEnteredFor } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource } from 'vaults-web-shared/records-source.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
 import { ACME, aRecordFiledBy, ORIGIN, fromAda } from './a-company-of-two-seats.test-support.js';
+import { writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, ADDRESS, anchorDoorsOf, api, BO, CO, committeeKeyOfLeaf, companyNow, deviceOf, directoryOf, events, KEY, LABEL,
   recordsReadBy, rosterDoorsOf, seatsOnTheChain, sendAs, store, theInviteeTakesTheSeatHere, walletOf, type Seat,
@@ -65,7 +71,7 @@ const seatingDevice = (s: Seat) => ({ ...deviceOf(s), roster: rosterDoorsOf(s) }
 describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO THE CHAIN AND THE ANCHOR', () => {
   it('DEE IS SEATED ON THE CHAIN, ADMITTED TO THE ROSTER, FILES HER OWN ENTRY WITH HER INVITATION, AND EVERY DEVICE BELIEVES HER AND OPENS EVERY BATCH', async () => {
     /* Ada's device invites Dee, its seat signing who the seat is for; Dee's device accepts under her own sign-in and wallet. */
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, writesOver(fromAda));
     const kept: PendingSeat[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {
       newKeys: newSeatKeys, seal: async (seat) => { kept.push(seat as PendingSeat); }, promote: async () => {},
@@ -128,8 +134,8 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
 
     /* Dee's own device files her entry, with the invitation it reads from the proposal that seated her. */
     let owed: OwedDirectoryEntry | null = { person: 'dee', company: LABEL, signed: { committeeKey: DEES_KEY as never, entry: statement }, opening: dee.opening! };
-    const filed = await fileTheOwedDirectoryEntry(api('dee'), CO, { read: () => owed, settle: async () => { owed = null; } },
-      async () => ({ signingSecret: dee.signingSecret, viewingKey: KEY }), async () => ADA.seat);
+    const filed = await fileTheOwedDirectoryEntry(CO, { read: () => owed, settle: async () => { owed = null; } },
+      async () => ({ signingSecret: dee.signingSecret, viewingKey: KEY }), async () => ADA.seat, viewOver(api('dee'), CO));
     /* RED WHEN: the proposal that seated her does not carry her invitation with her leaf, so her entry waits for it for good. */
     expect(filed).toBe('filed');
     const own = store.directoryFilingsOf(CO).length;
@@ -147,19 +153,19 @@ describe('A PERSON INVITED AND SEATED FROM THE SIGNERS\' OWN DEVICES, TRACED TO 
 
     /* Dee gives her vault keys from her own device and Ada's device folds them into the roster: her wallet's statement is read from it. */
     const deeAsASeat = {
-      person: 'dee', n: 4, seat: leaf, signingSecret: dee.signingSecret, entered: recordsEnteredFor(manifestServiceFor(api('dee')), CO, dee.signingSecret),
+      person: 'dee', n: 4, seat: leaf, signingSecret: dee.signingSecret, entered: recordsEnteredFor(manifestServiceOf(serviceSource(api('dee'), CO)), CO, dee.signingSecret),
     } as unknown as Seat;
-    await offerVaultKeysHere(api('dee'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId, signingSecret: dee.signingSecret, committeeKey: DEES_KEY as never, ...walletOf(deeAsASeat), entry: statement, viewingKey: KEY,
-    });
+    }, viewOver(api('dee'), CO));
     expect(await foldOffersHere(rosterDoorsOf(ADA))).toEqual({ folded: [leaf], refused: [] });
 
     /* Ada's device anchors Dee's entry; Dee files a record and it is anchored after it. */
     events.length = 0;
-    expect((await anchorTheRecordsHere(anchorDoorsOf(ADA))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(ADA)))).anchored).toBeGreaterThan(0);
     const deesRecord = await aRecordFiledBy(deeAsASeat, 'prp_filed_by_dee', 'proposal');
     await deeAsASeat.entered.enter([deesRecord]);
-    expect((await anchorTheRecordsHere(anchorDoorsOf(ADA))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(anchorDoorsOf(ADA)))).anchored).toBeGreaterThan(0);
     expect(events).toEqual(['anchored', 'anchored']);
 
     /* The company's records, checked from their first header on every device, Dee's own among them: every batch opens. */

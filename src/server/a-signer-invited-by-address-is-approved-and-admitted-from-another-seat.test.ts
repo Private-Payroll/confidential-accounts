@@ -31,30 +31,37 @@ import { storedSignerLeaf } from '../core/signer-leaf.js';
 import type { PendingSignerPayload, SealedProposal } from '../core/types.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { theNetwork } from '../midnight/network.js';
-import { inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { sealRoster } from '../core/roster-record.js';
 import { vaultKeyIndexOf } from '../core/vault-keys.js';
 import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry, proposalEntry } from '../midnight/record-manifest.js';
-import {
-  approveSeatInvitationOnDevice, governOnDevice, InvitationNotBound, InvitationOutrun, NothingToApprove,
-  raiseSeatInvitationOnDevice,
-  signerByAddressDoorsOf, type SeatInvitationShown,
-} from 'vaults-web-shared/governed-call-on-device.js';
+import { governOnDevice, InvitationNotBound, InvitationOutrun } from 'vaults-web-shared/company-change-on-device.js';
+import { NothingToApprove } from 'vaults-web-shared/proposal-approved-on-device.js';
+import { approveSeatInvitationOnDevice, raiseSeatInvitationOnDevice, signerByAddressDoorsOf, type SeatInvitationShown } from 'vaults-web-shared/seat-invited-on-device.js';
 import { addressSeatedOrInvitedRefusal } from 'vaults-web-shared/address-seated-or-invited.js';
-import {
-  admitSignerHere, fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, rosterHere, RosterNotBelieved, seatingOf,
-  WaitingIdTaken, waitingHere,
-} from 'vaults-web-shared/roster-here.js';
+import { rosterHere, RosterNotBelieved, seatingOf, WaitingIdTaken, waitingHere } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere, fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
 import { SeatNotReadOnTheChain } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { companyJudges, openAccountWith } from 'vaults-web-shared/company-judges.js';
 import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
+import { companyViewFor } from 'vaults-web-shared/company-view.js';
+import { serviceSource, type ServiceCall } from 'vaults-web-shared/records-source.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { PROPOSALS_NOT_READ, SEAT_READ_STOP, SeatingRefusedOnTheChain, TWO_SEATINGS } from 'vaults-web-shared/seat-not-read-on-the-chain.js';
 import { seatingRefusedRead } from 'vaults-web-shared/roster-seating-refused.js';
 import { FiledNotEntered } from 'vaults-web-shared/record-entered-here.js';
 import { invitedLeafOfTheTestChain } from '../testing/invitation-approved.js';
 import { ACME, ORIGIN, acmeReads, fromAda, seatsTakenByInvitation, store } from './a-company-of-two-seats.test-support.js';
+import { writesOver, viewOver } from '../testing/writes-over-a-send.js';
+
+/** A fresh view of the company over `call` for each read the judges make, so every read asks the service as it stands. */
+const freshViews = (call: ServiceCall) => () => companyViewFor(serviceSource(call, CO), {
+  holders: async () => acmeReads.holders() as never,
+  onChain: async () => { throw new Error('this file reads no anchors on the chain'); },
+  builder: { anchorHeads: async () => { throw new Error('this file reads no anchor heads'); } },
+}, async () => { throw new Error('this file reads nothing held through a view'); });
 import {
   aCompanyWhoseSignersChange, ADA, api, BO, chains, CO, committeeKeyOfLeaf, companyNow, CY, deviceOf, events, ID, KEY, LABEL, rosterDoorsOf, sendAs,
   theInviteeTakesTheSeatHere, walletOf as releasedBy, type Seat,
@@ -102,10 +109,9 @@ const openedOnThePage = (s: Seat, o: {
     const body = await api(s.person)(path, init);
     return o.served === undefined ? body : o.served(path, body);
   };
-  const doors = { api: served as ReturnType<typeof api>, keysFor: (id: string) => (id === CO ? shown : null), servedKeyFor: () => KEY as Hex };
+  const doors = { view: freshViews(served), keysFor: (id: string) => (id === CO ? shown : null), servedKeyFor: () => KEY as Hex };
   const judges = companyJudges({
     ...doors,
-    holders: async () => acmeReads.holders() as never,
     indexer: async () => (o.noIndexer === true ? null : { indexerUri: 'http://indexer.test', indexerWsUri: 'ws://indexer.test' }),
     builder: async () => ({
       /*
@@ -143,7 +149,7 @@ const coinOf = (name: string) => companyNow().signers.find((x) => x.name === nam
 /** Ada's device invites a person by their private address, and the offer the link opens; `unchecked` skips the check for a wallet seated or invited. */
 const invited = async (who: { name: string; fill: number }, o: { unchecked?: boolean } = {}) => {
   const doors = signerByAddressDoorsOf(seatingDevice(ADA), KEY, NETWORK, MidnightCommitments, async () => {});
-  const made = await inviteHere(ACME, ADA, 'signer', { name: who.name, role: 'approver', person: 'unused', address: addressOf(who.fill) }, ORIGIN, fromAda,
+  const made = await inviteHere(ACME, ADA, 'signer', { name: who.name, role: 'approver', person: 'unused', address: addressOf(who.fill) }, ORIGIN, writesOver(fromAda),
     o.unchecked === true ? { ...doors, held: async () => null } : doors);
   const opened = await openInvitationHere(made.link, sendAs(null));
   const offer = opened.signed.offer.for as SignerOffer;
@@ -357,9 +363,9 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
   });
   it('a fold and a follow of the roster each keep the coin key a seat was admitted with', async () => {
     /* Bo gives his vault keys again, and Ada's device folds them in: the roster is filed again. */
-    await offerVaultKeysHere(api(BO.person), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: ID[BO.person]!, signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, ...releasedBy(BO), entry: BO.statement, viewingKey: KEY,
-    });
+    }, viewOver(api(BO.person), CO));
     const before = (await rosterHere(rosterDoorsOf(ADA))).version;
     expect((await foldOffersHere(rosterDoorsOf(ADA))).folded).toEqual([BO.seat]);
     expect((await rosterHere(rosterDoorsOf(ADA))).version).toBe(before + 1);
@@ -650,7 +656,7 @@ describe('A SIGNER INVITED BY ADDRESS IS APPROVED AND ADMITTED FROM ANOTHER SEAT
     expect([unread.held, noIndexerRead.held]).toEqual([null, null]);
     /* RED WHEN: a wallet that names no indexer is read as an answer that no invitation's proposal took a seat. */
     const noIndexer = companyJudges({
-      api: api(ADA.person), keysFor: () => null, servedKeyFor: () => KEY as Hex, holders: async () => acmeReads.holders() as never, indexer: async () => null,
+      view: freshViews(api(ADA.person)), keysFor: () => null, servedKeyFor: () => KEY as Hex, indexer: async () => null,
       builder: async () => ({ invitedSeats: async () => ({}) }) as never, released: () => null, askReleased: async () => null, treeKept: () => treeKeptInMemory() as never,
       openAccount: async () => null, seatsAdmittedFor: async () => new Set(), noAccount: () => { throw new Error('unused'); },
     }).rosterReadsFor(CO, LABEL, '00'.repeat(32) as never).invitedSeats!([sam.offer.invited.terms.proposal!.toLowerCase()]);

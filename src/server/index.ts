@@ -48,7 +48,7 @@ import { whyVaultRecordsCannotBeKept } from './vault-records-authority.js';
 import { openCompanyRecords } from '../db/vault-records.js';
 import { memberOrReaderReading, withoutReaders } from './readers-route.js';
 import { MemoryCompanyRecordStore, movePeopleToTheirRecords, withTheRosterIn } from './company-records-route.js';
-import { ownsPersonIn } from './people-route.js';
+import { ownsPersonBy, personHeldIn } from './people-route.js';
 import type { CompanyRecordStore, PeopleRecords } from '../midnight/sealed-record-wire.js';
 import { aCompanyCreatedOnTheLedger } from './account-creation.js';
 import { vaultArtefactPlaces } from './vault-artefacts.js';
@@ -583,7 +583,8 @@ const ownedBy = (
 
 const ownsProposal = ownedBy('id', id => store.getProposal(id));
 /* A person is on the payroll of the company whose records hold them. */
-const ownsPerson = ownsPersonIn(() => companyRecords, (accountId, userId) => accounts.membership(accountId, userId));
+const personHeldFor = personHeldIn(() => companyRecords, (accountId, userId) => accounts.membership(accountId, userId));
+const ownsPerson = ownsPersonBy(personHeldFor);
 
 /**
  * **A SIGNING SECRET IS REFUSED, OUT LOUD, RATHER THAN IGNORED.**
@@ -622,7 +623,7 @@ const refuseSigningSecret: express.RequestHandler = (req, res, next) => {
 
 await mountRecordsAndChainRoutes(app, {
   recordsSql, startup, handed, ledger, store, book, companyRecords, companyRecordStore, writeCapability, NETWORK,
-  authed, member, ownsPerson, ownsProposal, refuseSigningSecret, meteredOfferLookup,
+  authed, member, ownsPerson, personHeldFor, ownsProposal, refuseSigningSecret, meteredOfferLookup,
 });
 
 app.use(express.json({ limit: '1mb' }));
@@ -1378,31 +1379,6 @@ app.post('/api/employees/:id/invite/revoke', authed, ownsPerson, wrap(async (req
   const id = String(req.params.id);
   res.json(payroll.revokeInvite((await companyRecords.companyOfPerson(id))!, id));
 }));
-
-/**
- * **THE SEALED DROP BOX, FOR THE ADMIN'S OWN MACHINE TO OPEN.**
- *
- * The confirmation code is worked out on the ADMIN'S machine, because working it
- * out here would need the payee's address in the clear - so the browser needs
- * the ciphertext and this hands it over.
- *
- * **THIS ROUTE CANNOT READ WHAT IT SERVES.** The blob is sealed to the account's
- * inbox public key; the secret is derived from the account's viewing key, which
- * does not reach this handler on any path — there is no query parameter for one
- * and no body to put one in. **The rule is expressed as a missing parameter**,
- * the same way the accept door has nowhere to put a plain address.
- *
- * **AND IT IS NOT A WIDENING.** Everybody `ownsPerson` admits already holds the
- * viewing key that opens this — they need it to see the roster at all — and
- * nobody else can read it, including this deployment.
- */
-app.get('/api/employees/:id/handover', authed, ownsPerson, wrap(async (req, res) => {
-  res.json({ inbox: store.handoverFor(String(req.params.id), 'employee') });
-}));
-
-
-
-
 
 app.get('/api/accounts/:id/invites', authed, member, wrap(async (req, res) => {
   /*

@@ -29,6 +29,7 @@ import { accountBuilding, type AccountBuilding, type BuilderWorkerLike } from '.
 import { accountBuilderDeps, startAccountBuilder } from '../chain/account-builder.js';
 import type { PayKeyStandingAnswered } from '../chain/account-builder.js';
 import { foundingSeatOf } from '../keyring/founding-seat.js';
+import { creationSource, invitationSource, type AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
 import { finishCompanyAction, type FinishCompanyReach } from './finish-company.js';
 import type { ActionStep, StepContext, WalletRecord } from './definition.js';
 import { StepRefused } from './definition.js';
@@ -147,6 +148,12 @@ const world = (opts: {
     pin: async (_l, a) => { pinned.push(a); },
     ...opts.record,
   };
+  const call: AnsweredCall = async (method, path, body) => {
+    events.push(`call ${method} ${path}`);
+    calls.push({ method, path, body: body === undefined ? undefined : JSON.parse(body) });
+    if (opts.filings !== undefined) return opts.filings[Math.min(calls.length - 1, opts.filings.length - 1)]!;
+    return opts.filed ?? { status: 201, body: { proposal: { id: 'prp_PayKeyRecord' }, ...(body?.includes('"tx"') === true ? { txRef: 'r' } : {}) } };
+  };
   const ctx = (step: number): StepContext => ({
     intent: undefined as never, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: null, held: { identity, secret, wallet: record }, at: { step, steps: 5 }, signal: new AbortController().signal,
     relay: async (tx, label) => {
@@ -154,13 +161,10 @@ const world = (opts: {
       if (opts.relayRefuses === true) throw new Error('relay-refused');
       relays.push({ tx, label });
     },
-    call: async (method, path, body) => {
-      events.push(`call ${method} ${path}`);
-      calls.push({ method, path, body: body === undefined ? undefined : JSON.parse(body) });
-      if (opts.filings !== undefined) return opts.filings[Math.min(calls.length - 1, opts.filings.length - 1)]!;
-      return opts.filed ?? { status: 201, body: { proposal: { id: 'prp_PayKeyRecord' }, ...(body?.includes('"tx"') === true ? { txRef: 'r' } : {}) } };
-    },
+    creation: creationSource(call), invitations: invitationSource(call),
     tell: () => {}, show: (words) => { shown.push(words); },
+    viewFor: () => { throw new Error('finishing a company opens no view of it'); }, sendStraight: (send) => send({ ready: async () => {}, handedOver: () => {} }),
+    movesWhoHolds: () => { throw new Error('finishing a company moves nobody who holds it'); },
     confirm: async () => { throw new Error('finishing a company waits on no Confirm in the window'); },
     releaseReadKeys: () => { throw new Error('finishing a company hands a page no read keys'); },
     /* What the wallet sends itself, and finds on the chain, is counted by the run for the window's end; these steps end in the test. */

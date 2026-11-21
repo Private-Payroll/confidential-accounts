@@ -56,7 +56,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PAIR: ArtifactPair = {
   source: 'contracts/src/Fixture.compact',
   artifact: 'contracts/managed-fixture/contract/index.js',
-  door: 'COMPILE-FIXTURE.command',
+  door: 'npm run compile:fixture',
 };
 
 let root = '';
@@ -150,6 +150,41 @@ describe('BY THE CODE ONCE THE COMPILE RECORDED WHAT IT COMPILED', () => {
   });
 });
 
+describe('A FILE THE CONTRACT BRINGS IN IS CHECKED WITH IT', () => {
+  // The main file imports a module by path; an edit made only in the module must turn the pair stale.
+  const modulePath = (): string => join(root, 'contracts/src/modules/Part.compact');
+  const record = (): string => join(dirname(dirname(artifactPath())), '.version');
+  beforeEach(() => {
+    mkdirSync(dirname(modulePath()), { recursive: true });
+    writeFileSync(modulePath(), 'module Part { import CompactStandardLibrary; export circuit p(): [] {} }\n');
+    writeFileSync(sourcePath(), 'import CompactStandardLibrary;\nimport "modules/Part";\ncircuit fixture(): [] {}\n');
+    setMtime(modulePath(), 1_000_000);
+    setMtime(sourcePath(), 1_000_000);
+  });
+
+  it('refuses when only the module was saved after the artifact', () => {
+    expect(findRefusals(root, [PAIR])).toEqual([]);
+    setMtime(modulePath(), 1_000_061);
+    const refusals = findRefusals(root, [PAIR]);
+    expect(refusals.map((r) => r.kind)).toEqual(['stale']);
+    expect(refusals[0].sourceMs).toBe(1_000_061_000);
+  });
+
+  it('refuses when only the module\'s code changed, by the record, whatever the save times say', () => {
+    writeFileSync(record(), JSON.stringify({ sources: {
+      [PAIR.source]: codeHash(sourcePath()), 'contracts/src/modules/Part.compact': codeHash(modulePath()) } }));
+    expect(findRefusals(root, [PAIR])).toEqual([]);
+    writeFileSync(modulePath(), 'module Part { import CompactStandardLibrary; export circuit p(): [] { assert(true, "x"); } }\n');
+    setMtime(modulePath(), 1_000_000);
+    expect(findRefusals(root, [PAIR]).map((r) => r.kind)).toEqual(['stale']);
+  });
+
+  it('refuses when the record was written before the module existed', () => {
+    writeFileSync(record(), JSON.stringify({ sources: { [PAIR.source]: codeHash(sourcePath()) } }));
+    expect(findRefusals(root, [PAIR]).map((r) => r.kind)).toEqual(['stale']);
+  });
+});
+
 describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
   it('refuses when the source is touched one second past the artifact', () => {
     setMtime(sourcePath(), 1_000_061);
@@ -238,7 +273,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     const second: ArtifactPair = {
       source: 'contracts/src/Other.compact',
       artifact: 'contracts/managed-other/contract/index.js',
-      door: 'COMPILE-OTHER.command',
+      door: 'npm run compile:other',
     };
     mkdirSync(dirname(join(root, second.artifact)), { recursive: true });
     writeFileSync(join(root, second.source), 'circuit other(): [] {}\n');
@@ -254,7 +289,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
   });
 
   it('names each door ONCE when two stale pairs share one', () => {
-    // "Run COMPILE-VAULT.command and COMPILE-VAULT.command" is a refusal a
+    // "Run npm run compact:vault and npm run compact:vault" is a refusal a
     // person reads twice to check they read it right.
     const sibling: ArtifactPair = { ...PAIR, source: 'contracts/src/Sibling.compact' };
     writeFileSync(join(root, sibling.source), 'circuit sibling(): [] {}\n');
@@ -393,7 +428,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     for (const pair of CONTRACT_ARTIFACTS) {
       const named = /^npm run ([A-Za-z0-9:_-]+)$/.exec(pair.door);
-      expect({ door: pair.door, defined: named !== null && typeof pkg.scripts[named[1]] === 'string' })
+      expect({ door: pair.door, defined: named !== null && named[1] !== undefined && typeof pkg.scripts[named[1]] === 'string' })
         .toEqual({ door: pair.door, defined: true });
       expect(() => readFileSync(join(ROOT, pair.source), 'utf8')).not.toThrow();
     }

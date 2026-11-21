@@ -1,10 +1,11 @@
-import { AnotherPersonError, api, AuthError } from 'vaults-web-shared/keyring.js';
+import { AnotherPersonError, AuthError } from 'vaults-web-shared/service-transport.js';
+import { readThroughAViewOf, type PageView } from './filing-judge.js';
 import { keyringFor } from './keyring-person.js';
 
 /*
  * WHERE A COMPANY STANDS ON BEING HELD BY ITS COMMITTEE, READ FROM THE
- * SERVICE'S ACCOUNT OF WHAT THE CHAIN SAYS (`GET /api/accounts/:id/authority`
- * and, when a change is owed, `/committee-change`).
+ * SERVICE'S ACCOUNT OF WHAT THE CHAIN SAYS through the opening's view (its
+ * authority and, when a change is owed, the change).
  *
  * The service explains itself in sentences, which are never handed on; the
  * state is read from the answer's shape alone, into one of a fixed set a
@@ -44,16 +45,8 @@ interface Authority {
 }
 interface ChangeOwed { contracts: readonly { signedIndexes: readonly number[]; required: number }[] }
 
-/** The service's words for the chain's answer and a contract's shape, compared and never shown; and its addresses. */
-export const SERVICE = {
-  read: 'read',
-  company: '/api/accounts/', authority: '/authority', change: '/committee-change',
-  signatures: '/committee-change/signatures', send: '/committee-change/send', post: 'POST',
-  raiseAt: '/committee-change/raise', joinAt: '/committee-change/join', vaults: '/vaults',
-} as const;
-
-/** The service's address for `route` of the company `companyId`. */
-export const companyRoute = (companyId: string, route = ''): string => SERVICE.company + companyId + route;
+/** The service's word for the chain's answer, compared and never shown. */
+const SERVICE = { read: 'read' } as const;
 
 /**
  * WHERE THE SERVICE'S ANSWER LEAVES THE COMPANY, by its shape alone, the first
@@ -84,19 +77,25 @@ export function failureOf(e: unknown): Handover {
   return { of: HANDOVER.unreadable };
 }
 
+/** The authority and, when a change is owed, the change, read through `view`. */
+const readIn = async (view: PageView): Promise<{ authority: Authority; owed: ChangeOwed | null }> => {
+  const authority = await view.authority() as Authority;
+  return { authority, owed: authority?.change?.possible === true ? await view.committeeChange() as ChangeOwed : null };
+};
+
 /**
- * WHERE THE COMPANY `companyId` STANDS, for the person `personId`. The two
- * reads are asked first and their answer read after, so an answer of a shape
- * this does not know is unreadable, never taken for the service not being
- * reached.
+ * WHERE THE OPENING'S COMPANY STANDS, for the person `personId`, read through
+ * the opening's view, or through a view opened for this read alone once an
+ * action has ended the opening's. The two reads are asked first and their
+ * answer read after, so an answer of a shape this does not know is
+ * unreadable, never taken for the service not being reached.
  */
-export async function readHandover(personId: string, companyId: string): Promise<Handover> {
+export async function readHandover(personId: string, opening: PageView): Promise<Handover> {
   let authority: Authority;
   let owed: ChangeOwed | null;
   try {
     if (!(await keyringFor(personId))) return { of: HANDOVER.notSignedIn };
-    authority = await api(companyRoute(companyId, SERVICE.authority)) as Authority;
-    owed = authority?.change?.possible === true ? await api(companyRoute(companyId, SERVICE.change)) as ChangeOwed : null;
+    ({ authority, owed } = opening.ended === null ? await readIn(opening) : await readThroughAViewOf(opening.company, readIn));
   } catch (e) {
     return failureOf(e);
   }

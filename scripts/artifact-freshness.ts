@@ -1,24 +1,24 @@
 /**
  * THE SUITE REFUSES TO RUN AGAINST AN ARTIFACT OLDER THAN THE SOURCE IT WAS
- * BUILT FROM. `C294`, and it is `M-85` one level up.
+ * BUILT FROM, for the whole suite and both contracts.
  *
- * `TEST.command:112-134` already made this call for the account contract: a
+ * The whole-suite run already made this call for the account contract: a
  * stale compile is worse than no compile, because a test run against the wrong
  * artefact is not a weaker signal, it is a FALSE one. That guard RECOMPILES.
  * This one REFUSES, and the difference is not a preference:
  *
- *   - `TEST.command` is a door. A person opened it, so it may open the compiler.
- *   - The suite is not a door. It is run by sessions that rule 1 forbids to
- *     compile, by `MUTATE.command`, and by anything that types `vitest`. A
+ *   - The whole-suite run is a door. A person opened it, so it may open the compiler.
+ *   - The suite is not a door. It is run by people and tools that may not
+ *     compile, by the mutation harness, and by anything that types `vitest`. A
  *     harness that quietly repaired itself would be doing the one thing the
  *     session running it is not allowed to do.
  *
  * So this refuses and names the door, which is the only outcome a person can
- * act on and the only one that leaves the round's log honest.
+ * act on and the only one that leaves the run's log honest.
  *
- * WHY IT IS NOT IN `contracts/test/simulator.ts`. `V-249`(b) proposed exactly
+ * WHY IT IS NOT IN `contracts/test/simulator.ts`. One proposal put exactly
  * that — two `statSync` calls in the simulator's constructor. Measured, the
- * simulator is NOT the single seam `C294` calls it: the artifacts are imported
+ * simulator is NOT a single seam: the artifacts are imported
  * from twenty-nine sites across twenty-one files, fifteen of them inside
  * collected test files themselves, and four `contracts/test/*.test.ts` files
  * never import the simulator at all — `one-definition.test.ts:33` and
@@ -38,17 +38,17 @@
  *
  * WHAT DISARMS IT, MEASURED RATHER THAN ASSUMED. An earlier draft of this
  * comment said the only way past was deleting the `globalSetup` key. That was
- * false and an auditor demonstrated it, so it is written here as what it is:
+ * false and a review demonstrated it, so it is written here as what it is:
  *
  *   - `vitest --config <other>` REPLACES THE WHOLE CONFIG and therefore this
  *     guard, and that flag is upstream of anything a config can say. Nothing
  *     inside vitest can close it. What keeps it shut is that neither door uses
- *     it: `TEST.command` runs `npx vitest run` and `MUTATE.command` runs
+ *     it: the whole-suite run is `npx vitest run` and the mutation harness runs
  *     `./node_modules/.bin/vitest run contracts/test`, both unflagged.
  *   - Renaming `vitest.config.ts` makes vitest fall back to `vite.config.ts`,
  *     which has no `test` block and no guard. DELETING it is caught, because
  *     the test below reads it and throws; renaming is not.
- *   - Deleting, commenting out or neutering the `globalSetup` key. This one IS
+ *   - Deleting, commenting out or disabling the `globalSetup` key. This one IS
  *     closed: `artifact-freshness.test.ts` imports `vitest.config.ts` as a
  *     module and reads the value rather than grepping the text, and it calls
  *     this module's own default export against a stale fixture. A commented-out
@@ -58,6 +58,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { codeHash } from './contract-version.mjs';
+import { contractSources } from './contract-sources.mjs';
 import { dirname, isAbsolute, join } from 'node:path';
 
 /**
@@ -72,18 +73,21 @@ import { dirname, isAbsolute, join } from 'node:path';
  * being there.
  */
 export type ArtifactPair = {
-  /** Repository-relative path to the `.compact` a person edits. */
+  /**
+   * Repository-relative path to the contract's main `.compact`. The files it brings in are read off it
+   * (`scripts/contract-sources.mjs`) and checked with it, so an edit made only in a module is seen.
+   */
   readonly source: string;
   /** Repository-relative path to the generated module the tests actually import. */
   readonly artifact: string;
-  /** The `.command` that regenerates the artifact from the source. Rule 19. */
+  /** The `.command` that regenerates the artifact from the source, so a refusal names what resolves it. */
   readonly door: string;
 };
 
 /**
  * BOTH CONTRACTS, AND THE VAULT IS NOT AN AFTERTHOUGHT HERE.
  *
- * `TEST.command:119-120` guards `ConfidentialAccount.compact` alone, and
+ * The whole-suite run's own recompile guards `ConfidentialAccount.compact` alone, and
  * `package.json`'s `pretest` runs `compact:fast`, which is
  * `./scripts/compile-contract.sh` — the ACCOUNT only. So nothing in this
  * repository has ever checked the vault's artifact against the vault's source,
@@ -106,7 +110,7 @@ export const CONTRACT_ARTIFACTS: readonly ArtifactPair[] = [
 ];
 
 export type RefusalKind =
-  /** The source is newer than the artifact. The tests would report on code that is not the code. */
+  /** The source, or a file it brings in, changed after the artifact. The tests would report on code that is not the code. */
   | 'stale'
   /** The artifact has never been built, or was deleted. */
   | 'artifact-missing'
@@ -135,7 +139,7 @@ const under = (root: string, path: string): string => (isAbsolute(path) ? path :
  * Every pair that stops the suite, in table order. An empty array means the
  * artifacts on disk were built from the sources on disk.
  *
- * IT THROWS ON AN EMPTY TABLE RATHER THAN RETURNING NO REFUSALS. `C238`,
+ * IT THROWS ON AN EMPTY TABLE RATHER THAN RETURNING NO REFUSALS.
  * A check over zero things cannot fail, and a check that cannot fail
  * has already failed. The only way this guard could ever be disarmed from
  * inside is by handing it nothing to check, so that is an error and not a pass.
@@ -143,7 +147,7 @@ const under = (root: string, path: string): string => (isAbsolute(path) ? path :
  * `pairs` IS REQUIRED HERE AND DEFAULTED IN `assertArtifactsFresh` ALONE. Two
  * defaults for one decision means one of them is dead code, and a dead default
  * is a thing a mutation can change without any test noticing — which is how an
- * auditor found this one. There is exactly one place the live table is bound.
+ * review found this one. There is exactly one place the live table is bound.
  */
 export function findRefusals(root: string, pairs: readonly ArtifactPair[]): Refusal[] {
   if (pairs.length === 0) {
@@ -156,30 +160,30 @@ export function findRefusals(root: string, pairs: readonly ArtifactPair[]): Refu
 
   const refusals: Refusal[] = [];
   for (const pair of pairs) {
-    const sourceMs = mtimeMsOf(under(root, pair.source));
     const artifactMs = mtimeMsOf(under(root, pair.artifact));
-
-    if (sourceMs === null) {
-      refusals.push({ kind: 'source-missing', pair, sourceMs, artifactMs });
+    if (mtimeMsOf(under(root, pair.source)) === null) {
+      refusals.push({ kind: 'source-missing', pair, sourceMs: null, artifactMs });
       continue;
     }
+    // The main file and every file it brings in. The newest of them is the source's time.
+    const files: string[] = contractSources(root, pair.source);
+    const sourceMs = Math.max(...files.map((f) => mtimeMsOf(under(root, f)) ?? 0));
     if (artifactMs === null) {
       refusals.push({ kind: 'artifact-missing', pair, sourceMs, artifactMs });
       continue;
     }
-    // Strictly newer. A compile writes the artifact after it reads the source,
-    // so equal timestamps are what an untouched pair looks like on a filesystem
-    // with coarse resolution, and are not evidence of anything being stale.
     // By the code when the compile recorded what it compiled (scripts/contract-version.mjs writes
-    // <compiled folder>/.version): a source saved again with no change to its code (comments, spacing or
-    // the save time only, as moving a folder onto another branch does) is current. Without it, save time.
+    // <compiled folder>/.version with each file's code fingerprint): a file saved again with no change to
+    // its code (comments, spacing or the save time only, as moving a folder onto another branch does) is
+    // current, and a file the record does not name was not compiled. Without a record, save time: strictly
+    // newer, since a compile writes the artifact after it reads the source, so equal times on a filesystem
+    // with coarse resolution are what an untouched pair looks like.
     const record = join(dirname(dirname(under(root, pair.artifact))), '.version');
     const want = existsSync(record)
-      ? (JSON.parse(readFileSync(record, 'utf8')) as { sources?: Record<string, string> }).sources?.[pair.source]
+      ? (JSON.parse(readFileSync(record, 'utf8')) as { sources?: Record<string, string> }).sources
       : undefined;
-    if (want !== undefined) {
-      const have = codeHash(under(root, pair.source));
-      if (have !== want) refusals.push({ kind: 'stale', pair, sourceMs, artifactMs });
+    if (want?.[pair.source] !== undefined) {
+      if (files.some((f) => codeHash(under(root, f)) !== want[f])) refusals.push({ kind: 'stale', pair, sourceMs, artifactMs });
       continue;
     }
     if (sourceMs > artifactMs) {
@@ -189,7 +193,7 @@ export function findRefusals(root: string, pairs: readonly ArtifactPair[]): Refu
   return refusals;
 }
 
-/** IST. Rule 22. The times are read off the filesystem and not computed from anything. */
+/** IST, the project's one time zone. The times are read off the filesystem and not computed from anything. */
 const ist = (ms: number | null): string =>
   ms === null
     ? 'NOT ON DISK'
@@ -216,7 +220,7 @@ export function refusalText(refusals: readonly Refusal[]): string {
   out.push('  THE SUITE DID NOT RUN.');
   out.push('');
   out.push('  A test run against the wrong artefact is not a weaker signal, it is a FALSE');
-  out.push('  one. M-85 for the account; C294 is the same fault reaching the whole harness.');
+  out.push('  one, for either contract and for every test that loads it.');
   out.push('');
 
   const doors: string[] = [];
@@ -242,7 +246,7 @@ export function refusalText(refusals: readonly Refusal[]): string {
       doors.push(r.pair.door);
       continue;
     }
-    out.push(`  ${r.pair.source} was edited after the artifact the tests import was built.`);
+    out.push(`  ${r.pair.source}, or a file it brings in, was edited after the artifact the tests import was built.`);
     out.push('');
     out.push(`      source    ${pad(r.pair.source, width)}${ist(r.sourceMs)}`);
     out.push(`      artifact  ${pad(r.pair.artifact, width)}${ist(r.artifactMs)}`);

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { contractSourceText } from '../../scripts/contract-sources.mjs';
 import { AccountSimulator, privateStateFor, change, TEST_TOKEN_BYTES, tokenBytes } from './simulator.js';
 import { TEST_TOKEN, testToken } from '../../src/testing/assets.js';
 import { pureCircuits } from '../managed/contract/index.js';
@@ -29,22 +30,24 @@ import { toHex } from '../../src/core/crypto.js';
  * fixed-vector block instead, beside the value assertions it replaces.
  */
 const codeOf = (): string =>
-  readFileSync(new URL('../src/ConfidentialAccount.compact', import.meta.url), 'utf8')
+  contractSourceText(fileURLToPath(new URL('../..', import.meta.url)), 'contracts/src/ConfidentialAccount.compact')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/\/\/[^\n]*/g, ' ');
 
 /*
- * The body between a circuit's `export circuit <name>` and the first `}` at
- * column 0 after it. Narrow on purpose: an assertion over the whole file would
- * pass on a tag padded anywhere, including in another circuit.
+ * The body of a circuit from its `export circuit <name>` to the brace that closes it, wherever the
+ * circuit is indented. Narrow on purpose: an assertion over the whole file would pass on a tag
+ * padded anywhere, including in another circuit.
  */
 const bodyOf = (code: string, name: string): string => {
   const from = code.indexOf(`export circuit ${name}`);
-  expect(from, `${name} is not exported from ConfidentialAccount.compact any more`)
-    .toBeGreaterThan(-1);
-  const to = code.indexOf('\n}', from);
-  expect(to, `${name}'s body has no closing brace at column 0`).toBeGreaterThan(from);
-  return code.slice(from, to);
+  expect(from, `${name} is not exported from the account any more`).toBeGreaterThan(-1);
+  let depth = 0;
+  for (let i = code.indexOf('{', from); i > 0 && i < code.length; i += 1) {
+    if (code[i] === '{') depth += 1;
+    if (code[i] === '}' && (depth -= 1) === 0) return code.slice(from, i + 1);
+  }
+  throw new Error(`${name}'s body is never closed`);
 };
 
 describe('commitment schemes agree with the contract', () => {

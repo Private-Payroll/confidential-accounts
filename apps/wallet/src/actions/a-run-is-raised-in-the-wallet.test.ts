@@ -10,6 +10,7 @@ import { PUBLIC_PAYMENT_SAYS } from '../../../../src/core/movement.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
 import { payeeFor } from '../../../../src/testing/payees.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A PAYROLL RUN IS RAISED IN THE WALLET, IN ONE WINDOW, FROM ITS OWN READS; AND APPROVED THROUGH THE ONE APPROVAL.**
@@ -34,6 +35,7 @@ const t = vi.hoisted(() => ({
   opened: null as unknown,
   sealed: null as unknown,
   filed: null as unknown,
+  drawnFrom: null as unknown,
   dropAfterHanding: false,
 }));
 const stand = (name: string) => async (doors: any, input: any) => {
@@ -45,12 +47,15 @@ const stand = (name: string) => async (doors: any, input: any) => {
   }
   return { id: input.proposalId ?? 'prp_raised', chainId: 'ab'.repeat(32), status: 'open', raisedAt: 'now' };
 };
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/payroll-run-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/payroll-run-on-device.js')>()),
   raiseRunOnDevice: stand('raise'),
   raiseRetryOnDevice: stand('raise-retry'),
   sendRaiseFromDevice: stand('send-raise'),
   sendRetryFromDevice: stand('send-retry'),
+}));
+vi.mock('../../../../packages/web-shared/src/proposal-approved-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/proposal-approved-on-device.js')>()),
   approveOnDevice: async (doors: any, input: any) => { t.calls.push('approve'); t.doors.push(doors); t.inputs.push(input); return input.round; },
 }));
 vi.mock('../../../../packages/web-shared/src/run-rebuilt-here.js', async (real) => ({
@@ -73,9 +78,9 @@ vi.mock('../../../../packages/web-shared/src/run-drawn-here.js', async (real) =>
     ...actual,
     runDrawnHere: (doors: any, asked: any) => { t.calls.push(`draw ${asked.period}`); return (t.draw ?? actual.runDrawnHere)(doors, asked); },
     /* A run stood in for by `t.draw` is filed as it is; a run drawn for real is filed for real. */
-    fileRunDrawnHere: (doors: any, run: any) => {
-      t.calls.push(`file ${run.id}`); t.filed = run;
-      return (t.file ?? (t.draw === null ? actual.fileRunDrawnHere : async (_d: unknown, r: unknown) => r))(doors, run);
+    fileRunDrawnHere: (doors: any, run: any, drawnFrom: any) => {
+      t.calls.push(`file ${run.id}`); t.filed = run; t.drawnFrom = drawnFrom;
+      return (t.file ?? (t.draw === null ? actual.fileRunDrawnHere : async (_d: unknown, r: unknown) => r))(doors, run, drawnFrom);
     },
   };
 });
@@ -100,7 +105,7 @@ vi.mock('./upkeep.js', async (real) => {
 
 const { raiseRunAction } = await import('./raise-run.js');
 const { ActionStopped, runAction } = await import('./run.js');
-const { apiOver } = await import('./company-reach.js');
+const { viewOfTheStep } = await import('./company-reach.js');
 /* A draw as the page asks it: no run named, so no people or total. */
 const DRAW_OF_THE_PAGE = { run: undefined, payees: undefined, total: undefined };
 const { readOutcome } = await import('midnight-identity/profile/channel');
@@ -151,7 +156,7 @@ const RAISED = RUN({
 
 const ctxWith = (i: ActIntent) => {
   const told: Record<string, unknown> = {};
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a run is raised through its calls, never a bare relay'); },
@@ -162,13 +167,12 @@ const ctxWith = (i: ActIntent) => {
       t.calls.push('confirm'); t.confirmed.push([...lines]);
       if (!t.answer) throw new ActionStopped('stopped');
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const sent: Array<{ path: string; body: string }> = [];
-const reachOf = () => ({
+const reachOf = () => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
-  stepTo: () => {},
   api: async (path: string, init?: RequestInit) => {
     if (path.endsWith('/standing')) return { id: 'prp_leg', chainId: (t.opened as { chainId?: string } | null)?.chainId ?? 'ab'.repeat(32), status: 'open' };
     if (init?.method === 'POST') sent.push({ path, body: String(init.body) });
@@ -369,11 +373,14 @@ describe('A RUN THE PAGE DOES NOT NAME IS DRAWN, SHOWN WITH ITS NUMBERS, AND FIL
   });
 
   it('shows the month, list, vault, currency and form, the people and the total the draw gave, once, then files and raises that run', async () => {
-    t.draw = async () => drawnRun();
+    /* The draw reads one person through the seat step's view, at the newest version that view serves. */
+    t.draw = async (doors: any) => { await doors.view.current().newest([{ store: 'company', kind: 'person', id: 'e1' }]); return drawnRun(); };
     t.run = drawnRun();
     const told = await run(intent(DRAW));
     /* RED WHEN: the drawn run is filed or raised before the person confirmed it, or confirmed after anything was sent. */
     expect(t.calls).toEqual(['draw 2027-01', 'confirm', 'upkeep-first', 'file run_drawn', 'open run_drawn', 'raise', 'upkeep-last']);
+    /* RED WHEN: the step that files the run does not carry the people's records the draw read, at the versions it read them. */
+    expect(t.drawnFrom).toEqual([{ name: { store: 'company', kind: 'person', id: 'e1' }, version: 0 }]);
     /* RED WHEN: Confirm is asked more than once in the window. */
     expect(t.confirmed).toHaveLength(1);
     const lines = t.confirmed[0]!;
@@ -480,6 +487,8 @@ describe('OVER THE REAL RUNNER, A DRAW ASKS ITS CONFIRM BEFORE ANYTHING IS HANDE
       schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
       purpose: 'A test.', nonce: 'n1', expiresAt: NOW_MS + 20 * 60_000, hearsProgress: true, person: 'usr_a', intent: { name: 'raise-run', fields },
     } as unknown as ActRequest;
+    /* A request that only reads: a GET, or a POST to the newest versions or the records read, as a view reads before it writes. */
+    const READ_ONLY = /^(GET |POST \/api\/accounts\/acc_1\/(manifest\/newest|records\/read)$)/u;
     const drive = async (answer: boolean) => {
       t.people = { people: [{ person, version: 1, handedOver: false }], notBelieved: [], notPayable: [] };
       t.run = 'filed';
@@ -489,11 +498,24 @@ describe('OVER THE REAL RUNNER, A DRAW ASKS ITS CONFIRM BEFORE ANYTHING IS HANDE
       const channel = {
         step: () => true,
         relay: async () => { posted.push('relay'); return 'relayed'; },
-        call: async (_at: unknown, method: string, path: string) => { posted.push(`${method} ${path}`); return { of: 'answered', status: 200, body: method === 'GET' ? [] : {} }; },
+        call: async (_at: unknown, method: string, path: string, body?: string) => {
+          posted.push(`${method} ${path}`);
+          /* The service as a view reads it first: no directory filed yet, and no record entered. */
+          if (path.endsWith('/directory')) return { of: 'answered', status: 200, body: { filings: [] } };
+          if (path.endsWith('/manifest/newest')) return { of: 'answered', status: 200, body: { versions: (JSON.parse(body!) as { records: unknown[] }).records.map(() => 0) } };
+          return { of: 'answered', status: 200, body: method === 'GET' ? [] : {} };
+        },
         answer: (a: unknown) => { ended.push(a); return true; },
       } as unknown as ActingChannel;
-      /* The company is reached over the runner's own calls, as the product reaches it. */
-      const overTheRunner = { ...reach, reachFor: async (c: StepContext) => ({ ...reachOf(), api: apiOver(c) }) as never };
+      /* The company is reached through the step's own view over the runner's calls, as the product reaches it. */
+      const overTheRunner = {
+        ...reach,
+        reachFor: async (c: StepContext) => {
+          const r = reachOf();
+          const chain = { ...r.chain, holders: async () => r.holders() };
+          return Object.assign(r, { stepView: viewOfTheStep(c, { ...r, chain } as never, { judges: r.judges as never }) }) as never;
+        },
+      };
       await runAction({
         definition: raiseRunAction(overTheRunner), request, channel, held: { identity, secret, account: 0 } as never, stop: new AbortController().signal,
         now: () => NOW_MS, confirm: async () => { atConfirm.push([...posted]); return answer; },
@@ -504,14 +526,14 @@ describe('OVER THE REAL RUNNER, A DRAW ASKS ITS CONFIRM BEFORE ANYTHING IS HANDE
     /* RED WHEN: the draw hands anything over before its Confirm, so the runner refuses the Confirm and every draw stops there. */
     expect(confirmed.atConfirm).toHaveLength(1);
     expect(confirmed.atConfirm[0]!.length).toBeGreaterThan(0);
-    for (const c of confirmed.atConfirm[0]!) expect(c, c).toMatch(/^GET /u);
+    for (const c of confirmed.atConfirm[0]!) expect(c, c).toMatch(READ_ONLY);
     expect(confirmed.posted).toContain('POST /api/accounts/acc_1/runs');
     expect(confirmed.ended[0]).toMatchObject({ ended: 'done' });
     expect(raised()).toEqual(['raise']);
     t.calls = [];
     const stopped = await drive(false);
     /* RED WHEN: a Stop at the Confirm still files, raises or hands anything over. */
-    expect(stopped.posted.filter((c) => !c.startsWith('GET '))).toEqual([]);
+    expect(stopped.posted.filter((c) => !READ_ONLY.test(c))).toEqual([]);
     expect(stopped.ended[0]).toMatchObject({ ended: 'stopped' });
     expect(raised()).toEqual([]);
   });

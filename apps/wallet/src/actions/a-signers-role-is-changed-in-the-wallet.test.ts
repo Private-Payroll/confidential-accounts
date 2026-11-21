@@ -7,6 +7,7 @@ import { NETWORK } from 'midnight-identity/network';
 import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
+import { stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SIGNER'S ROLE IS CHANGED IN THE WALLET: THE SEAT REMOVED, THEN THE PERSON INVITED BY ADDRESS AT THE NEW ROLE.** What
@@ -211,12 +212,12 @@ describe('A SIGNER\'S ROLE IS CHANGED BY THE SEAT\'S REMOVAL, THEN AN INVITATION
     const drop = { name: 'drop-role-change', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, leaf: LEAF } } as unknown as ActIntent;
     const told: Array<Record<string, unknown>> = [];
     const confirmed: string[] = [];
-    const ctx = {
+    const ctx = stepOverItsCall({
       intent: drop, tell: (x: Record<string, unknown>) => { told.push(x); },
       confirm: async (lines: readonly { key: string }[]) => { confirmed.push(...lines.map((l) => l.key)); },
       call: async () => { throw new Error('dropping a kept role change calls nothing'); },
       keyring: { open: () => ({ read: () => saved }), keep: async (f: (k: any) => any) => { saved = f(saved); } },
-    } as unknown as StepContext;
+    }) as unknown as StepContext;
     const action = dropRoleChangeAction();
     expect(await action.check(drop, {} as never)).toBeNull();
     for (const step of action.steps(drop)) await step.run(ctx);

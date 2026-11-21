@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WalletClosed, type WalletRefusal } from 'vaults-web-shared/wallet-sign-in.js';
 import * as keyring from 'vaults-web-shared/keyring.js';
+import * as transport from 'vaults-web-shared/service-transport.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
 import { ACT_REFUSAL, refusalOf } from './refusals.js';
 import { RosterNotBelieved } from 'vaults-web-shared/roster-here.js';
@@ -62,7 +63,7 @@ describe('a fee that could not be paid, told by the service with a code', () => 
   afterEach(() => { vi.unstubAllGlobals(); });
   const refusedWith = async (status: number, body: unknown): Promise<unknown> => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })));
-    return keyring.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e);
+    return transport.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e);
   };
 
   /* RED WHEN: a 422 that says the fee could not be paid, nothing sent, is told as "it did not finish", or as another refusal's kind. */

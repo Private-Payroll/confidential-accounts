@@ -4,17 +4,16 @@ import { assets as theAssets, formatAmount, type AssetId, type AssetRegistry } f
 import { canonicalPeriod } from '../../../../src/core/calendar-days.js';
 import { EMPLOYEE_CLASSIFICATIONS, type EmployeeClassification } from '../../../../src/core/invitation.js';
 import type { PersonChange } from '../../../../src/core/person-record.js';
-import type { SealedProposal, SealedRun } from '../../../../src/core/types.js';
+import type { SealedRun } from '../../../../src/core/types.js';
 import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
-import { governedCallServiceFor } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { InvitationRefused } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { changePersonHere, PersonNotChanged, setStatusHere, type PeopleDevice } from '../../../../packages/web-shared/src/people-on-device.js';
 import { changeVendorHere, VendorNotChanged, type VendorChange } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { periodsPastDraftHere, type RoundIdentity } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, keptReach, proposalsInTheView, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -265,8 +264,8 @@ function pastDraftFor(
   r: CompanyReach, d: PeopleDevice, reach: ChangePersonReach, list: 'employees' | 'vendors',
 ): () => Promise<readonly string[]> {
   return async () => periodsPastDraftHere({
-    runs: async () => r.api(`/api/accounts/${encodeURIComponent(r.accountId)}/runs`) as Promise<readonly SealedRun[]>,
-    proposals: async () => governedCallServiceFor(r.api).sealedProposals!(r.accountId) as Promise<readonly SealedProposal[]>,
+    runs: async () => await r.stepView.current().list('runs') as readonly SealedRun[],
+    proposals: proposalsInTheView(r),
     roundsOnChain: (chainIds) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret }),
     directory: d.directory,
     roundIdentity: await reach.roundIdentity(),

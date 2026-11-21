@@ -13,6 +13,7 @@ import {
   fromCompanyWire, signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord,
 } from '../../../../src/midnight/sealed-record-wire.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **THE COMPANY'S CHOICE OF SERVICE IS FILED FROM THE WALLET, ONE WINDOW, ONE PASSKEY, AND READ BACK AS EVERY ACT READS
@@ -50,7 +51,7 @@ vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) 
 });
 
 const { chooseCompanyServiceAction, CHOOSE_SERVICE_STATE } = await import('./choose-company-service.js');
-const { companyServiceHere } = await import('./company-reach.js');
+const { companyServiceHere } = await import('./company-service-read.js');
 
 const COMPANY = 'acc_choice';
 const LABEL = drawCompanyLabel();
@@ -87,6 +88,10 @@ const aService = () => ({
   filed: [] as SealedCompanyRecord[], entered: [] as number[], digests: new Map<number, string>(), puts: 0,
   /* How many entries the service fails to keep, from the next; and the versions it serves as other bytes. */
   failEntries: 0, altered: new Map<number, SealedCompanyRecord>(),
+  /* What happens at the service just before it takes the next filing: another seat filing first, in a race. */
+  beforePut: null as (() => Promise<void>) | null,
+  /* How the service answers the next filing instead of taking it, when set. */
+  putAnswer: null as { status: number; body: { error: string } } | null,
 });
 type Service = ReturnType<typeof aService>;
 
@@ -105,7 +110,7 @@ const reachOf = (me: Seat, s: Service, co: Company) => {
     records: { history: new Map(), notYetAnchored: [] as unknown[] },
   };
   const entries = () => s.entered.map((version) => ({ store: 'company', kind: 'policy', id: 'company-service', version, digest: s.digests.get(version) }));
-  return {
+  return viewOverItsApi({
     accountId: COMPANY, label: LABEL, account: ACCOUNT, leaf: me.leaf, companyKey: me.companyKey, opener: me.opener,
     seat: { signerId: me.leaf, signingSecret: me.signing.secret, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'cc'.repeat(32) },
     companyKeys: {
@@ -115,11 +120,11 @@ const reachOf = (me: Seat, s: Service, co: Company) => {
         return { key: COMPANY_KEY, epoch: 0 };
       },
     },
-    roster: async () => ({}), stepTo: () => {},
+    roster: async () => ({}),
+    /* The choice's versions as the step's view reads them: every version the service holds. */
+    records: async (asked: readonly { kind: string; id: string }[]) => asked.map((r) => (r.kind === 'policy' && r.id === 'company-service'
+      ? { versions: s.filed.map((v) => toCompanyWire(s.altered.get(v.version) ?? v)) } : null)),
     api: async (path: string, init?: RequestInit) => {
-      if (path === `/api/accounts/${COMPANY}/records/policy/company-service/versions`) {
-        return { versions: s.filed.map((r) => toCompanyWire(s.altered.get(r.version) ?? r)) };
-      }
       if (path === `/api/accounts/${COMPANY}/manifest/entries` && init?.method === 'POST') {
         if (s.failEntries > 0) { s.failEntries -= 1; throw Object.assign(new Error('the service answered 503'), { status: 503 }); }
         for (const e of (JSON.parse(String(init.body)) as { entries: { version: number; digest: string }[] }).entries) {
@@ -128,23 +133,33 @@ const reachOf = (me: Seat, s: Service, co: Company) => {
         }
         return {};
       }
+      if (/^\/api\/accounts\/acc_choice\/records\/policy\/company-service\/\d+$/u.test(path) && init?.method === 'PUT') {
+        const before = s.beforePut;
+        s.beforePut = null;
+        await before?.();
+        if (s.putAnswer !== null) throw Object.assign(new Error(s.putAnswer.body.error), s.putAnswer);
+        s.puts += 1;
+        const wire = JSON.parse(String(init.body));
+        const rec = fromCompanyWire(wire, { company: COMPANY, kind: 'policy', id: 'company-service' }).sealed;
+        if (rec.version !== s.filed.length + 1) {
+          throw Object.assign(new Error('version already filed'), { status: 409, body: { refused: 'version-already-filed' } });
+        }
+        s.filed.push(rec);
+        return { filed: true, version: rec.version, digest: wire.digest };
+      }
+      /* Every version of the choice, as the store reads a version told taken back through the step's view. */
+      if (path === `/api/accounts/${COMPANY}/records/read` && init?.method === 'POST') {
+        const asked = (JSON.parse(String(init.body)) as { records: { kind: string; id: string }[] }).records;
+        return { records: asked.map((r) => (r.kind === 'policy' && r.id === 'company-service'
+          ? { kind: r.kind, id: r.id, versions: s.filed.map((v) => toCompanyWire(s.altered.get(v.version) ?? v)) } : { kind: r.kind, id: r.id, filed: null })) };
+      }
       throw Object.assign(new Error(`not served here: ${path}`), { status: 500 });
-    },
-    send: async (path: string, init: { method: string; body?: string }) => {
-      const at = path.match(/^\/api\/accounts\/acc_choice\/records\/policy\/company-service\/(\d+)$/u);
-      if (at === null || init.method !== 'PUT') return { status: 404, body: {} };
-      s.puts += 1;
-      const wire = JSON.parse(String(init.body));
-      const rec = fromCompanyWire(wire, { company: COMPANY, kind: 'policy', id: 'company-service' }).sealed;
-      if (rec.version !== s.filed.length + 1) return { status: 409, body: { refused: 'version-already-filed' } };
-      s.filed.push(rec);
-      return { status: 201, body: { filed: true, version: rec.version, digest: wire.digest } };
     },
     judges: {
       directoryHereFor: () => async () => ({ ...here, records: { ...here.records, notYetAnchored: entries() } }),
       filingJudgeFor: () => async () => () => null,
     },
-  };
+  });
 };
 
 const intent = (fields: Record<string, string>): ActIntent =>
@@ -153,14 +168,14 @@ const fieldsOf = (c: CompanyService): Record<string, string> => (c.service === '
 
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity: {}, account: 0 }, at: { step: 1, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a choice of service relays nothing'); },
     call: async () => ({ status: 404, body: {} }),
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: null,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const actionFor = (me: Seat, s: Service, co: Company) => chooseCompanyServiceAction({
@@ -339,20 +354,27 @@ describe('THE CHOICE IS SEALED TO THE SIGNERS SEATED NOW, AND ONLY THEY CAN READ
     expect(s.puts).toBe(1);
   });
 
+  it('a filing the service refuses is said as refused and not filed; one it gave no good answer to, as maybe filed', async () => {
+    const { ada, co } = twoSeats();
+    const refused = aService();
+    refused.putAnswer = { status: 403, body: { error: 'this seat may not file it' } };
+    /* RED WHEN: a filing the service refused is said as one that may have been filed, so a signer believes a policy in force that is not. */
+    expect(await refusedWhenFiledBy(ada, refused, co, OWN)).toEqual({
+      key: 'act.choose-company-service.why.not-filed', values: { says: expect.stringMatching(/was refused and not filed \(403: this seat may not file it\)/u) },
+    });
+    const unknown = aService();
+    unknown.putAnswer = { status: 503, body: { error: 'the service is not available' } };
+    /* RED WHEN: a filing whose outcome is not known is said as refused, so a filing that went through is filed again over. */
+    expect(await refusedWhenFiledBy(ada, unknown, co, OWN)).toEqual({
+      key: 'act.choose-company-service.why.not-filed', values: { says: expect.stringMatching(/not confirmed filed\. It may have been filed/u) },
+    });
+  });
+
   it('another seat filing the same version first refuses this one, unfiled, saying to try again', async () => {
     const { ada, bea, co } = twoSeats();
     const s = aService();
-    const reach = reachOf(ada, s, co);
-    const def = chooseCompanyServiceAction({
-      chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {},
-      reachFor: async () => ({
-        ...reach,
-        send: async (path: string, init: { method: string; body?: string }) => {
-          await filedBy(bea, s, co, NONE);
-          return reach.send(path, init);
-        },
-      }) as never,
-    });
+    s.beforePut = () => filedBy(bea, s, co, NONE).then(() => undefined);
+    const def = actionFor(ada, s, co);
     const i = intent(fieldsOf(OWN));
     const { ctx } = ctxOf(i);
     let words: unknown = null;

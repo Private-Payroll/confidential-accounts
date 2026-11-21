@@ -7,7 +7,7 @@
 import { openRecord } from '../../../../src/core/sealed-records.js';
 import type { PayrollRun, Proposal, SealedProposal, SealedRun } from '../../../../src/core/types.js';
 import { keysByPurpose, type HeldForReading } from 'vaults-web-shared/keys-by-purpose.js';
-import { SERVICE } from './company-records.js';
+import { SERVICE } from './company-rows.js';
 
 /**
  * A run as this device reads it: the service's plain fields and its sealed ones, opened, the marker the record carries

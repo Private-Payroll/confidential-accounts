@@ -9,6 +9,7 @@
  *
  * Over real HTTP; the chain is the test's.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Hex } from '../core/crypto.js';
 import type { PayrollRun } from '../core/types.js';
@@ -31,6 +32,7 @@ import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js
 import { oneOffToPayHere, raiseOneOffHere, type OneOffAsked } from 'vaults-web-shared/one-off-raised-here.js';
 import { checkedAgainstTheRecordsAndTheWallet, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { ACME, acmeDirectory, fromAda, ORIGIN } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, ADA, anchorDoorsOf, CO, CY, deviceOf, KEY, ledgerViewNow, oneOffRaiseDoorsOf, oneOffRecordsOf, paidOnChain, sendAs, VAULT, type Seat,
 } from './a-company-whose-signers-change-on-the-chain.test-support.js';
@@ -43,7 +45,7 @@ const NETWORK = theNetwork();
 const NOW = BigInt(Math.floor(Date.now() / 1000));
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** `s`'s device's records with the company's vendors read on it, or with what `vendors` says instead. */
@@ -67,7 +69,7 @@ const PAYING = { runPayload: pureCircuits.runPayload, proposalIdOf: pureCircuits
 /** A vendor paid by one-off payments, added by Ada at the address `n` names: paid at it at once. */
 const aVendor = async (n: number): Promise<string> => (await inviteHere(ACME, ADA, 'vendor', {
   name: `Vendor ${n}`, email: `vendor${n}@vendors.co`, startDate: '2026-10-01', terms: { kind: 'one-off' }, network: NETWORK, address: addressOf(n),
-}, ORIGIN, fromAda, { vendors: () => readVendorsHere(peopleOn(ADA)) })).person!;
+}, ORIGIN, writesOver(fromAda), { vendors: () => readVendorsHere(peopleOn(ADA)) })).person!;
 /** The company's vendors as `s`'s device reads them, with `id`'s entry paying `address` instead: what a lying device would raise from. */
 const vendorsSayingOf = (s: Seat, id: string, address: string) => async (): Promise<VendorsHere> => {
   const read = await readVendorsHere(peopleOn(s));
@@ -136,7 +138,7 @@ describe('A ONE-OFF TO A VENDOR ENTRY IS PAID ONLY AT THE ENTRY\'S OWN ADDRESS',
     const rec = signCompanyFiling(sealVendor({ ...first, status: 'leaver', address: payeeAt(elsewhere, NETWORK), madeAt: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z') }, 2, 0, KEY), ADA.signingSecret as Hex);
     expect((await sendAs(ADA.person)(`/api/accounts/${CO}/records/vendor/${acme}/2`, { method: 'PUT', body: JSON.stringify(toCompanyWire(rec)) })).status).toBe(201);
     await ADA.entered.enter([companyRecordEntry(rec)]);
-    await anchorTheRecordsHere(anchorDoorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(anchorDoorsOf(ADA)));
     /* RED WHEN: a vendor who has left is read at an address their own wallet never gave, so a one-off to their entry pays it. */
     expect((await readVendorsHere(peopleOn(ADA))).notPayable.find((n) => n.here.vendor.id === acme)?.why).toMatch(/pays another address without a new code from their own wallet/u);
     await expect(raiseOneOffHere(raisingOn(CY), asked(acme, elsewhere, { amount: 95n }))).rejects.toThrow(/the vendor entry it names is not one this device believes and would pay/u);

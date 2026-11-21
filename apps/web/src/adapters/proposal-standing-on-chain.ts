@@ -6,7 +6,7 @@
 import type { ProposalStatus } from '../../../../src/core/types.js';
 import type { RoundOnChain } from 'vaults-web-shared/governed-call-builder.js';
 import type { ClosedAs } from 'vaults-web-shared/run-rebuilt-here.js';
-import type { ProposalRow } from './company-records.js';
+import type { ProposalRow } from './company-rows.js';
 /** Where a proposal the chain holds stands while it is held: open, or approved once its approvals are in. */
 export const PROPOSAL_STANDING = { open: 'open', approved: 'approved' } as const;
 

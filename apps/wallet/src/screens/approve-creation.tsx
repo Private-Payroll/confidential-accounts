@@ -15,7 +15,7 @@ import { StatusAlert } from '../components/status.js';
 import { hrefOf } from '../routes.js';
 import { useAnswerAtOnce } from '../framing.js';
 import type { Consent } from '../framing.js';
-import { labelInAccountState } from '../chain/company-label-on-chain.js';
+import { labelInAccountState } from '../chain/view-doors.js';
 import { builtAccountKeys, type BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
 import { liveConstruction, startingStateRefusal, type ConstructionDeps } from '../chain/account-as-constructed.js';
 
@@ -46,6 +46,52 @@ type Stage =
   | { of: 'ready'; shown: CreationShown; ledger: CreationLedger }
   | { of: 'refused'; says: string }
   | { of: 'sent'; at: number; shown: CreationShown };
+
+function CreationSent({ request, at, shown }: {
+  readonly request: CreationRequest;
+  readonly at: number;
+  readonly shown: CreationShown;
+}): ReactNode {
+  return (
+    <>
+      <h1 data-signed-heading>{`You signed the step that finishes your company's account, for ${request.requester.origin}`}</h1>
+      <p className="lede" data-signed>
+        {`On ${new Date(at).toLocaleString()} this wallet signed the second step of the account's creation and handed the signature back. `}
+        Return to the page to send it: the page sends the account, and once the chain shows it you finish it there with
+        one more press. You will not be asked to sign again. This wallet now knows the account below as this
+        company&rsquo;s.
+      </p>
+      <p className="m-0 font-mono break-all text-sm" data-pinned-label>{shown.company}</p>
+      <p className="m-0 font-mono break-all text-sm" data-pinned-account>{shown.account}</p>
+      <p className="m-0 font-mono text-xl" data-pinned-fingerprint>{companyFingerprint(shown.company, shown.account)}</p>
+      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+    </>
+  );
+}
+
+function CreationAccountSection({ shown }: { readonly shown: CreationShown }): ReactNode {
+  return (
+    <Section
+      list={false} box={false} aria-label="The company's account" title="The company's account"
+      description="Read by this wallet from the deploy the page built. Nothing has been sent yet."
+    >
+      <p className="m-0 text-sm text-muted-foreground">The label this wallet made up for the company</p>
+      <p className="m-0 font-mono break-all text-sm" data-label>{shown.company}</p>
+      <p className="m-0 text-sm text-muted-foreground">The account the deploy creates</p>
+      <p className="m-0 font-mono break-all text-sm" data-account>{shown.account}</p>
+      <p className="m-0 text-sm text-muted-foreground">The fingerprint of the label and the account together</p>
+      <p className="m-0 font-mono text-xl" data-fingerprint>{companyFingerprint(shown.company, shown.account)}</p>
+      <p className="m-0 text-sm" data-held-by-you>
+        The account is held by your own key for this company and by nobody else, from its first transaction. Only
+        your key controls it for now: signers you named do not, until its committee is changed to include them in
+        Settings.
+      </p>
+      <p className="m-0 text-sm" data-circuits>
+        {`Its deploy runs ${shown.deployed.length} of this build's circuits. This step adds the other ${shown.inserted.length}, each checked against this build's own, and changes nothing else.`}
+      </p>
+    </Section>
+  );
+}
 
 export function ApproveCreation({
   request, identity, channel, consent, whoIsAsking, onDecline, onPin, drewTheLabel,
@@ -155,23 +201,7 @@ export function ApproveCreation({
   const signAtOnce = useCallback(() => { void sign(); }, [sign]);
   useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null, signAtOnce);
 
-  if (stage.of === 'sent') {
-    return (
-      <>
-        <h1 data-signed-heading>{`You signed the step that finishes your company's account, for ${request.requester.origin}`}</h1>
-        <p className="lede" data-signed>
-          {`On ${new Date(stage.at).toLocaleString()} this wallet signed the second step of the account's creation and handed the signature back. `}
-          Return to the page to send it: the page sends the account, and once the chain shows it you finish it there with
-          one more press. You will not be asked to sign again. This wallet now knows the account below as this
-          company&rsquo;s.
-        </p>
-        <p className="m-0 font-mono break-all text-sm" data-pinned-label>{stage.shown.company}</p>
-        <p className="m-0 font-mono break-all text-sm" data-pinned-account>{stage.shown.account}</p>
-        <p className="m-0 font-mono text-xl" data-pinned-fingerprint>{companyFingerprint(stage.shown.company, stage.shown.account)}</p>
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
-      </>
-    );
-  }
+  if (stage.of === 'sent') return <CreationSent request={request} at={stage.at} shown={stage.shown} />;
 
   const shown = stage.of === 'ready' ? stage.shown : null;
   return (
@@ -184,25 +214,7 @@ export function ApproveCreation({
         </StatusAlert>
       )}
       {shown !== null && (
-        <Section
-          list={false} box={false} aria-label="The company's account" title="The company's account"
-          description="Read by this wallet from the deploy the page built. Nothing has been sent yet."
-        >
-          <p className="m-0 text-sm text-muted-foreground">The label this wallet made up for the company</p>
-          <p className="m-0 font-mono break-all text-sm" data-label>{shown.company}</p>
-          <p className="m-0 text-sm text-muted-foreground">The account the deploy creates</p>
-          <p className="m-0 font-mono break-all text-sm" data-account>{shown.account}</p>
-          <p className="m-0 text-sm text-muted-foreground">The fingerprint of the label and the account together</p>
-          <p className="m-0 font-mono text-xl" data-fingerprint>{companyFingerprint(shown.company, shown.account)}</p>
-          <p className="m-0 text-sm" data-held-by-you>
-            The account is held by your own key for this company and by nobody else, from its first transaction. Only
-            your key controls it for now: signers you named do not, until its committee is changed to include them in
-            Settings.
-          </p>
-          <p className="m-0 text-sm" data-circuits>
-            {`Its deploy runs ${shown.deployed.length} of this build's circuits. This step adds the other ${shown.inserted.length}, each checked against this build's own, and changes nothing else.`}
-          </p>
-        </Section>
+        <CreationAccountSection shown={shown} />
       )}
       {whoIsAsking}
       <div className="flex flex-wrap gap-2">

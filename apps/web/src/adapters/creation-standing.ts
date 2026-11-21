@@ -1,7 +1,9 @@
+import { canOpenCompanies, currentUser, type CompanyCreationState } from 'vaults-web-shared/keyring.js';
+import { AuthError } from 'vaults-web-shared/service-transport.js';
+import { sourceOnPage } from 'vaults-web-shared/company-view-on-page.js';
 import {
-  api, AuthError, canOpenCompanies, companyAwaitingItsSecondPress, companyBeingCreated, companyBeingCreatedLabel, companyCreationStanding, currentUser,
-  keptCreationShowsItsKeyCommitted, walletShowsPayKeyCommitted, type CompanyCreationState,
-} from 'vaults-web-shared/keyring.js';
+  companyAwaitingItsSecondPress, companyBeingCreated, companyBeingCreatedLabel, companyCreationStanding, keptCreationShowsItsKeyCommitted, walletShowsPayKeyCommitted,
+} from 'vaults-web-shared/company-creation.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } from 'vaults-web-shared/read-bound.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -14,8 +16,6 @@ import { ACCOUNT_ORIGIN } from './session.js';
  * confirmed, because a kept creation cannot be seen. A screen asks here and nowhere else, and is handed codes.
  */
 
-/** Where the service keeps a company's account. */
-const SERVICE = { company: '/api/accounts/' } as const;
 
 /** The mark a company carries in a list. Only this one exists: a company without it is shown as every other. */
 export const CREATION_MARK = { notFinished: 'not-finished' } as const;
@@ -98,7 +98,8 @@ export function creationChanged(companyId: string | null): void {
 async function walletShowsTheKeyCommitted(companyId: string): Promise<boolean | null> {
   try {
     if (companyBeingCreated(companyId)) return await keptCreationShowsItsKeyCommitted(companyId, ACCOUNT_ORIGIN);
-    const sealed = (await api(SERVICE.company + companyId)) as { companyLabel?: unknown; contractAddress?: unknown } | null;
+    /* A company with no view yet: its account read alone, through the page's one transport. */
+    const sealed = (await sourceOnPage(companyId).account()) as { companyLabel?: unknown; contractAddress?: unknown } | null;
     if (typeof sealed?.companyLabel !== 'string' || typeof sealed.contractAddress !== 'string') return null;
     return await walletShowsPayKeyCommitted(ACCOUNT_ORIGIN, sealed.companyLabel as CompanyLabel, sealed.contractAddress as AccountAddress);
   } catch {

@@ -39,7 +39,7 @@ import { knownEntriesOf } from './payment-entries.js';
 import {
   payableFactsOf, payeesHere, payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere, type PayeesHere,
 } from './run-rebuilt-here.js';
-import { policyForARunHere, type PolicyForARun } from './spending-policy-here.js';
+import { policyForARunHere, type PolicyForARun } from './spending-policy-read-here.js';
 
 /** A round of a run, as this device made it: the run, the leg, and the payments it makes, with what they are checked against. */
 export interface RoundToCheck {

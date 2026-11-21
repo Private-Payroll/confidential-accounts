@@ -1,3 +1,4 @@
+import { useCompanyView } from '../records/company-records.js';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Alert, AlertDescription, Button, ConfirmInYourAccount, Input, Label, Textarea, useText } from 'vaults-ui';
 import {
@@ -149,7 +150,7 @@ function StopResolvedBy({ result, disabled, ask }: {
  * is created, with the way to the signers page where a change is owed.
  */
 export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps & { starting?: string; retired?: string }) {
-  const t = useText();
+  const t = useText(), view = useCompanyView();
   const stoppedSays = useStoppedSays();
   const { person, company } = useSession();
   const saidSays = useSaidSays();
@@ -176,9 +177,8 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
   const [nameUnreadFor, setNameUnreadFor] = useState<string | null>(null);
 
   const read = useCallback(async () => {
-    if (company === null) { setReady(null); return; }
-    setReady(await readVaultReadiness(person.id, company));
-  }, [person.id, company]);
+    setReady(view === null ? null : await readVaultReadiness(person.id, view));
+  }, [person.id, view]);
   useEffect(() => { void read(); }, [read]);
   /* Asked to carry on setting up one vault, from this signer's own device: asked once, once the company has been read. */
   const askedToStart = useRef<string | null>(null);
@@ -193,24 +193,25 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
    * up. A name that could not be read is said so, and no name is asked over one that may be filed.
    */
   useEffect(() => {
-    if (asking?.of !== ASKING.start || company === null) return undefined;
+    if (asking?.of !== ASKING.start || view === null) return undefined;
     let alive = true;
     const vault = asking.vault;
-    void import('../adapters/company-records.js').then(({ readVaultName, NAME_NOT_READ }) => readVaultName(person.id, company, vault, NAME_NOT_READ)
-      .then((filed) => { if (alive) { setNameOwed(filed === null ? vault : null); setNameUnreadFor(filed === NAME_NOT_READ ? vault : null); setNameReadFor(vault); } }));
+    void import('../adapters/company-vaults-read.js')
+      .then(async ({ readVaultName, NAME_NOT_READ }) => ({ filed: await readVaultName(person.id, view, vault, NAME_NOT_READ), unread: NAME_NOT_READ }))
+      .then(({ filed, unread }) => { if (alive) { setNameOwed(filed === null ? vault : null); setNameUnreadFor(filed === unread ? vault : null); setNameReadFor(vault); } });
     return () => { alive = false; };
-  }, [asking, person.id, company]);
+  }, [asking, person.id, view]);
 
   const busy = stage !== null;
   const act = async (asked: Asking): Promise<void> => {
-    if (company === null) return;
+    if (view === null) return;
     setAsking(null); setResult(null); setStage(CREATING.checking);
     const r = asked.of === ASKING.create
-      ? await createVault(person.id, company, setStage, { name: name.trim(), description: description.trim() })
-      : retired !== undefined ? await adoptAgain(person.id, company, asked.vault, retired, setStage)
-      : await finishStarting(person.id, company, asked.vault, setStage,
+      ? await createVault(person.id, view, setStage, { name: name.trim(), description: description.trim() })
+      : retired !== undefined ? await adoptAgain(person.id, view, asked.vault, retired, setStage)
+      : await finishStarting(person.id, view, asked.vault, setStage,
         nameOwed === asked.vault && name.trim() !== '' ? { name: name.trim(), description: description.trim() } : undefined);
-    const handover = r.of === ACTED.done ? await readHandover(person.id, company) : null;
+    const handover = r.of === ACTED.done ? await readHandover(person.id, view) : null;
     /* Any read of who holds the company but "held" is said under the outcome: a vault created does not make the company's account held. */
     setHeld(handover === null ? null : handover.of);
     setResult(r);
@@ -227,9 +228,9 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
   };
 
   const giveKeys = async (): Promise<void> => {
-    if (company === null) return;
+    if (view === null) return;
     setGave(null);
-    const r = await giveYourVaultKeys(person.id, company);
+    const r = await giveYourVaultKeys(person.id, view);
     setGave(r.of === ACTED.refused ? r.why : ACTED.done);
     await read();
     onChanged();

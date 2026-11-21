@@ -18,6 +18,7 @@ import type { SignerMaterial } from './governed-call-builder.js';
 import type { SecretRunOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 import type { VaultInfoRecords } from './vault-info-here.js';
 import type { VaultService } from './vault-service.js';
+import type { VaultsReadOnce } from './vaults-read-in-the-view.js';
 
 /**
  * **A VAULT'S COMPANY ACCOUNT, AS THE SIGNER'S OWN WALLET READ IT OFF THE CHAIN
@@ -43,6 +44,8 @@ export interface ChainHereDoors extends VaultOnChainDoors {
    * the wallet said it; null when the wallet said none.
    */
   readonly indexer: () => Promise<{ readonly indexerUri: string; readonly indexerWsUri: string } | null>;
+  /** The step's vaults, read together once for it and kept in its view (`vaultsReadInTheView`); absent, each standing is read alone. */
+  readonly vaultsHere?: VaultsReadOnce;
 }
 
 /**
@@ -213,6 +216,7 @@ export interface PoolDoors extends Pacing {
   /** The vault is read on this device, by its vault worker, at the indexer the person's own wallet names. */
   readonly builder: Pick<VaultBuilderClient, 'vaultOnChain'>;
   readonly indexer: ChainHereDoors['indexer'];
+  readonly vaultsHere?: ChainHereDoors['vaultsHere'];
   readonly me: DeviceSigner;
   /** This device's own records key, so it is not wrapped to twice. */
   readonly myRecordsKey: Hex;

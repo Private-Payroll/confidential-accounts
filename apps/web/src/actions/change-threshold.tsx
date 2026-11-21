@@ -5,7 +5,7 @@ import { readHolders, whatAChangeCosts, type ChangeHolders } from '../adapters/p
 import { CHANGE_ASKED } from '../adapters/change-asked.js';
 import { OPENED, READ, type Read } from '../adapters/reads.js';
 import { ActedSays, type ActPhase } from '../records/proposal-act.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { PanelFooter } from '../shell/right-panel.js';
 import { useSession } from '../session.js';
 
@@ -27,6 +27,7 @@ type Asked = { readonly wanted: number; readonly acted: ThresholdActed };
  * therefore draws it in the shell's panel.
  */
 export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; vault?: string }) {
+  const view = useCompanyView();
   const t = useText();
   const { person, company: companyId } = useSession();
   const { company, reload } = useCompanyRecords();
@@ -53,18 +54,18 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
   const shown = chosen !== null ? t('changeThreshold.value', { count: chosen }) : now === null ? '' : t('changeThreshold.keeps', { count: now });
 
   useEffect(() => {
-    if (companyId === null) return undefined;
+    if (view === null) return undefined;
     let alive = true;
     setHeld(null);
-    void readHolders(person.id, companyId).then((read) => { if (alive) setHeld(read); });
+    void readHolders(person.id, view).then((read) => { if (alive) setHeld(read); });
     return () => { alive = false; };
-  }, [person.id, companyId, company]);
+  }, [person.id, view, company]);
 
   const raise = async (): Promise<void> => {
-    if (companyId === null || busy || chosen === null) return;
+    if (view === null || busy || chosen === null) return;
     setAsked(null);
     setPhase({ step: 0, steps: 0 });
-    const acted = await changeThreshold(person.id, companyId, chosen, { now, seated }, (step, steps) => setPhase({ step, steps }), vault);
+    const acted = await changeThreshold(person.id, view, chosen, { now, seated }, (step, steps) => setPhase({ step, steps }), vault);
     setPhase(null);
     setAsked({ wanted: chosen, acted });
     const wentThrough = acted.of === THRESHOLD_ACTED.done || (acted.of === THRESHOLD_ACTED.stopped && (acted.partial || acted.handedOver));

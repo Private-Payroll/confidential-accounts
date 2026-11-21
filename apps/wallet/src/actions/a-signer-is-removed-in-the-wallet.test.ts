@@ -8,6 +8,7 @@ import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profil
 import { readOutcome } from 'midnight-identity/profile/act-channel';
 import { StepRefused, type StepContext } from './definition.js';
 import type { VaultsChangedTold } from './vault-secrets-changed-here.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A SIGNER IS REMOVED FROM THE WALLET, ONE WINDOW EACH, WITH OR WITHOUT A NEW THRESHOLD.** The removal is raised by one
@@ -46,13 +47,16 @@ vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (re
   ...(await real<typeof import('../../../../packages/web-shared/src/spending-policy-here.js')>()),
   bandsInForceHere: async () => t.bands,
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
   /* The company's removals as its records list them: those withdrawn of the seat asked, one still open of it, and one withdrawn of another seat. */
   removalsOpenHere: async () => [
     ...t.withdrawn.map((id) => ({ id, leaf: LEAVER, status: 'cancelled' })),
     { id: 'prp_open', leaf: LEAVER, status: 'open' }, { id: 'prp_other', leaf: SEATS[2]!, status: 'cancelled' },
   ],
+}));
+vi.mock('../../../../packages/web-shared/src/signer-removed-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/signer-removed-on-device.js')>()),
   removeSignerOnDevice: async (doors: unknown, input: any) => { t.onDevice.push({ input }); t.doors = doors; return t.outcome!(input); },
 }));
 vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real) => ({
@@ -70,6 +74,11 @@ vi.mock('./upkeep.js', async (real) => {
   };
 });
 
+/*
+ * The change to the company is loaded first: the modules stood in for above reach it through their own imports, and
+ * loaded first it is not loaded in the middle of them, so every reader it brings in takes the stand-ins.
+ */
+await import('../../../../packages/web-shared/src/company-change-on-device.js');
 const { removalKind, removeSignerAction } = await import('./remove-signer.js');
 const { approveProposalAction } = await import('./approve-proposal.js');
 const { ActionStopped } = await import('./run.js');
@@ -95,7 +104,7 @@ const intent = (name: string, fields: Record<string, string>): ActIntent => ({ n
 let company: { approvals: number; policyBar: number | null; seatBar: number; rights: (unknown | null | undefined)[]; seats: string[] };
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
   api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
@@ -127,7 +136,13 @@ const ctxOf = (i: ActIntent) => {
   const showed: Array<{ key: string; values?: Record<string, unknown> }> = [];
   /* What the window asked the person to confirm, with how much had reached the shared code by then. */
   const confirmed: Array<{ lines: readonly { key: string; values?: Record<string, unknown> }[]; handedBefore: number }> = [];
-  const ctx = {
+  /* Each send the step said moves who holds the company: whether it names the removal's carry, and the seats and threshold it leaves. */
+  const moves: Array<{ carry: boolean; chain: unknown[]; seats: readonly string[]; approvals: number }> = [];
+  const ctx = stepOverItsCall({
+    movesWhoHolds: (sends: readonly object[], move: (h: { seats: readonly string[]; approvals: number }) => { seats: readonly string[]; approvals: number }) => {
+      const left = move({ seats: [...SEATS], approvals: 9 });
+      moves.push({ carry: sends.some((s) => (s as { proposal?: string }).proposal === 'prp_1'), chain: sends.map((s) => (s as { circuit?: string }).circuit).filter(Boolean), seats: left.seats, approvals: left.approvals });
+    },
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a removal is sent through its calls, never a bare relay'); },
@@ -139,8 +154,8 @@ const ctxOf = (i: ActIntent) => {
       if (t.stops) throw new ActionStopped('stopped');
     },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
-  return { ctx, told, showed, confirmed };
+  }) as unknown as StepContext;
+  return { ctx, told, showed, confirmed, moves };
 };
 const after: Array<{ leaf: string; round: unknown }> = [];
 const NONE_CHANGED: VaultsChangedTold = { vaultsRotated: 0, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 };
@@ -188,8 +203,10 @@ beforeEach(() => {
 describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS BAR', () => {
   it('at a bar of one the raise is carried out in the same window, by the one carry step, with the threshold asked and the name the roster holds', async () => {
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER, threshold: '2' });
-    const { ctx, told, confirmed } = ctxOf(i);
+    const { ctx, told, confirmed, moves } = ctxOf(i);
     await run(removeSignerAction(reach()), i, ctx);
+    /* RED WHEN: carrying the removal out does not say it takes the leaving seat, and only that seat, off the account at the threshold asked, or says it of another send. */
+    expect(moves).toEqual([{ carry: true, chain: [], seats: SEATS.filter((s) => s !== LEAVER), approvals: 2 }]);
     /* RED WHEN: the person raising is not shown whose seat it is, from the company's list of signers, before anything is handed over. */
     expect(confirmed).toEqual([{
       lines: [{ key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } }, { key: 'act.remove-signer.shown.threshold', values: { threshold: 2 } }],
@@ -625,7 +642,9 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
     const acts = '(remove-signer|rotate-vault-secrets)';
     const onAPage = new RegExp(`(name|act|intent)\\s*:\\s*['"]${acts}['"]|kind\\s*:\\s*['"]removal['"]|:\\s*['"]${acts}['"]\\s*[,}]`, 'u');
     const inShared = new RegExp(`name\\s*:\\s*['"]${acts}['"]|kind\\s*:\\s*['"]removal['"]`, 'u');
-    const allowed = [join(root, 'apps/web/src/adapters/signer-acts.ts'), join(root, 'packages/web-shared/src/proposal-in-the-wallet.ts')];
+    /* The list of every place a company is read from names every wallet intent, these two among them, and asks the wallet for none. */
+    const listed = join(root, 'packages/web-shared/src/company-view-inventory.ts');
+    const allowed = [join(root, 'apps/web/src/adapters/signer-acts.ts'), join(root, 'packages/web-shared/src/proposal-in-the-wallet.ts'), listed];
     const asks = [
       ...shipping(join(root, 'apps/web/src')).filter((p) => !allowed.includes(p) && onAPage.test(readFileSync(p, 'utf8'))),
       ...shipping(join(root, 'packages/web-shared/src')).filter((p) => !allowed.includes(p) && inShared.test(readFileSync(p, 'utf8'))),

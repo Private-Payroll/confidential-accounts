@@ -2,7 +2,7 @@
  * **THE PAGE ACCEPTS NO RECORDS KEY THE ROSTER IT OPENED DOES NOT NAME, AND
  * JUDGES NO COMMITTEE BY THE ROSTER.** The committee is the super admins' keys,
  * the company's own choice, so a key no signer holds is as good as any. The
- * page's own vault routes, `vaultServiceFor`, over a stand-in for the
+ * company's vault routes as a device takes them, `vaultServiceOver`, over a stand-in for the
  * service's answers and a real roster: each signer's keys signed with their
  * own roster signing key.
  */
@@ -10,7 +10,8 @@ import { describe, it, expect } from 'vitest';
 import { newSigningKeypair, type Hex } from '../../../src/core/crypto.js';
 import { signVaultKeys } from '../../../src/core/vault-keys.js';
 import type { Account } from '../../../src/core/types.js';
-import { vaultServiceFor } from './vault-page-doors.js';
+import { vaultServiceOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 
 const k = (n: number) => ({ tag: 'schnorr', value: n.toString(16).padStart(2, '0').repeat(32) });
 const r = (n: number) => n.toString(16).padStart(2, '0').repeat(32) as Hex;
@@ -23,11 +24,11 @@ const entry = (id: string, pair: { publicKey: Hex; secret: Hex }, n: number) => 
 const roster = { id: 'acc_1', signers: [entry('ada', ADA, 1), entry('bo', BO, 2)], notBelieved: [] as string[] } as unknown as Account & { readonly notBelieved: readonly string[] };
 const VAULT = 'ab'.repeat(32) as Hex;
 
-const serviceAnswering = (answers: Record<string, unknown>) => vaultServiceFor(async (path) => {
+const serviceAnswering = (answers: Record<string, unknown>) => vaultServiceOver(readRoutesOver(async (path) => {
   const found = Object.entries(answers).find(([suffix]) => path.endsWith(suffix));
   if (!found) throw new Error(`nothing answers ${path}`);
   return found[1];
-}, 'acc_1', async () => roster);
+}, { directory: 'empty', newest: 'none-entered' }), 'acc_1', async () => roster);
 
 describe('A COMMITTEE THE SERVICE REPORTS', () => {
   it('is taken as it is, a key no roster entry names among its keys', async () => {

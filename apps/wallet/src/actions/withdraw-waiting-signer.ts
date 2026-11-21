@@ -1,12 +1,12 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { InvitationRefused, SeatMayNotInvite, type InvitationSend } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import { InvitationRefused, SeatMayNotInvite } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import {
   withdrawalReadsHere, withdrawWaitingSignerHere, type WaitingReads, type WithdrawalReads,
 } from '../../../../packages/web-shared/src/waiting-signer-withdrawn.js';
 import { RecordWithheld } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { chainTimeOf } from './chain-time.js';
-import { companyReachFor, governanceRecordsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, governanceRecordsFor, keptReach, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { invitingSeatOf } from './invite.js';
 import { ActionStopped } from './run.js';
@@ -78,9 +78,8 @@ export function withdrawWaitingSignerAction(reach: WithdrawWaitingSignerReach): 
             if (e instanceof RecordWithheld) throw new StepRefused(why('withheld', { says: said(e) }), codeOfError(e));
             throw new StepRefused(why('chain-unread', { says: said(e) }), codeOfError(e));
           }
-          const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
           try {
-            await withdrawWaitingSignerHere({ id: r.accountId, companyKeys: r.companyKeys }, inviting, signerId, reads, send, intent.fields['personName']!);
+            await withdrawWaitingSignerHere({ id: r.accountId, companyKeys: r.companyKeys }, inviting, signerId, reads, writesOfTheStep(r), intent.fields['personName']!);
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof SeatMayNotInvite) throw new StepRefused(why('may-not', { says: said(e) }), codeOfError(e));

@@ -4,15 +4,15 @@ import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim'
 import { tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { assets as theAssets, type AssetRegistry } from '../../../../src/core/assets.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
-import { InvitationRefused, type InvitationSend } from '../../../../packages/web-shared/src/invitation-on-device.js';
-import { admitHere, PersonNotChanged, readPeopleHere, type PeopleDevice, type PersonHere } from '../../../../packages/web-shared/src/people-on-device.js';
+import { InvitationRefused } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import { AdmissionNotRead, admitHere, PersonNotChanged, readPeopleHere, type PeopleDevice, type PersonHere } from '../../../../packages/web-shared/src/people-on-device.js';
 import { admitVendorHere, readVendorsHere, VendorNotChanged, type VendorHere } from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
 import { FiledNotEntered, type Filed, type RecordsEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { readAfterEntering, recordEnteredHere } from '../../../../packages/web-shared/src/carried-entries-entered.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, enteredFor, keptReach, listsOfTheStep, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -55,12 +55,12 @@ export async function peopleDeviceFor(
   entered: RecordsEntered = enteredFor(r),
 ): Promise<PeopleDevice> {
   const signedInAs = ctx.person ?? refuse('no-person');
-  const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
   return {
     company: withCompanyKeys({ id: r.accountId, name: (await r.roster()).name, label: r.label, account: r.account, keyEpoch: r.companyKeys.epoch }, r.companyKeys),
     signingSecret: r.seat.signingSecret,
     signedInAs,
-    send,
+    view: listsOfTheStep(r),
+    writes: writesOfTheStep(r),
     directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster),
     network,
     claimRefusal: signedClaimRefusal,
@@ -203,7 +203,7 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
             /* A version of the record whose entry was lost is entered with the entry its filer signed, then read again. */
             const found = await readAfterEntering(() => personNamedHere(d, kind, f['person']!, refuse),
               (e) => e instanceof StepRefused && e.words.key === why('not-believed').key,
-              () => recordEnteredHere({ ...r, directory: d.directory }, kind === 'employee' ? 'person' : 'vendor', f['person']!));
+              () => recordEnteredHere({ accountId: r.accountId, view: r.stepView.current() }, kind === 'employee' ? 'person' : 'vendor', f['person']!));
             const rec = found.kind === 'employee' ? found.here.person : found.here.vendor;
             if (rec.name !== f['personName']) refuse('not-as-shown');
             const done = found.kind === 'employee' ? found.here.person.status === 'active' : (found.here.vendor.payeeCode ?? null) !== null;
@@ -221,6 +221,8 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof FiledNotEntered) throw new StepRefused(why('filed-not-entered', { says: said(e) }));
             if (e instanceof PersonNotChanged || e instanceof VendorNotChanged) throw new StepRefused(why('not-admitted', { says: said(e) }));
+            /* A read the admission rests on that failed filed nothing: said as that read, never as a filing refused. */
+            if (e instanceof AdmissionNotRead) throw new StepRefused(why('not-admitted', { says: said(e) }));
             if (e instanceof InvitationRefused) throw new StepRefused(why('not-filed', { says: said(e) }));
             throw new StepRefused(why('not-admitted', { says: said(e) }));
           }

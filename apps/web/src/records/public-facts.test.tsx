@@ -2,7 +2,7 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { KitProvider, languagesFrom, privateAmount, publicAmount } from 'vaults-ui';
-import type { RunLeg } from '../adapters/company-records.js';
+import type { RunLeg } from '../adapters/company-rows.js';
 import { ENGLISH } from '../english.test-support.js';
 import { PublicFacts } from './public-facts.js';
 

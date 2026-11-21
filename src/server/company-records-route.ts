@@ -27,6 +27,7 @@
  * against the chain its own wallet read: this server is not taken at its word.
  */
 import express from 'express';
+import { z } from 'zod';
 import type { SealedAccount } from '../core/types.js';
 import { canonical } from '../core/crypto.js';
 import {
@@ -38,6 +39,8 @@ import { CHAIN_UNREAD, filerSeatNow, type DirectoryNow } from './seat-directory-
 import { assertTheNextVersion, VaultPoolVersionAlreadyFiled } from '../midnight/vault-pool.js';
 import { ROSTER_ID } from '../core/roster-record.js';
 import { carriedEntryRefusal } from '../midnight/carried-entry.js';
+import { readerAskedBeyondItsKinds } from './readers-route.js';
+import { listAsked, READ_AT_ONCE, READ_BODY_LIMIT } from './read-at-once.js';
 
 export { CompanyRecordIdTaken, type PeopleRecords };
 
@@ -227,6 +230,24 @@ export const fileCompanyRecord = async (
   return { status: 201, body: { filed: true, kind: n.kind, id: n.id, version: rec.version, digest } };
 };
 
+/** A version as the wire carries it, or `null` for a record never filed: how every read here answers one. */
+const wireOrNone = (rec: SealedCompanyRecord | null) => (rec === null ? null : toCompanyWire(rec));
+
+/** One record a list read names: its kind, its id, and whether every version is asked for or only the newest. */
+interface RecordAsked { readonly kind: CompanyRecordKind; readonly id: string; readonly every: boolean }
+const recordAsked = z.object({ kind: z.unknown(), id: z.unknown(), every: z.boolean().optional() }).strict();
+
+/** The records a list read names, each kind and id checked as the single routes check the path's, or why it names none. */
+const recordsAsked = (body: unknown): readonly RecordAsked[] | string => {
+  const entries = listAsked(body, 'records', recordAsked);
+  if (entries === null) return 'this is not a list of records to read';
+  try {
+    return entries.map((e) => ({ kind: assertCompanyRecordKind(e.kind), id: assertCompanyRecordId(e.id), every: e.every === true }));
+  } catch (e) {
+    return `a record named is not one this service keeps: ${(e as Error).message}`;
+  }
+};
+
 export const companyRecordsRoutes = (deps: {
   readonly signedIn: express.RequestHandler;
   readonly member: express.RequestHandler;
@@ -246,6 +267,11 @@ export const companyRecordsRoutes = (deps: {
       return null;
     }
   };
+  /* What a read of one record answers: its newest version, or every version, as the wire carries them. */
+  const newest = async (company: string, kind: CompanyRecordKind, id: string) =>
+    ({ kind, id, filed: wireOrNone(await deps.records.get(company, kind, id)) });
+  const every = async (company: string, kind: CompanyRecordKind, id: string) =>
+    ({ kind, id, versions: (await deps.records.versions(company, kind, id)).map(toCompanyWire) });
   const unreadable = (res: express.Response, e: unknown) =>
     res.status(502).json({ error: `the record could not be read: ${(e as Error)?.message ?? String(e)}` });
 
@@ -253,8 +279,7 @@ export const companyRecordsRoutes = (deps: {
     const n = named(req, res);
     if (!n) return;
     try {
-      const rec = await deps.records.get(n.company, n.kind, n.id);
-      res.status(200).json({ kind: n.kind, id: n.id, filed: rec === null ? null : toCompanyWire(rec) });
+      res.status(200).json(await newest(n.company, n.kind, n.id));
     } catch (e) { unreadable(res, e); }
   });
 
@@ -262,7 +287,7 @@ export const companyRecordsRoutes = (deps: {
     const n = named(req, res);
     if (!n) return;
     try {
-      res.status(200).json({ kind: n.kind, id: n.id, versions: (await deps.records.versions(n.company, n.kind, n.id)).map(toCompanyWire) });
+      res.status(200).json(await every(n.company, n.kind, n.id));
     } catch (e) { unreadable(res, e); }
   });
 
@@ -272,8 +297,29 @@ export const companyRecordsRoutes = (deps: {
     let version: number;
     try { version = assertWireVersionNumber(req.params.version); } catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
     try {
-      const rec = await deps.records.at(n.company, n.kind, n.id, version);
-      res.status(200).json({ kind: n.kind, id: n.id, version, filed: rec === null ? null : toCompanyWire(rec) });
+      res.status(200).json({ kind: n.kind, id: n.id, version, filed: wireOrNone(await deps.records.at(n.company, n.kind, n.id, version)) });
+    } catch (e) { unreadable(res, e); }
+  });
+
+  /*
+   * Many records in one request: each entry answered exactly as the read of one record answers it (its newest version,
+   * or with `every` all of them), in the order asked, and a record never filed answered as `filed: null`, as that read
+   * answers it. A reader of the company is held to the kinds its grant reads on every entry, by kind alone as the single
+   * read judges the kind in its path, so no record is served here that the single read would refuse; one entry beyond
+   * them refuses the whole request, and nothing is read.
+   */
+  router.post('/api/accounts/:id/records/read', deps.signedIn, deps.member, express.json({ limit: READ_BODY_LIMIT }), async (req, res) => {
+    const company = String(req.params.id);
+    const asked = recordsAsked(req.body);
+    if (typeof asked === 'string') {
+      res.status(400).json({ refused: 'not-a-list', error: `${asked}. Name one to ${READ_AT_ONCE} of the company's records, each by its kind and id. Nothing was read.` });
+      return;
+    }
+    if (readerAskedBeyondItsKinds(res, asked.map(({ kind }) => ({ store: 'company' as const, kind })))) return;
+    try {
+      res.status(200).json({
+        records: await Promise.all(asked.map((r) => (r.every ? every(company, r.kind, r.id) : newest(company, r.kind, r.id)))),
+      });
     } catch (e) { unreadable(res, e); }
   });
 

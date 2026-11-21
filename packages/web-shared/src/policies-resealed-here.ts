@@ -9,7 +9,7 @@ import { openSpendingPolicy, sealSpendingPolicy, SPENDING_POLICY_KIND, type Spen
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { mayFileHere } from './may-file-here.js';
 import { kindAsked, namedHere, readersOf } from './vault-page-doors.js';
-import { believedSigners, keysHere, policiesOf, versionsHere, type SpendingPolicyDoors } from './spending-policy-here.js';
+import { believedSigners, keysHere, policiesOf, versionsHere, type SpendingPolicyDoors } from './spending-policy-read-here.js';
 
 /** What sealing the policies in force to the signers seated since needs of this device: its own filing key, and the key epoch a bare key names. */
 type PolicyResealDoors = SpendingPolicyDoors & { readonly keyEpoch: number; readonly filingKey: string };

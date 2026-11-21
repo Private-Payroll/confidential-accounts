@@ -15,6 +15,8 @@ import { emptyDirectory, type Directory, type DirectorySeat } from '../../../src
 import { filingRefusalCodeOf, judgeIn, listedHere, RecordSealedUnderAnOlderKey, refusedForItsKey, type DirectoryHere } from './vault-page-doors.js';
 import { HttpCompanyRecordStore } from './http-sealed-pool-store.js';
 import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
+import { storeReachOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memory.js';
 
 const ACC = 'acc_older_key';
 const ADA = newSigningKeypair();
@@ -165,10 +167,10 @@ describe('a record sealed under an older company key than the one in force at it
       company: ACC, kind: kind as never, id, version: 1, keyEpoch: 0, sealed: { iv: '11'.repeat(12) as Hex, tag: '22'.repeat(16) as Hex, body: '33' as Hex },
       wrapped: kind === 'roster' ? [] : [{ signerId: 'ada', ephemeral: '44'.repeat(32) as Hex, iv: '55'.repeat(12) as Hex, tag: '66'.repeat(16) as Hex, body: '77'.repeat(32) as Hex }],
     } as never, ADA.secret);
-    const store = new HttpCompanyRecordStore(ACC, async (path) => {
+    const store = new HttpCompanyRecordStore(ACC, storeReachOver(readRoutesOverSend(async (path) => {
       const kind = path.includes('roster') ? 'roster' : 'spending-policy';
       return { status: 200, body: { kind, id: kind === 'roster' ? 'roster' : 'pol_1', filed: toCompanyWire(filed(kind, kind === 'roster' ? 'roster' : 'pol_1')) } };
-    }, ADA.secret, async () => judge as never);
+    }, { directory: 'empty', newest: 'none-entered' }), ACC), ADA.secret, async () => judge as never);
     await store.get('roster', 'roster');
     await store.get('spending-policy' as never, 'pol_1');
     /* RED WHEN: a roster is judged without the epoch it names, or a spending policy's version is held to the key in force. */

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import type { Hex } from '../../../../src/core/crypto.js';
 
 /*
  * THE COMPANY'S RECORDS AS THIS PAGE READS THEM. The page's vault worker and
@@ -29,21 +30,41 @@ vi.mock('./vault-builder.js', () => ({
     };
   },
 }));
-vi.mock('vaults-web-shared/records-anchored-here.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/records-anchored-here.js')>()),
-  heldFor: (doors: Record<string, unknown>) => async () => { t.held.push(doors); return { held: undefined }; },
+/* This device holds a seat on another company too: a judge asked about it would open it with that seat. */
+vi.mock('vaults-web-shared/keyring.js', async (real) => {
+  const keyring = await real<typeof import('vaults-web-shared/keyring.js')>();
+  return { ...keyring, seatHeldHere: (id: string) => (id === 'acc_other' ? { signingPublicKey: '11'.repeat(32) } as never : keyring.seatHeldHere(id)) };
+});
+vi.mock('vaults-web-shared/records-held-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/records-held-here.js')>()),
+  recordsHeldHere: async (doors: Record<string, unknown>) => { t.held.push(doors); return { records: { held: undefined } }; },
 }));
-vi.mock('vaults-web-shared/keyring.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  holdersFromTheWallet: async () => ({ holders: {}, indexer: t.indexer }),
-  api: async (path: string) => { t.paths.push(path); throw new Error('the service is stood in for'); },
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
+  holdersFromTheWallet: async () => ({ holders: { committee: [], seats: [], adoptedVaults: [], vaultThresholds: [], approvals: 1, threshold: 1, policyBar: null }, indexer: t.indexer }),
 }));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => {
+  /* The service, stood in for: the company's account, a directory with no filing, no newer version of any record, and nothing else. */
+  const api = async (path: string, init?: RequestInit) => {
+    t.paths.push(path);
+    if (path === '/api/accounts/acc_northwind') return { id: 'acc_northwind', companyLabel: `co_${'a7'.repeat(32)}`, contractAddress: 'b7'.repeat(32) };
+    if (path === '/api/accounts/acc_northwind/directory') return { filings: [] };
+    if (path === '/api/accounts/acc_northwind/manifest/newest') return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => 0) };
+    throw new Error('the service is stood in for');
+  };
+  return { ...(await real<typeof import('vaults-web-shared/service-transport.js')>()), api, serviceCall: api };
+});
 
 const judged = await import('./filing-judge.js');
-const { rosterReadsFor } = judged;
 
 const LABEL = `co_${'a7'.repeat(32)}`;
 const ACCOUNT = 'b7'.repeat(32);
+/* What a read of the company's records is handed on this page: read through a view of the company opened afresh. */
+const heldDoors = async (): Promise<Record<string, unknown>> => {
+  const view = judged.openViewOf('acc_northwind');
+  await judged.rosterReadsIn(view, { company: LABEL as never, account: ACCOUNT as never }).anchored({ dir: {}, holders: {} } as never, {});
+  return t.held[0]!;
+};
 
 beforeEach(() => {
   t.held.length = 0; t.asked.length = 0; t.builder = null; t.vouched.length = 0; t.paths.length = 0;
@@ -52,28 +73,37 @@ beforeEach(() => {
 
 describe('THE COMPANY A READ IS FOR', () => {
   it('READS THE COMPANY FOR ITS VIEWING KEY AT THE COMPANY\'S OWN ADDRESS ON THE SERVICE', async () => {
-    await rosterReadsFor('acc_northwind', LABEL as never, ACCOUNT as never).anchored({} as never, {});
-    const vouching = t.held[0]!.vouching as AnchorDoors['vouching'];
+    const vouching = (await heldDoors()).vouching as AnchorDoors['vouching'];
     await expect(vouching!.runs(['ee'.repeat(32)])).rejects.toThrow(/stood in for/u);
     /* RED WHEN: the company is read at any address but its own - another company's key would open its runs. */
-    expect(t.paths).toEqual(['/api/accounts/acc_northwind']);
+    expect(t.paths.filter((p) => p !== '/api/accounts/acc_northwind' && !p.startsWith('/api/accounts/acc_northwind/'))).toEqual([]);
+    expect(t.paths).toContain('/api/accounts/acc_northwind/proposals');
+  });
+});
+
+describe('A JUDGE OF ONE VIEW READS ONLY THAT VIEW\'S COMPANY', () => {
+  /* RED WHEN: a judge handed another company's account reads that company through this view's directory, holders and records. */
+  it('refuses to open another company\'s account through the view, before anything is read', async () => {
+    const view = judged.openViewOf('acc_northwind');
+    await expect(judged.openedHere(view, { id: 'acc_other', companyLabel: LABEL, contractAddress: ACCOUNT, wrappedKeys: [] } as never))
+      .rejects.toThrow(/web-21-judge-asked-another-company/u);
+    expect(t.paths).toEqual([]);
   });
 });
 
 describe('THE ACCOUNT\'S ANCHORS, READ AT THE INDEXER THE PERSON\'S OWN WALLET NAMES', () => {
   it('A WALLET THAT NAMES NO INDEXER IS SAID SO, AND NOTHING IS READ ANYWHERE ELSE', async () => {
     t.indexer = null;
-    await rosterReadsFor('acc_northwind', LABEL as never, ACCOUNT as never).anchored({} as never, {});
+    const doors = await heldDoors();
     /* RED WHEN: with no indexer from the wallet, the anchors are read elsewhere - the service's, or a default. */
-    await expect((t.held[0]!.onChain as AnchorDoors['onChain'])()).rejects.toThrow(/your wallet did not name the indexer it reads the chain through/u);
+    await expect((doors.onChain as AnchorDoors['onChain'])()).rejects.toThrow(/your wallet did not name the indexer it reads the chain through/u);
     expect(t.asked).toEqual([]);
   });
 });
 
 describe('EVERY READ OF A COMPANY\'S RECORDS ON THIS PAGE', () => {
   it('READS THEM AGAINST THE HEAD THE ACCOUNT\'S HISTORY HOLDS AT THE WALLET\'S INDEXER, AND IS HANDED NOTHING OF THE SERVICE\'S CHAIN READ', async () => {
-    await rosterReadsFor('acc_northwind', LABEL as never, ACCOUNT as never).anchored({} as never, {});
-    const [doors] = t.held;
+    const doors = await heldDoors();
     /* RED WHEN: the screens' reads are handed the service's chain read - the head would be the service's word again. */
     expect(doors).not.toHaveProperty('service');
     expect(doors!.accountId).toBe('acc_northwind');
@@ -83,12 +113,26 @@ describe('EVERY READ OF A COMPANY\'S RECORDS ON THIS PAGE', () => {
   });
 
   it('A DEVICE NEW TO THE COMPANY IS HANDED THE RUNS THAT MAY VOUCH FOR A HEAD, EACH RUN\'S IDENTITY MADE BY THE ACCOUNT\'S FUNCTIONS IN THE PAGE\'S WORKER', async () => {
-    await rosterReadsFor('acc_northwind', LABEL as never, ACCOUNT as never).anchored({} as never, {});
-    const vouching = t.held[0]!.vouching as AnchorDoors['vouching'];
+    const vouching = (await heldDoors()).vouching as AnchorDoors['vouching'];
     const run = { root: 'ab'.repeat(32), payees: '1', opensAt: '1', closesAt: '2', required: '0', vault: 'cd'.repeat(32), head: '1a'.repeat(32), r: '2b'.repeat(32) };
     /* RED WHEN: a read on this page starts from its first header though runs vouch for a later head, or makes a run's identity anywhere but the worker. */
     expect(await vouching!.identity(run)).toBe('ff'.repeat(32));
     expect(t.vouched).toEqual([run]);
+  });
+});
+
+describe('A RECORD STORE ON THIS PAGE ONLY READS', () => {
+  it('is reached through the view with no way to file, so no store that files can be made over it', async () => {
+    const { HttpCompanyRecordStore } = await import('vaults-web-shared/http-sealed-pool-store.js');
+    const reach = judged.storeReachIn(judged.openViewOf('acc_northwind'));
+    /* RED WHEN: the page hands its stores a way to file through a view the page never opens again. */
+    expect(reach).not.toHaveProperty('file');
+    const judge = async () => (() => null) as never;
+    const SECRET = '11'.repeat(32) as Hex;
+    /* RED WHEN: a store given a signing secret, which could file, takes the page's reach (the typecheck refuses it). */
+    // @ts-expect-error a store that files cannot be given a reach that only reads
+    expect(() => new HttpCompanyRecordStore('acc_northwind', reach, SECRET, judge)).not.toThrow();
+    expect(new HttpCompanyRecordStore('acc_northwind', reach, null, judge)).toBeInstanceOf(HttpCompanyRecordStore);
   });
 });
 

@@ -22,19 +22,21 @@
  * the saved keys again**, because keeping what it read in storage would put it
  * where any script on the page can read it.
  */
-import { isReadMethod, notePreparing, serviceRead } from './read-bound.js';
-import type { KeysHeld } from '../../../src/core/company-key.js';
-import type { DirectoryHereDeps, OwedDirectoryEntry } from './vault-page-doors.js';
+import { notePreparing } from './read-bound.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
-import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
-import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
-import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 import {
-  askWalletToSignIn, openWalletDialog, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog,
+  askWalletToSignIn, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog,
 } from './wallet-sign-in.js';
 import { actInTheWallet, type ActOutcome } from './wallet-act.js';
-import { pageWireSend } from './http-sealed-pool-store.js';
+import {
+  AnotherPersonError, AuthError, CouldNotCheckError, ServiceRefused, theSignInIsHeldBy,
+} from './service-transport.js';
+import { walletCallsOnPage } from './asks-on-page.js';
+import { personOnPage } from './person-on-page.js';
+import { doneWaiting, forgetTheWalletsIndexer, openTheWallet, putAway } from './wallet-asks.js';
+import { readsAreStale, STALE } from './company-reads-stale.js';
 import type { NotAskedWhy, StepAt } from 'midnight-identity/profile/channel';
 import type { KeyringHandedIn, KeysRead, SealedKeyring } from 'midnight-identity/profile/unlock';
 import { MOST_SERVED, type FoundingAsked, type ServedHandedIn } from 'midnight-identity/profile/request';
@@ -42,30 +44,19 @@ import { MOST_SERVED, type FoundingAsked, type ServedHandedIn } from 'midnight-i
  * know which file below this one the wallet plumbing lives in. */
 export type { WalletDialog } from './wallet-sign-in.js';
 import { askWalletForKeys, UnlockRefused } from './wallet-unlock.js';
-import { askWalletToPay } from './wallet-balance.js';
-import { askWalletToSignCommittee, type CommitteeAsked } from './wallet-committee.js';
-import {
-  askWalletToSignRecordsKey, askWalletWhoHolds, type HoldersAsked, type HoldersRead, type RecordsKeyAsked, type RecordsKeySigned,
-} from './wallet-records-key.js';
 /* **THE WALLET IS SHOWN INSIDE THIS PAGE.** Every journey below defaults to it;
  * a test hands in a window of its own and drives the same conversation. */
-import { walletInThisPage, walletQuietlyInThisPage } from './wallet-frame.js';
+import { walletInThisPage } from './wallet-frame.js';
 
 /** A company as this device opened it: the entries it believes, and each entry it refused with why, for a screen to say. */
 export type { OpenedAccount } from './company-judges.js';
-import { openAccountWith, seatsAdmittedWith, type OpenedAccount } from './company-judges.js';
-import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import {
-  COMPANY_CREATION_STATES, type CompanyCreationState,
-} from '../../../src/core/company-founding.js';
-import type { AccountPresenceOnTheWire } from './vault-worker-client.js';
 
 export type { CompanyCreationState } from '../../../src/core/company-founding.js';
 import { seatToPromote } from './seat-repair.js';
-import type { SealedAccount, SignerRole } from '../../../src/core/types.js';
+import type { SealedAccount } from '../../../src/core/types.js';
 import { onlyCompanyLabels, rememberedCompanies } from './my-payslips.js';
 import {
-  metadataFrom, type Keyring, type PendingSeat, type SavedCreation, type SeatPublicHalves,
+  metadataFrom, type Keyring, type OwedDirectoryEntry, type PendingSeat, type SeatPublicHalves,
 } from './keyring-blob.js';
 /* The keyring's format is defined once, beside this file, and read by the person's wallet too. */
 export type { AccountKeys, Keyring, PendingSeat, SavedAccountKeys, SavedCreation } from './keyring-blob.js';
@@ -183,6 +174,13 @@ let forgotBecause: 'no-session' | 'another-person' | null = null;
 
 export const currentUser = () => me;
 export const signedInWallet = () => walletAddress;
+/** The saved keys' parts that open nothing, as the wallet last said them: what a creation in progress reads its own state from. */
+export const keptKeyring = (): Keyring => keyring;
+/**
+ * Whether a person's first keys may be saved from this tab: some are saved already, or this tab signed the person in
+ * and so can tell which wallet answers (`keyCheckedAgainstSignIn`).
+ */
+export const firstKeysMaySaveFromHere = (): boolean => savedKeys === 'some' || keyCheckedAgainstSignIn;
 /**
  * **THE COMPANY KEY THIS TAB HOLDS FOR `accountId`, OR NULL.**
  *
@@ -237,32 +235,6 @@ const WENT_BACK = 'what is saved for you here is older than what this tab alread
 /** A second answer, in a tab the wallet already read the saved keys for, from a wallet that is not the same one. */
 const NOT_THE_SAME_WALLET = 'the wallet that answered is not the one that read your saved keys for this tab, so nothing it '
   + 'gave has been used. Answer with the wallet you signed in with.';
-
-/**
- * **A PERSON'S FIRST KEYS ARE SAVED ONLY FROM A TAB THAT CAN TELL WHICH WALLET
- * SIGNED IN** (`keyCheckedAgainstSignIn` says why). This is the refusal when
- * this tab did not sign them in: its own class so a screen can tell it apart
- * and say it in its own words; its message is `FIRST_KEYS_NEED_THE_SIGN_IN`.
- */
-export class FirstKeysNeedTheSignIn extends Error {}
-
-const FIRST_KEYS_NEED_THE_SIGN_IN = 'nothing is saved for you here yet, and this tab did not sign you '
-  + 'in, so it cannot make sure that the wallet answering is the one you signed in with before your '
-  + 'first keys are saved under its key. Nothing has been created or saved. Sign in again in this tab, '
-  + 'with the same wallet address, and try again.';
-
-/**
- * The company this tab is waiting to finish was started by somebody other than
- * the person signed in here now. Its own class so a screen can tell it apart
- * and say it in its own words; nothing is saved and the company stays waiting
- * for the person who started it.
- */
-export class CompanyStartedBySomebodyElse extends Error {}
-
-const STARTED_BY_SOMEBODY_ELSE = 'the company waiting to be finished in this tab was started by '
-  + 'somebody else, who is not the person signed in here now. Its keys are never saved into yours. '
-  + 'Nothing has been saved; the person who started it can sign in again in this tab to finish it.';
-
 /**
  * **THIS SIGNER'S SEAT FOR A COMPANY, AS THE WALLET READ IT: ITS PUBLIC HALVES AND SCOPE, AND NOTHING ELSE**, or null
  * when the saved keys the wallet read for this tab hold no seat for it. Nothing here signs, opens or proves.
@@ -285,29 +257,12 @@ export async function seatShownHere(accountId: string): Promise<{ readonly signi
  * **A COMPANY'S VIEWING KEY AS THE WALLET OPENED IT FOR THIS TAB**: the one wrapped to this signer's seat, given only when
  * it made the company's inbox public key. Throws when the wallet gave none, so a read refuses rather than guesses.
  */
-export function viewingKeyFor(account: { id: string; wrappedKeys: any[] }): Hex {
+export function viewingKeyFor(account: Pick<SealedAccount, 'id' | 'wrappedKeys'>): Hex {
   if (seatHeldHere(account.id) === null) throw new Error('no keys for this account on this device');
   const key = read?.viewing[account.id];
   if (key === undefined) throw new Error('you have not been granted access to this account yet');
   return key;
 }
-
-/* ---------------- transport ---------------- */
-
-export class AuthError extends Error {}
-/**
- * The sign-in this tab sent belongs to somebody else. Still an `AuthError` to
- * every caller that only asks whether the tab is signed in; told apart where it
- * matters, which is signing out - that session is still live in this browser.
- */
-export class AnotherPersonError extends AuthError {}
-
-/**
- * The service answered 503 `could-not-check`: it could not look up whether this sign-in is live. It
- * says nothing about the person, so it is NOT an `AuthError`: nobody is signed out for it and
- * nothing is forgotten. The page keeps the person signed in and asks again.
- */
-export class CouldNotCheckError extends Error {}
 
 /** How long `resumeSession` waits before each new ask when the service could not check, then gives up. */
 export const RESUME_BACKOFF_MS: readonly number[] = [600, 1500, 4000];
@@ -322,65 +277,6 @@ export class SavedKeysDidNotOpen extends Error {}
  * gone. It is not taken in place of what this tab holds.
  */
 export class SavedKeysWentBack extends Error {}
-
-/** Starting a creation again was asked for a company this browser keeps no creation for. */
-export class NoCreationKeptHere extends Error {}
-
-/** The service holds no record at the address asked for (a 404). The message is the service's own. */
-export class NotOnTheService extends Error {}
-
-/**
- * The service refused a request, and what its refusal carried besides the words: whether nothing was sent, and for what.
- * `code` is the reason a fee was not paid (`fee-not-paid`, `network-refused`), kept only from a 422 whose body says
- * nothing was sent; any other answer, a 502 included, leaves it unset.
- */
-export class ServiceRefused extends Error {
-  readonly code: 'fee-not-paid' | 'network-refused' | undefined;
-  constructor(message: string, readonly body: Record<string, unknown>, status?: number) {
-    super(message);
-    const named = body['code'];
-    this.code = status === 422 && body['nothingWasSent'] === true && (named === 'fee-not-paid' || named === 'network-refused') ? named : undefined;
-  }
-}
-
-const apiOnce = async (path: string, opts?: RequestInit) => {
-  const r = await fetch(path, {
-    ...opts,
-    /* The sign-in cookie rides on this, and only to this page's own origin. */
-    credentials: 'same-origin',
-    headers: {
-      'content-type': 'application/json',
-      /* **WHO THIS TAB WAS PREPARED FOR.** The sign-in is the browser's, so a
-       * sign-in in another tab changes it under this one; the server refuses a
-       * request whose session is somebody else, rather than letting this tab's
-       * keys be written under them. */
-      ...(me ? { 'x-signed-in-as': me.id } : {}),
-      ...(opts?.headers ?? {}),
-    },
-  });
-  const body = await r.json().catch(() => ({}));
-  if (r.status === 401) {
-    forgetLocally();
-    forgotBecause = 'no-session';
-    throw new AuthError(body?.error ?? 'not signed in');
-  }
-  if (r.status === 409 && body?.code === 'another-person') {
-    forgetLocally();
-    forgotBecause = 'another-person';
-    throw new AnotherPersonError(body.error);
-  }
-  if (r.status === 503 && body?.code === 'could-not-check') throw new CouldNotCheckError(body?.error ?? 'the service could not check your sign-in');
-  if (r.status === 404) throw new NotOnTheService(body?.error ?? `request failed: ${r.status}`);
-  if (!r.ok) throw new ServiceRefused(body?.error ?? `request failed: ${r.status}`, typeof body === 'object' && body !== null ? body : {}, r.status);
-  return body;
-};
-
-export const api = (path: string, opts?: RequestInit & { read?: boolean }) => {
-  const { read, ...init } = opts ?? {};
-  if (read !== true && !isReadMethod(init.method)) return apiOnce(path, init);
-  return serviceRead(`The service (${path.split('?')[0]})`, (signal) => apiOnce(path, { ...init, signal }));
-};
-
 /* ---------------- sign in and out ---------------- */
 
 /*
@@ -390,81 +286,8 @@ export const api = (path: string, opts?: RequestInit & { read?: boolean }) => {
  * person's wallet, and none of them opens the saved keys.
  */
 
-/* ---------------- the wallet dialog, and the page behind it ---------------- */
-
 /**
- * **THE PAGE BEHIND THE DIALOG HAS TO SHOW THAT IT IS WAITING.**
- *
- * A person who presses a button, sees nothing change, and cannot see the window
- * that opened behind their browser presses it again — and a second press is a
- * second ask. So every wallet ask in this module announces itself: the screen
- * subscribes once, draws *waiting for your wallet* while a dialog is open, and
- * offers the way out that `WalletDialog.giveUp` is.
- *
- * It is a subscription rather than a parameter because the asks are started
- * from four different places on three different screens, and a callback
- * threaded through all of them is a callback one of them forgets.
- */
-type WalletWaiting = (dialog: WalletDialog | null) => void;
-
-const watching = new Set<WalletWaiting>();
-
-/** Returns the way to stop watching. Call it from an effect's cleanup. */
-export function onWalletWaiting(watch: WalletWaiting): () => void {
-  watching.add(watch);
-  return () => { watching.delete(watch); };
-}
-
-const nowWaiting = (dialog: WalletDialog | null): void => {
-  for (const watch of watching) watch(dialog);
-};
-
-/**
- * **THE WINDOW IS OPENED HERE, AND EVERY CALLER CALLS THIS BEFORE ITS FIRST
- * `await`.** That is the whole repair, and it is one line at each of
- * the four call sites rather than a rule written down somewhere.
- *
- * `already` is the dialog a longer journey opened in its own click — creating a
- * company opens the wallet in the press, then talks to this server, then asks
- * the wallet — so the second half does not open a second window.
- */
-function openTheWallet(
-  view: Openable, walletOrigin: string, already?: WalletDialog,
-): WalletDialog {
-  const dialog = already ?? openWalletDialog(view, walletOrigin);
-  nowWaiting(dialog);
-  return dialog;
-}
-
-/** Nothing is waiting on a wallet any more, however it ended. */
-const doneWaiting = (): void => { nowWaiting(null); };
-
-/**
- * **A JOURNEY THAT OPENS ITS OWN DIALOG ANNOUNCES IT HERE.** Accepting an
- * invitation drives two asks through one dialog it owns, so it does not come
- * through `openTheWallet` - and a wallet shown with no dialog announced has a
- * *Stop waiting* that can hide the wallet but cannot refuse the ask in flight.
- * Returns the way to stop announcing; call it when the journey ends.
- */
-export function showWaitingFor(dialog: WalletDialog): () => void {
-  nowWaiting(dialog);
-  return doneWaiting;
-}
-
-/**
- * **A JOURNEY THAT FAILED PUTS ITS WALLET AWAY BEFORE IT STOPS SAYING IT IS WAITING.**
- *
- * Every wallet journey opens the wallet in the press and then talks to this
- * server. When that talk fails the ask never ran, so nothing closed the wallet
- * - and `doneWaiting` then removed the one control that could, leaving a wallet
- * on screen with nothing able to put it away. `giveUp` is safe after anything:
- * an ask that already ended has already closed it, and a second close is not a
- * second event.
- */
-const putAway = (dialog: WalletDialog): void => { dialog.giveUp(); };
-
-/**
- * SIGNING IN WITH THE WALLET. `docs/scope-payroll-identity.md` §10 step 1.
+ * SIGNING IN WITH THE WALLET: how a person gets in.
  *
  * Three steps and no password anywhere in them: ask this server for a nonce,
  * open the wallet and have it sign one payload naming this origin, hand the
@@ -493,7 +316,7 @@ export async function signInWithWallet(
    */
   const dialog = openTheWallet(view, walletOrigin);
   try {
-    const challenge = await api('/api/auth/wallet/challenge', { method: 'POST' });
+    const challenge = await personOnPage.challenge() as { nonce: string; expiresAt: string; handle: string };
     const response = await askWalletToSignIn(view, walletOrigin, {
       nonce: challenge.nonce,
       /* The wallet refuses an ask that has already expired, so the deadline is
@@ -519,12 +342,9 @@ async function finishWalletSignIn(
   response: unknown,
   inviteToken?: string,
 ): Promise<Me> {
-  const r = await api('/api/auth/wallet', {
-    method: 'POST',
-    body: JSON.stringify({
-      handle: challenge.handle, nonce: challenge.nonce, response,
-      ...(inviteToken ? { inviteToken } : {}),
-    }),
+  const r = await personOnPage.signIn({
+    handle: challenge.handle, nonce: challenge.nonce, response,
+    ...(inviteToken ? { inviteToken } : {}),
   });
   return takeTheSignIn(r);
 }
@@ -568,6 +388,8 @@ function takeTheSignIn(r: any): Me {
   tidyOwed.clear();
   me = r.user;
   bundleVersion = 0;
+  /* Whatever this tab read of a company, it read as whoever was signed in before. */
+  readsAreStale({ company: null, why: STALE.signedIn, signedIn: true });
   return r.user as Me;
 }
 
@@ -608,7 +430,7 @@ export async function resumeSession(
 ): Promise<Me | null> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const r = await api('/api/me');
+      const r = await personOnPage.me() as { user: unknown };
       sessionLive = true;
       me = r.user as Me;
       if (carried !== null && carried.personId === me.id && typeof carried.address === 'string' && carried.address !== '') {
@@ -728,7 +550,7 @@ const kindOf = (e: unknown): string => {
   return typeof e;
 };
 
-async function openKeysOnceOpen(
+export async function openKeysOnceOpen(
   walletOrigin: string, view: Openable, atOrigin: string,
   dialog: WalletDialog,
   /**
@@ -834,7 +656,7 @@ async function openKeysOnceOpen(
  * a field it does not name never reaches this tab's memory; the viewing keys of a company the answer did not name are
  * kept from the same wallet's earlier answer.
  */
-function takeTheRead(got: KeysRead, some: boolean, version: number): void {
+export function takeTheRead(got: KeysRead, some: boolean, version: number): void {
   const metadata = metadataFrom(got.metadata);
   const seats: Record<string, SeatPublicHalves> = {};
   for (const [id, s] of Object.entries(got.seats)) {
@@ -863,7 +685,7 @@ function takeTheRead(got: KeysRead, some: boolean, version: number): void {
  * opens that company and reads its vaults with no other window, and asks the wallet to read the saved keys before it
  * opens any other.
  */
-function takeWhatTheActionLeft(outcome: ActOutcome, accountId: string | null): void {
+export function takeWhatTheActionLeft(outcome: ActOutcome, accountId: string | null): void {
   const left = outcome.keys;
   if (left === undefined) return;
   if (Object.keys(left.viewing).some((id) => id !== accountId)) return;
@@ -900,13 +722,13 @@ function takeWhatTheActionLeft(outcome: ActOutcome, accountId: string | null): v
  * empty one: the wallet then opens no company's key, and those companies stay locked here.
  */
 /** The action's own company's served keys, for its end answer to give that company's viewing key; none when not served. */
-async function servedForTheAction(accountId: string): Promise<ServedHandedIn[]> {
+export async function servedForTheAction(accountId: string): Promise<ServedHandedIn[]> {
   return (await servedForTheWallet()).filter((s) => s.accountId === accountId).slice(0, 1);
 }
 
 async function servedForTheWallet(): Promise<ServedHandedIn[]> {
   let listed: unknown;
-  try { listed = await api('/api/accounts'); } catch (e) {
+  try { listed = await personOnPage.companies(); } catch (e) {
     notePreparing(`reading the companies you belong to failed (${kindOf(e)}), so none is handed to the wallet`);
     return [];
   }
@@ -930,8 +752,8 @@ async function servedForTheWallet(): Promise<ServedHandedIn[]> {
  * could tell the service about which company it is that the service should
  * believe. Refused by name when the answer is not a label and an address.
  */
-async function companyNamedFor(accountId: string): Promise<{ accountId: string; label: CompanyLabel; account: AccountAddress | null }> {
-  const answer = await api(`/api/accounts/${accountId}/unlock`, { method: 'POST' });
+export async function companyNamedFor(accountId: string): Promise<{ accountId: string; label: CompanyLabel; account: AccountAddress | null }> {
+  const answer = await personOnPage.companyNamed(accountId) as { company?: unknown; account?: unknown } | null;
   const label = readCompanyLabel(answer?.company);
   const account = answer?.account === null || answer?.account === undefined ? null : readAccountAddress(answer.account);
   if (label === null || (answer?.account !== null && answer?.account !== undefined && account === null)) {
@@ -1021,122 +843,8 @@ export async function walletKeyForAnInvitation(
 }
 
 /**
- * **ASKS THIS PERSON'S WALLET TO PUT IN THE COINS A DEPOSIT NEEDS.** Opened in
- * the press, like every wallet journey; see `wallet-balance.ts`.
- */
-export async function payIntoAVaultFromTheWallet(
-  walletOrigin: string,
-  ask: { company: CompanyLabel; account: AccountAddress; vault: VaultAddress; transaction: string },
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-  already?: WalletDialog,
-): Promise<{ transaction: string; leaves: readonly unknown[] }> {
-  if (!sessionLive) throw new Error('not signed in');
-  const dialog = openTheWallet(view, walletOrigin, already);
-  try {
-    return await askWalletToPay(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
-  } catch (e) {
-    if (!already) putAway(dialog);
-    throw e;
-  } finally {
-    doneWaiting();
-  }
-}
-
-/**
- * **ASKS THIS PERSON'S WALLET TO SIGN A CHANGE TO WHO HOLDS THEIR COMPANY'S
- * RULES.** Opened in the press, like every wallet journey; see
- * `wallet-committee.ts`.
- */
-export async function signCommitteeChangeFromTheWallet(
-  walletOrigin: string,
-  ask: Pick<CommitteeAsked, 'company' | 'account' | 'to' | 'contracts'>,
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-  already?: WalletDialog,
-): Promise<Awaited<ReturnType<typeof askWalletToSignCommittee>>> {
-  if (!sessionLive) throw new Error('not signed in');
-  const dialog = openTheWallet(view, walletOrigin, already);
-  try {
-    return await askWalletToSignCommittee(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
-  } catch (e) {
-    if (!already) putAway(dialog);
-    throw e;
-  } finally {
-    doneWaiting();
-  }
-}
-
-/**
- * **THIS PERSON'S RECORDS KEY FOR THEIR SEAT, SIGNED BY THEIR OWN WALLET, AND WHO
- * HOLDS THE COMPANY'S ACCOUNT NOW AS THAT WALLET READ IT.** Asked right before a
- * vault's secret is approved, so what it is checked against is read then.
- * With `firstSecret`, asked before a vault's first secret, the wallet also
- * shows the person that vault and every reader its secret will be sealed to:
- * a confirmation for the person, not a lock, since the chain accepts the
- * approval on the seat's proof this page makes.
- * Opened in the press, like every wallet journey; see `wallet-records-key.ts`.
- */
-export async function recordsKeyFromTheWallet(
-  walletOrigin: string,
-  ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault' | 'signingKey' | 'invitedBy' | 'firstSecret'>,
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-  already?: WalletDialog,
-): Promise<RecordsKeySigned> {
-  if (!sessionLive) throw new Error('not signed in');
-  const dialog = openTheWallet(view, walletOrigin, already);
-  try {
-    return await askWalletToSignRecordsKey(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
-  } catch (e) {
-    if (!already) putAway(dialog);
-    throw e;
-  } finally {
-    doneWaiting();
-  }
-}
-
-/**
- * The indexer this person's wallet last named in an answer it gave in this tab: the wallet names it only with an
- * answer it completes, never with a refusal. Null until it has named one.
- */
-let walletsIndexer: { readonly indexerUri: string; readonly indexerWsUri: string } | null = null;
-
-/**
- * **WHO HOLDS THE COMPANY NOW, AS THIS PERSON'S OWN WALLET READS THE CHAIN**, with
- * no press. Asked afresh for every read that believes a filing; see
- * `wallet-records-key.ts`. Nothing is shown and nothing is unlocked: the wallet
- * is asked in a frame of its own that nobody sees (`walletQuietlyInThisPage`),
- * and the page says it is waiting for nothing.
- */
-export async function holdersFromTheWallet(
-  walletOrigin: string,
-  ask: Pick<HoldersAsked, 'company' | 'account' | 'movements' | 'roles'>,
-  view: Openable = walletQuietlyInThisPage(window),
-  atOrigin: string = window.location.origin,
-): Promise<HoldersRead> {
-  if (!sessionLive) throw new Error('not signed in');
-  const dialog = openWalletDialog(view, walletOrigin);
-  try {
-    const read = await askWalletWhoHolds(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
-    if (read.indexer !== null) walletsIndexer = read.indexer;
-    return read;
-  } finally {
-    putAway(dialog);
-  }
-}
-
-/**
  * Forgets everything this tab holds. LOCAL ONLY — it does not sign the person
- * out on the server, and it must not: it is also the 401 handler above, where
+ * out on the server, and it must not: it is also what the service transport runs on a 401, where
  * the sign-in is already gone and calling the API again would recurse.
  *
  * Use `signOut()` for the button.
@@ -1144,9 +852,15 @@ export async function holdersFromTheWallet(
 export function forgetLocally() {
   sessionLive = false; read = null; keyring = { accounts: {} }; me = null; walletAddress = null;
   releasedCompanyKey = null; savedKeys = null; keyCheckedAgainstSignIn = false; tidyOwed.clear();
-  /* The indexer the wallet named belongs to the sign-in it was learnt in. */
-  walletsIndexer = null;
+  forgetTheWalletsIndexer();
+  readsAreStale({ company: null, why: STALE.signInEnded, signedIn: false });
 }
+
+theSignInIsHeldBy({
+  person: () => me,
+  isLive: () => sessionLive,
+  lost: (why) => { forgetLocally(); forgotBecause = why; },
+});
 
 /**
  * Signing out for real: the service ends the sign-in, so a token dropped by
@@ -1180,7 +894,7 @@ export async function signOut(): Promise<{ ended: boolean; anotherPerson: boolea
   let ended = false;
   let anotherPerson = false;
   try {
-    await api('/api/auth/logout', { method: 'POST' });
+    await personOnPage.signOut();
     ended = true;
   } catch (e) {
     anotherPerson = e instanceof AnotherPersonError;
@@ -1193,7 +907,7 @@ export async function signOut(): Promise<{ ended: boolean; anotherPerson: boolea
 
 /** The signed-in devices. Never includes a token — see SessionStore.list. */
 export async function listSessions() {
-  return (await api('/api/me/sessions')).sessions as Array<{
+  return ((await personOnPage.sessions()) as { sessions: unknown }).sessions as Array<{
     id: string; issuedAt: string; expiresAt: string;
     userAgent: string | null; current: boolean;
   }>;
@@ -1201,12 +915,12 @@ export async function listSessions() {
 
 /** Ends one of them by id. "Sign out that phone." */
 export async function endSession(id: string) {
-  await api(`/api/me/sessions/${id}/revoke`, { method: 'POST' });
+  await personOnPage.endSession(id);
 }
 
 /** Ends every other session and keeps this one. */
 export async function signOutEverywhereElse() {
-  return (await api('/api/me/sessions/others/revoke', { method: 'POST' })).ended as number;
+  return ((await personOnPage.endOtherSessions()) as { ended: unknown }).ended as number;
 }
 
 /* ---------------- the keyring ---------------- */
@@ -1272,7 +986,7 @@ export async function finishPendingSeat(accountId: string, sealed: SealedAccount
  * newest copy there is; the wallet opens them and refuses a copy older than one it has already opened.
  */
 export async function savedKeysForTheWallet(): Promise<{ readonly sealed: Sealed | null; readonly version: number }> {
-  const r = await api('/api/me/keys');
+  const r = await personOnPage.savedKeys() as { keyBundle?: unknown; version?: unknown } | null;
   return {
     sealed: r?.keyBundle ? r.keyBundle as Sealed : null,
     version: typeof r?.version === 'number' ? r.version : 0,
@@ -1287,7 +1001,7 @@ export async function savedKeysForTheWallet(): Promise<{ readonly sealed: Sealed
 export async function keepWhatTheWalletSealed(sealed: Sealed, ifVersion: number): Promise<number | null> {
   let r: Record<string, unknown> | null;
   try {
-    r = await api('/api/me/keys', { method: 'PUT', body: JSON.stringify({ keyBundle: sealed, ifVersion }) }) as Record<string, unknown> | null;
+    r = await personOnPage.keepSavedKeys({ keyBundle: sealed, ifVersion }) as Record<string, unknown> | null;
   } catch (e) {
     if (e instanceof ServiceRefused) return null;
     throw e;
@@ -1303,508 +1017,16 @@ export async function keepWhatTheWalletSealed(sealed: Sealed, ifVersion: number)
  * wallet makes each only when the saved keys agree; until then this tab reads the creation as already changed. Memory
  * only: a reload forgets them, and the creation shows again as it is kept.
  */
-const tidyOwed = new Map<string, 'aside' | 'forget'>();
-
-/* ---------------- bringing a company into being ---------------- */
-
-/** What a company is made from: its name, who signs for it, and how many signatures it needs. */
-export interface CompanyToFound {
-  name: string;
-  signers: Array<{ name: string; role: SignerRole }>;
-  threshold: number;
-}
-
-/** A company as its founding signer's press made it: the label their wallet drew, and what its account is deployed from. */
-interface Founded {
-  readonly accountId: string;
-  readonly label: CompanyLabel;
-  /** The key the founding signer sits on the company's committee with, which alone holds the account from its first transaction. */
-  readonly foundingKey: { tag: 'schnorr'; value: string };
-  /** The founding signer's seat in the account, as this device made it. */
-  readonly foundingLeaf: string;
-}
-
-/**
- * **THE COMPANY IS FOUNDED IN THE WALLET**, in the one window the press opens:
- * the wallet draws the label, makes the founding seat from its words, signs the
- * founding roster and state with it and writes the seat into the person's saved
- * keys, sealed again (`apps/wallet/src/keyring/found-company.ts`). This page
- * hands the wallet the saved keys as the service holds them and the company's
- * name and founding signer, keeps the saved keys the wallet sealed over the
- * version it named, and only then sends the service what the company was
- * founded with. The founding seat's keys never reach this page.
- */
-async function foundCompany(spec: CompanyToFound, walletOrigin: string, view: Openable, atOrigin: string): Promise<Founded> {
-  if (!sessionLive || me === null) throw new Error('not signed in');
-  /*
-   * **THE WINDOW OPENS IN THE PRESS, EVERY TIME.** The new company's label is
-   * the wallet's to draw, so a tab the wallet already read for asks it too - and
-   * its answer must come from the same wallet (`openKeysOnceOpen`).
-   */
-  const startedBy = me.id;
-  const dialog = openTheWallet(view, walletOrigin);
-  try {
-    const handedIn = await savedKeysForTheWallet();
-    const signer = spec.signers[0]!;
-    const { drawn, committeeKey, founding, read: foundedRead } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, 'new', {
-      asked: { name: spec.name, signer: { name: signer.name, role: signer.role } }, keyring: handedIn,
-    });
-    if (drawn === null) throw new Error('Your wallet did not make up a label for the new company, so nothing was created. Close the wallet\'s window, reload this page and start the company again.');
-    const foundingKey = schnorrKeyOf(committeeKey);
-    if (foundingKey === null) {
-      throw new Error('Your wallet drew a label for the new company but gave no key to hold it with, so nothing was created. '
-        + 'Close the wallet\'s window, reload this page and start the company again.');
-    }
-    if (founding === null) {
-      throw new Error('Your wallet drew a label for the new company but did not hand back what it founded it with, so nothing '
-        + 'was created. Close the wallet\'s window, reload this page and start the company again.');
-    }
-    /* Asked before anything is kept, so a refusal costs nothing. */
-    if (savedKeys !== 'some' && !keyCheckedAgainstSignIn) throw new FirstKeysNeedTheSignIn(FIRST_KEYS_NEED_THE_SIGN_IN);
-    return await keepWhatTheWalletFounded(drawn, foundingKey, founding, startedBy, foundedRead!);
-  } catch (e) {
-    putAway(dialog);
-    throw e;
-  } finally {
-    doneWaiting();
-  }
-}
-
-/**
- * The saved keys the wallet sealed with the new seat in them, kept over the
- * version it named; then the creation they keep, read back and checked against
- * the label and key the wallet gave, sent to the service.
- */
-async function keepWhatTheWalletFounded(
-  label: CompanyLabel, foundingKey: { tag: 'schnorr'; value: string },
-  founding: { founded: Readonly<Record<string, unknown>>; sealed: SealedKeyring; ifVersion: number },
-  person: string,
-  foundedRead: KeysRead,
-): Promise<Founded> {
-  const account = founding.founded['account'] as { id?: unknown } | undefined;
-  const accountId = typeof account?.id === 'string' ? account.id : null;
-  if (accountId === null) {
-    throw new Error('Your wallet founded the company without an id it can be kept under, so nothing was created. '
-      + 'Reload this page and start the company again.');
-  }
-  /* The saved keys the wallet sealed are the starter's: somebody else signed in on this tab since is never written over with them. */
-  if (me === null || me.id !== person) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
-  const kept = await keepWhatTheWalletSealed(founding.sealed as unknown as Sealed, founding.ifVersion);
-  if (kept === null) {
-    throw new Error('Your saved keys, with your seat in the new company, were not kept by the service: they changed on another '
-      + 'device since this page read them, or the service refused them. Nothing was created. Reload this page, which reads '
-      + 'your newest saved keys, and start the company again.');
-  }
-  /* What the wallet read from the saved keys it sealed, taken in now they are kept: the new seat and its creation. */
-  takeTheRead(foundedRead, true, kept);
-  const saved = theCreation(accountId);
-  if (saved === undefined || saved.label !== label || saved.foundingKey.value !== foundingKey.value) {
-    throw new Error('the company was founded but what was kept of it could not be read back as the company your wallet drew, '
-      + 'so nothing was sent. Reload this page and start the company again.');
-  }
-  refuseWhenNotTheStarter(saved);
-  await sendTheCompany(saved, 'new');
-  /* A sign-in by somebody else while the service was answering: this tab acts for them now, and nothing more is done here. */
-  if (me === null || me.id !== person) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
-  return { accountId, label, foundingKey, foundingLeaf: saved.request.founding.seat.leaf };
-}
+export const tidyOwed = new Map<string, 'aside' | 'forget'>();
 
 const HEX64_KEY = /^[0-9a-f]{64}$/u;
 
 /** A committee key as the wallet gave it, or null when it is not one. */
-const schnorrKeyOf = (k: { tag: string; value: string } | null): { tag: 'schnorr'; value: string } | null => {
+export const schnorrKeyOf = (k: { tag: string; value: string } | null): { tag: 'schnorr'; value: string } | null => {
   if (k === null || k.tag !== 'schnorr') return null;
   const value = String(k.value).toLowerCase();
   return HEX64_KEY.test(value) ? { tag: 'schnorr', value } : null;
 };
-
-/**
- * This person's company being created, if there is one: as the wallet last read it, with the changes this tab asked
- * for and has not yet seen made (`tidyOwed`), one finished here (`finishedHere`), and one set aside that this tab took
- * up again because its deploy landed (`takenUpHere`; the wallet takes it up itself when it finishes it).
- */
-const theCreation = (accountId: string): SavedCreation | undefined => {
-  if (tidyOwed.has(accountId) || finishedHere.has(accountId)) return undefined;
-  const c = keyring.creations?.[accountId];
-  if (c === undefined) return undefined;
-  if (c.setAside !== true) return c;
-  if (!takenUpHere.has(accountId)) return undefined;
-  const { setAside: _taken, ...active } = c;
-  return active as SavedCreation;
-};
-
-/** Creations this tab saw finished on the chain: no longer offered here; the wallet drops them when it finishes one. */
-const finishedHere = new Set<string>();
-/** Creations set aside whose deploy this tab saw land: offered to finish again here; the wallet takes them up. */
-const takenUpHere = new Set<string>();
-/** Creations this tab sent to the service, so a later relay does not send them again. */
-const sentHere = new Set<string>();
-
-/**
- * A creation is written only into the saved keys of the person who started it: a step that returns after somebody
- * else was signed in and opened their keys would otherwise leave them holding it, unable to create a company.
- */
-function refuseWhenNotTheStarter(c: SavedCreation): void {
-  if (c.person !== undefined && (me === null || me.id !== c.person)) throw new CompanyStartedBySomebodyElse(STARTED_BY_SOMEBODY_ELSE);
-}
-
-/**
- * Drops what was kept of a creation: one finished is no longer offered here (the wallet drops it from the saved keys
- * when it finishes it); one whose deploy was never built is asked of the wallet in this tab's next ask (`tidyOwed`).
- */
-async function forgetCreation(accountId: string): Promise<void> {
-  const kept = keyring.creations?.[accountId];
-  if (kept !== undefined) refuseWhenNotTheStarter(kept);
-  if (kept?.setAside === true) return;
-  if (kept !== undefined && kept.signed === null && !kept.recorded) tidyOwed.set(accountId, 'forget');
-  else finishedHere.add(accountId);
-}
-
-/**
- * Sets one creation aside: asked of the wallet in this tab's next ask (`tidyOwed`), which keeps all of it under its own
- * company id, marked `setAside`, so it is not lost and no other creation is touched. This tab reads it as set aside at once.
- */
-async function setCreationAside(accountId: string): Promise<void> {
-  const kept = theCreation(accountId);
-  if (kept === undefined) return;
-  refuseWhenNotTheStarter(kept);
-  tidyOwed.set(accountId, 'aside');
-}
-
-/**
- * **A CREATION SET ASIDE, TAKEN UP AGAIN** because its account turned up on the chain: this tab offers it to finish
- * again, and the wallet takes its mark off when it finishes it (`apps/wallet/src/actions/finish-company.ts`). Only
- * that creation is touched; any other kept creation stays as it is.
- */
-export async function takeUpACreationSetAside(accountId: string): Promise<boolean> {
-  const aside = keyring.creations?.[accountId];
-  if (aside === undefined) return false;
-  if (tidyOwed.get(accountId) === 'aside') {
-    /* Set aside here and not yet in the saved keys: the change is no longer asked of the wallet. */
-    refuseWhenNotTheStarter(aside);
-    tidyOwed.delete(accountId);
-    return true;
-  }
-  if (aside.setAside !== true || takenUpHere.has(accountId)) return false;
-  refuseWhenNotTheStarter(aside);
-  takenUpHere.add(accountId);
-  return true;
-}
-
-/**
- * Sends the request that made the company, as it was kept, unless this tab sent it or the service already holds the
- * company. Nothing is written into the saved keys for it: the service's own answer says whether it holds it.
- */
-async function sendTheCompany(saved: SavedCreation, known: 'new' | 'ask' = 'ask'): Promise<SavedCreation> {
-  if (saved.made || sentHere.has(saved.accountId)) return saved;
-  if (known === 'ask') {
-    try {
-      await api(`/api/accounts/${saved.accountId}/creation`);
-      sentHere.add(saved.accountId);
-      return saved;
-    } catch (e) {
-      if (!(e instanceof NotOnTheService)) throw e;
-    }
-  }
-  await api('/api/accounts', { method: 'POST', body: JSON.stringify(saved.request) });
-  sentHere.add(saved.accountId);
-  return saved;
-}
-
-/**
- * What reads the chain for a kept creation this page is asked to start again: the vault worker, or anything that
- * answers as it does. A company's account is built, signed and proved in the wallet (`finishCompanyInTheWallet`),
- * never here.
- */
-export interface AccountCreationBuilder {
-  /**
-   * Whether the chain holds a contract at the account, at the indexer the person's wallet names: with the time of the
-   * newest block it names and the newest time to live of the kept transactions. Throws when the indexer cannot say.
-   */
-  accountPresence?(input: { account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] }): Promise<AccountPresenceOnTheWire>;
-}
-
-/**
- * The company this person has started and not finished, for which the press that finishes it is owed: every creation
- * still kept, since the wallet drops a creation from the saved keys as the last step of finishing it. The account is
- * the one the wallet built, once it has.
- */
-export const companyAwaitingItsSecondPress = (accountId: string): { accountId: string; account: AccountAddress | null } | null => {
-  const saved = theCreation(accountId) ?? null;
-  return saved !== null ? { accountId: saved.accountId, account: saved.deploy?.account ?? null } : null;
-};
-
-/** Every company this person is creating on a chain, each kept on its own, in the order they were started. A creation set aside is not among them. */
-export const companiesBeingCreated = (): string[] => Object.keys(keyring.creations ?? {}).filter((id) => theCreation(id) !== undefined);
-
-/** Whether this company is one this person is creating on a chain, kept with their saved keys, until its creation is finished. A creation set aside is not. */
-export const companyBeingCreated = (accountId: string): boolean => theCreation(accountId) !== undefined;
-
-/**
- * The label the wallet drew for the company being created, as this browser kept it: the one source of the label the
- * person is shown after the first press. Null when no creation is kept, or when it is another company's than the one asked
- * about.
- */
-export const companyBeingCreatedLabel = (accountId: string): CompanyLabel | null => theCreation(accountId)?.label ?? null;
-
-/**
- * The name the person gave a company, as this device kept it with the company's creation, whether that creation is still
- * kept or was set aside: the one source of the name of a company that is not finished, which has no sealed record to open
- * yet: the name written on the kept request. Null for a company this device holds no creation of, or whose creation holds
- * no name; never the service's word for it, and never the roster opened here, which only the seat's own keys open.
- */
-export const companyNameKeptHere = (accountId: string): string | null => {
-  const kept = keyring.creations?.[accountId] ?? keyring.creationsSetAside?.[accountId];
-  if (kept === undefined || kept === null) return null;
-  return aNameIfAny(kept.request?.name);
-};
-
-const aNameIfAny = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null);
-
-/**
- * **THE FIRST PRESS: THE COMPANY IS FOUNDED IN THE WALLET** (`foundCompany`).
- *
- * The wallet draws the company's label, makes the founding seat from its words,
- * signs the founding roster and state and keeps the seat in the saved keys; the
- * service records what was founded, and the founding signer's committee key.
- * **NOTHING IS SENT TO THE CHAIN, AND NO ACCOUNT IS BUILT YET**: the second
- * press is one action the wallet runs whole, which builds the account and
- * finishes it (`finishCompanyInTheWallet`). It returns the label the wallet
- * drew, so the page can show the person the name their wallet gave the company.
- *
- * **A COMPANY IS NEVER REFUSED BECAUSE ANOTHER IS NOT FINISHED.** Each creation is kept on its own, under its own
- * company id, and carried on or started again on its own; a new one is added beside the others and never replaces one.
- * A kept creation from which nothing was sent to the chain can be dropped, by `forgetAnUnsentCreation`.
- */
-export async function startCompanyHeldFromTheStart(
-  spec: CompanyToFound,
-  walletOrigin: string,
-  view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
-): Promise<{ accountId: string; label: CompanyLabel }> {
-  /* Before the wallet is opened: a company is created with its founding signer only. */
-  if (spec.signers.length !== 1 || spec.threshold !== 1) {
-    throw new Error('a company is created with you as its only signer, at a threshold of one; everybody else joins by '
-      + 'invitation, their seat made on their own device. Nothing was created.');
-  }
-  const founded = await foundCompany(spec, walletOrigin, view, atOrigin);
-  return { accountId: founded.accountId, label: founded.label };
-}
-
-/**
- * Drops a kept creation from which nothing reached the chain, so the first press can make a company again: its
- * deploy was never built, or was built and never signed for or sent. It refuses when this browser keeps no creation
- * for the company, and when anything was signed or sent: that carries on, and dropping it would lose what the
- * wallet signed or what the chain already holds. The company's keys stay kept, because the service may already
- * list the company.
- */
-export async function forgetAnUnsentCreation(accountId: string): Promise<void> {
-  const saved = theCreation(accountId);
-  if (saved === undefined) throw new Error('this browser keeps no creation for this company.');
-  if (saved.signed !== null || saved.recorded) {
-    throw new Error('this company\'s second step was signed or sent, so it is carried on, not started again. Nothing was dropped.');
-  }
-  await forgetCreation(accountId);
-}
-
-/** What starting a kept creation again came to. */
-export type StartedAgain =
-  /** What was kept of it is dropped; the first press can make a company again. */
-  | { readonly of: 'dropped' }
-  /** Its account is on the chain, so it is finished, never dropped. */
-  | { readonly of: 'on-the-chain' }
-  /** Nothing shows it on the chain, but what was sent can still land for this many minutes. */
-  | { readonly of: 'may-still-land'; readonly minutes: number }
-  /** The chain could not be read well enough to say nothing landed. */
-  | { readonly of: 'not-confirmed' };
-
-/** The service's own margin past a transaction's time to live before it counts it as run out. */
-const THE_SERVICES_MARGIN_MS = 5 * 60_000;
-
-/**
- * Every creation this tab handed on for the person's wallet (`relayForTheCreation`), by company: the deploy and its
- * second step as the wallet built them, which may be newer than the copy kept in the saved keys, because the wallet
- * builds a creation again shortly before it runs out. Kept for the life of the tab and never sent anywhere: a creation
- * is never set aside while any copy handed on can still land.
- */
-const CREATIONS_HANDED_ON = new Map<string, string[]>();
-
-/** The service's creation standings in which the account's deploy has not landed. */
-const DEPLOY_NOT_LANDED: ReadonlySet<CompanyCreationState> = new Set<CompanyCreationState>(['not-created', 'deploy-sent', 'deploy-expired']);
-
-/** The service's creation standings in which the account's deploy has landed. */
-const DEPLOY_LANDED: ReadonlySet<CompanyCreationState> = new Set<CompanyCreationState>(['finish-owed', 'finish-expired', 'finish-sent', 'pay-key-owed', 'finished']);
-
-/**
- * **STARTING A KEPT CREATION AGAIN: ONLY WHEN THE CHAIN SHOWS NO ACCOUNT, AND NOTHING SENT CAN STILL LAND.**
- * Only the person who started it. A creation whose second step was never signed was never sent, and is dropped at once.
- * One that was signed or sent is set aside (not deleted: `takeUpACreationSetAside` finishes it if its account turns up)
- * only when all of this holds: the service does not say its deploy landed; the person's wallet does not read the
- * account; and this device, reading the chain at the indexer that wallet named (never the service's word), is told by
- * a clean answer that no contract is held at the address AND the chain's own newest block is past the newest time to
- * live of the kept transactions and of every copy this tab handed on for the wallet, read from their bytes, by the
- * service's five-minute margin; AND the service does not say the deploy it holds, which a copy the wallet built again
- * replaces, can still be sent (its word can only keep a creation, never set one aside). No device clock is used. Any
- * failure, an indexer not named, or a transaction that cannot be read keeps the creation. A landed deploy is finished,
- * never set aside. The company's keys stay kept.
- */
-export async function startAnUnfinishedCreationAgain(
-  accountId: string, walletOrigin: string, builder: AccountCreationBuilder | null, view?: Openable, atOrigin?: string,
-): Promise<StartedAgain> {
-  const saved = theCreation(accountId);
-  if (saved === undefined) throw new NoCreationKeptHere('this browser keeps no creation for this company.');
-  refuseWhenNotTheStarter(saved);
-  if (saved.signed === null && !saved.recorded) {
-    await forgetAnUnsentCreation(accountId);
-    return { of: 'dropped' };
-  }
-  const standing = (await companyCreationStanding(accountId)).state;
-  if (DEPLOY_LANDED.has(standing)) return { of: 'on-the-chain' };
-  if (!DEPLOY_NOT_LANDED.has(standing) || saved.deploy === null) return { of: 'not-confirmed' };
-  const account = saved.deploy.account;
-  try {
-    await holdersFromTheWallet(walletOrigin, { company: saved.label, account }, view, atOrigin);
-    return { of: 'on-the-chain' };
-  } catch (e) {
-    if (!(e instanceof WalletClosed && e.refusal.of === 'unreadable')) return { of: 'not-confirmed' };
-  }
-  const indexer = walletsIndexer;
-  if (indexer === null || builder === null || builder.accountPresence === undefined) return { of: 'not-confirmed' };
-  let seen: AccountPresenceOnTheWire;
-  try {
-    seen = await builder.accountPresence({
-      account, indexer,
-      transactions: [...new Set([saved.deploy.tx, ...(saved.signed === null ? [] : [saved.signed.tx]), ...(CREATIONS_HANDED_ON.get(accountId) ?? [])])],
-    });
-  } catch {
-    return { of: 'not-confirmed' };
-  }
-  if (seen.held) return { of: 'on-the-chain' };
-  if (seen.ttl === null || !Number.isFinite(seen.ttl) || !Number.isFinite(seen.blockTime)) return { of: 'not-confirmed' };
-  const endsAt = seen.ttl + THE_SERVICES_MARGIN_MS;
-  if (seen.blockTime < endsAt) return { of: 'may-still-land', minutes: Math.max(1, Math.ceil((endsAt - seen.blockTime) / 60_000)) };
-  /* A copy the wallet built again in another tab is not read here; the service holds it, and says whether it can still be sent. */
-  if (standing === 'deploy-sent') return { of: 'not-confirmed' };
-  const now = theCreation(accountId);
-  if (now === undefined) return { of: 'dropped' };
-  /* Carried again while the chain was read: what was read is not what is kept now. */
-  if (now.deploy?.tx !== saved.deploy.tx || now.signed?.tx !== saved.signed?.tx) return { of: 'not-confirmed' };
-  await setCreationAside(accountId);
-  return { of: 'dropped' };
-}
-
-/** True when the person's wallet, reading the account itself, shows the company's pay-record key committed on it. */
-export async function walletShowsPayKeyCommitted(
-  walletOrigin: string, company: CompanyLabel, account: AccountAddress, view?: Openable, atOrigin?: string,
-): Promise<boolean> {
-  const read = await holdersFromTheWallet(walletOrigin, { company, account, movements: [PAY_KEY_COMMITMENT_ENTRY] }, view, atOrigin);
-  return read.payments !== undefined && read.payments.payKeyCommitment !== null;
-}
-
-/**
- * Asks the wallet, quietly, whether the pay-record key is committed on the account THIS BROWSER KEPT for the
- * creation: the kept label and the kept deploy's account, never a pair a service names. Null when nothing is kept
- * for the company here; false when the kept creation built no deploy.
- */
-export async function keptCreationShowsItsKeyCommitted(
-  accountId: string, walletOrigin: string, view?: Openable, atOrigin?: string,
-): Promise<boolean | null> {
-  const saved = theCreation(accountId);
-  if (saved === undefined) return null;
-  if (saved.deploy === null) return false;
-  return await walletShowsPayKeyCommitted(walletOrigin, saved.label, saved.deploy.account, view, atOrigin);
-}
-
-/**
- * Drops what this browser kept to carry a creation on, once the company is finished: true when something was dropped,
- * false when nothing was kept. It asks the wallet itself, about the kept label and account, and refuses unless the
- * wallet shows the pay-record key committed there, so no caller can drop a creation on another's word. The
- * company's keys stay kept.
- */
-export async function forgetAFinishedCreation(
-  accountId: string, walletOrigin: string, view?: Openable, atOrigin?: string,
-): Promise<boolean> {
-  if (theCreation(accountId) === undefined) return false;
-  if ((await keptCreationShowsItsKeyCommitted(accountId, walletOrigin, view, atOrigin)) !== true) {
-    throw new Error('your wallet does not show this company\'s pay-record key committed on its account, so what was kept of its creation is kept. Nothing was dropped.');
-  }
-  if (theCreation(accountId) === undefined) return false;
-  await forgetCreation(accountId);
-  return true;
-}
-
-/**
- * **THE SECOND PRESS: FINISH CREATING THE COMPANY, AS ONE ACTION IN THE
- * WALLET** (`apps/wallet/src/actions/finish-company.ts`), in one window behind
- * one passkey: the wallet builds the account's deploy and its signed second
- * step, has them sent, finishes the account, and proves the pay-record key's
- * proposal, approval and seal, each from its own reads of the chain and with
- * the founding seat it makes again from its words. This page hands the wallet
- * the saved keys as the service holds them, keeps those the wallet seals
- * again, sends each transaction the wallet hands it where the wallet says
- * it goes (`relayForTheCreation`), and makes the one call the wallet asks, the
- * pay-record key's proposal written down with its raise beside it, for this
- * company alone. It proves and signs nothing itself.
- *
- * It resolves with where the action ended: done, or stopped at a step, which
- * the person carries on from with one more press (the wallet works out from
- * the chain what is already done).
- *
- * **IN A TAB THE WALLET HAS NOT YET READ FOR**, the company is named to the
- * wallet by the label the service's record gives it, in the same one window:
- * the wallet finishes it only when it drew that label and keeps its creation in
- * the saved keys, and the action's end answer tells this tab what they hold.
- */
-export async function finishCompanyInTheWallet(
-  accountId: string,
-  walletOrigin: string,
-  opts: { readonly onStep?: (at: StepAt) => void } = {},
-  view: Openable = walletInThisPage(window),
-  _atOrigin: string = window.location.origin,
-): Promise<ActOutcome> {
-  if (!sessionLive || me === null) throw new Error('not signed in');
-  const saved = theCreation(accountId);
-  if (saved === undefined && canOpenCompanies()) throw new NoCreationKeptHere('this browser keeps no creation for this company.');
-  if (saved !== undefined) refuseWhenNotTheStarter(saved);
-  const person = me.id;
-  const dialog = openTheWallet(view, walletOrigin);
-  const send = pageWireSend(() => (me === null ? null : me.id));
-  const creationAt = `/api/accounts/${accountId}/creation/`;
-  try {
-    const label = saved !== undefined ? saved.label : (await companyNamedFor(accountId)).label;
-    const handedIn = await savedKeysForTheWallet();
-    const served = await servedForTheAction(accountId);
-    const ended = await actInTheWallet(view, walletOrigin, {
-      intent: { name: 'finish-company', company: label },
-      relay: (transaction, at) => relayForTheCreation(accountId, transaction, at),
-      call: async (request) => {
-        if (me === null || me.id !== person) throw new Error('the person signed in changed, so nothing more is sent for this action.');
-        /* Only for the company this press finishes: the wallet names the company by its label, this page by its record. */
-        if (!request.path.startsWith(creationAt)) throw new Error('finishing this company calls the service for this company alone.');
-        return send(request.path, request as never);
-      },
-      savedKeys: {
-        person, keyring: handedIn as unknown as KeyringHandedIn, served,
-        /* Kept only for the person the action runs for: somebody else signed in on this tab since is never written over. */
-        keep: async (sealed, ifVersion) => {
-          if (me === null || me.id !== person) return null;
-          return keepWhatTheWalletSealed(sealed as unknown as Sealed, ifVersion);
-        },
-      },
-      ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }),
-      minutes: 30,
-      name: US_TO_A_WALLET.name,
-      rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
-    takeWhatTheActionLeft(ended, accountId);
-    return ended;
-  } catch (e) {
-    putAway(dialog);
-    throw e;
-  } finally {
-    doneWaiting();
-  }
-}
 
 /**
  * **RUNS ONE ACTION ON A COMPANY IN THE PERSON'S WALLET**, over one window: the
@@ -1824,7 +1046,7 @@ export async function actOnACompanyInTheWallet(
   if (!sessionLive || me === null) throw new Error('not signed in');
   const person = me.id;
   const dialog = openTheWallet(view, walletOrigin);
-  const send = pageWireSend(() => (me === null ? null : me.id));
+  const send = walletCallsOnPage(() => (me === null ? null : me.id));
   try {
     const handedIn = await savedKeysForTheWallet();
     const own = typeof intent['record'] === 'string' ? intent['record'] : null;
@@ -1834,7 +1056,7 @@ export async function actOnACompanyInTheWallet(
       relay: async () => false,
       call: async (request) => {
         if (me === null || me.id !== person) throw new Error('the person signed in changed, so nothing more is sent for this action.');
-        return send(request.path, request as never);
+        return send(request);
       },
       savedKeys: {
         person, keyring: handedIn as unknown as KeyringHandedIn, served,
@@ -1855,6 +1077,8 @@ export async function actOnACompanyInTheWallet(
     throw e;
   } finally {
     doneWaiting();
+    /* Whatever the action wrote, this page read the company before it: what it read is stale, and whoever holds it is told. */
+    if (typeof intent['record'] === 'string') readsAreStale({ company: intent['record'], why: STALE.actedInTheWallet, signedIn: true });
   }
 }
 
@@ -1878,121 +1102,4 @@ export function privateDepositInTheWallet(
     name: 'private-deposit', record: ask.record, company: ask.company, account: ask.account,
     vault: ask.vault, token: ask.token, amount: ask.units.toString(),
   }, walletOrigin, opts, view);
-}
-
-/* The standings in which the service has already been handed the account's second step, so handing it again is not owed. */
-const SECOND_STEP_HANDED: ReadonlySet<CompanyCreationState> = new Set<CompanyCreationState>(['finish-sent', 'pay-key-owed', 'finished']);
-
-/**
- * **WHERE EACH TRANSACTION OF FINISHING A COMPANY GOES**, by what the wallet
- * says it is for (`FINISH_COMPANY_RELAYS`). True once the service has taken it;
- * false for anything else, which stops the action at that step. A name this
- * page does not know is refused, never guessed at.
- */
-export async function relayForTheCreation(
-  accountId: string, transaction: string, at: { readonly what?: string; readonly also?: string },
-): Promise<boolean> {
-  const at$ = `/api/accounts/${accountId}/creation`;
-  const post = async (path: string, body: unknown): Promise<boolean> => {
-    await api(path, { method: 'POST', body: JSON.stringify(body) });
-    return true;
-  };
-  switch (at.what) {
-    case 'creation':
-    case 'creation-again': {
-      if (at.also === undefined) return false;
-      /* Kept before it is handed on: a copy the service may have sent can land whatever its answer was. */
-      CREATIONS_HANDED_ON.set(accountId, [...(CREATIONS_HANDED_ON.get(accountId) ?? []), transaction, at.also]);
-      /* The service records the account against the company it was told was founded; tell it first if it was not. */
-      const saved = theCreation(accountId);
-      if (saved !== undefined) await sendTheCompany(saved);
-      /*
-       * WHERE THE CREATION GOES IS WHAT THE SERVICE HOLDS, not what the wallet
-       * did: the wallet cannot know whether a relay answered late was recorded.
-       * A deploy the service holds and says may be replaced takes the one carried
-       * again in its place; anything else goes to the creation itself, which
-       * records a first deploy and sends the recorded one again.
-       */
-      const held = await companyCreationStanding(accountId);
-      const replaces = held.state !== 'not-created' && held.replaceable === true;
-      return post(replaces ? `${at$}/again` : at$, { deploy: transaction, insert: at.also });
-    }
-    case 'creation-finish': {
-      /* Handed again after a stop: already with the service, so nothing more is sent and the wallet carries on. */
-      if (SECOND_STEP_HANDED.has((await companyCreationStanding(accountId)).state)) return true;
-      return post(`${at$}/finish`, { insert: transaction });
-    }
-    case 'pay-key-approve': return post(`${at$}/pay-key`, { call: 'approve', tx: transaction });
-    case 'pay-key-seal': return post(`${at$}/pay-key`, { call: 'sealPayKey', tx: transaction });
-    default: return false;
-  }
-}
-
-/** **WHETHER A COMPANY IS FINISHED**, as the service reads its record and the chain. */
-export async function companyCreationStanding(accountId: string): Promise<{ account: AccountAddress | null; state: CompanyCreationState; replaceable?: boolean }> {
-  let answer;
-  try {
-    answer = await api(`/api/accounts/${accountId}/creation`);
-  } catch (e) {
-    /* A company this browser keeps that the service never stored (the first press's send failed) is not created. */
-    if (e instanceof NotOnTheService && theCreation(accountId) !== undefined) return { account: null, state: 'not-created' };
-    throw e;
-  }
-  const state = creationStateOf(answer.state);
-  if (typeof answer.replaceable === 'boolean') {
-    return { account: readAccountAddress(answer.account), state, replaceable: answer.replaceable };
-  }
-  return { account: readAccountAddress(answer.account), state };
-}
-
-/** A state the service named, or `unknown` for anything this page does not know. */
-const creationStateOf = (s: unknown): CompanyCreationState =>
-  COMPANY_CREATION_STATES.find((k) => k === s) ?? 'unknown';
-
-/**
- * Opens an account the server just served us.
- *
- * The server sends ciphertext because that is all it has: the company
- * name, the signer list, the roles and the spending limits are sealed under a
- * key it never sees. Opening happens here, on the device that can, using exactly
- * the same code the server used to seal it.
- *
- * **THE SIGNERS ARE READ ONLY FROM THE COMPANY'S ROSTER RECORD, AND ONLY AS
- * THIS DEVICE BELIEVES IT** (`rosterBelievedHere`): filed by a seat the
- * company's directory believes, read afresh with the chain as `holders` reads
- * it through the person's own wallet, and each entry held to its own signer's
- * witnesses, this device's own key among them for its own entry. A company with
- * no roster record is refused with `NO_ROSTER_RECORD`; the unsigned list on
- * its account record is never read. A refusal throws `RosterNotBelieved`. Each
- * entry refused on its own is handed back beside the company, with why.
- *
- * The roster opens under the company's key of the epoch it was sealed at,
- * from `companyKeys`. A seat the chain holds that was taken on an invitation by
- * address, whose signer waits for Finish adding, is waited for only through
- * `invitedSeats`, the seat the chain shows that invitation's proposal took,
- * and believed only when the invitation makes that proposal, worked out with
- * `identity`.
- *
- * Returns null rather than throwing when this device holds no keys for the
- * account. That is a real state — you are a member, on a machine you have not
- * enrolled — and the account picker has to render something for it.
- */
-export async function openAccount(
-  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
-  holders: (company: CompanyLabel, account: AccountAddress) => Promise<AccountHoldersRead>,
-  anchored: (accountId: string, company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['anchored'],
-  leaves: (company: CompanyLabel, account: AccountAddress) => DirectoryHereDeps['leaves'],
-  companyKeys?: (rec: SealedAccount) => Promise<KeysHeld>,
-  invitedSeats?: Parameters<typeof openAccountWith>[6], identity?: Parameters<typeof openAccountWith>[7],
-): Promise<OpenedAccount | null> {
-  return openAccountWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats, identity);
-}
-
-/** The seats the company's roster admitted, read with the same doors as `openAccount`; throws when this device holds no keys for it. */
-export async function seatsAdmittedFor(
-  rec: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
-  holders: Parameters<typeof openAccount>[1], anchored: Parameters<typeof openAccount>[2], leaves: Parameters<typeof openAccount>[3],
-  companyKeys?: Parameters<typeof openAccount>[4], invitedSeats?: Parameters<typeof openAccount>[5], identity?: Parameters<typeof openAccount>[6],
-): Promise<ReadonlySet<string>> {
-  return seatsAdmittedWith({ api, keysFor: seatHeldHere, servedKeyFor: viewingKeyFor }, rec, holders, anchored, leaves, companyKeys, invitedSeats, identity);
 }

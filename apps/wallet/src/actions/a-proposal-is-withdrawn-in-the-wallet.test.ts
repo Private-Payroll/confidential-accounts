@@ -5,6 +5,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, sendsIn, type ActIntent } from 'midnight-identity/profile/request';
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A PROPOSAL IS WITHDRAWN FROM THE WALLET, ONE WINDOW, ONE PASSKEY.** The action runs whole: the shared code that
@@ -55,10 +56,10 @@ const NOW_MS = 1_900_000_000_000;
 /* The leaf the company's directory shows retired, if any. */
 let retired: string | null = null;
 
-const reachOf = () => ({
+const reachOf = () => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT,
   seat: { signerId: 's1', signingSecret: SECRET, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'cc'.repeat(32) },
-  leaf: 'a1'.repeat(32), companyKey: '11'.repeat(32), stepTo: () => {},
+  leaf: 'a1'.repeat(32), companyKey: '11'.repeat(32),
   api: async (path: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     t.log.push(`${method} ${path}${init?.body === undefined ? '' : ` ${init.body}`}`);
@@ -100,14 +101,14 @@ const reachOf = () => ({
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, account: 0 }, at: { step: 2, steps: 2 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a withdrawal is sent through its calls, never a bare relay'); },
     call: async () => ({ status: 404, body: {} }),
     tell: (x: Record<string, unknown>) => { told.push(x); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = () => ({

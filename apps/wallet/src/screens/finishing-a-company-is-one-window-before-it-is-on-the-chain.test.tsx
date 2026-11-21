@@ -39,6 +39,7 @@ import { forgetApprovalBeforeThePasskey } from '../framing.js';
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { savePasskey, saveSecret, saveWalletName } from '../accounts/storage.js';
 import * as keyring from '../../../../packages/web-shared/src/keyring.js';
+import * as creation from '../../../../packages/web-shared/src/company-creation.js';
 import type { Openable } from '../../../../packages/web-shared/src/wallet-sign-in.js';
 
 const PAGE = 'https://app.payroll.example';
@@ -126,7 +127,7 @@ describe('finishing a company not yet on the chain', () => {
     theServiceAtStepTwo();
     keyring.signedInByAnotherScreen({ user: { id: 'usr_a', email: null, name: 'Priya' }, address: ADDRESS, created: true, session: {} });
     const page = thePagesAsk();
-    void keyring.finishCompanyInTheWallet(COMPANY, WALLET, {}, page.view, PAGE).catch(() => {});
+    void creation.finishCompanyInTheWallet(COMPANY, WALLET, {}, page.view, PAGE).catch(() => {});
     asking = await page.asked;
     expect([asking['kind'], (asking['intent'] as Record<string, unknown>)['name']]).toEqual(['act', 'finish-company']);
 

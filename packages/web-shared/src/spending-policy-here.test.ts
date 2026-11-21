@@ -16,10 +16,8 @@ import { signCompanyFiling, type SealedCompanyRecord } from '../../../src/midnig
 import { openSpendingPolicy, sealSpendingPolicy } from '../../../src/midnight/spending-policy-record.js';
 import { MOST_ROLES_ASKED } from 'midnight-identity/profile/request';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
-import {
-  chainReadThroughTheWallet, policyProposedHere, policyReadHere, setPolicyBarOnDevice, setSpendingPolicyOnDevice, spendingPolicyHere,
-  type PolicyGovernanceDoors,
-} from './spending-policy-here.js';
+import { chainReadThroughTheWallet, policyProposedHere, policyReadHere, setPolicyBarOnDevice, setSpendingPolicyOnDevice, type PolicyGovernanceDoors } from './spending-policy-here.js';
+import { spendingPolicyHere } from './spending-policy-read-here.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { withCompanyKeys } from './governed-call-on-device.js';
@@ -37,8 +35,8 @@ vi.mock('./round-opened-here.js', async (real) => ({
 
 /* Each change handed to the shared governed call, as it was handed: followed in its own tests, only watched here. */
 const governed = vi.hoisted(() => ({ inputs: [] as Array<Record<string, unknown>> }));
-vi.mock('./governed-call-on-device.js', async (real) => {
-  const actual = await real<typeof import('./governed-call-on-device.js')>();
+vi.mock('./company-change-on-device.js', async (real) => {
+  const actual = await real<typeof import('./company-change-on-device.js')>();
   return { ...actual, governOnDevice: (d: never, i: Record<string, unknown>) => { governed.inputs.push(i); return actual.governOnDevice(d, i as never); } };
 });
 

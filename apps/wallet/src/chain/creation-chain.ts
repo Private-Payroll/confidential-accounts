@@ -2,7 +2,7 @@ import { ContractState } from '@midnightntwrk/ledger-v9';
 import { operationsFromContractState } from 'midnight-identity/profile/contract-keys';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import { publicDataProviderFor } from '../../../../packages/web-shared/src/public-data.js';
-import { accountAtOneBlockOver, accountPresenceAt } from '../../../../packages/web-shared/src/vault-on-chain-here.js';
+import { accountAtOneBlockOver, accountPresenceAt } from './view-doors.js';
 import { decodedState } from '../../../../src/midnight/decoded-state.js';
 import { INDEXER_HTTP_URL, INDEXER_WS_URL } from '../config.js';
 

@@ -6,19 +6,22 @@
  * acts that set a policy, which sign with the seat it holds; every other caller files nothing.
  */
 import type { Hex } from '../../../src/core/crypto.js';
-import { companyWirePaths, fromCompanyWire, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import { fromCompanyWire, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { SPENDING_POLICY_KIND } from '../../../src/midnight/spending-policy-record.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
-import { chainReadThroughTheWallet, type SpendingPoliciesHere } from './spending-policy-here.js';
+import { chainReadThroughTheWallet } from './spending-policy-here.js';
+import { type SpendingPoliciesHere } from './spending-policy-read-here.js';
 import { deviceSignerFrom, type DirectoryRead } from './vault-page-doors.js';
-import { grantsHere, grantsServedBy, policyReadersIn } from './purpose-wraps.js';
+import { grantsHere, grantsReadWith, policyReadersIn } from './purpose-wraps.js';
+import type { CompanyRecordAsked } from './records-source.js';
 
 /** What the policies are read through: the seat and the company's key that opens them, the service, the worker's keys, the chain's entries, the directory, and a filing door where one is given. */
 export interface SpendingPoliciesReach {
   readonly accountId: string;
   readonly leaf: string;
   readonly companyKey: Hex;
-  readonly api: (path: string) => Promise<unknown>;
+  /** The company's records, read through its view: every version of a record asked with `every`. */
+  readonly records: (asked: readonly CompanyRecordAsked[]) => Promise<readonly unknown[]>;
   readonly keys: SpendingPoliciesHere['keys'];
   /** What the company's account holds under each key asked, as the person's own wallet reads it from the chain. */
   readonly roles: Parameters<typeof chainReadThroughTheWallet>[0];
@@ -36,7 +39,7 @@ export const spendingPoliciesFor = (r: SpendingPoliciesReach): NonNullable<Compa
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   return {
     versions: async (id) => {
-      const b = await r.api(companyWirePaths.versions(r.accountId, SPENDING_POLICY_KIND, id)) as { versions?: unknown } | null;
+      const [b] = await r.records([{ kind: SPENDING_POLICY_KIND, id, every: true }]) as readonly ({ versions?: unknown } | null | undefined)[];
       return Array.isArray(b?.versions)
         ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind: SPENDING_POLICY_KIND, id }).sealed) as SealedCompanyRecord[] : [];
     },
@@ -46,7 +49,7 @@ export const spendingPoliciesFor = (r: SpendingPoliciesReach): NonNullable<Compa
     onChain: chainReadThroughTheWallet(r.roles),
     /* The read grants as this seat's device believes them, from the directory every reader reads: the readers given `policy`. */
     grantReaders: async () => policyReadersIn(await grantsHere({
-      accountId: r.accountId, versions: grantsServedBy(r.api, r.accountId),
+      accountId: r.accountId, versions: grantsReadWith(r.records, r.accountId),
       directory: r.directory,
       me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex },
     })),

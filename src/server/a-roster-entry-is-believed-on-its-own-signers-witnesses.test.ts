@@ -12,6 +12,7 @@
  * own roster route, and every reading device - Ada's, Bo's, and a filing
  * device's own read - refuses the rewrite. The chain's read is the test's.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { identityFromSecret } from 'midnight-identity';
@@ -33,10 +34,11 @@ import {
 import { anchoredOver, anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { directoryEntryMade, type DirectoryFiling } from '../midnight/seat-directory.js';
 import { invitationIdOf, newInvitationToken } from '../core/invitation.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import { anchorServiceFor, anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../testing/invitation-approved.js';
+import { viewOver, foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 const ID: Record<string, string> = { ada: 'sgn_ada', bo: 'sgn_bo' };
 
@@ -87,11 +89,11 @@ const readOn = async (s: Seat) => rosterBelievedHere(await served(), KEY, {
 });
 /** One seat's device, as it reads the roster to change it. */
 const doorsOf = (s: Seat): RosterDoors => ({
-  api: async (path, init) => {
+  view: viewOver(async (path, init) => {
     const r = await sendAs(s.person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
     if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status });
     return r.body;
-  },
+  }, CO),
   accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS, reads: acmeReads,
   entered: s.entered,
 });
@@ -474,11 +476,11 @@ describe('A ROSTER THAT LEAVES OUT A SIGNER THE CHAIN SEATS IS REFUSED, AND NO C
 
 describe('A ROSTER SHORT OF A SEAT THE CHAIN HOLDS, WHILE A DIRECTORY VERSION IS PASSED OVER', () => {
   /** Ada's device anchoring the company's records, the service handing it every directory filing but `without`. */
-  const anchorAsAda = (without: number) => anchorTheRecordsHere({
+  const anchorAsAda = (without: number) => anchorTheRecordsHere(throughAView({
     accountId: CO,
     material: { signingSecret: ADA.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-    manifest: manifestServiceFor(apiAs('ada')),
-    tree: treeServiceFor(apiAs('ada')),
+    manifest: manifestServiceOf(serviceSource(apiAs('ada'), CO)),
+    tree: treeServiceOf(serviceSource(apiAs('ada'), CO)),
     directory: () => acmeDirectoryWithItsFold(),
     directoryFilings: async () => store.directoryFilingsOf(CO).filter((f) => f.version !== without),
     onChain: acmeChain.onChain,
@@ -489,10 +491,10 @@ describe('A ROSTER SHORT OF A SEAT THE CHAIN HOLDS, WHILE A DIRECTORY VERSION IS
         acmeChain.move(previous, batch, held, tag);
       },
       sealedProposals: async (c) => store.listProposals(c),
-      foundingRecords: anchorServiceFor(apiAs('ada')).foundingRecords,
+      foundingRecords: foundingRecordsOver(apiAs('ada'), CO),
     },
     builder: { ...anchorFunctions, anchor: anchorSentInATest },
-  });
+  }));
   /** Another entry for Ada's seat under a new filing key, as the directory's next version: the service keeps it, and every device passes it over. */
   const adaAgain = async (): Promise<number> => {
     const version = store.directoryFilingsOf(CO).length + 1;

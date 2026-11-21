@@ -8,6 +8,7 @@ import { acceptanceProofOf, signWithdrawal, tokenOfLink } from '../core/invitati
 import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
 import { sealToInbox } from '../core/sealed-records.js';
 import { aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, BO, chains, CO, fromAda, metered, ORIGIN, sendAs, store } from './a-company-of-two-seats.test-support.js';
+import { writesOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
@@ -25,7 +26,7 @@ const chainHolding = (...more: string[]): void => {
 afterEach(() => { chains.delete(CO); });
 
 const aSignerInvitation = async (name: string) => {
-  const made = await inviteHere(ACME, ADA, 'signer', { name, role: 'approver', person: name.toLowerCase() }, ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'signer', { name, role: 'approver', person: name.toLowerCase() }, ORIGIN, writesOver(fromAda));
   return { id: made.id, acceptance: acceptanceProofOf(tokenOfLink(made.link)!) };
 };
 const expire = (id: string): void => { store.putInvite({ ...store.invitationById(id)!, expiresAt: new Date(Date.now() - 1000).toISOString() }); };

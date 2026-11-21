@@ -76,6 +76,7 @@ const setUp = async () => {
         authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true, circuits: null, accountCircuits: null,
       };
     },
+    vaultsOnChain: refuse,
     /* The block, a transaction's events and the vault's history, read here at the wallet's indexer. */
     chainAtOneBlock: async () => ({ blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
     eventsOf: async () => { throw new Error('no events'); },

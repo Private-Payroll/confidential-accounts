@@ -19,6 +19,8 @@ import { HttpCompanyRecordStore } from './http-sealed-pool-store.js';
 import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
 import { vaultInfoHere, VaultInfoRefused, type VaultInfoDoors, type VaultInfoRead } from './vault-info-here.js';
 import { fileVaultInfoHere, VaultInfoChanged, VaultInfoNotFiled } from './vault-info-filed-here.js';
+import { storeReachOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memory.js';
 
 const ACC = 'acc_vault_info';
 const VAULT = 'ab'.repeat(32) as Hex;
@@ -73,6 +75,8 @@ const aCompany = (o: { rotatedIn?: number } = {}) => {
     } as unknown as DirectoryHere;
   };
   const send = async (path: string, init: { method: string; body?: string }) => {
+    /* Every version, as a store reads a version told taken back. */
+    if (init.method === 'GET' && path.endsWith('/versions')) return { status: 200, body: { kind: 'vault-info', id: VAULT, versions: served.map(toCompanyWire) } };
     if (init.method === 'GET') {
       const rec = serve([...served]);
       return { status: 200, body: { kind: 'vault-info', id: VAULT, filed: rec === null ? null : toCompanyWire(rec) } };
@@ -89,7 +93,7 @@ const aCompany = (o: { rotatedIn?: number } = {}) => {
     records: ((store) => ({
       get: (k: never, i: string) => store.get(k, i), put: (r: SealedCompanyRecord) => store.put(r),
       served: async () => serve([...served]),
-    }))(new HttpCompanyRecordStore(ACC, send as never, who.secret, async () => judgeIn(here()))),
+    }))(new HttpCompanyRecordStore(ACC, storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), ACC), who.secret, async () => judgeIn(here()))),
     entered: { enter: async (filed) => { for (const f of filed as ManifestEntryBody[]) { log.push(`entered ${f.version}`); if (!entered.some((e) => e.version === f.version)) entered.push(f); } } },
   });
   /** Files a version as `who` straight to the service, sealed at `epoch`, and enters it. */

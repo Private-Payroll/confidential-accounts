@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { INDEXER_HOST, INDEXER_HTTP_URL } from '../config.js';
-import { fromIndexerAt, labelOnAccount } from '../chain/company-label-on-chain.js';
-import type { LabelOnAccount } from '../chain/company-label-on-chain.js';
+import { fromIndexerAt, labelOnAccount } from '../chain/view-doors.js';
+import type { LabelOnAccount } from '../chain/view-doors.js';
 import { StatusAlert } from '../components/status.js';
 
 /**

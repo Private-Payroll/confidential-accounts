@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { ACT_REFUSAL } from './refusals.js';
@@ -14,13 +15,20 @@ const kr = vi.hoisted(() => ({
   user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, seat: null as unknown, filed: null as unknown,
 }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./filing-judge.js')>()),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => { kr.acts.push(intent); return kr.ended; },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
 }));
 vi.mock('./vault-private-money.js', async (real) => ({
   ...(await real<typeof import('./vault-private-money.js')>()),
@@ -53,7 +61,7 @@ describe('what the page reads of the company\'s choice of service', () => {
   it('says nothing was chosen and that the calls go through ours', async () => {
     reset();
     const { readService, SERVICE_READ } = await load();
-    const read = await readService('u1', COMPANY);
+    const read = await readService('u1', aViewOf(COMPANY));
     expect(read).toMatchObject({ of: SERVICE_READ.read, inForce: { service: 'ours' }, asked: null });
     expect(read.of === SERVICE_READ.read && read.unchosen).toMatch(/not chosen/u);
   });
@@ -63,7 +71,7 @@ describe('what the page reads of the company\'s choice of service', () => {
     reset();
     kr.filed = { versions: [filedBy(1, 2, OWN)], needed: 2, highest: 1 };
     const { readService, SERVICE_READ } = await load();
-    expect(await readService('u1', COMPANY)).toMatchObject({
+    expect(await readService('u1', aViewOf(COMPANY))).toMatchObject({
       of: SERVICE_READ.read, inForce: { service: 'ours' }, asked: { choice: OWN, needed: 2, filers: [{ seat: SEATS[1]!.seat, you: true }] },
     });
   });
@@ -73,7 +81,7 @@ describe('what the page reads of the company\'s choice of service', () => {
     reset();
     kr.filed = { versions: [filedBy(1, 2, { service: 'none' }), filedBy(2, 1, OWN), filedBy(3, 3, OWN)], needed: 2, highest: 3 };
     const { readService, SERVICE_READ } = await load();
-    expect(await readService('u1', COMPANY)).toMatchObject({
+    expect(await readService('u1', aViewOf(COMPANY))).toMatchObject({
       of: SERVICE_READ.read, inForce: OWN, unchosen: null,
       asked: { choice: OWN, filers: [{ seat: SEATS[0]!.seat, you: false }, { seat: SEATS[2]!.seat, you: false }] },
     });
@@ -84,9 +92,9 @@ describe('what the page reads of the company\'s choice of service', () => {
     reset();
     const { readService, SERVICE_READ } = await load();
     kr.filed = { unread: 'the service did not give version 2', fileOver: { versions: [], needed: 2, highest: 2 } };
-    expect(await readService('u1', COMPANY)).toEqual({ of: SERVICE_READ.unread, why: 'the service did not give version 2', canFileOver: true });
+    expect(await readService('u1', aViewOf(COMPANY))).toEqual({ of: SERVICE_READ.unread, why: 'the service did not give version 2', canFileOver: true });
     kr.filed = { unread: 'withheld' };
-    expect(await readService('u1', COMPANY)).toEqual({ of: SERVICE_READ.unread, why: 'withheld', canFileOver: false });
+    expect(await readService('u1', aViewOf(COMPANY))).toEqual({ of: SERVICE_READ.unread, why: 'withheld', canFileOver: false });
   });
 
   /* RED WHEN: a device with no seat or no keys is shown a choice, or a read that throws escapes the page. */
@@ -94,9 +102,9 @@ describe('what the page reads of the company\'s choice of service', () => {
     reset();
     kr.seat = ACT_REFUSAL.noKeysHere;
     const { readService, SERVICE_READ } = await load();
-    expect(await readService('u1', COMPANY)).toEqual({ of: SERVICE_READ.refused, why: ACT_REFUSAL.noKeysHere });
+    expect(await readService('u1', aViewOf(COMPANY))).toEqual({ of: SERVICE_READ.refused, why: ACT_REFUSAL.noKeysHere });
     kr.seat = { ...HERE, directory: async () => { throw new Error('down'); } };
-    expect((await readService('u1', COMPANY)).of).toBe(SERVICE_READ.refused);
+    expect((await readService('u1', aViewOf(COMPANY))).of).toBe(SERVICE_READ.refused);
   });
 });
 
@@ -106,8 +114,8 @@ describe('what the page asks of the wallet when the choice is filed', () => {
     reset();
     const { chooseService, SERVICE_ACTED, SERVICE_STATE } = await load();
     kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: SERVICE_STATE.waiting, filed: 1, needed: 2 } };
-    expect(await chooseService('u1', COMPANY, OWN)).toEqual({ of: SERVICE_ACTED.done, state: 'waiting-for-signers', filed: 1, needed: 2 });
-    await chooseService('u1', COMPANY, { service: 'none' });
+    expect(await chooseService('u1', aViewOf(COMPANY), OWN)).toEqual({ of: SERVICE_ACTED.done, state: 'waiting-for-signers', filed: 1, needed: 2 });
+    await chooseService('u1', aViewOf(COMPANY), { service: 'none' });
     expect(kr.acts.map((a) => ({ name: a['name'], service: a['service'], at: a['at'] }))).toEqual([
       { name: 'choose-company-service', service: 'own', at: OWN.at }, { name: 'choose-company-service', service: 'none', at: undefined },
     ]);
@@ -117,9 +125,9 @@ describe('what the page asks of the wallet when the choice is filed', () => {
   it('opens no wallet for a choice that is not one', async () => {
     reset();
     const { chooseService, SERVICE_ACTED } = await load();
-    expect(await chooseService('u1', COMPANY, { service: 'own', at: 'http://x.example.com' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-an-address' });
-    expect(await chooseService('u1', COMPANY, { service: 'own', at: '' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-an-address' });
-    expect(await chooseService('u1', COMPANY, { service: 'sideways' as 'none' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-a-choice' });
+    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'own', at: 'http://x.example.com' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-an-address' });
+    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'own', at: '' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-an-address' });
+    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'sideways' as 'none' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-a-choice' });
     expect(kr.acts).toEqual([]);
   });
 
@@ -129,7 +137,7 @@ describe('what the page asks of the wallet when the choice is filed', () => {
     const { chooseService, SERVICE_ACTED, SERVICE_WHY } = await load();
     const why = async (code: string | undefined, over: Record<string, unknown> = {}) => {
       kr.ended = stopped(code === undefined ? undefined : `act.choose-company-service.why.${code}`, over);
-      return chooseService('u1', COMPANY, OWN);
+      return chooseService('u1', aViewOf(COMPANY), OWN);
     };
     expect(await why('role-may-not-file')).toEqual({ of: SERVICE_ACTED.stopped, why: SERVICE_WHY.mayNotFile, partial: false, handedOver: false });
     expect(await why('filed-meanwhile')).toMatchObject({ why: SERVICE_WHY.filedMeanwhile, partial: false });
@@ -145,7 +153,7 @@ describe('what the page asks of the wallet when the choice is filed', () => {
     reset();
     kr.user = null;
     const { chooseService, SERVICE_ACTED } = await load();
-    expect((await chooseService('u1', COMPANY, OWN)).of).toBe(SERVICE_ACTED.refused);
+    expect((await chooseService('u1', aViewOf(COMPANY), OWN)).of).toBe(SERVICE_ACTED.refused);
     expect(kr.acts).toEqual([]);
   });
 });

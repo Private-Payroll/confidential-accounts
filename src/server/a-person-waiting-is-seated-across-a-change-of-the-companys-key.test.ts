@@ -17,13 +17,16 @@ import type { RotateChange } from '../midnight/seat-directory.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { leafOfTheContract } from '../testing/directory-seats.js';
 import { newSeatKeys, type NewSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { acceptAsSignerHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsSignerHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
-import { admitSignerHere, rosterHere } from 'vaults-web-shared/roster-here.js';
+import { rosterHere } from 'vaults-web-shared/roster-here.js';
+import { admitSignerHere } from 'vaults-web-shared/roster-filed-here.js';
 import { companyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { PendingSeat } from 'vaults-web-shared/keyring.js';
 import { ACME, acmeDirectoryDeps, ORIGIN, fromAda } from './a-company-of-two-seats.test-support.js';
+import { writesOver } from '../testing/writes-over-a-send.js';
 import { directoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import {
   aCompanyWhoseSignersChange, ADA, BO, chains, CO, committeeKeyOfLeaf, companyKeyDoorsOf, CY, deviceOf, KEY, LABEL, rosterDoorsOf,
@@ -39,7 +42,7 @@ const DEES_SIGNS = aJoinersWallet(committeeSigningKeyFor(identityFromSecret(new 
 
 describe('A PERSON SEATED ON THE CHAIN BEFORE A SIGNER LEAVES IS ADMITTED AFTER THE KEY CHANGES', () => {
   it('the change of key does not wait for Dee, names her request, and Ada admits her with the new key, which Dee then reads', async () => {
-    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'signer', { name: 'dee', role: 'approver', person: 'dee' }, ORIGIN, writesOver(fromAda));
     const kept: PendingSeat[] = [];
     const made_: NewSeatKeys[] = [];
     const accepted = await acceptAsSignerHere(await openInvitationHere(made.link, sendAs(null)), MidnightCommitments, {

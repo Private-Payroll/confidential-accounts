@@ -16,7 +16,7 @@ import { openVaultRecords, refuseVaultsTheOperatorToolsKeep, type RecordsSql } f
 import { readersRoutes } from './readers-route.js';
 import { companyRecordsRoutes, type withTheRosterIn } from './company-records-route.js';
 import { invitationRoutes } from './invitations-route.js';
-import { peopleRoutes } from './people-route.js';
+import { peopleRoutes, type PersonHeldFor } from './people-route.js';
 import { closedOnChain } from './proposal-closed-on-chain.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import { runRoutes } from './run-routes.js';
@@ -57,6 +57,7 @@ export interface RecordsAndChainParts {
   readonly authed: express.RequestHandler;
   readonly member: express.RequestHandler;
   readonly ownsPerson: express.RequestHandler;
+  readonly personHeldFor: PersonHeldFor;
   readonly ownsProposal: express.RequestHandler;
   readonly refuseSigningSecret: express.RequestHandler;
   readonly meteredOfferLookup: (req: express.Request, res: express.Response) => Promise<boolean>;
@@ -135,7 +136,7 @@ async function chainReadsOf(parts: RecordsAndChainParts): Promise<ChainReads> {
 }
 
 function companyRecordRoutes(app: express.Express, parts: RecordsAndChainParts, reads: ChainReads): void {
-  const { authed, member, ownsPerson, meteredOfferLookup, store, ledger, companyRecords, companyRecordStore } = parts;
+  const { authed, member, ownsPerson, personHeldFor, meteredOfferLookup, store, ledger, companyRecords, companyRecordStore } = parts;
   const { records, accountOf, directoryNow } = reads;
   mountVaultRecords(app, {
     signedIn: (req, res, next) => authed(req, res, next),
@@ -164,7 +165,7 @@ function companyRecordRoutes(app: express.Express, parts: RecordsAndChainParts, 
   app.use(peopleRoutes({
     signedIn: (req, res, next) => authed(req, res, next),
     member: (req, res, next) => member(req, res, next),
-    ownsPerson: (req, res, next) => ownsPerson(req, res, next),
+    ownsPerson: (req, res, next) => ownsPerson(req, res, next), heldFor: personHeldFor,
     store, records: () => companyRecordStore, people: () => companyRecords,
     directoryOf: directoryNow,
   }));

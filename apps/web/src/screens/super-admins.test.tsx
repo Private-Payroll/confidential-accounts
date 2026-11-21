@@ -15,6 +15,35 @@ import { untilShown } from '../page-shown.test-support.js';
 const st = vi.hoisted(() => ({
   read: null as unknown, raised: [] as unknown[], joined: [] as unknown[], approved: [] as unknown[], answer: null as unknown, reaches: [] as unknown[],
   named: { label: `co_${'c0'.repeat(32)}`, company: 'b2'.repeat(32) } as unknown, signed: [] as string[],
+  /* The openings of the page's view: each `reload` opens another, as the page's frame does; `signedOn` is the opening each signing was handed. */
+  opened: 0, reopened: new Set<() => void>(), signedOn: [] as number[], viewOpened: new Map<unknown, number>(),
+}));
+/* The page's own view and judges, with only what follows stood in for. */
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('../adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+}));
+vi.mock('../records/company-records.js', async (real) => {
+  const { useSyncExternalStore } = await import('react');
+  const { useTheViewOfTheTest, aViewOf } = await import('../adapters/page-view.test-support.js');
+  const watch = (f: () => void) => { st.reopened.add(f); return () => { st.reopened.delete(f); }; };
+  const openings = new Map<string, unknown>();
+  const useCompanyView = () => {
+    const opened = useSyncExternalStore(watch, () => st.opened);
+    const first = useTheViewOfTheTest();
+    if (first === null || opened === 0) { st.viewOpened.set(first, 0); return first; }
+    const key = `${first.company}/${opened}`;
+    const view = openings.get(key) ?? aViewOf(first.company);
+    openings.set(key, view); st.viewOpened.set(view, opened);
+    return view as typeof first;
+  };
+  const reload = () => { st.opened += 1; for (const f of st.reopened) f(); };
+  return { ...(await real<typeof import('../records/company-records.js')>()), useCompanyView, useCompanyRecords: () => ({ reload }) };
+});
+/* Who holds the company, as the signer's own wallet reads it for the screen's view. */
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
+  holdersFromTheWallet: async () => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], vaultThresholds: [], policyBar: null }, indexer: null }),
 }));
 vi.mock('../adapters/super-admins.js', async (real) => ({
   ...(await real<typeof import('../adapters/super-admins.js')>()),
@@ -24,9 +53,14 @@ vi.mock('../adapters/super-admins.js', async (real) => ({
   approveChange: async (...ask: unknown[]) => { st.approved.push(ask); return st.answer; },
   notYetAdopted: async (_id: string, listed: readonly string[]) => (listed.includes('d2'.repeat(32)) ? [] : ['d2'.repeat(32)]),
 }));
-vi.mock('vaults-web-shared/keyring.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  api: async () => st.named,
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  /* The company's record as the service keeps it: its label and its account on the chain, as `st.named` names them. */
+  api: async (path: string) => {
+    if (path.endsWith('/directory')) return { filings: [] };
+    const { label, company } = st.named as { label?: unknown; company?: unknown };
+    return { companyLabel: label, contractAddress: company };
+  },
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
@@ -34,7 +68,7 @@ vi.mock('../adapters/handover-state.js', async (real) => ({
 }));
 vi.mock('../adapters/committee-change.js', async (real) => ({
   ...(await real<typeof import('../adapters/committee-change.js')>()),
-  signChange: async (person: string, company: string) => { st.signed.push(`${person}/${company}`); return { of: 'done' }; },
+  signChange: async (person: string, view: { company: string }) => { st.signed.push(`${person}/${view.company}`); st.signedOn.push(st.viewOpened.get(view) ?? -1); return { of: 'done' }; },
 }));
 
 const { SuperAdmins, SuperAdminsByLink } = await import('./super-admins.js');
@@ -74,7 +108,7 @@ const inSettings = async () => {
 };
 
 beforeEach(() => {
-  st.read = readOf(); st.raised = []; st.joined = []; st.approved = []; st.reaches = []; st.signed = [];
+  st.read = readOf(); st.raised = []; st.joined = []; st.approved = []; st.reaches = []; st.signed = []; st.signedOn = [];
   st.answer = { of: 'done', sent: false, held: null };
 });
 afterEach(cleanup);
@@ -200,5 +234,26 @@ describe('SETTINGS > SUPER ADMINS', () => {
     fireEvent.click([...document.body.querySelectorAll('button')].find((b) => /Confirm|Continue|Open/.test(b.textContent ?? '') && b.closest('[data-action="committee-change"]') !== null)!);
     await settle();
     expect(st.signed).toEqual(['u1/c-1']);
+  });
+
+  it('SIGNS THE HAND-OVER ON A FRESH READ OF WHO HOLDS THE COMPANY, ONCE AN APPROVAL HERE SENT THE CHANGE', async () => {
+    st.read = readOf({ changes: [changeOf({ joining: [{ key: C, signed: true, mine: false }] })] });
+    st.answer = { of: 'done', sent: false, held: null, sentAny: true };
+    await inSettings();
+    const before = st.opened;
+    await press('[data-action="approve"]');
+    await untilShown(() => q(`[data-hand-over] [data-state="${HANDOVER.changeOwed}"]`), 'the hand-over owed');
+    await press('[data-action="sign-change"]');
+    fireEvent.click([...document.body.querySelectorAll('button')].find((b) => /Confirm|Continue|Open/.test(b.textContent ?? '') && b.closest('[data-action="committee-change"]') !== null)!);
+    await settle();
+    /* RED WHEN: the page keeps the opening that read who held the company before the change was sent, so the hand-over is refused as another signer's change. */
+    expect(st.signedOn).toEqual([before + 1]);
+    cleanup();
+    st.answer = { of: 'done', sent: false, held: null, sentAny: false };
+    await inSettings();
+    const still = st.opened;
+    await press('[data-action="approve"]');
+    /* RED WHEN: an approval that sent nothing ends the opening anyway, and the page reads everything again for nothing. */
+    expect(st.opened).toBe(still);
   });
 });

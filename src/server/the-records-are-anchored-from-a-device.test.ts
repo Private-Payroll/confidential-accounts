@@ -13,6 +13,7 @@
  *
  * The one to read first is "ANOTHER DEVICE ANCHORING FIRST".
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { leavesOfTheContract } from '../testing/directory-seats.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { aChainAnchor, anchoredOver, anchorFunctions, headAfter, heldBy, holdersOf, onChainOf, tagInATest, anchorSentInATest } from '../testing/record-tree-double.js';
@@ -29,15 +30,16 @@ import { treeBatchOf, type TreeHeader } from '../midnight/record-tree.js';
 import type { RecordsAsked, RecordsHeld } from '../midnight/records-held.js';
 import { signProposalFiling } from '../core/proposal-filing.js';
 import type { SealedProposal } from '../core/types.js';
-import { FiledNotEntered, manifestServiceFor, recordsEnteredFor, treeServiceFor, type TreeService } from 'vaults-web-shared/record-entered-here.js';
-import {
-  ANCHORED_AT_LEAST_EVERY_MS, AnchorNotMade, anchoredOnTheWayIn, anchorTheRecordsHere, recordsHeldHere, treeHeaderHere, type AnchorDoors,
-  anchorServiceFor,
-} from 'vaults-web-shared/records-anchored-here.js';
+import { FiledNotEntered, recordsEnteredFor, type TreeService } from 'vaults-web-shared/record-entered-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { AnchorNotMade, anchorTheRecordsHere, treeHeaderHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import { recordsHeldHere } from 'vaults-web-shared/records-held-here.js';
+import { ANCHORED_AT_LEAST_EVERY_MS, anchoredOnTheWayIn } from 'vaults-web-shared/anchored-on-the-way-in.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeClock, acmeHeldNow, acmeDirectory, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, chains, CO, EVE,
   heldByMoreThanOneKey, KEY, OTHER, OTHER_ADDRESS, OTHER_LABEL, peopleRecords, seatOf, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
@@ -54,10 +56,10 @@ const builder: AnchorDoors['builder'] = {
   ...anchorFunctions,
   anchor: anchorSentInATest,
 };
-const doorsOf = (s: Seat, tree: TreeService = treeServiceFor(apiAs(s.person))): AnchorDoors => ({
+const doorsOf = (s: Seat, tree: TreeService = treeServiceOf(serviceSource(apiAs(s.person), CO))): AnchorDoorsBare => ({
   accountId: CO,
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(apiAs(s.person)),
+  manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)),
   tree: {
     ...tree,
     fileHeader: async (company, header) => { log.push(`${s.person} kept a batch`); await tree.fileHeader(company, header); },
@@ -79,7 +81,7 @@ const doorsOf = (s: Seat, tree: TreeService = treeServiceFor(apiAs(s.person))): 
       log.push(`${s.person} anchored`);
     },
     sealedProposals: async (company) => store.listProposals(company),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder,
 });
@@ -98,7 +100,7 @@ const ALL: RecordsAsked = { kinds: [
   { store: 'proposal', kind: 'proposal' }, { store: 'directory', kind: 'directory' },
 ] };
 /** What a device holds now of the company's records. */
-const heldNow = async (d: AnchorDoors, asked: RecordsAsked = ALL) => (await recordsHeldHere(d, asked)).records;
+const heldNow = async (d: AnchorDoorsBare, asked: RecordsAsked = ALL) => (await recordsHeldHere(d, asked)).records;
 /** The newest version a read holds of a record, with the digest it holds it at. */
 const newestOf = (f: RecordsHeld, key: string) => { const v = f.history.get(key)?.at(-1); return v === undefined ? undefined : { version: v.version, digest: v.digest }; };
 /** Every header of Acme's record tree the service keeps, in the order kept. */
@@ -115,7 +117,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     const a1 = await enter(ADA, 'emp_anchored_a1');
     /* The head Acme's founding batch left. */
     const founded = head();
-    const out = await anchorTheRecordsHere(doorsOf(ADA));
+    const out = await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* RED WHEN: the header is kept after the call is sent - a device stopping between the two leaves a batch no device was given. */
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
     const [, batch] = headers();
@@ -130,7 +132,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     expect(newestOf(nowHeld, 'directory:directory:directory')?.version).toBe(store.directoryFilingsOf(CO).length);
     log.length = 0;
     /* RED WHEN: a device anchors when nothing is waiting - a call, and its fee, for nothing. */
-    await expect(anchorTheRecordsHere(doorsOf(ADA))).resolves.toEqual({ anchored: 0, head: head() });
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA)))).resolves.toEqual({ anchored: 0, head: head() });
     expect(log).toEqual([]);
   });
 
@@ -138,10 +140,10 @@ describe('ANCHORING FROM A DEVICE', () => {
     await enter(ADA, 'emp_anchored_a2');
     meanwhile = async () => {
       /* Bo's device anchors what is waiting first; then one more filing of Ada's arrives. */
-      await anchorTheRecordsHere(doorsOf(BO));
+      await anchorTheRecordsHere(throughAView(doorsOf(BO)));
       await enter(ADA, 'emp_anchored_a3');
     };
-    const out = await anchorTheRecordsHere(doorsOf(ADA));
+    const out = await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* RED WHEN: a refusal of the call for a stale head ends the anchoring, or is reported as a failure the person must act on. */
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'bo kept a batch', 'bo sent', 'bo anchored', 'ada kept a batch', 'ada sent', 'ada anchored']);
     expect(out.anchored).toBe(1);
@@ -158,14 +160,14 @@ describe('ANCHORING FROM A DEVICE', () => {
     /* Bo's device anchors what is waiting first, and then one more filing arrives for Ada's next read: every time. */
     const raced = async () => {
       n += 1;
-      await anchorTheRecordsHere(doorsOf(BO));
+      await anchorTheRecordsHere(throughAView(doorsOf(BO)));
       await enter(ADA, `emp_raced_00${n}`);
       meanwhile = raced;
     };
     await enter(ADA, 'emp_raced_000');
     meanwhile = raced;
     /* RED WHEN: a device reads the head again without end, or gives up before reading it again. */
-    await expect(anchorTheRecordsHere(doorsOf(ADA))).rejects.toThrow(/other devices anchored the company's records first, or who holds the company's account changed, 3 times running/u);
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA)))).rejects.toThrow(/other devices anchored the company's records first, or who holds the company's account changed, 3 times running/u);
     expect(log.filter((l) => l === 'ada sent')).toHaveLength(3);
     meanwhile = null;
     const nowHeld = await heldNow(doorsOf(BO));
@@ -173,12 +175,12 @@ describe('ANCHORING FROM A DEVICE', () => {
   });
 
   it('AN ENTRY SIGNED BY A SEAT WHOSE ROLE MAY NOT FILE ITS RECORD, SERVED BY THE SERVICE, IS NEVER ANCHORED FROM A DEVICE', async () => {
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     /* Bo is an approver: a roster is not his to file, and an honest service would never have entered this. */
     const bos = signManifestEntry(CO, { store: 'company', kind: 'roster', id: 'roster', version: 99, digest: 'b0'.repeat(32) }, BO.signingSecret as Hex);
     const lying: TreeService = { ...all, pending: async (c, root) => { const p = await all.pending(c, root); return p === null ? null : [...p, bos]; } };
     await enter(ADA, 'emp_with_a_lie_d1');
-    await anchorTheRecordsHere(doorsOf(ADA, lying));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA, lying)));
     const anchoredIn = headers().at(-1)!.changes.map((c) => c.leaf.entryId);
     /* RED WHEN: a device anchors an entry its own directory says that seat may not file - every other device then stops there. */
     expect(anchoredIn).not.toContain(entryIdOf(bos));
@@ -195,7 +197,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     /* RED WHEN: a read told of a raised removal holds what the leaving seat filed past its boundary as waiting to be anchored. */
     expect(waiting).not.toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === bos.id)!));
     expect(waiting).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === adas.id)!));
-    await anchorTheRecordsHere(told);
+    await anchorTheRecordsHere(throughAView(told));
     const anchoredIn = headers().at(-1)!.changes.map((c) => c.leaf.entryId);
     /* RED WHEN: the batch a head this device checked was left by is not read back, so a removal's boundary cannot be judged at the head its raise names. */
     const held = await heldNow(doorsOf(ADA));
@@ -204,7 +206,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     expect(anchoredIn).not.toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === bos.id)!));
     expect(anchoredIn).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === adas.id)!));
     /* The control: a boundary that keeps the version, as one raised after it was anchored would, anchors it. */
-    await anchorTheRecordsHere({ ...doorsOf(ADA), leaving: async () => new Map([[bo, { [boundaryKeyOfEntry(bos)]: bos.version }]]) });
+    await anchorTheRecordsHere(throughAView({ ...doorsOf(ADA), leaving: async () => new Map([[bo, { [boundaryKeyOfEntry(bos)]: bos.version }]]) }));
     expect(headers().at(-1)!.changes.map((c) => c.leaf.entryId)).toContain(entryIdOf(store.manifestOf(CO).entries.find((e) => e.id === bos.id)!));
   });
 
@@ -224,10 +226,10 @@ describe('ANCHORING FROM A DEVICE', () => {
       approvalCount: 0, keyEpoch: 0, sealed: filing.sealed, filedBy: { publicKey: filing.filedBy.publicKey, signature: 'ee'.repeat(64) },
     } as SealedProposal);
     const named = () => store.manifestOf(CO).entries.filter((e) => e.id === filing.id);
-    await anchorTheRecordsHere(doorsOf(BO));
+    await anchorTheRecordsHere(throughAView(doorsOf(BO)));
     /* RED WHEN: a seat enters a proposal another seat filed - the service refuses it, and the anchor stops on it. */
     expect(named()).toEqual([]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* RED WHEN: a proposal whose entry was not kept is never entered again - it is never anchored, and its leg never believed. */
     expect(named().map((e) => e.filedBy.publicKey)).toEqual([ADA.statement.signingKey]);
     /* RED WHEN: a device enters a proposal its own seat's signature does not cover - the anchor would vouch for what the service made up. */
@@ -238,11 +240,11 @@ describe('ANCHORING FROM A DEVICE', () => {
 
   it('THE HEAD IS THE ONE THE ACCOUNT\'S HISTORY HOLDS AT THE WALLET\'S INDEXER: A STATE THE SERVICE SERVES OLDER CHANGES NOTHING A DEVICE BELIEVES OR ANCHORS ON', async () => {
     await enter(ADA, 'emp_head_from_the_wallet_h1');
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     await enter(ADA, 'emp_head_from_the_wallet_h2');
     const onChainNow = head();
     /* The service serves the account as it stood before any anchor: a genuine, older state. */
-    const older: AnchorDoors = {
+    const older: AnchorDoorsBare = {
       ...doorsOf(ADA),
       service: { ...doorsOf(ADA).service, callState: async () => ({ account: ADDRESS, accountState: EMPTY_HEAD, parameters: '', blockHash: 'b' }) as never },
     };
@@ -252,21 +254,21 @@ describe('ANCHORING FROM A DEVICE', () => {
     expect(read.stopped).toBeNull();
     expect(newestOf(read, 'company:policy:emp_head_from_the_wallet_h1')?.version).toBe(1);
     const sent: string[] = [];
-    const watching: AnchorDoors = { ...older, builder: { ...builder, anchor: async (a) => { sent.push(a.previous); return builder.anchor(a); } } };
-    await anchorTheRecordsHere(watching);
+    const watching: AnchorDoorsBare = { ...older, builder: { ...builder, anchor: async (a) => { sent.push(a.previous); return builder.anchor(a); } } };
+    await anchorTheRecordsHere(throughAView(watching));
     /* RED WHEN: a device anchors on the head the service's state holds rather than the one the account's history holds. */
     expect(sent).toEqual([onChainNow]);
     expect(newestOf(await heldNow(doorsOf(BO)), 'company:policy:emp_head_from_the_wallet_h2')?.version).toBe(1);
   });
 
   it('A FILING WHOSE ENTRY THE SERVICE DID NOT KEEP IS ENTERED AGAIN BY ITS FILER\'S DEVICE WHEN IT ANCHORS, AND ANCHORED', async () => {
-    const all = manifestServiceFor(apiAs('ada'));
+    const all = manifestServiceOf(serviceSource(apiAs('ada'), CO));
     /* The service takes the filing and drops its entry. */
     const dropping = { ...all, enter: async () => { throw new Error('the service dropped the connection'); } };
     const entry = await aRecordFiledBy(ADA, 'emp_entry_dropped_e1');
     await expect(recordsEnteredFor(dropping, CO, ADA.signingSecret as Hex).enter([entry])).rejects.toBeInstanceOf(FiledNotEntered);
     expect(store.manifestOf(CO).entries.some((e) => e.id === 'emp_entry_dropped_e1')).toBe(false);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* RED WHEN: a filing whose entry was not kept is never entered again - it is in no batch, for as long as the service likes. */
     expect(newestOf(await heldNow(doorsOf(BO)), 'company:policy:emp_entry_dropped_e1')).toEqual({ version: 1, digest: entry.digest });
   });
@@ -274,34 +276,34 @@ describe('ANCHORING FROM A DEVICE', () => {
   it('A FILING THE SERVICE KEEPS LEAVING OUT OF WHAT IT SERVES STOPS ITS FILER\'S ANCHOR, SAID, AND NOTHING IS SENT', async () => {
     const entry = await aRecordFiledBy(ADA, 'emp_entry_withheld_w1');
     await ADA.entered.enter([entry]);
-    const leavingOut = leavingOutOf(treeServiceFor(apiAs('ada')), (e) => e.id === 'emp_entry_withheld_w1');
+    const leavingOut = leavingOutOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), (e) => e.id === 'emp_entry_withheld_w1');
     log.length = 0;
     /* RED WHEN: the filer anchors what it is served and leaves its own filing out - the record held at its older version unseen. */
-    await expect(anchorTheRecordsHere(doorsOf(ADA, leavingOut)))
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA, leavingOut))))
       .rejects.toThrow(/the service keeps leaving version 1 of company record emp_entry_withheld_w1, which this device filed and entered, out of the company's records/u);
     expect(log.filter((l) => l.endsWith('sent'))).toEqual([]);
     /* Served whole again, it is anchored, and let go of: left out once anchored, it is a batch the service does not give. */
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     expect(newestOf(await heldNow(doorsOf(BO)), 'company:policy:emp_entry_withheld_w1')?.version).toBe(1);
     /* RED WHEN: an entry the anchor holds is kept on the page and entered again for ever. */
-    await expect(anchorTheRecordsHere(doorsOf(ADA, leavingOut))).rejects.toThrow(/the service did not give the entry of version 1 of company record emp_entry_withheld_w1/u);
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA, leavingOut)))).rejects.toThrow(/the service did not give the entry of version 1 of company record emp_entry_withheld_w1/u);
   });
 
   it('A FILING WHOSE ENTRY WAS NOT KEPT, BEHIND A NEWER VERSION OF THE SAME RECORD, IS LET GO OF AND NOT ENTERED AGAIN', async () => {
-    const dropping = { ...manifestServiceFor(apiAs('ada')), enter: async () => { throw new Error('the service dropped the connection'); } };
+    const dropping = { ...manifestServiceOf(serviceSource(apiAs('ada'), CO)), enter: async () => { throw new Error('the service dropped the connection'); } };
     await expect(recordsEnteredFor(dropping, CO, ADA.signingSecret as Hex).enter([await aRecordFiledBy(ADA, 'emp_superseded_s1')]))
       .rejects.toBeInstanceOf(FiledNotEntered);
     const second = await aRecordFiledBy(ADA, 'emp_superseded_s1');
     await ADA.entered.enter([second]);
     /* RED WHEN: an entry behind a newer version is entered again - the service refuses it as not newer, and nothing is anchored. */
-    await expect(anchorTheRecordsHere(doorsOf(ADA))).resolves.toMatchObject({ anchored: expect.any(Number) });
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA)))).resolves.toMatchObject({ anchored: expect.any(Number) });
     expect(newestOf(await heldNow(doorsOf(BO)), 'company:policy:emp_superseded_s1')?.version).toBe(2);
   });
 
   it('A FILING THE SERVICE GIVES TO EVERY READ BUT THE ONE THE BATCH IS MADE FROM STILL STOPS ITS FILER\'S ANCHOR', async () => {
     const entry = await aRecordFiledBy(ADA, 'emp_hidden_from_the_fold_h1');
     await ADA.entered.enter([entry]);
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     /* The service leaves the entry out only of the read made while the device reads the records - the one its header is made from. */
     let reading = false;
     const twoFaced: TreeService = {
@@ -316,29 +318,29 @@ describe('ANCHORING FROM A DEVICE', () => {
     log.length = 0;
     const d = doorsOf(ADA, twoFaced);
     /* RED WHEN: whether the service gives the filing is asked of another read than the check's - the batch leaves it out unseen. */
-    await expect(anchorTheRecordsHere({ ...d, onChain: async () => { reading = true; return d.onChain(); } }))
+    await expect(anchorTheRecordsHere(throughAView({ ...d, onChain: async () => { reading = true; return d.onChain(); } })))
       .rejects.toThrow(/the service keeps leaving version 1 of company record emp_hidden_from_the_fold_h1/u);
     expect(log.filter((l) => l.endsWith('sent'))).toEqual([]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
   });
 
   it('A SEND THAT FAILS WITH THE HEAD UNMOVED IS NOT READ AS A RACE: IT IS SAID, AND NOT SENT AGAIN', async () => {
     await enter(ADA, 'emp_unsent_b1');
     sendFails = 'the node dropped the connection';
     /* RED WHEN: any failed send is taken for another device's anchor and sent again, or swallowed. */
-    const said = await anchorTheRecordsHere(doorsOf(ADA)).then(() => null, (e: unknown) => e);
+    const said = await anchorTheRecordsHere(throughAView(doorsOf(ADA))).then(() => null, (e: unknown) => e);
     expect(said).toBeInstanceOf(AnchorNotMade);
     expect((said as Error).message).toMatch(/the anchor was not sent \(the node dropped the connection\)/u);
     expect(log.filter((l) => l === 'ada sent')).toHaveLength(1);
     sendFails = null;
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
   });
 
   it("THE BATCH'S HEADER NAMES WHO HOLDS THE ACCOUNT AS THE HISTORY SHOWS IT, AND A DEVICE WHOSE WALLET READ OTHER HOLDERS SENDS NOTHING", async () => {
     await enter(ADA, 'emp_holders_named_h1');
     const d = doorsOf(ADA);
     const before = headers().length;
-    await anchorTheRecordsHere(d);
+    await anchorTheRecordsHere(throughAView(d));
     const header = headers().at(-1)!;
     /* RED WHEN: the header names any holders but those the account's history at the wallet's indexer shows now. */
     expect(headers().length).toBe(before + 1);
@@ -346,29 +348,29 @@ describe('ANCHORING FROM A DEVICE', () => {
     log.length = 0;
     await enter(ADA, 'emp_holders_named_h2');
     /* The history shows the account at another number of approvals than the wallet read: one of the two is behind. */
-    const behind: AnchorDoors = { ...d, onChain: async () => { const r = await acmeChain.onChain(); return { ...r, now: { ...r.now, approvals: r.now.approvals + 1 } }; } };
+    const behind: AnchorDoorsBare = { ...d, onChain: async () => { const r = await acmeChain.onChain(); return { ...r, now: { ...r.now, approvals: r.now.approvals + 1 } }; } };
     /* RED WHEN: a device anchors a batch it judged against its wallet's holders under a header naming other holders. */
-    await expect(anchorTheRecordsHere(behind)).rejects.toThrow(/who holds the company's account, as your wallet read it, is not what the account's history at its indexer shows yet/u);
+    await expect(anchorTheRecordsHere(throughAView(behind))).rejects.toThrow(/who holds the company's account, as your wallet read it, is not what the account's history at its indexer shows yet/u);
     expect(log).toEqual([]);
     /* The history shows the same approvals and a seat fewer than the wallet read. */
-    const fewer: AnchorDoors = { ...d, onChain: async () => { const r = await acmeChain.onChain(); return { ...r, seatsNow: r.seatsNow.slice(1) }; } };
+    const fewer: AnchorDoorsBare = { ...d, onChain: async () => { const r = await acmeChain.onChain(); return { ...r, seatsNow: r.seatsNow.slice(1) }; } };
     /* RED WHEN: the seats the wallet read are not compared with the seats the history shows. */
-    await expect(anchorTheRecordsHere(fewer)).rejects.toThrow(/who holds the company's account, as your wallet read it, is not what the account's history/u);
-    const other: AnchorDoors = { ...d, onChain: async () => { const r = await acmeChain.onChain(); return { ...r, seatsNow: [...r.seatsNow.slice(1), 'ee'.repeat(32)] }; } };
-    await expect(anchorTheRecordsHere(other)).rejects.toThrow(/who holds the company's account, as your wallet read it, is not what the account's history/u);
+    await expect(anchorTheRecordsHere(throughAView(fewer))).rejects.toThrow(/who holds the company's account, as your wallet read it, is not what the account's history/u);
+    const other: AnchorDoorsBare = { ...d, onChain: async () => { const r = await acmeChain.onChain(); return { ...r, seatsNow: [...r.seatsNow.slice(1), 'ee'.repeat(32)] }; } };
+    await expect(anchorTheRecordsHere(throughAView(other))).rejects.toThrow(/who holds the company's account, as your wallet read it, is not what the account's history/u);
     expect(log).toEqual([]);
-    await anchorTheRecordsHere(d);
+    await anchorTheRecordsHere(throughAView(d));
   });
 
   it('A BATCH WHOSE FILINGS THE SERVICE DOES NOT GIVE STOPS THE DEVICE: IT ANCHORS NOTHING PAST IT, AND NAMES WHO ANCHORED IT', async () => {
     const firstEntry = headers()[0]!.changes[0]!.leaf;
     expect(firstEntry.store).toBe('directory');
-    const withholding = leavingOutOf(treeServiceFor(apiAs('ada')), (e) => entryIdOf(e) === firstEntry.entryId);
+    const withholding = leavingOutOf(treeServiceOf(serviceSource(apiAs('ada'), CO)), (e) => entryIdOf(e) === firstEntry.entryId);
     await enter(ADA, 'emp_withheld_c1');
     /* RED WHEN: a device skips a header it cannot check, and anchors on past it. The entry withheld is the directory's first
      * version - Ada's own claim - and the header is given whole otherwise: not given, the service's doing, naming no seat. */
     /* A device that checks the records from the first header: Acme held by more than one key, none of its runs vouching. */
-    await heldByMoreThanOneKey(() => expect(anchorTheRecordsHere(doorsOf(ADA, withholding)))
+    await heldByMoreThanOneKey(() => expect(anchorTheRecordsHere(throughAView(doorsOf(ADA, withholding))))
       .rejects.toThrow(/the service did not give the entry of version 1 of directory record directory of batch 1 of the company's records/u));
     expect(log).toEqual([]);
   });
@@ -377,18 +379,18 @@ describe('ANCHORING FROM A DEVICE', () => {
     await enter(ADA, 'emp_heads_unread_c3');
     const short = { ...doorsOf(ADA), builder: { ...builder, anchorHeads: async () => ({ after: [] }) } };
     /* RED WHEN: a device checks headers with heads it never read, and believes or anchors past a batch it could not place. */
-    await expect(anchorTheRecordsHere(short as never)).rejects.toThrow(/this device could not read the anchor's heads/u);
+    await expect(anchorTheRecordsHere(throughAView(short as never))).rejects.toThrow(/this device could not read the anchor's heads/u);
     const holed = { ...doorsOf(ADA), builder: { ...builder, anchorHeads: async (a: Parameters<typeof builder.anchorHeads>[0]) => {
       const read = await builder.anchorHeads(a);
       return { ...read, after: read.after.map(() => undefined) };
     } } };
-    await expect(anchorTheRecordsHere(holed as never)).rejects.toThrow(/the anchor's heads were not read for every batch/u);
+    await expect(anchorTheRecordsHere(throughAView(holed as never))).rejects.toThrow(/the anchor's heads were not read for every batch/u);
     expect(log).toEqual([]);
   });
 
   it('A BATCH ANCHORED BY A SEAT WHOSE ROLE MAY NOT ANCHOR STOPS THE DEVICE, THOUGH THE KEY IS A SEAT\'S', async () => {
     await enter(ADA, 'emp_anchored_by_bo_b7');
-    await anchorTheRecordsHere(doorsOf(BO));
+    await anchorTheRecordsHere(throughAView(doorsOf(BO)));
     log.length = 0;
     /* A directory in which Bo's seat only ever viewed the company, at every version: his key is a seat's, and his role files nothing. */
     const viewing = async () => {
@@ -405,9 +407,9 @@ describe('ANCHORING FROM A DEVICE', () => {
 
   it('A BATCH ANCHORED BY A KEY NO SEAT OF THE COMPANY HOLDS STOPS THE DEVICE: NOTHING FROM IT ON IS BELIEVED, AND NOTHING IS ANCHORED', async () => {
     await enter(ADA, 'emp_strange_f1');
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     log.length = 0;
-    const all = treeServiceFor(apiAs('ada'));
+    const all = treeServiceOf(serviceSource(apiAs('ada'), CO));
     /* Ada files one more record; another company's seat makes the next header over it, and the chain folds it in. */
     const f2 = await enter(ADA, 'emp_strange_f2');
     const waiting = ((await all.pending(CO, (await heldNow(doorsOf(BO))).reached.root))! as ManifestEntry[]).filter((e) => e.id === f2.id);
@@ -424,7 +426,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     const read = await heldNow(doorsOf(BO, serving));
     /* RED WHEN: a header is believed from a key no seat the directory believes holds. */
     expect(read.stopped).toMatchObject({ stop: 'dishonest', anchoredBy: strange.anchoredBy.publicKey });
-    await expect(anchorTheRecordsHere(doorsOf(ADA, serving))).rejects.toThrow(/is not honest: it was anchored by a key no seat that may anchor held, in the directory as anchored with it/u);
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA, serving)))).rejects.toThrow(/is not honest: it was anchored by a key no seat that may anchor held, in the directory as anchored with it/u);
     expect(log).toEqual([]);
   });
 
@@ -435,7 +437,7 @@ describe('ANCHORING FROM A DEVICE', () => {
     expect(read.stopped).toMatchObject({ stop: 'not-given' });
     /* RED WHEN: a device believes the records it can check, or anchors on, past a head it cannot reach: no directory is believed, so no reader acts. */
     await expect(acmeDirectory()).rejects.toThrow(/cannot be read past a batch this device cannot open/u);
-    await expect(anchorTheRecordsHere(doorsOf(ADA))).rejects.toThrow(/the service did not give its header of batch \d+ of the company's records/u);
+    await expect(anchorTheRecordsHere(throughAView(doorsOf(ADA)))).rejects.toThrow(/the service did not give its header of batch \d+ of the company's records/u);
     expect(log).toEqual([]);
   });
 
@@ -457,20 +459,20 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
   });
 
   it('A FILING WAITING WHEN THE LAST BATCH IS A DAY OLD IS ANCHORED BY THE SEAT ENTERING; WITHIN THE DAY IT WAITS, AND NOTHING IS SENT', async () => {
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     log.length = 0;
     await enter(ADA, 'emp_on_the_way_in_d1');
     /* RED WHEN: entering the company anchors nothing though the last batch is a day old - a filing could wait unanchored for ever between raises. */
-    expect(await anchoredOnTheWayIn(at(T))).toMatchObject({ anchored: 1 });
+    expect(await anchoredOnTheWayIn(throughAView(at(T)))).toMatchObject({ anchored: 1 });
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
     log.length = 0;
     await enter(ADA, 'emp_on_the_way_in_d2');
     /* RED WHEN: every entry into the company anchors - a call, and its fee, for every page opened. */
-    expect(await anchoredOnTheWayIn(at(T + 23 * HOUR))).toEqual({ waits: 'anchored-within-a-day' });
+    expect(await anchoredOnTheWayIn(throughAView(at(T + 23 * HOUR)))).toEqual({ waits: 'anchored-within-a-day' });
     expect(log).toEqual([]);
     expect((await heldNow(doorsOf(ADA))).notYetAnchored).toHaveLength(1);
     /* RED WHEN: a day after the last batch the filing still waits. */
-    expect(await anchoredOnTheWayIn(at(T + ANCHORED_AT_LEAST_EVERY_MS))).toMatchObject({ anchored: 1 });
+    expect(await anchoredOnTheWayIn(throughAView(at(T + ANCHORED_AT_LEAST_EVERY_MS)))).toMatchObject({ anchored: 1 });
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
   });
 
@@ -479,25 +481,25 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
     await enter(ADA, 'emp_block_time_t1');
     /* The anchor lands in a block set at X; the anchoring seat's clock wrote X plus a day and a half into its header. */
     acmeClock.now = () => X;
-    await anchorTheRecordsHere({ ...doorsOf(ADA), now: () => new Date(X + 36 * HOUR - HOUR) });
+    await anchorTheRecordsHere(throughAView({ ...doorsOf(ADA), now: () => new Date(X + 36 * HOUR - HOUR) }));
     expect(Date.parse(headers().at(-1)!.at)).toBe(X + 35 * HOUR);
     await enter(ADA, 'emp_block_time_t2');
     log.length = 0;
     /* RED WHEN: the day is counted from the time the seat wrote - an hour ago - so a filing waits on one seat's word. */
-    expect(await anchoredOnTheWayIn(at(X + 36 * HOUR))).toMatchObject({ anchored: 1 });
+    expect(await anchoredOnTheWayIn(throughAView(at(X + 36 * HOUR)))).toMatchObject({ anchored: 1 });
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
   });
 
   it('NOTHING WAITING IS ANSWERED SO, WHENEVER THE LAST BATCH WAS: NO CALL IS MADE', async () => {
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     log.length = 0;
     /* RED WHEN: a device anchors on the way in with nothing waiting. */
-    await expect(anchoredOnTheWayIn(at(T + 400 * 24 * HOUR))).resolves.toEqual({ anchored: 0, head: head() });
+    await expect(anchoredOnTheWayIn(throughAView(at(T + 400 * 24 * HOUR)))).resolves.toEqual({ anchored: 0, head: head() });
     expect(log).toEqual([]);
   });
 
   it('A PROPOSAL OF THIS SEAT\'S WHOSE ENTRY WAS NOT KEPT IS ENTERED AND ANCHORED ON THE WAY IN, THOUGH NOTHING ELSE WAITS', async () => {
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const filing = signProposalFiling(CO, {
       id: 'prp_onthewayin01', digest: 'd8'.repeat(32) as Hex, chainId: 'c8'.repeat(32) as Hex, keyEpoch: 0,
       createdAt: '2026-10-09T11:00:00.000Z', sealed: { iv: 'aa', tag: 'bb', body: 'cc' },
@@ -507,18 +509,18 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
       approvalCount: 0, keyEpoch: 0, sealed: filing.sealed, filedBy: filing.filedBy,
     } as SealedProposal);
     /* RED WHEN: entering the company a day on reads only what the manifest names, so a proposal whose entry was lost is never anchored. */
-    expect(await anchoredOnTheWayIn(at(T + 500 * 24 * HOUR))).toMatchObject({ anchored: 1 });
+    expect(await anchoredOnTheWayIn(throughAView(at(T + 500 * 24 * HOUR)))).toMatchObject({ anchored: 1 });
     expect(newestOf(await heldNow(doorsOf(BO)), `proposal:proposal:${filing.id}`))
       .toEqual({ version: 1, digest: proposalEntry(CO, filing).digest });
   });
 
   it('A LAST BATCH WHOSE TIME IS AHEAD OF THIS DEVICE\'S CLOCK HOLDS NOTHING OFF', async () => {
     await enter(ADA, 'emp_on_the_way_in_f1');
-    await anchoredOnTheWayIn(at(T + 300 * 24 * HOUR));
+    await anchoredOnTheWayIn(throughAView(at(T + 300 * 24 * HOUR)));
     await enter(ADA, 'emp_on_the_way_in_f2');
     log.length = 0;
     /* RED WHEN: a batch dated ahead - one seat's clock, or its word - stops every device anchoring until that date. */
-    expect(await anchoredOnTheWayIn(at(T + 2 * 24 * HOUR))).toMatchObject({ anchored: 1 });
+    expect(await anchoredOnTheWayIn(throughAView(at(T + 2 * 24 * HOUR)))).toMatchObject({ anchored: 1 });
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
   });
 
@@ -530,7 +532,7 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
       return { ...d, dir: { ...d.dir, seats: d.dir.seats.map((x) => (x.seat === BO.seat ? { ...x, role: 'limited' as const } : x)) } };
     };
     /* RED WHEN: a seat whose role files nothing proves and sends an anchor no device's check would ever believe. */
-    expect(await anchoredOnTheWayIn({ ...doorsOf(BO), directory: viewing as never, now: () => new Date(T + 900 * 24 * HOUR) }))
+    expect(await anchoredOnTheWayIn(throughAView({ ...doorsOf(BO), directory: viewing as never, now: () => new Date(T + 900 * 24 * HOUR) })))
       .toEqual({ waits: 'this-seat-does-not-anchor' });
     expect(log).toEqual([]);
   });
@@ -543,14 +545,14 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
       return { ...d, dir: { ...d.dir, seats: d.dir.seats.map((x) => (x.seat === ADA.seat ? { ...x, retired: {} } : x)) } };
     };
     /* RED WHEN: a retired seat still on the committee anchors - a batch every device's check stops at. */
-    expect(await anchoredOnTheWayIn({ ...at(T + 1100 * 24 * HOUR), directory: retired as never })).toEqual({ waits: 'this-seat-does-not-anchor' });
+    expect(await anchoredOnTheWayIn(throughAView({ ...at(T + 1100 * 24 * HOUR), directory: retired as never }))).toEqual({ waits: 'this-seat-does-not-anchor' });
     expect(log).toEqual([]);
   });
 
   it('A COMPANY NEVER ANCHORED IS ANCHORED ON THE WAY IN AT ONCE: IT DOES NOT WAIT A DAY', async () => {
     const d = at(T + 1200 * 24 * HOUR);
     /* The company as it stood before its first anchor: no batch, the chain's head the empty one. */
-    const never: AnchorDoors = {
+    const never: AnchorDoorsBare = {
       ...d,
       tree: {
         ...d.tree, headersAfter: async () => ({ headers: [], entries: [], leaves: [] }), fileHeader: async () => { log.push('kept'); },
@@ -564,23 +566,23 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
     };
     log.length = 0;
     /* RED WHEN: a company with no batch yet is taken as anchored within the day, so its first anchor never comes between raises. */
-    expect(await anchoredOnTheWayIn(never)).toMatchObject({ anchored: expect.any(Number) });
+    expect(await anchoredOnTheWayIn(throughAView(never))).toMatchObject({ anchored: expect.any(Number) });
     expect(log).toEqual(['kept', 'sent']);
   });
 
   it('A CHECK STOPPED AT A BATCH IS SAID ON THE WAY IN, EVEN WHEN THE LAST BATCH IS RECENT', async () => {
     /* Two batches within the hour; the service then withholds an entry of the second, so the check passes the first and stops. */
     await enter(ADA, 'emp_on_the_way_in_s1');
-    await anchoredOnTheWayIn(at(T + 1300 * 24 * HOUR));
+    await anchoredOnTheWayIn(throughAView(at(T + 1300 * 24 * HOUR)));
     await enter(ADA, 'emp_on_the_way_in_s2');
-    await anchorTheRecordsHere(at(T + 1300 * 24 * HOUR + 60_000));
+    await anchorTheRecordsHere(throughAView(at(T + 1300 * 24 * HOUR + 60_000)));
     const d = at(T + 1300 * 24 * HOUR + HOUR);
     const last = headers().at(-1)!;
     /* The service withholds one entry of the last batch. */
-    const withheld: AnchorDoors = { ...d, tree: leavingOutOf(d.tree, (e) => entryIdOf(e) === last.changes[0]!.leaf.entryId) };
+    const withheld: AnchorDoorsBare = { ...d, tree: leavingOutOf(d.tree, (e) => entryIdOf(e) === last.changes[0]!.leaf.entryId) };
     log.length = 0;
     /* RED WHEN: a stopped check is answered as anchored within the day - the device says nothing of records it cannot believe. */
-    expect(await anchoredOnTheWayIn(withheld)).toMatchObject({ notAnchored: expect.stringMatching(/the service did not give/u) });
+    expect(await anchoredOnTheWayIn(throughAView(withheld))).toMatchObject({ notAnchored: expect.stringMatching(/the service did not give/u) });
     expect(log).toEqual([]);
   });
 
@@ -588,12 +590,12 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
     await enter(ADA, 'emp_on_the_way_in_x1');
     sendFails = 'the node did not answer';
     /* RED WHEN: an anchor failing on the way in throws, so the company is not entered. */
-    expect(await anchoredOnTheWayIn(at(T + 1000 * 24 * HOUR))).toEqual({
+    expect(await anchoredOnTheWayIn(throughAView(at(T + 1000 * 24 * HOUR)))).toEqual({
       notAnchored: 'the company\'s records were not anchored: the anchor was not sent (the node did not answer). Reload the page and anchor again.',
     });
     sendFails = null;
     log.length = 0;
-    const both = await Promise.all([anchoredOnTheWayIn(at(T + 1001 * 24 * HOUR)), anchoredOnTheWayIn(at(T + 1001 * 24 * HOUR))]);
+    const both = await Promise.all([anchoredOnTheWayIn(throughAView(at(T + 1001 * 24 * HOUR))), anchoredOnTheWayIn(throughAView(at(T + 1001 * 24 * HOUR)))]);
     /* RED WHEN: two reads of the company at once each anchor, and the second's call is refused for a fee. */
     expect(log).toEqual(['ada kept a batch', 'ada sent', 'ada anchored']);
     expect(both[0]).toBe(both[1]);
@@ -602,10 +604,10 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
   it('THE NEWEST HEAD LANDED BY A TIME IS READ FROM THE BLOCKS AT THE WALLET\'S INDEXER: ONE WHOSE BLOCK THE INDEXER GIVES NO TIME FOR IS NEVER IT, AND ONE THIS DEVICE DID NOT CHECK IS SAID SO', async () => {
     const X = T + 3000 * 24 * HOUR;
     await enter(ADA, 'emp_landed_by_l1');
-    await anchorTheRecordsHere(at(X));
+    await anchorTheRecordsHere(throughAView(at(X)));
     const first = headers().at(-1)!.seq;
     await enter(ADA, 'emp_landed_by_l2');
-    await anchorTheRecordsHere(at(X + HOUR));
+    await anchorTheRecordsHere(throughAView(at(X + HOUR)));
     const second = headers().at(-1)!.seq;
     const held = await heldNow(at(X + HOUR));
     /* RED WHEN: the newest head landed by a time is not the one whose block was set at or before it. */
@@ -616,7 +618,7 @@ describe('THE ONE-A-DAY ANCHOR, ON THE WAY INTO THE COMPANY', { timeout: 120_000
     /* A batch anchored in a block the wallet's indexer gives no time for. */
     await enter(ADA, 'emp_landed_by_l3');
     acmeClock.now = () => 0;
-    await anchorTheRecordsHere({ ...doorsOf(ADA), now: () => new Date(X + 2 * HOUR) });
+    await anchorTheRecordsHere(throughAView({ ...doorsOf(ADA), now: () => new Date(X + 2 * HOUR) }));
     expect(headers().at(-1)!.seq).toBe(second + 1);
     /* RED WHEN: a head whose block the indexer gives no time for counts as landed, so it can be the head a removal's raise is held to. */
     expect((await heldNow(at(X + 2 * HOUR))).newestLandedBy?.(X + 5 * HOUR)).toEqual({ seq: second });
@@ -641,11 +643,11 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     leaves: leavesOfTheContract,
     anchored: anchoredOver(apiAs('eve'), OTHER, otherChain.read),
   }, asked);
-  const evesDoors = (over: Partial<AnchorDoors['service']> = {}): AnchorDoors => ({
+  const evesDoors = (over: Partial<AnchorDoors['service']> = {}): AnchorDoorsBare => ({
     accountId: OTHER,
     material: { signingSecret: EVE.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-    manifest: manifestServiceFor(apiAs('eve')),
-    tree: treeServiceFor(apiAs('eve')),
+    manifest: manifestServiceOf(serviceSource(apiAs('eve'), OTHER)),
+    tree: treeServiceOf(serviceSource(apiAs('eve'), OTHER)),
     directory: () => otherDirectory(),
     directoryFilings: async () => store.directoryFilingsOf(OTHER),
     onChain: otherChain.onChain,
@@ -656,7 +658,7 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
         otherChain.move(previous, batch, held, tag);
       },
       sealedProposals: async (company) => store.listProposals(company),
-      foundingRecords: anchorServiceFor(apiAs('eve')).foundingRecords,
+      foundingRecords: foundingRecordsOver(apiAs('eve'), OTHER),
       ...over,
     },
     builder,
@@ -667,18 +669,18 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     const entryOf = (kind: 'state' | 'roster', id: string, version: number) => signManifestEntry(OTHER, {
       store: 'company', kind, id, version, digest: (kind === 'state' ? 'a1' : 'a2').repeat(32),
     } as ManifestEntryBody, EVE.signingSecret as Hex);
-    const serving = (entries: ReturnType<typeof entryOf>[]): AnchorDoors => ({
+    const serving = (entries: ReturnType<typeof entryOf>[]): AnchorDoorsBare => ({
       ...evesDoors({ foundingRecords: async () => ({ state: null, roster: null }) }),
       tree: {
-        ...treeServiceFor(apiAs('eve')),
-        pending: async (c, root) => { const m = await treeServiceFor(apiAs('eve')).pending(c, root); return m === null ? null : [...m, ...entries]; },
+        ...treeServiceOf(serviceSource(apiAs('eve'), OTHER)),
+        pending: async (c, root) => { const m = await treeServiceOf(serviceSource(apiAs('eve'), OTHER)).pending(c, root); return m === null ? null : [...m, ...entries]; },
       },
     });
     /* RED WHEN: a first anchor is made with a roster entry of a version past the first - the company could never be founded from it. */
-    await expect(anchorTheRecordsHere(serving([entryOf('state', '0', 1), entryOf('roster', 'signers', 2)])))
+    await expect(anchorTheRecordsHere(throughAView(serving([entryOf('state', '0', 1), entryOf('roster', 'signers', 2)]))))
       .rejects.toThrow(/first anchor holds the records it was founded with/u);
     /* RED WHEN: a first anchor is made with a state entry of a version past the first. */
-    await expect(anchorTheRecordsHere(serving([entryOf('state', '0', 2), entryOf('roster', 'signers', 1)])))
+    await expect(anchorTheRecordsHere(throughAView(serving([entryOf('state', '0', 2), entryOf('roster', 'signers', 1)]))))
       .rejects.toThrow(/first anchor holds the records it was founded with/u);
     expect(otherChain.landed).toEqual([]);
   });
@@ -700,18 +702,18 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     const entryBy = (kind: 'state' | 'roster', id: string, secret: string) => signManifestEntry(OTHER, {
       store: 'company', kind, id, version: 1, digest: (kind === 'state' ? 'a1' : 'a2').repeat(32),
     } as ManifestEntryBody, secret as Hex);
-    const serving = (secret: string): AnchorDoors => ({
+    const serving = (secret: string): AnchorDoorsBare => ({
       ...evesDoors({ foundingRecords: async () => ({ state: null, roster: null }) }),
       directory: withFay,
       tree: {
-        ...treeServiceFor(apiAs('eve')),
-        pending: async (c, root) => { const m = await treeServiceFor(apiAs('eve')).pending(c, root); return m === null ? null : [...m, entryBy('state', '0', secret), entryBy('roster', 'signers', secret)]; },
+        ...treeServiceOf(serviceSource(apiAs('eve'), OTHER)),
+        pending: async (c, root) => { const m = await treeServiceOf(serviceSource(apiAs('eve'), OTHER)).pending(c, root); return m === null ? null : [...m, entryBy('state', '0', secret), entryBy('roster', 'signers', secret)]; },
       },
     });
     /* RED WHEN: a first anchor is made from a first state and roster, both of version 1, that another seat of the directory entered - the founding signer's device did not enter them. */
-    await expect(anchorTheRecordsHere(serving(fay.signingSecret))).rejects.toThrow(/first anchor holds the records it was founded with/u);
+    await expect(anchorTheRecordsHere(throughAView(serving(fay.signingSecret)))).rejects.toThrow(/first anchor holds the records it was founded with/u);
     /* RED WHEN: the refusal sends the founding signer to open the company, which anchors nothing now, instead of to their next action in their wallet. */
-    await expect(anchorTheRecordsHere(serving(fay.signingSecret))).rejects.toThrow(/founding signer's next action in their wallet anchors them/u);
+    await expect(anchorTheRecordsHere(throughAView(serving(fay.signingSecret)))).rejects.toThrow(/founding signer's next action in their wallet anchors them/u);
     expect(otherChain.landed).toEqual([]);
   });
 
@@ -719,7 +721,7 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     const pol = await aRecordFiledBy(EVE, 'pol_eves_first', 'policy', OTHER);
     await EVE.entered.enter([pol]);
     /* RED WHEN: a first anchor is made without the company's first state and roster - its founding seat could then never be said. */
-    await expect(anchorTheRecordsHere(evesDoors())).rejects.toThrow(/first anchor holds the records it was founded with/u);
+    await expect(anchorTheRecordsHere(throughAView(evesDoors()))).rejects.toThrow(/first anchor holds the records it was founded with/u);
     expect(otherChain.landed).toEqual([]);
     expect(headers(OTHER)).toEqual([]);
     /* Eve's founding device kept her first roster and first state with the company. */
@@ -729,7 +731,7 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     await peopleRecords.put(state);
     /* The service serves a first roster another key signed in place of Eve's, and no first state. */
     const forgedRoster = signCompanyFiling(sealRoster(OTHER, { name: 'Other', signers: [] }, 1, 0, KEY), newSigningKeypair().secret);
-    await expect(anchorTheRecordsHere(evesDoors({ foundingRecords: async () => ({ state: null, roster: forgedRoster }) })))
+    await expect(anchorTheRecordsHere(throughAView(evesDoors({ foundingRecords: async () => ({ state: null, roster: forgedRoster }) }))))
       .rejects.toThrow(/first anchor holds the records it was founded with/u);
     /* RED WHEN: a device enters a first roster its own seat did not sign as the one it founded the company with - anchored in batch 0, the company could never be founded. */
     expect(store.manifestOf(OTHER).entries.filter((e) => e.kind === 'roster')).toEqual([]);
@@ -737,11 +739,11 @@ describe('A COMPANY\'S FIRST ANCHOR HOLDS THE RECORDS IT WAS FOUNDED WITH, ENTER
     /* The service serves a first state another key signed in place of Eve's. */
     const forged = signedFoundingState(OTHER, sealState({ entries: [] }, newStateBlinding(), KEY, 0), newSigningKeypair().secret);
     /* RED WHEN: a device enters a first state its own seat did not sign as the one it founded the company with. */
-    await expect(anchorTheRecordsHere(evesDoors({ foundingRecords: async () => ({ state: forged, roster }) })))
+    await expect(anchorTheRecordsHere(throughAView(evesDoors({ foundingRecords: async () => ({ state: forged, roster }) }))))
       .rejects.toThrow(/first anchor holds the records it was founded with/u);
     expect(otherChain.landed).toEqual([]);
     /* RED WHEN: the founding device does not enter its own first state and roster before the company's first anchor. */
-    await expect(anchorTheRecordsHere(evesDoors())).resolves.toMatchObject({ anchored: 4 });
+    await expect(anchorTheRecordsHere(throughAView(evesDoors()))).resolves.toMatchObject({ anchored: 4 });
     const first = headers(OTHER)[0]!;
     const named = store.manifestOf(OTHER).entries.filter((e) => first.changes.some((c) => c.leaf.entryId === entryIdOf(e)))
       .map((e) => `${e.store}:${e.kind}:${e.id}@${e.version}`).sort();

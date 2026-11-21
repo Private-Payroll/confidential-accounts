@@ -8,7 +8,7 @@ import {
   CommitteeSignError, committeeChangeShown, committeeJoinFor, committeeSignaturesFor, contractsToRead,
 } from 'midnight-identity/profile/committee-sign';
 import type { ChainRead, CommitteeChangeShown, CommitteeSigningLedger } from 'midnight-identity/profile/committee-sign';
-import { contractsOnChain, fromIndexerAt } from '../chain/company-label-on-chain.js';
+import { contractsOnChain, fromIndexerAt } from '../chain/view-doors.js';
 import { INDEXER_HTTP_URL } from '../config.js';
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
@@ -82,6 +82,101 @@ export function ApproveCommittee(props: ScreenProps<CommitteeAsk>): ReactNode {
   return <ApproveCommitteeChange {...props} request={request} />;
 }
 
+const isMine = (k: CommitteeKeyOnTheWire, shown: CommitteeChangeShown): boolean => k.value === shown.mine.value;
+const keyList = (keys: readonly CommitteeKeyOnTheWire[], shown: CommitteeChangeShown, attr: string) => (
+  <ul className="m-0 list-disc ps-6" {...{ [attr]: true }}>
+    {keys.map((k) => (
+      <li key={k.value} className="font-mono text-sm">{keyText(k)}{isMine(k, shown) ? ' (your key)' : ''}</li>
+    ))}
+  </ul>
+);
+
+function CommitteeSent({ request, at, shown }: {
+  readonly request: CommitteeRequest;
+  readonly at: number;
+  readonly shown: CommitteeChangeShown;
+}): ReactNode {
+  return (
+    <>
+      <h1 data-signed-heading>{`You signed a change to who holds this company's rules, for ${request.requester.origin}`}</h1>
+      <p className="lede" data-signed>
+        {shown.press === 'join'
+          ? `On ${new Date(at).toLocaleString()} this wallet signed the change with your key, to show you hold it, and handed the signature back. `
+          : `On ${new Date(at).toLocaleString()} this wallet signed the change on ${shown.contracts.length} contract${shown.contracts.length === 1 ? '' : 's'} and handed the signatures back. `}
+        The change takes effect on a contract only once the chain shows that contract held by the new committee. A change
+        can reach the chain and still leave the committee as it was. Until the chain shows it, nothing has changed.
+      </p>
+      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+    </>
+  );
+}
+
+function CommitteeAfterSection({ change }: { readonly change: CommitteeChangeShown }): ReactNode {
+  return (
+    <Section
+      list={false} box={false} aria-label="The committee after this change"
+      title="The committee after this change"
+      description="Worked out by this wallet from what the page sent and what the chain holds. It replaces the whole list of keys on every contract below."
+    >
+      <p className="m-0 text-foreground text-lg" data-new-threshold>
+        {`${change.to.committee.length} key${change.to.committee.length === 1 ? '' : 's'}, and ${change.to.threshold} of them must sign any change to the company's rules.`}
+      </p>
+      {keyList(change.to.committee, change, 'data-new-committee')}
+      <p className="m-0 text-sm text-muted-foreground" data-list-is-what-holds>
+        Who holds each contract now was read from the chain by this wallet, not taken from the page. The list above
+        is what every contract will hold. Anyone not on it loses their place.
+      </p>
+      {change.press === 'hand-over' && (
+        <p className="m-0 text-sm" data-hand-over>
+          This brings each contract below to the committee that holds the company&rsquo;s account on the chain. No key
+          joins the company this way.
+        </p>
+      )}
+      {change.press === 'super-admins' && (
+        <p className="m-0 text-sm" data-joins-signed>
+          Every key this change puts on a contract below has signed the change with its own key, and this wallet
+          checked each of those signatures.
+        </p>
+      )}
+      {change.press === 'join' && (
+        <p className="m-0 text-sm" data-joining>
+          Your key is one this change puts on the company&rsquo;s contracts. Signing says you hold it. Nothing changes
+          until enough of the super admins who hold each contract sign it too.
+        </p>
+      )}
+      {!change.staysOn && (
+        <StatusAlert tone="warning" role={null} title="Your own key leaves">
+          <p className="m-0" data-you-leave>
+            Your key is not on the new committee. Once this change reaches the chain, you can no longer sign any
+            change to this company&rsquo;s rules.
+          </p>
+        </StatusAlert>
+      )}
+    </Section>
+  );
+}
+
+function CommitteeContractSection({ c, change }: {
+  readonly c: CommitteeChangeShown['contracts'][number];
+  readonly change: CommitteeChangeShown;
+}): ReactNode {
+  return (
+    <Section
+      list={false} box={false}
+      aria-label={c.contract === 'account' ? 'The company account' : 'A vault'}
+      title={c.contract === 'account' ? 'The company account' : 'A vault'}
+      description={`The chain shows ${c.keysNow} key${c.keysNow === 1 ? '' : 's'} hold${c.keysNow === 1 ? 's' : ''} this contract now and ${c.thresholdNow} of them must sign. After this change, only the keys listed above hold it, and ${c.thresholdAfter} of them must sign.`}
+    >
+      <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-contract={c.contract}>{c.address}</p>
+      <p className="m-0 text-sm" data-threshold-change>{`Threshold: ${c.thresholdNow} before, ${c.thresholdAfter} after.`}</p>
+      <p className="m-0 text-sm text-muted-foreground">Joining: on the new list and not on this contract on the chain</p>
+      {c.joins.length === 0 ? <p className="m-0 text-sm" data-joins-none>Nobody.</p> : keyList(c.joins, change, 'data-joins')}
+      <p className="m-0 text-sm text-muted-foreground">Leaving: on this contract on the chain and not on the new list. They lose their place.</p>
+      {c.leaves.length === 0 ? <p className="m-0 text-sm" data-leaves-none>Nobody.</p> : keyList(c.leaves, change, 'data-leaves')}
+    </Section>
+  );
+}
+
 function ApproveCommitteeChange({
   request, identity, channel, consent, whoIsAsking, onDecline,
   ledger = liveCommitteeLedger, now = Date.now, readLabel = liveLabelReader, readChain = liveChainReader,
@@ -119,32 +214,9 @@ function ApproveCommitteeChange({
     }
   }, [stage, channel, identity, request, now, onChain]);
 
-  const isMine = (k: CommitteeKeyOnTheWire, shown: CommitteeChangeShown): boolean => k.value === shown.mine.value;
-  const keyList = (keys: readonly CommitteeKeyOnTheWire[], shown: CommitteeChangeShown, attr: string) => (
-    <ul className="m-0 list-disc ps-6" {...{ [attr]: true }}>
-      {keys.map((k) => (
-        <li key={k.value} className="font-mono text-sm">{keyText(k)}{isMine(k, shown) ? ' (your key)' : ''}</li>
-      ))}
-    </ul>
-  );
-
   const change = useMemo(() => (stage.of === 'ready' || stage.of === 'sent' ? stage.shown : null), [stage]);
 
-  if (stage.of === 'sent') {
-    return (
-      <>
-        <h1 data-signed-heading>{`You signed a change to who holds this company's rules, for ${request.requester.origin}`}</h1>
-        <p className="lede" data-signed>
-          {stage.shown.press === 'join'
-            ? `On ${new Date(stage.at).toLocaleString()} this wallet signed the change with your key, to show you hold it, and handed the signature back. `
-            : `On ${new Date(stage.at).toLocaleString()} this wallet signed the change on ${stage.shown.contracts.length} contract${stage.shown.contracts.length === 1 ? '' : 's'} and handed the signatures back. `}
-          The change takes effect on a contract only once the chain shows that contract held by the new committee. A change
-          can reach the chain and still leave the committee as it was. Until the chain shows it, nothing has changed.
-        </p>
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
-      </>
-    );
-  }
+  if (stage.of === 'sent') return <CommitteeSent request={request} at={stage.at} shown={stage.shown} />;
 
   return (
     <>
@@ -156,62 +228,10 @@ function ApproveCommitteeChange({
         </StatusAlert>
       )}
       {change !== null && (
-        <Section
-          list={false} box={false} aria-label="The committee after this change"
-          title="The committee after this change"
-          description="Worked out by this wallet from what the page sent and what the chain holds. It replaces the whole list of keys on every contract below."
-        >
-          <p className="m-0 text-foreground text-lg" data-new-threshold>
-            {`${change.to.committee.length} key${change.to.committee.length === 1 ? '' : 's'}, and ${change.to.threshold} of them must sign any change to the company's rules.`}
-          </p>
-          {keyList(change.to.committee, change, 'data-new-committee')}
-          <p className="m-0 text-sm text-muted-foreground" data-list-is-what-holds>
-            Who holds each contract now was read from the chain by this wallet, not taken from the page. The list above
-            is what every contract will hold. Anyone not on it loses their place.
-          </p>
-          {change.press === 'hand-over' && (
-            <p className="m-0 text-sm" data-hand-over>
-              This brings each contract below to the committee that holds the company&rsquo;s account on the chain. No key
-              joins the company this way.
-            </p>
-          )}
-          {change.press === 'super-admins' && (
-            <p className="m-0 text-sm" data-joins-signed>
-              Every key this change puts on a contract below has signed the change with its own key, and this wallet
-              checked each of those signatures.
-            </p>
-          )}
-          {change.press === 'join' && (
-            <p className="m-0 text-sm" data-joining>
-              Your key is one this change puts on the company&rsquo;s contracts. Signing says you hold it. Nothing changes
-              until enough of the super admins who hold each contract sign it too.
-            </p>
-          )}
-          {!change.staysOn && (
-            <StatusAlert tone="warning" role={null} title="Your own key leaves">
-              <p className="m-0" data-you-leave>
-                Your key is not on the new committee. Once this change reaches the chain, you can no longer sign any
-                change to this company&rsquo;s rules.
-              </p>
-            </StatusAlert>
-          )}
-        </Section>
+        <CommitteeAfterSection change={change} />
       )}
       {change !== null && change.contracts.map((c) => (
-        <Section
-          list={false} box={false}
-          key={c.address}
-          aria-label={c.contract === 'account' ? 'The company account' : 'A vault'}
-          title={c.contract === 'account' ? 'The company account' : 'A vault'}
-          description={`The chain shows ${c.keysNow} key${c.keysNow === 1 ? '' : 's'} hold${c.keysNow === 1 ? 's' : ''} this contract now and ${c.thresholdNow} of them must sign. After this change, only the keys listed above hold it, and ${c.thresholdAfter} of them must sign.`}
-        >
-          <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-contract={c.contract}>{c.address}</p>
-          <p className="m-0 text-sm" data-threshold-change>{`Threshold: ${c.thresholdNow} before, ${c.thresholdAfter} after.`}</p>
-          <p className="m-0 text-sm text-muted-foreground">Joining: on the new list and not on this contract on the chain</p>
-          {c.joins.length === 0 ? <p className="m-0 text-sm" data-joins-none>Nobody.</p> : keyList(c.joins, change, 'data-joins')}
-          <p className="m-0 text-sm text-muted-foreground">Leaving: on this contract on the chain and not on the new list. They lose their place.</p>
-          {c.leaves.length === 0 ? <p className="m-0 text-sm" data-leaves-none>Nobody.</p> : keyList(c.leaves, change, 'data-leaves')}
-        </Section>
+        <CommitteeContractSection key={c.address} c={c} change={change} />
       ))}
       <Section list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it" description="This wallet signs with the key it holds for this company and no other.">
         <CompanyOnChain

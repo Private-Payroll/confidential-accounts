@@ -33,6 +33,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { publicHoldingsOf } from '../../../src/midnight/public-balance.js';
 import { boundedRead } from './read-bound.js';
+import { inParts } from './company-view-batch.js';
 import { decodedState } from '../../../src/midnight/decoded-state.js';
 import type { VaultOnChainOnTheWire } from './vault-worker-client.js';
 import {
@@ -41,10 +42,16 @@ import {
 } from './one-block-read.js';
 export { accountAtOneBlockOver, accountCallChainOf, atOneBlockOver, payoutChainOf };
 export type { AccountAtOneBlock, BlockReader, VaultAtOneBlock };
+export { ON_CHAIN, moneyOnChainOf, type MoneyOnChain } from './money-on-chain.js';
+
+/** How a refusal about this vault's circuits or its account's begins: it says plainly that no money goes in or out. */
+const NO_MONEY = 'no money goes in or out of this vault';
 
 /** Where the chain is read from: one contract's state now, a vault's transactions, and each transaction's events. */
 export interface VaultChainSource {
   contractState(address: string): Promise<{ serialize(): Uint8Array } | null | undefined>;
+  /** The states of many contracts read in one request, in the order asked; null where it holds none. Absent, each is read alone. */
+  contractStates?(addresses: readonly string[]): Promise<ReadonlyArray<{ serialize(): Uint8Array } | null>>;
   /** The state the contract's deploy left at `address`, as the chain recorded it; null when it holds no deploy there. */
   deployState(address: string): Promise<unknown>;
   readonly transactions: VaultTransactions;
@@ -115,6 +122,7 @@ export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource 
   return {
     /* Decoded here with the contract runtime, so a refusal can read the state's authority and circuits. */
     contractState: async (address) => (await import('../../../src/midnight/contract-state-at.js')).contractStateAt(await reader, address),
+    contractStates: (addresses) => contractStatesAt(indexer.indexerUri, addresses),
     deployState: async (address) => {
       const read = await (await reader).queryDeployContractState(address);
       if (read === null) return null;
@@ -160,24 +168,42 @@ const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString
  * for.
  */
 export async function readVaultOnChain(
-  d: {
-    readonly vault: {
-      ledger(data: unknown): unknown; pureCircuits: { copiesWrittenKey(): Uint8Array };
-      readonly expectedVk?: Readonly<Record<string, string>>;
-    };
-    readonly accountExpectedVk?: Readonly<Record<string, string>>;
-    readonly runtimeState: { deserialize(bytes: Uint8Array): unknown };
-  },
+  d: VaultReadDeps,
   source: VaultChainSource,
   vault: string,
   accountAddress?: string,
 ): Promise<VaultOnChainOnTheWire> {
   const served = await source.contractState(vault);
   if (served === null || served === undefined) return { onChain: false };
+  const accountCircuits = accountAddress === undefined ? undefined : accountCircuitsFrom(d, await source.contractState(accountAddress));
+  return vaultReadFrom(d, source, vault, served, accountCircuits);
+}
+
+/** What a vault is read with: its compiled vault, the account's compiled digests, and the runtime that reads a state. */
+interface VaultReadDeps {
+  readonly vault: {
+    ledger(data: unknown): unknown; pureCircuits: { copiesWrittenKey(): Uint8Array };
+    readonly expectedVk?: Readonly<Record<string, string>>;
+  };
+  readonly accountExpectedVk?: Readonly<Record<string, string>>;
+  readonly runtimeState: { deserialize(bytes: Uint8Array): unknown };
+}
+
+/** What the account's circuits were found to be, as `readVaultOnChain` hands it on; undefined when no account was asked. */
+type AccountCircuitsRead = ReturnType<typeof accountCircuitsFrom> | undefined;
+
+/**
+ * One vault's answer from the state the indexer served for it (`served`, never null here) and what was found of the
+ * account's circuits: its notes and lists off this build's ledger, its start and account, every coin ever made for it,
+ * and what it holds in public money.
+ */
+async function vaultReadFrom(
+  d: VaultReadDeps, source: Pick<VaultChainSource, 'transactions' | 'events'>, vault: string,
+  served: { serialize(): Uint8Array }, accountCircuits: AccountCircuitsRead,
+): Promise<VaultOnChainOnTheWire> {
   const bytes = served.serialize();
   const state = d.runtimeState.deserialize(bytes) as { data: unknown };
   const circuits = circuitsNotThisBuilds(state, d.vault.expectedVk, sha256, NO_MONEY, 'the vault\'s');
-  const accountCircuits = accountAddress === undefined ? undefined : await accountCircuitsOf(d, source, accountAddress);
   const ledger = d.vault.ledger(state.data) as Parameters<typeof startingLedgerFrom>[0] & {
     notes: Iterable<Uint8Array>; unshieldedTokens: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
   };
@@ -228,17 +254,11 @@ export async function readVaultOnChain(
   };
 }
 
-export { ON_CHAIN, moneyOnChainOf, type MoneyOnChain } from './money-on-chain.js';
-
-const NO_MONEY = 'no money goes in or out of this vault';
-
-/** The company account's circuits as the chain holds them now, or why they are not this app's or not there. */
-async function accountCircuitsOf(
-  d: Pick<Parameters<typeof readVaultOnChain>[0], 'accountExpectedVk' | 'runtimeState'>,
-  source: VaultChainSource,
-  account: string,
-): Promise<{ readonly why: string; readonly circuit: string | null } | null> {
-  const served = await source.contractState(account);
+/** The company account's circuits from the state the chain holds now (`served`), or why they are not this app's or not there. */
+function accountCircuitsFrom(
+  d: Pick<VaultReadDeps, 'accountExpectedVk' | 'runtimeState'>,
+  served: { serialize(): Uint8Array } | null | undefined,
+): { readonly why: string; readonly circuit: string | null } | null {
   if (served === null || served === undefined) {
     return {
       why: `${NO_MONEY}: the chain shows no company account at the address it pays out on, so whose approvals it `
@@ -298,4 +318,137 @@ export async function readCreatedBy(
 ): Promise<{ transactionHash: string; events: EventOnTheWire[] } | null> {
   const found = await transactionThatCreatedOutput(vault as never, commitment, source);
   return found === null ? null : { transactionHash: found.transactionHash, events: found.events.map(eventOnTheWire) };
+}
+
+/** A contract's state as the indexer served it, decoded with the contract runtime, or null where it holds none. */
+type ServedState = { serialize(): Uint8Array } | null;
+
+const LEFT_OUT = 'the indexer\'s answer left a contract out, so nothing of it is used.';
+
+/**
+ * How many contracts one request to the indexer names. The indexer bounds each query's complexity (its default
+ * `max_complexity` is 200): each contract asked costs 2 (its field and its state) and the block that dates them 3 (its
+ * field, protocol version and ledger parameters), so one request carries at most 98 contracts; this leaves room.
+ */
+export const STATES_AT_ONCE = 96;
+
+/** Refuses an address that is not a contract's, so no request names it: the indexer refuses a whole request for one. */
+const askable = async (address: string): Promise<void> => {
+  const utils = await import('@midnight-ntwrk/midnight-js-utils');
+  const check: (a: string) => void = utils.assertIsContractAddress;
+  try {
+    check(address);
+  } catch (e) {
+    throw new Error(`${String(address)} is not a contract's address, so no read of it was asked of the indexer.`, { cause: e });
+  }
+};
+
+/**
+ * **THE STATES OF MANY CONTRACTS, READ IN AS FEW REQUESTS TO THE INDEXER THE PERSON'S OWN WALLET NAMES AS IT TAKES.**
+ * Each request names the newest block's protocol version and ledger parameters beside every contract it asks, and each
+ * state is dated by them as the SDK's read of one contract's state alone dates it: a state the block's version cannot
+ * date, or that is not hex, and parameters of another era than their block, are refused. As in that read, each state
+ * is the newest the indexer holds when it answers, not pinned to one block: states of one request can be of blocks
+ * either side of one indexed while it answered. A contract the indexer holds no state for is null. An address that is
+ * not a contract's is refused before any request names it. An answer that leaves a contract out, carries errors, or is
+ * of another shape is a throw, never "no contract there".
+ *
+ * The states of `addresses` come in parts of `STATES_AT_ONCE`, one request each, every answer in the order asked.
+ */
+export async function contractStatesAt(
+  indexerUri: string, addresses: readonly string[], fetcher: typeof fetch = fetch,
+): Promise<ServedState[]> {
+  for (const a of addresses) await askable(a);
+  return inParts(addresses, (part) => statesInOneRequest(indexerUri, part, fetcher), STATES_AT_ONCE);
+}
+
+/** Asks for the states of `addresses` in one request: one alias for each address, in the order asked. */
+async function statesInOneRequest(indexerUri: string, addresses: readonly string[], fetcher: typeof fetch): Promise<ServedState[]> {
+  if (addresses.length === 0) return [];
+  const query = `query (${addresses.map((_, i) => `$a${i}: HexEncoded!`).join(', ')}) { block { protocolVersion ledgerParameters } `
+    + `${addresses.map((_, i) => `c${i}: contract(address: $a${i}) { state }`).join(' ')} }`;
+  const variables = Object.fromEntries(addresses.map((a, i) => [`a${i}`, a]));
+  const { response, body } = await boundedRead('The network indexer', async (signal) => {
+    const answered = await fetcher(indexerUri, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables }), signal,
+    });
+    if (!answered.ok) return { response: answered, body: null };
+    return { response: answered, body: await answered.json() as { errors?: unknown; data?: Record<string, unknown> | null } };
+  });
+  if (!response.ok || body === null) throw new Error(`the indexer answered ${response.status}.`);
+  if (body.errors !== undefined) throw new Error('the indexer refused the read.');
+  const data = body.data;
+  if (typeof data !== 'object' || data === null) throw new Error(LEFT_OUT);
+  const answers = addresses.map((_, i) => {
+    if (!Object.hasOwn(data, `c${i}`)) throw new Error(LEFT_OUT);
+    const c = data[`c${i}`] as { state?: unknown } | null;
+    if (c === null || c.state === null || c.state === undefined) return null;
+    if (typeof c.state !== 'string') throw new Error('the indexer served a contract state that is not text.');
+    return c.state;
+  });
+  if (answers.every((a) => a === null)) return answers as null[];
+  const block = data['block'] as { protocolVersion?: unknown; ledgerParameters?: unknown } | null | undefined;
+  if (block === null || block === undefined) throw new Error('the indexer served a contract state but no block to date it.');
+  await parametersOfTheBlocksEra(block);
+  return Promise.all(answers.map((hex) => (hex === null ? null : datedState(hex, block.protocolVersion))));
+}
+
+/** Refuses a block whose ledger parameters are of another era than its protocol version, as the SDK's read of one state does. */
+async function parametersOfTheBlocksEra(block: { protocolVersion?: unknown; ledgerParameters?: unknown }): Promise<void> {
+  const { protocolVersionToLedger } = await import('@midnight-ntwrk/midnight-js-protocol');
+  const { isHex, ledgerVersionOfLedgerParameters } = await import('@midnight-ntwrk/midnight-js-utils');
+  const era = protocolVersionToLedger(block.protocolVersion as number, 'read');
+  const hex = block.ledgerParameters;
+  if (typeof hex !== 'string' || !isHex(hex)) throw new Error('the indexer served no ledger parameters, in hex, with the block that dates its states.');
+  const bare = hex.replace(/^0x/u, '');
+  const raw = Uint8Array.from(bare.match(/../gu) ?? [], (b) => parseInt(b, 16));
+  if (ledgerVersionOfLedgerParameters(raw) !== era) throw new Error('the indexer served a block whose ledger parameters are of another era than its protocol version.');
+}
+
+/** One state, dated by the block's protocol version and decoded with the contract runtime, as the SDK's read of one state does. */
+async function datedState(hex: string, protocolVersion: unknown): Promise<{ serialize(): Uint8Array }> {
+  const { protocolVersionToLedger } = await import('@midnight-ntwrk/midnight-js-protocol');
+  protocolVersionToLedger(protocolVersion as number, 'read');
+  const { isHex, ledgerVersionOfContractState } = await import('@midnight-ntwrk/midnight-js-utils');
+  if (!isHex(hex)) throw new Error('the indexer served a contract state that is not hex.');
+  const bare = hex.replace(/^0x/u, '');
+  const raw = Uint8Array.from(bare.match(/../gu) ?? [], (b) => parseInt(b, 16));
+  const { SerializedContractState } = await import('@midnight-ntwrk/midnight-js-types');
+  const { ContractState } = await import('@midnight-ntwrk/compact-runtime');
+  return decodedState(SerializedContractState.fromBytes(ledgerVersionOfContractState(raw), raw), ContractState);
+}
+
+/** One vault's answer, named by the vault it is about. */
+interface VaultReadOnTheWire { readonly vault: string; readonly read: VaultOnChainOnTheWire }
+
+/** The states of `asked`, in parts of 256 when the source can read many (each read in its indexer's parts), one state at a time when it cannot. */
+const statesOf = (source: VaultChainSource, asked: readonly string[]): Promise<ReadonlyArray<{ serialize(): Uint8Array } | null | undefined>> => {
+  const together = source.contractStates;
+  return together !== undefined ? inParts(asked, (part) => together(part)) : Promise.all(asked.map((a) => source.contractState(a)));
+};
+
+/**
+ * **EVERY VAULT A STEP READS, READ TOGETHER**: the states of the vaults, and of the company's account when one is
+ * named, in one `VaultChainSource.contractStates` call for each 256 addresses; each vault's answer is then exactly
+ * the one a read of it alone gives (`vaultReadFrom`). Every coin ever made for each vault is still read from that
+ * vault's own history, all of them at once: the indexer lists a contract's transactions one address at a time.
+ *
+ * **THE VAULTS, READ.** Each vault the indexer holds no state for is `onChain: false`; with `account`, each answer
+ * carries what was found of that account's circuits, worked out once from its state read in the same request.
+ */
+export async function readVaultsOnChain(
+  d: VaultReadDeps, source: VaultChainSource, addresses: readonly string[], account?: string,
+): Promise<VaultReadOnTheWire[]> {
+  const served = await statesOf(source, account === undefined ? addresses : [...addresses, account]);
+  let circuits: { readonly found: AccountCircuitsRead } | null = null;
+  /* Worked out only when some vault is there to carry it, as a read of one vault works it out only then. */
+  const accountCircuits = (): AccountCircuitsRead => {
+    if (account === undefined) return undefined;
+    circuits ??= { found: accountCircuitsFrom(d, served[addresses.length]) };
+    return circuits.found;
+  };
+  return Promise.all(addresses.map(async (vault, i) => {
+    const state = served[i];
+    return { vault, read: state === null || state === undefined ? { onChain: false } : await vaultReadFrom(d, source, vault, state, accountCircuits()) };
+  }));
 }

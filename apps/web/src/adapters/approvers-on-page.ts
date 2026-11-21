@@ -1,14 +1,11 @@
+import type { PageView } from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { api, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
 import { approversFrom, rightsBelievedIn, seatAndThreshold, unnamedSeatsRefusal } from 'vaults-web-shared/approvers-read.js';
-import type { SealedAccount } from '../../../../src/core/types.js';
 import { isSignerRole } from '../../../../src/core/roles.js';
 import { invitedSeatRightsOf, scopeOfRole } from '../../../../src/core/seat-rights.js';
 import { refusalSaid, seatThresholdRefusal } from '../../../../src/core/vault-approvers.js';
-import { companyKeysQuietlyFor, directoryHereFor, openedQuietly } from './filing-judge.js';
-import { companyRoute } from './handover-state.js';
+import { companyKeysQuietlyFor, directoryHereFor, openedQuietly, sealedIn } from './filing-judge.js';
 import { keysOnTheWayIn } from './keyring-person.js';
-import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
 
 /*
@@ -35,19 +32,19 @@ type CountRead = Omit<Parameters<typeof approversFrom>[0], 'rights'> & { readonl
  * roster, the directory or the chain not read, or a seat the roster names no one for. Only the reads are caught; the
  * count is made outside, so a fault in it is never taken for a read that failed.
  */
-async function countReadHere(companyId: string): Promise<CountRead | null> {
+async function countReadHere(view: PageView): Promise<CountRead | null> {
   try {
-    const sealed = await api(companyRoute(companyId)) as SealedAccount;
+    const sealed = await sealedIn(view);
     const label = sealed.companyLabel as CompanyLabel | undefined;
     const address = sealed.contractAddress as AccountAddress | undefined;
-    const keys = await keysOnTheWayIn(companyId);
+    const keys = await keysOnTheWayIn(view.company);
     if (label === undefined || address === undefined || keys === null) return null;
-    const account = await openedQuietly(sealed);
+    const account = await openedQuietly(view, sealed);
     if (account === null || unnamedSeatsRefusal(account) !== null) return null;
-    const viewingKey = await companyKeysQuietlyFor(companyId, sealed, { signingPublicKey: keys.signingPublicKey });
-    const [{ holders }, here, wide] = await Promise.all([
-      holdersFromTheWallet(ACCOUNT_ORIGIN, { company: label, account: address }),
-      directoryHereFor(companyId, label, address, viewingKey, async () => account)(),
+    const viewingKey = await companyKeysQuietlyFor(view, sealed, { signingPublicKey: keys.signingPublicKey });
+    const [holders, here, wide] = await Promise.all([
+      view.holders(),
+      directoryHereFor(view, label, address, viewingKey, async () => account)(),
       theVaultBuilder().then((builder) => builder.companyWide()),
     ]);
     return { account, held: holders, companyWide: wide, believed: here.dir.seats };
@@ -63,10 +60,10 @@ async function countReadHere(companyId: string): Promise<CountRead | null> {
  * holds, which the wallet refuses on its own: the page then refuses nothing and the wallet, which reads it all itself,
  * stays the final check.
  */
-export async function seatThresholdRefusedOnThePage(companyId: string, asked: SeatAsked): Promise<string | null> {
+export async function seatThresholdRefusedOnThePage(view: PageView, asked: SeatAsked): Promise<string | null> {
   const role = asked.role;
   if (!isSignerRole(role)) return null;
-  const read = await countReadHere(companyId);
+  const read = await countReadHere(view);
   if (read === null) return null;
   const rights = invitedSeatRightsOf({ role }, scopeOfRole(role));
   const { believed, ...from } = read;

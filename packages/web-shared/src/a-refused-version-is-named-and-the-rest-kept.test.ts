@@ -7,7 +7,10 @@
 import { describe, expect, it } from 'vitest';
 import { newSigningKeypair, newWrappingKeypair } from '../../../src/core/crypto.js';
 import { sealPool } from '../../../src/midnight/vault-pool.js';
-import { FilingNotBelieved, HttpSealedPoolStore, type FreshJudge, type WireSend } from './http-sealed-pool-store.js';
+import { FilingNotBelieved, HttpSealedPoolStore, type FreshJudge } from './http-sealed-pool-store.js';
+import type { InvitationSend as WireSend } from './invitation-on-device.js';
+import { storeReachOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memory.js';
 
 const VAULT = 'ab'.repeat(32);
 const SIGNING = newSigningKeypair();
@@ -25,15 +28,14 @@ const threeVersionsFiled = async () => {
     if (path.endsWith('/versions')) return { status: 200, body: { record: 'pool', versions: filed } };
     return { status: 200, body: { record: 'pool', filed: filed.at(-1) ?? null } };
   };
-  const entered = { enter: async () => {} } as never;
   const believeAll: FreshJudge = async () => Object.assign(() => null, {});
-  const filer = new HttpSealedPoolStore('pool', send, SIGNING.secret, believeAll, entered);
+  const filer = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_refused'), SIGNING.secret, believeAll);
   for (const version of [1, 2, 3]) {
     await filer.put(VAULT, sealPool(VAULT, { notes: [] } as never, [{ id: 'aa'.repeat(32), wrappingPublicKey: WRAPPING.publicKey }], version, 'pool'));
   }
   /* A store whose company's records refuse the versions named, each with its reason. */
-  const refusing = (...versions: number[]) => new HttpSealedPoolStore('pool', send, null, async () => Object.assign(
-    (_filer: unknown, _kind: unknown, _key: unknown, read: { version?: number }) => (versions.includes(read.version ?? 0) ? 'its filer was not seated' : null), {}), entered);
+  const refusing = (...versions: number[]) => new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_refused'), null, async () => Object.assign(
+    (_filer: unknown, _kind: unknown, _key: unknown, read: { version?: number }) => (versions.includes(read.version ?? 0) ? 'its filer was not seated' : null), {}));
   return { refusing };
 };
 

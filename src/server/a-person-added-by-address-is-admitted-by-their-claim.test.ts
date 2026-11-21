@@ -23,12 +23,13 @@ import { payeeFor } from '../testing/payees.js';
 import { payeeOf } from '../midnight/payee-address.js';
 import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
-import { inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice, type PersonHere } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, fromAda, KEY, LABEL, newestPerson, ORIGIN, sendAs,
-} from './a-company-of-two-seats.test-support.js';
+  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, fromAda, KEY, LABEL, newestPerson, ORIGIN, sendAs } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver } from '../testing/writes-over-a-send.js';
 /** The day a payee leaves when a test marks them a leaver: their first day, with no month raised yet to leave out. */
 const LEFT = { leavingDate: '2026-10-01', pastDraft: async (): Promise<string[]> => [] };
 
@@ -36,7 +37,7 @@ aCompanyOfTwoSeats();
 
 const NETWORK = theNetwork();
 const device = (over: Partial<PeopleDevice> = {}): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', send: fromAda,
+  company: ACME as InvitingCompany, signingSecret: ADA.signingSecret, signedInAs: 'ada', view: listsOver(fromAda, ACME.id), writes: writesOver(fromAda),
   directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal, entered: ADA.entered, ...over,
 });
 const walletOf = (n: number) => identityFromSecret(new Uint8Array(32).fill(n));
@@ -62,7 +63,7 @@ const forOf = (person: string, address: string): AddressClaimFor => ({ company: 
 
 /** Somebody added by an unshielded address, claimed by the wallet `n` with its own key. */
 const addedAndClaimed = async (n: number, typed: string, claimer = n, over: { code?: (person: string) => JoinCode; claim?: (person: string) => AddressClaim } = {}) => {
-  const made = await inviteHere(ACME, ADA, 'employee', pay(n, typed), ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', pay(n, typed), ORIGIN, writesOver(fromAda));
   const person = made.person!;
   const code = over.code?.(person) ?? signJoinCode(walletOf(claimer), LABEL, person, { kind: 'payee', address: typed, payslipKey: PAYSLIP });
   const claim = over.claim?.(person) ?? signUnshieldedClaim(walletOf(claimer), 0, forOf(person, typed));
@@ -73,7 +74,7 @@ const addedAndClaimed = async (n: number, typed: string, claimer = n, over: { co
 describe('A PERSON ADDED BY AN UNSHIELDED ADDRESS IS ADMITTED BY THEIR WALLET\'S CLAIM OF IT, WITH NO FINGERPRINT', () => {
   it('the address typed is held in the record every device opens, from its first version', async () => {
     const typed = unshieldedOf(61);
-    const made = await inviteHere(ACME, ADA, 'employee', pay(61, typed), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', pay(61, typed), ORIGIN, writesOver(fromAda));
     /* RED WHEN: the address the inviter typed is held only in the offer the invitee opens. */
     expect(openPerson((await newestPerson(made.person!))!, KEY).invitedAddress).toBe(typed);
   });
@@ -120,8 +121,8 @@ describe('A PERSON ADDED BY AN UNSHIELDED ADDRESS IS ADMITTED BY THEIR WALLET\'S
 
   it('RED WHEN: somebody added by address is admitted on a code handed over as on the link path, with a read-out fingerprint', async () => {
     const typed = unshieldedOf(68);
-    const made = await inviteHere(ACME, ADA, 'employee', pay(68, typed), ORIGIN, fromAda);
-    const { acceptAsPayeeHere, payeeHandoverOf } = await import('vaults-web-shared/invitation-on-device.js');
+    const made = await inviteHere(ACME, ADA, 'employee', pay(68, typed), ORIGIN, writesOver(fromAda));
+    const { acceptAsPayeeHere, payeeHandoverOf } = await import('vaults-web-shared/invitation-taken-on-device.js');
     const code = signJoinCode(walletOf(68), LABEL, made.person!, { kind: 'payee', address: typed, payslipKey: PAYSLIP });
     const opened = await openInvitationHere(made.link, sendAs(null));
     /* The page refuses to hand over a code with a fingerprint for an invitation made by address. */
@@ -137,9 +138,9 @@ describe('A PERSON ADDED BY AN UNSHIELDED ADDRESS IS ADMITTED BY THEIR WALLET\'S
   });
 
   it('the page asks the wallet to claim exactly what the offer names, and nothing for an invitation not made by address', async () => {
-    const { claimIntentOf } = await import('vaults-web-shared/invitation-on-device.js');
+    const { claimIntentOf } = await import('vaults-web-shared/invitation-taken-on-device.js');
     const typed = unshieldedOf(69);
-    const made = await inviteHere(ACME, ADA, 'employee', pay(69, typed), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', pay(69, typed), ORIGIN, writesOver(fromAda));
     const opened = await openInvitationHere(made.link, sendAs(null));
     const token = tokenOfLink(made.link)!;
     /* RED WHEN: the page hands the wallet the inbox key or the record to claim, instead of the token it opens the offer with. */
@@ -147,10 +148,10 @@ describe('A PERSON ADDED BY AN UNSHIELDED ADDRESS IS ADMITTED BY THEIR WALLET\'S
       name: 'claim-by-address', company: LABEL, account: String(opened.signed.offer.account), record: opened.signed.offer.company,
       token, address: typed,
     });
-    const byLink = await inviteHere(ACME, ADA, 'employee', { ...pay(70, typed), address: undefined } as never, ORIGIN, fromAda);
+    const byLink = await inviteHere(ACME, ADA, 'employee', { ...pay(70, typed), address: undefined } as never, ORIGIN, writesOver(fromAda));
     await expect((async () => claimIntentOf(await openInvitationHere(byLink.link, sendAs(null))))()).rejects.toThrow(/not made by an address/u);
     /* RED WHEN: the page asks a wallet to claim a shielded address, which no device can check a claim of. */
-    const byShielded = await inviteHere(ACME, ADA, 'employee', pay(79, payeeFor('79'.repeat(32), NETWORK).bech32, TEST_NETWORK_COLOUR), ORIGIN, fromAda);
+    const byShielded = await inviteHere(ACME, ADA, 'employee', pay(79, payeeFor('79'.repeat(32), NETWORK).bech32, TEST_NETWORK_COLOUR), ORIGIN, writesOver(fromAda));
     await expect((async () => claimIntentOf(await openInvitationHere(byShielded.link, sendAs(null))))()).rejects.toThrow(/made by a private address/u);
   });
 
@@ -229,11 +230,11 @@ describe('A PERSON ADDED BY A SHIELDED ADDRESS IS ADMITTED ON THE FINGERPRINT TH
   const shieldedOf = (n: number): string => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
   const addedByShielded = async (n: number) => {
     const typed = shieldedOf(n);
-    const made = await inviteHere(ACME, ADA, 'employee', pay(n, typed, TEST_NETWORK_COLOUR), ORIGIN, fromAda);
+    const made = await inviteHere(ACME, ADA, 'employee', pay(n, typed, TEST_NETWORK_COLOUR), ORIGIN, writesOver(fromAda));
     return { typed, made, person: made.person! };
   };
   const accepted = async (n: number, typed: string, link: string, person: string) => {
-    const { acceptAsPayeeHere } = await import('vaults-web-shared/invitation-on-device.js');
+    const { acceptAsPayeeHere } = await import('vaults-web-shared/invitation-taken-on-device.js');
     const code = signJoinCode(walletOf(n), LABEL, person, { kind: 'payee', address: typed, payslipKey: PAYSLIP });
     const { fingerprint } = await acceptAsPayeeHere(await openInvitationHere(link, sendAs(null)), code, sendAs(`usr_${n}`));
     return { code, fingerprint };
@@ -269,7 +270,7 @@ describe('A PERSON ADDED BY A SHIELDED ADDRESS IS ADMITTED ON THE FINGERPRINT TH
   it('RED WHEN: a person added by a shielded address hands over a code for another address and is admitted at it', async () => {
     const { typed, made, person } = await addedByShielded(84);
     const own = shieldedOf(85);
-    const { acceptAsPayeeHere, payeeHandoverOf } = await import('vaults-web-shared/invitation-on-device.js');
+    const { acceptAsPayeeHere, payeeHandoverOf } = await import('vaults-web-shared/invitation-taken-on-device.js');
     const code = signJoinCode(walletOf(84), LABEL, person, { kind: 'payee', address: own, payslipKey: PAYSLIP });
     const opened = await openInvitationHere(made.link, sendAs(null));
     await expect(acceptAsPayeeHere(opened, code, sendAs('usr_84'))).rejects.toThrow(/the code names another address/u);
@@ -304,10 +305,10 @@ describe('A PERSON ADDED BY A SHIELDED ADDRESS IS ADMITTED ON THE FINGERPRINT TH
     expect((await fromAda(`/api/people/${person}/status`, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(rec) }) })).status).toBe(201);
     await ADA.entered.enter([companyRecordEntry(rec)]);
     const other = shieldedOf(88);
-    const { acceptAsPayeeHere } = await import('vaults-web-shared/invitation-on-device.js');
+    const { acceptAsPayeeHere } = await import('vaults-web-shared/invitation-taken-on-device.js');
     const code = signJoinCode(walletOf(87), LABEL, person, { kind: 'payee', address: other, payslipKey: PAYSLIP });
     await expect(acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs('usr_87'))).rejects.toThrow(/another address/u);
-    const { payeeHandoverOf } = await import('vaults-web-shared/invitation-on-device.js');
+    const { payeeHandoverOf } = await import('vaults-web-shared/invitation-taken-on-device.js');
     const opened = await openInvitationHere(made.link, sendAs(null));
     const token = tokenOfLink(made.link)!;
     expect((await sendAs('usr_87')(`/api/invites/${invitationIdOf(token)}/accept-payee`, {

@@ -38,11 +38,12 @@ import { directoryHere } from './vault-page-doors.js';
 import { seatRequestFingerprint } from './seat-request-fingerprint.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
-import {
-  approveOnDevice, InvitationNotBound, openTheRoundHere, type GovernedCallDoors, type GovernedCallService,
-} from './governed-call-on-device.js';
+import { openTheRoundHere, type GovernedCallDoors, type GovernedCallService } from './governed-call-on-device.js';
+import { InvitationNotBound } from './company-change-on-device.js';
+import { approveOnDevice } from './proposal-approved-on-device.js';
 import { seatSignerOnDevice } from './signer-by-link.js';
 import { provedSeatsOf, refuseASeatNotForTheInvited, rosterBelievedHere, seatingOf, waitingHere, type RosterDoors, type RosterReads } from './roster-here.js';
+import type { ServiceCall } from './records-source.js';
 import { invitationByAddressRefusal } from './invitation-signed-by-a-seat.js';
 import type { DirectoryWitness } from '../../../src/core/roster-record.js';
 import { aRosterASeatFiled } from '../../../src/testing/a-roster-a-seat-filed.js';
@@ -52,6 +53,8 @@ import { signSeatAddress } from '../../../src/core/seat-address.js';
 import { seatRoundBound } from '../../../src/testing/seat-round-bound.js';
 import { governanceIdentityOfTheContract } from '../../../src/testing/invitation-approved.js';
 import { scopeOfRole } from '../../../src/core/seat-rights.js';
+import { viewOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 
 /* Dana is invited as an approver, so her seat is made with an approver's rights. */
 const scope = scopeOfRole('approver');
@@ -130,9 +133,9 @@ const filed = aRosterASeatFiled(store, company, viewingKey as Hex, [
   { signerId: bo.signerId, person: 'bo', signingSecret: bo.signingSecret, n: 2 },
 ]);
 const honestRecord = structuredClone(store.getAccount(company)!);
-/** The roster doors of Ada's device, over what the service holds now. */
-const adasRoster = (api: RosterDoors['api']): RosterDoors => ({
-  api, accountId: company, viewingKey: viewingKey as Hex, signingSecret: ada.signingSecret as Hex,
+/** The roster doors of Ada's device, over what the service holds now, given the read routes the view asks. */
+const adasRoster = (api: ServiceCall): RosterDoors => ({
+  view: viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), company), accountId: company, viewingKey: viewingKey as Hex, signingSecret: ada.signingSecret as Hex,
   label: honestRecord.companyLabel as never, account: honestRecord.contractAddress as never, reads: filed.reads,
   entered: filed.records.enteredBy(ada.signingSecret as Hex),
 });

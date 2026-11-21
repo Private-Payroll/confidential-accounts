@@ -2,7 +2,7 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { invitationIdOf, offerExpiredRefusal, openOffer } from '../../../../src/core/invitation.js';
 import type { Hex, Sealed } from '../../../../src/core/crypto.js';
-import { takeTheReissueHere, type InvitationSend } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import { takeTheReissueHere } from '../../../../packages/web-shared/src/invitation-taken-on-device.js';
 import { withReissuedInvitationKept } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
@@ -47,8 +47,7 @@ const fieldsRefusal = (fields: Readonly<Record<string, string>>): Words | null =
 /** The re-issued offer under the link's token, opened here and held to the company the page named and this wallet reads. */
 async function reissueOpened(ctx: StepContext, r: CompanyReach): Promise<Parameters<typeof takeTheReissueHere>[0]> {
   const token = ctx.intent.fields['token']! as Hex;
-  const send: InvitationSend = (path, init) => ctx.call(init.method, path, init.body);
-  const got = await send(`/api/invites/${invitationIdOf(token)}/offer`, { method: 'GET' });
+  const got = await ctx.invitations.offer(invitationIdOf(token));
   const sealed = (got.body as { offer?: Sealed } | null)?.offer;
   if (got.status === 410) return refuse('closed');
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');

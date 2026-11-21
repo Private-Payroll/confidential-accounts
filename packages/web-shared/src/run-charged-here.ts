@@ -41,8 +41,8 @@ import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private
 import type { RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { believedProposalIdsOnChainHere, believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
-import { spendingPolicyHere } from './spending-policy-here.js';
-import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
+import { spendingPolicyHere } from './spending-policy-read-here.js';
+import { refuseARunALeaverRaisedHere } from './seats-leaving-here.js';
 import { oneOffOfTheProposalHere, oneOffsHere, OneOffRefused, refuseAOneOffToAnotherVendorHere, type OneOffBelieved } from './one-off-here.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import { chainAtOneBlockHere } from './vault-read-here.js';

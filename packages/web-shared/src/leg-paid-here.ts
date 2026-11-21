@@ -34,7 +34,7 @@ import { legToPayHere, type PaymentsHereDeps } from './payments-made-here.js';
 import { chargeTheRunHere, type ChargeDoors } from './run-charged-here.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import type { LegNamed } from './material-made-here.js';
-import { refuseARunALeaverRaisedHere } from './governed-call-on-device.js';
+import { refuseARunALeaverRaisedHere } from './seats-leaving-here.js';
 
 /** What paying a leg is done with: the doors every step out of the vault takes, and the account's record of a payment. */
 export interface LegDoors extends PayoutDoors {

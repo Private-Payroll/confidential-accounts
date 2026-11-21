@@ -27,24 +27,26 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import { removalRefusal } from '../../../../src/core/vault-approvers.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import {
-  ApprovalNotOwed, nothingWasSentBy, removalsOpenHere, removeSignerOnDevice, withCompanyKeys, WithdrawnWhileSent,
-  type RemovalDoors, type RemovalOutcome, type ThresholdChangeSteps,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { anchorTheRecordsHere, directoryChangeFiledHere } from '../../../../packages/web-shared/src/records-anchored-here.js';
+import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import type { ThresholdChangeSteps } from '../../../../packages/web-shared/src/company-change-on-device.js';
+import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import { removalsOpenHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
+import { removeSignerOnDevice, type RemovalDoors, type RemovalOutcome } from '../../../../packages/web-shared/src/signer-removed-on-device.js';
+import { anchorTheRecordsHere } from '../../../../packages/web-shared/src/records-anchored-here.js';
+import { directoryChangeFiledHere } from '../../../../packages/web-shared/src/anchored-on-the-way-in.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import { removalApproversHere } from '../../../../packages/web-shared/src/removal-approvers-here.js';
 import { attestedIn, leaversStatementIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import {
-  approversHere, companyReachFor, governanceDoorsFor, governanceRecordsFor, keptReach, runsOutrunHere,
-  type CompanyChain, type CompanyReach, type Handed,
-} from './company-reach.js';
+import { approversHere, runsOutrunHere } from './approvers-here.js';
+import { companyReachFor, governanceDoorsFor, governanceRecordsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { type Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import type { VaultsChangedTold } from './vault-secrets-changed-here.js';
 import { approving, carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind, type RoundHere } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
+import { removed } from './holders-moved-here.js';
 import { removalReachFor, rosterForARemovalHere, UNREAD_SEAT_NAME } from './roster-for-a-removal.js';
 import { anchorDoorsIn, rotationDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
@@ -192,9 +194,9 @@ export function removalDoorsFor(
   r: CompanyReach, sleep: (ms: number) => Promise<void>, handed: Handed, o: { readonly waitMs?: number; readonly everyMs?: number } = {},
 ): RemovalDoors {
   let anchor: ReturnType<typeof anchorDoorsIn> | null = null;
-  const anchored = () => (anchor ??= anchorDoorsIn(r, r.api));
+  const anchored = () => (anchor ??= anchorDoorsIn(r));
   let rotation: ReturnType<typeof rotationDoorsIn> | null = null;
-  const rotating = () => (rotation ??= rotationDoorsIn(r, r.api));
+  const rotating = () => (rotation ??= rotationDoorsIn(r));
   return {
     ...governanceDoorsFor(r, sleep, handed, o),
     /* The vault check the shared code runs at the raise, every approval and the carrying out counts every open run. */
@@ -352,6 +354,11 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
     },
     stateAt: (atItsBar) => (atItsBar ? REMOVE_SIGNER_STATE.atItsBar : REMOVE_SIGNER_STATE.waiting),
     carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.remove-signer.step.carry' }, carryOutFor(reach))],
+    carries: (intent) => {
+      const a = askedOf(intent);
+      if ('key' in a) throw new StepRefused(a);
+      return { kind: 'removal', move: removed(a.leaf, a.threshold) };
+    },
     why: kindWhy,
   };
   return kind;

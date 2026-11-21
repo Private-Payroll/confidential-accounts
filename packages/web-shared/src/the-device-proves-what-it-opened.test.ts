@@ -22,9 +22,8 @@ import {
   buildGovernedCall, NotWhatThisDeviceOpened, RecordDoesNotAddUp, refuseARaiseThatIsNotTheRecordedOne, refuseWhatThisDeviceDidNotOpen,
   type GovernedCallDeps, type GovernedCallOrder, type GovernanceOnTheWire, type OpenedRound,
 } from './governed-call-builder.js';
-import {
-  approveOnDevice, NotOpenedOnThisDevice, openTheRoundHere, type GovernedCallDoors, type GovernedCallService,
-} from './governed-call-on-device.js';
+import { NotOpenedOnThisDevice, openTheRoundHere, type GovernedCallDoors, type GovernedCallService } from './governed-call-on-device.js';
+import { approveOnDevice } from './proposal-approved-on-device.js';
 import { SimulatedLedger } from '../../../src/core/ledger.js';
 import { MidnightCommitments } from '../../../src/midnight/commitments.js';
 import { FileStore } from '../../../src/core/store-file.js';

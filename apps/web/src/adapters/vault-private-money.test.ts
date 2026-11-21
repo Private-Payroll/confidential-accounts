@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 import { seatOpenedFor } from '../../../../src/testing/directory-seats.js';
-import { enteredHere } from '../../../../src/testing/records-entered.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../../src/core/crypto.js';
 import type { Asset, AssetRegistry } from '../../../../src/core/assets.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { directoryEntryMade } from '../../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
-import { HttpSealedPoolStore, pageWireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { sendOnPage } from 'vaults-web-shared/service-transport.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
+import { openViewOf } from './filing-judge.js';
+import { manifestKept, storeReachOver } from '../../../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../../../src/testing/service-routes-in-memory.js';
 
 /*
  * A VAULT'S PRIVATE MONEY THROUGH THE ADAPTER, WITH THE SHARED READER AND THE
@@ -25,6 +28,8 @@ import type { CompanyLabel } from 'midnight-identity/profile/company-label';
  * entry signed by a real wallet's committee key. `deviceVaultHoldings` compares it with
  * the chain's notes as it does for the legacy page's payments.
  */
+/* A view of the company opened afresh for each read, as each opening of a page opens one. */
+const aViewOf = (company: string) => openViewOf(company);
 const VAULT = 'ab'.repeat(32);
 const TOKEN = 'c1'.repeat(32);
 const OTHER_TOKEN = 'c2'.repeat(32);
@@ -80,23 +85,46 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const { signingPublicKeyOf } = await import('../../../../src/core/crypto.js');
     return kr.keys === null ? null : { signingPublicKey: signingPublicKeyOf(kr.keys['signingSecret'] as never).toLowerCase() };
   },
-  openAccount: () => kr.roster,
   companyKeyReleasedFor: () => kr.companyKey,
   /* The wallet window that releases the company key: counted, and it releases the key when opened. */
   companyKeysForVaults: async () => { kr.released += 1; kr.companyKey = '11'.repeat(32); return { companyKey: kr.companyKey }; },
   /* The company's viewing key, which opens every directory entry's proof here. */
-  viewingKeyFor: () => '5e'.repeat(32),
+  viewingKeyFor: () => '5e'.repeat(32)}));
+/* The company's roster as this device opens it, stood in for where the page's judges open it. */
+vi.mock('vaults-web-shared/company-judges.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-judges.js')>()),
+  openAccountWith: async () => kr.roster,
+}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   holdersFromTheWallet: async () => {
     if (kr.holdersFail !== null) throw kr.holdersFail;
     return {
-    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: kr.adopted ? [VAULT] : [], founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
+    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: kr.adopted ? [VAULT] : [], vaultThresholds: [], policyBar: null, founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
     vault: null,
     /* The indexer the wallet reads through: the vault is read there on this device, and nowhere else. */
     indexer: kr.indexer,
     };
   },
-  api: async (path: string, init?: RequestInit) => {
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => {
+  const api = async (path: string, init?: RequestInit) => {
     kr.asked.push(path);
+    /* The newest version entered of each record named: the pool's once it is filed, and none of any other. */
+    if (path === '/api/accounts/c1/manifest/newest') {
+      const b = JSON.parse(String(init?.body)) as { records: { store: string; kind: string }[] };
+      const filed = (kr.filed as { version?: number } | null)?.version ?? 0;
+      return { versions: b.records.map((r) => (r.store === 'vault' && r.kind === 'pool' ? filed : 0)) };
+    }
+    /* The vault records read by name, each as its own read answers it. */
+    if (path === '/api/accounts/c1/vault-records/read') {
+      const b = JSON.parse(String(init?.body)) as { records: { record: string }[] };
+      return { records: b.records.map((r) => ({ record: r.record, filed: r.record === 'pool' ? kr.filed : null })) };
+    }
+    if (path === '/api/accounts/c1/records/read') {
+      const b = JSON.parse(String(init?.body)) as { records: { kind: string; id: string; every?: boolean }[] };
+      return { records: b.records.map((r) => (r.every === true ? { kind: r.kind, id: r.id, versions: [] } : { kind: r.kind, id: r.id, filed: null })) };
+    }
     if (path === '/api/accounts/c1') return { id: 'c1', companyLabel: `co_${'c1'.repeat(32)}`, contractAddress: 'c0'.repeat(32) };
     if (path === '/api/accounts/c1/directory') return { filings: kr.filings };
     /* The company's records: the pool filed, entered by the seat that filed it, and the chain holding no anchor yet. */
@@ -114,8 +142,10 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     }
     if (path === '/api/accounts/c1/call-state') return { account: 'c0'.repeat(32), accountState: '00'.repeat(32), parameters: '', blockHash: 'b' };
     throw new Error(`no answer for ${path}`);
-  },
-}));
+  };
+  /* The page's one transport and its older name are the same function, as in the product. */
+  return { ...(await real<typeof import('vaults-web-shared/service-transport.js')>()), api, serviceCall: api };
+});
 vi.mock('./vault-builder.js', () => ({
   theVaultBuilder: async () => ({
     /* A note's commitment, worked out from the note alone, as the worker does. */
@@ -142,6 +172,11 @@ vi.mock('./vault-builder.js', () => ({
       if (kr.view instanceof Error) throw kr.view;
       return kr.view;
     },
+    vaultsOnChain: async (i: { vaults: readonly string[]; indexer: { indexerUri: string } }) => i.vaults.map((vault) => {
+      kr.readHere.push(`${vault} at ${i.indexer.indexerUri}`);
+      if (kr.view instanceof Error) throw kr.view;
+      return kr.view;
+    }),
   }),
 }));
 
@@ -190,7 +225,7 @@ const RECORDS = recordsKeypairFrom(new Uint8Array(32).fill(0x11));
 
 /** The pool filed by `filer`, wrapped under `seat` to `to`, holding `notes`. */
 async function filePool(notes: Array<{ nonce: Hex; token: Hex; value: bigint }>, filer = SIGNING, to = RECORDS.publicKey, seat = SEAT) {
-  const store = new HttpSealedPoolStore('pool', pageWireSend(() => 'u1'), filer.secret, async () => () => null, enteredHere());
+  const store = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(sendOnPage(() => 'u1'), { directory: 'empty', newest: 'none-entered' }), 'acc_private', manifestKept().manifest), filer.secret, async () => () => null);
   kr.filedBy = filer.secret;
   await new SealedNotePool(store, { signerId: seat, wrappingSecret: RECORDS.secret }, async () => [{ id: seat, wrappingPublicKey: to }]).create(VAULT, { notes });
 }
@@ -234,9 +269,9 @@ describe('a vault\'s private money, read on this device', () => {
     const { readVaultPrivateMoney } = await load();
     /* The kit's own module as the adapter reached it, after the reset. */
     const { formatTokenAmount, visibilityOf } = await import('vaults-ui/format/token-amount');
-    const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
+    const answer = await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY });
     expect(heldOf(answer).amounts.map((a) => [a.symbol, visibilityOf(a), formatTokenAmount(a, 'en')])).toEqual([['TDUST', 'private', '1.5'], ['OTHER', 'private', '123.45']]);
-    const without = await readVaultPrivateMoney('u1', 'c1', VAULT, registryOf([asset('TDUST', 6, TOKEN), asset('NIGHT', 6, null), asset('NONE', 2, 'c8'.repeat(32))]));
+    const without = await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: registryOf([asset('TDUST', 6, TOKEN), asset('NIGHT', 6, null), asset('NONE', 2, 'c8'.repeat(32))]) });
     expect(heldOf(without).amounts.map((a) => a.symbol)).toEqual(['TDUST']);
   });
 
@@ -248,11 +283,11 @@ describe('a vault\'s private money, read on this device', () => {
     kr.view = chainHolding(notes);
     await filePool(notes);
     const { readVaultPrivateMoney } = await load();
-    const answer = heldOf(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY));
+    const answer = heldOf(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }));
     expect(answer.unrecognised).toBe(1);
     expect(answer.amounts.map((a) => a.symbol)).toEqual(['TDUST', 'OTHER']);
     /* Naming that token in the list of assets makes it an amount and leaves nothing to count. */
-    const named = heldOf(await readVaultPrivateMoney('u1', 'c1', VAULT, registryOf([asset('TDUST', 6, TOKEN), asset('OTHER', 2, OTHER_TOKEN), asset('NINE', 0, 'c9'.repeat(32))])));
+    const named = heldOf(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: registryOf([asset('TDUST', 6, TOKEN), asset('OTHER', 2, OTHER_TOKEN), asset('NINE', 0, 'c9'.repeat(32))]) }));
     expect(named.unrecognised).toBe(0);
     expect(named.amounts.map((a) => a.symbol)).toEqual(['TDUST', 'OTHER', 'NINE']);
   });
@@ -261,7 +296,7 @@ describe('a vault\'s private money, read on this device', () => {
   it('reads the vault it was given on this device, at the indexer the person\'s own wallet names, and never asks the service', async () => {
     await filePool(NOTES);
     const { readVaultPrivateMoney } = await load();
-    expect((await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY)).of).toBe('held');
+    expect((await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY })).of).toBe('held');
     /* RED WHEN: the vault's notes are read from the service's route, or from any indexer but the wallet's, or for another vault. */
     expect(kr.readHere.length).toBeGreaterThan(0);
     expect(new Set(kr.readHere)).toEqual(new Set([`${VAULT} at ${kr.indexer!.indexerUri}`]));
@@ -269,7 +304,7 @@ describe('a vault\'s private money, read on this device', () => {
     /* RED WHEN: a wallet that names no indexer has the vault read somewhere else, or its money shown as read. */
     kr.indexer = null;
     kr.readHere = [];
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY)).toEqual(COULD_NOT('chain'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY })).toEqual(COULD_NOT('chain'));
     expect(kr.readHere).toEqual([]);
   });
 
@@ -284,7 +319,7 @@ describe('a vault\'s private money, read on this device', () => {
       ['the service fails', new Error('down'), COULD_NOT('chain')],
     ] as const) {
       kr.view = view;
-      expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), name).toEqual(found);
+      expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), name).toEqual(found);
     }
   });
 
@@ -296,7 +331,7 @@ describe('a vault\'s private money, read on this device', () => {
     const { WalletClosed } = await import('vaults-web-shared/wallet-sign-in.js');
     for (const refusal of [{ of: 'declined' }, { of: 'window-gone' }, { of: 'silent' }] as const) {
       kr.holdersFail = new WalletClosed(refusal, 'the wallet did not answer');
-      expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), refusal.of).toEqual(COULD_NOT('wallet-refused'));
+      expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), refusal.of).toEqual(COULD_NOT('wallet-refused'));
     }
     /* A wallet window is not opened to ask again: the read only reports. */
     expect(kr.released).toBe(0);
@@ -308,7 +343,7 @@ describe('a vault\'s private money, read on this device', () => {
     const { readVaultPrivateMoney } = await load();
     kr.view = { ...chainHolding(NOTES), notes: [...chainHolding(NOTES).notes, 'hffff'] };
     const { visibilityOf: _v, formatTokenAmount } = await import('vaults-ui/format/token-amount');
-    const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
+    const answer = await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY });
     expect(heldOf(answer).amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '1.5'], ['OTHER', '123.45']]);
   });
 
@@ -322,7 +357,7 @@ describe('a vault\'s private money, read on this device', () => {
     kr.view = { ...chainHolding(NOTES), notes: [...chainHolding(NOTES).notes, commitmentOf(other.nonce), 'hffff'], account: 'c0'.repeat(32), started: true, everCreated: [], nonceCommitment: '5c'.repeat(32), splitJournal: [] };
     const { formatTokenAmount } = await import('vaults-ui/format/token-amount');
     /* The read counts what the rebuild found, and files nothing: the filing is owed to a seat action in the wallet. */
-    const answer = await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY);
+    const answer = await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY });
     expect(heldOf(answer).amounts.map((a) => [a.symbol, formatTokenAmount(a, 'en')])).toEqual([['TDUST', '2'], ['OTHER', '123.45']]);
     /* RED WHEN: a read of a vault's private money files the rebuilt pool, signed on the page with the seat's secret. */
     expect((kr.filed as { version: number }).version).toBe(1);
@@ -332,25 +367,25 @@ describe('a vault\'s private money, read on this device', () => {
   it('says nothing is held yet for a vault whose pool was never opened and which holds no note', async () => {
     kr.view = chainHolding([]);
     const { readVaultPrivateMoney } = await load();
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY)).toEqual({ of: 'nothing-yet' });
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY })).toEqual({ of: 'nothing-yet' });
   });
 
   /* RED WHEN: a vault with no pool on this device, whose chain holds a note, is shown as holding nothing yet: money may be there that this device cannot see. */
   it('says it could not read, never nothing held, when the chain holds a note and this device has no record of the vault\'s notes', async () => {
     kr.view = chainHolding(NOTES.slice(0, 1));
     const { readVaultPrivateMoney } = await load();
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY)).toEqual(COULD_NOT('record'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY })).toEqual(COULD_NOT('record'));
   });
 
   /* RED WHEN: a pool filed by a key no seat of the company holds, or by a seat no longer seated, is believed, or is shown as a failed read instead of a record not believed. */
   it('says the record was not believed when a stranger or a seat no longer seated filed it', async () => {
     const { readVaultPrivateMoney } = await load();
     await filePool(NOTES, newSigningKeypair());
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'filed by a stranger').toEqual({ of: 'not-believed' });
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'filed by a stranger').toEqual({ of: 'not-believed' });
     kr.filed = null;
     await filePool(NOTES);
     kr.seated = [];
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'filed by a seat no longer seated').toEqual({ of: 'not-believed' });
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'filed by a seat no longer seated').toEqual({ of: 'not-believed' });
   });
 
   /* RED WHEN: the pool is opened with anything but the records key this signer's wallet released, under their own seat - the roster's wrapping secret, another company key or another seat - or a pool filed by a key no directory entry names, or by a seat no longer seated, is believed. */
@@ -358,21 +393,21 @@ describe('a vault\'s private money, read on this device', () => {
     await filePool(NOTES);
     const { readVaultPrivateMoney } = await load();
     kr.companyKey = '22'.repeat(32);
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'another company key').toEqual(COULD_NOT('other'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'another company key').toEqual(COULD_NOT('other'));
     kr.companyKey = null;
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'no company key released in this tab').toEqual(COULD_NOT('no-keys'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'no company key released in this tab').toEqual(COULD_NOT('no-keys'));
     /* RED WHEN: reading a vault's money opens a wallet window to release the company key. */
     expect(kr.released, 'a read opened a wallet window').toBe(0);
     kr.companyKey = COMPANY_KEY;
     /* RED WHEN: a seat whose signing key no believed directory entry names reads the pool under some other seat. */
     kr.keys = { signerId: 's1', signingSecret: newSigningKeypair().secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'another seat').toEqual(COULD_NOT('other'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'another seat').toEqual(COULD_NOT('other'));
     kr.keys = { signerId: 's1', signingSecret: SIGNING.secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'the same pool, with this signer\'s own records key').toMatchObject({ of: 'held' });
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'the same pool, with this signer\'s own records key').toMatchObject({ of: 'held' });
     /* A pool wrapped to the roster's key, as before this change, does not open. */
     kr.filed = null;
     await filePool(NOTES, SIGNING, WRAPPING.publicKey, 's1');
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'wrapped to the roster key').toEqual(COULD_NOT('other'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'wrapped to the roster key').toEqual(COULD_NOT('other'));
   });
 
   /* RED WHEN: a read asks the wallet to release the company key, or a deposit that may ask does not, or the seat it gives is not this signer's own. */
@@ -380,21 +415,21 @@ describe('a vault\'s private money, read on this device', () => {
     const { seatAndRecordsHere } = await load();
     kr.companyKey = null;
     let asked = 0;
-    expect(await seatAndRecordsHere('u1', 'c1'), 'a read with no company key').toBe('no-keys-here');
-    const here = await seatAndRecordsHere('u1', 'c1', async () => { asked += 1; kr.companyKey = COMPANY_KEY; });
+    expect(await seatAndRecordsHere('u1', aViewOf('c1')), 'a read with no company key').toBe('no-keys-here');
+    const here = await seatAndRecordsHere('u1', aViewOf('c1'), async () => { asked += 1; kr.companyKey = COMPANY_KEY; });
     expect(asked).toBe(1);
     expect(typeof here === 'string' ? here : [here.mine.signerId, here.company, here.account, here.companyKey]).toEqual([SEAT.toLowerCase(), LABEL, 'c0'.repeat(32), COMPANY_KEY]);
-    expect(await seatAndRecordsHere('u1', 'c1', async () => { asked += 1; }), 'a key already held is not asked for again').not.toBe('no-keys-here');
+    expect(await seatAndRecordsHere('u1', aViewOf('c1'), async () => { asked += 1; }), 'a key already held is not asked for again').not.toBe('no-keys-here');
     expect(asked).toBe(1);
     kr.signedIn = 'u2';
-    expect(await seatAndRecordsHere('u1', 'c1', async () => { asked += 1; }), 'another person').toBe('not-signed-in');
+    expect(await seatAndRecordsHere('u1', aViewOf('c1'), async () => { asked += 1; }), 'another person').toBe('not-signed-in');
     expect(asked).toBe(1);
   });
 
   /* RED WHEN: a read of the company's spending policies is given no seat leaf or no company key set, so it must work them out again beside this one. */
   it('gives the seat\'s leaf and the company\'s key set with the seat and records', async () => {
     const { seatAndRecordsHere } = await load();
-    const here = await seatAndRecordsHere('u1', 'c1');
+    const here = await seatAndRecordsHere('u1', aViewOf('c1'));
     if (typeof here === 'string') throw new Error(`no seat: ${here}`);
     expect(here.leaf).toBe(SEAT.toLowerCase());
     expect(here.leaf).toBe(here.mine.signerId);
@@ -405,7 +440,7 @@ describe('a vault\'s private money, read on this device', () => {
   it('gives a read the seat\'s public half and records that file nothing, and never the seat\'s secrets', async () => {
     await filePool(NOTES);
     const { seatAndRecordsHere } = await load();
-    const here = await seatAndRecordsHere('u1', 'c1');
+    const here = await seatAndRecordsHere('u1', aViewOf('c1'));
     if (typeof here === 'string') throw new Error(`no seat: ${here}`);
     /* RED WHEN: the seat's signing secret or blinding reaches what a read is given, or its leaf is worked out from them. */
     const given = JSON.stringify(here, (_k, v) => (v instanceof Uint8Array ? Buffer.from(v).toString('hex') : v));
@@ -427,11 +462,11 @@ describe('a vault\'s private money, read on this device', () => {
     await filePool(NOTES);
     const { readVaultPrivateMoney } = await load();
     kr.signedIn = 'u2';
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'another person').toEqual(COULD_NOT('other'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'another person').toEqual(COULD_NOT('other'));
     kr.signedIn = 'u1';
     kr.keys = null;
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, REGISTRY), 'no keys').toEqual(COULD_NOT('no-keys'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'no keys').toEqual(COULD_NOT('no-keys'));
     kr.keys = { signerId: 's1', signingSecret: SIGNING.secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
-    expect(await readVaultPrivateMoney('u1', 'c1', VAULT, registryOf([asset('A', 6, TOKEN), asset('B', 6, TOKEN.toUpperCase())])), 'one token twice').toEqual(COULD_NOT('other'));
+    expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: registryOf([asset('A', 6, TOKEN), asset('B', 6, TOKEN.toUpperCase())]) }), 'one token twice').toEqual(COULD_NOT('other'));
   });
 });

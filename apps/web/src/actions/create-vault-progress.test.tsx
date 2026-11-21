@@ -15,6 +15,11 @@ import { ENGLISH } from '../english.test-support.js';
  */
 
 const stages = vi.hoisted(() => ({ show: null as ((s: string) => void) | null }));
+/* The panel is shown without the page's frame, so the view the frame would hand it is handed here. */
+vi.mock('../records/company-records.js', async (real) => ({
+  ...(await real<typeof import('../records/company-records.js')>()),
+  useCompanyView: (await import('../adapters/page-view.test-support.js')).useTheViewOfTheTest,
+}));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
   creationOf: vi.fn(async (company: string | null) => ({ company, standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null })),

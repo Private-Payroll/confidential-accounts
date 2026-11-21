@@ -342,8 +342,10 @@ async function waitsHere(doors: VaultRotationDoors, leaf: string | undefined): P
 /**
  * **EVERY VAULT'S SECRET, CHANGED AFTER A REMOVAL**, from a staying signer's
  * device: the removal's waits first (never on the seat that is leaving, never
- * before the company's key is changed), then each vault on its own. A vault that
- * cannot go on says why; the others go on.
+ * before the company's key is changed), then each vault on its own. Every vault
+ * is named to the step's one read of its vaults first, so the first vault's read
+ * reads them all and each later one is served from it until the step writes. A
+ * vault that cannot go on says why; the others go on.
  */
 export async function vaultSecretsRotatedHere(
   doors: VaultRotationDoors, vaults: readonly Hex[], may: RotationMay, o: { readonly leaf?: string } = {},
@@ -355,6 +357,7 @@ export async function vaultSecretsRotatedHere(
     waited = { state: 'waits', why: `the company's directory could not be read (${(e as Error)?.message ?? e})` };
   }
   if (waited !== null) return vaults.map((vault) => ({ vault, did: [], ...waited! }));
+  doors.vaultsHere?.declare(vaults);
   const out: VaultSecretRotated[] = [];
   for (const vault of vaults) out.push(await oneVaultRotatedHere(doors, lower(vault), may));
   return out;

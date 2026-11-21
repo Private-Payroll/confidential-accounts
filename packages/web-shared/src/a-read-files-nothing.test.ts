@@ -6,8 +6,11 @@
 import { describe, expect, it } from 'vitest';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
 import { sealPool } from '../../../src/midnight/vault-pool.js';
-import { HttpSealedPoolStore, ReadFilesNothing, type WireSend } from './http-sealed-pool-store.js';
+import { HttpSealedPoolStore, ReadFilesNothing, type ThroughTheView } from './http-sealed-pool-store.js';
 import { recordsReadHere } from './vault-page-doors.js';
+import type { InvitationSend as WireSend } from './invitation-on-device.js';
+import { storeReachOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memory.js';
 
 const VAULT = 'ab'.repeat(32);
 const SIGNING = newSigningKeypair();
@@ -27,11 +30,18 @@ describe('a read of a vault\'s records files nothing', () => {
       const newest = [...filed.values()].at(-1) ?? null;
       return { status: 200, body: { record: 'pool', filed: newest } };
     };
-    const entered = { enter: async () => {} } as never;
     const believeAll = async () => Object.assign(() => null, {}) as never;
     const pool = sealPool(VAULT, { notes: [] } as never, [{ id: 'aa'.repeat(32), wrappingPublicKey: WRAPPING.publicKey }], 1, 'pool');
-    await new HttpSealedPoolStore('pool', send, SIGNING.secret, believeAll, entered).put(VAULT, pool);
-    const reading = recordsReadHere(believeAll, () => 'u1', send)('pool');
+    await new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_reads'), SIGNING.secret, believeAll).put(VAULT, pool);
+    /* The company's view as the read reaches it: each read answered from what was filed, each filing or entry recorded as sent. */
+    const viewed: ThroughTheView = {
+      vaultRecord: async (asked) => { sent.push(`read ${asked.record}`); return (await send(`/api/vaults/${asked.vault}/records/${asked.record}`, { method: 'GET' })).body; },
+      companyRecord: async () => { throw new Error('a read of a vault reads no company record'); },
+      file: async (w) => { sent.push(`file ${w.to}`); return null; },
+      manifest: { newest: async () => { throw new Error('a read asks no newest version'); }, enter: async () => { sent.push('enter'); } },
+      company: 'acc_read',
+    };
+    const reading = recordsReadHere(believeAll, viewed)('pool');
     /* RED WHEN: the read's store does not read what a filing store filed. */
     expect((await reading.get(VAULT))?.version).toBe(1);
     sent.length = 0;
@@ -40,6 +50,6 @@ describe('a read of a vault\'s records files nothing', () => {
     await expect(reading.put(VAULT, again)).rejects.toThrow(ReadFilesNothing);
     expect(sent).toEqual([]);
     /* RED WHEN: a store built to file can still be built with no signing key. */
-    expect(() => new HttpSealedPoolStore('pool', send, '' as Hex, believeAll, entered)).toThrow(/no signing key/);
+    expect(() => new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_reads'), '' as Hex, believeAll)).toThrow(/no signing key/);
   });
 });

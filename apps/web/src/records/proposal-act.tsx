@@ -4,7 +4,8 @@ import { PROPOSAL_ACTED, WHY, type ProposalActed, type ProposalWhy } from '../ad
 import { ActRefused } from '../act-refused.js';
 import type { ActRefusal } from '../adapters/refusals.js';
 import { useSession } from '../session.js';
-import { useCompanyRecords } from './company-records.js';
+import type { PageView } from '../adapters/filing-judge.js';
+import { useCompanyRecords, useCompanyView } from './company-records.js';
 
 /** How far a wallet act has got: which step of how many (both 0 until the wallet says). */
 export type ActStep = { readonly step: number; readonly steps: number };
@@ -14,17 +15,18 @@ export type ActPhase = ActStep | null;
 /** One wallet act on one proposal: whether it is running (and at which step), what it ended as, and the press that starts it, which reads the records again when the act may have changed them. */
 export function useProposalAct(): {
   readonly phase: ActPhase; readonly result: ProposalActed | null; readonly done: boolean;
-  readonly start: (act: (personId: string, companyId: string, onStep: (step: number, steps: number) => void) => Promise<ProposalActed>) => void;
+  readonly start: (act: (personId: string, view: PageView, onStep: (step: number, steps: number) => void) => Promise<ProposalActed>) => void;
 } {
-  const { person, company } = useSession();
+  const { person } = useSession();
+  const view = useCompanyView();
   const { reload } = useCompanyRecords();
   const [phase, setPhase] = useState<ActPhase>(null);
   const [result, setResult] = useState<ProposalActed | null>(null);
-  const start = (act: (personId: string, companyId: string, onStep: (step: number, steps: number) => void) => Promise<ProposalActed>): void => {
-    if (company === null || phase !== null) return;
+  const start = (act: (personId: string, view: PageView, onStep: (step: number, steps: number) => void) => Promise<ProposalActed>): void => {
+    if (view === null || phase !== null) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    void act(person.id, company, (step, steps) => setPhase({ step, steps })).then((ended) => {
+    void act(person.id, view, (step, steps) => setPhase({ step, steps })).then((ended) => {
       setPhase(null);
       setResult(ended);
       if (ended.of === PROPOSAL_ACTED.done || (ended.of === PROPOSAL_ACTED.stopped && (ended.partial || ended.handedOver))) reload();

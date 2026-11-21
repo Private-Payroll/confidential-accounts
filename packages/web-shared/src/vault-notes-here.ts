@@ -23,6 +23,7 @@ import { type VaultRebuildAsked, type VaultRebuilt } from './vault-worker-client
 import { type ChainHereDoors, type VaultChainView } from './vault-doors.js';
 import { NOT_PINNED_WHY, NO_VAULT_YET, readHere, vaultStandingHere } from './vault-read-here.js';
 import { creatingTransactionOfOutput } from './vault-step-reads.js';
+import type { UnnamedNotesKeptStore } from './tree-kept-here.js';
 
 /**
  * **WHAT A REBUILD OF A VAULT'S NOTES NEEDS**: the vault read on this device at
@@ -45,7 +46,27 @@ export interface RebuildDoors extends ChainHereDoors {
    * page's read of a vault's private money, which signs nothing). A seat action in the wallet passes it to file.
    */
   readonly seatHere?: () => Promise<{ readonly role: Role | null; readonly retired: unknown } | null>;
+  /**
+   * The chain notes this device already looked for in every version of the records and found named by none, kept in
+   * the device's own store of the company (`unnamedKeptIn`). Left out, a note nobody's records name is looked for
+   * again at every read.
+   */
+  readonly unnamed?: UnnamedNotes;
 }
+
+/** The unnamed notes kept for one company: each note (as `vault:note`) with what it was last looked for in (`lookedForText`). */
+interface UnnamedNotes {
+  lookedIn(notes: readonly string[]): Promise<readonly (string | null)[]>;
+  keep(notes: readonly string[], lookedIn: string): Promise<void>;
+}
+
+/** The unnamed notes the device's stores of a view's company keep, for the rebuild's doors; nothing when it keeps none. */
+export const unnamedKeptIn = (view: { readonly company: string; readonly stores: { readonly unnamed?: UnnamedNotesKeptStore } }): Pick<RebuildDoors, 'unnamed'> => {
+  const store = view.stores.unnamed;
+  return store === undefined ? {} : {
+    unnamed: { lookedIn: (notes) => store.lookedIn(view.company, notes), keep: (notes, lookedIn) => store.keep(view.company, notes, lookedIn) },
+  };
+};
 
 /**
  * This device's own seat in the directory it believes, with its role, its retirement and the rights the directory
@@ -105,11 +126,28 @@ export type NotesHere = (
 ) & { readonly leaver?: readonly string[]; readonly unsealed?: readonly NotSealed[] };
 
 const REBUILD_ATTEMPTS = 5;
-/*
- * A vault whose chain notes the slow path already left unnamed this page session, keyed by the vault and those
- * notes, so a note nobody's records name (a stranger's deposit) does not send every open down the slow path again.
+
+/** What a note was looked for in, and by whom: the signer, and the newest versions of the vault's pool, journals and nonce secrets it read. */
+interface LookedForIn {
+  readonly signer: string;
+  readonly pool: number;
+  readonly deposits: number;
+  readonly payments: number;
+  readonly nonceSecret: number;
+}
+
+/**
+ * What a note was looked for in, as it is kept, so a note nobody's records name (a stranger's deposit) is not looked
+ * for again by the same signer in the same records, and is looked for again once a version is filed, a secret is given
+ * or another signer looks.
  */
-const UNNAMED_THIS_SESSION = new Set<string>();
+const lookedForText = (at: LookedForIn): string => `${at.signer}:${at.pool}:${at.deposits}:${at.payments}:${at.nonceSecret}`;
+
+/** Whether every one of `notes` was kept as looked for already in `lookedIn`; with nothing kept on this device, none was. */
+const everyLookedIn = async (unnamed: UnnamedNotes | undefined, notes: readonly string[], lookedIn: string): Promise<boolean> =>
+  unnamed !== undefined && notes.length > 0 && (await unnamed.lookedIn(notes)).every((kept) => kept === lookedIn);
+
+const newestOf = (versions: readonly { readonly version: number }[]): number => versions.reduce((n, v) => Math.max(n, v.version), 0);
 
 const sameNote = (a: Note, b: Note): boolean =>
   a.nonce.toLowerCase() === b.nonce.toLowerCase() && a.token.toLowerCase() === b.token.toLowerCase() && a.value === b.value;
@@ -167,7 +205,8 @@ const stepWire = (a: { spent: Note | { nonce: string; token: string; value: bigi
 /**
  * The second pass, only for a note the first left unnamed: every version of the pool and of each journal the company's
  * records believe, and the walk of every amount deposited and paid, asked of the vault worker. Each journal's newest
- * version as the first pass read it (`newestRead`) is kept even when every version could not be listed.
+ * version as the first pass read it (`newestRead`) is kept even when every version could not be listed. `whole` is
+ * false when any version was not read, not believed or did not open: what such a pass left unnamed may yet be named.
  */
 async function rebuiltFromEveryVersion(
   doors: RebuildDoors, vault: Hex, said: string[], rebuild: (input: VaultRebuildAsked) => Promise<VaultRebuilt>,
@@ -177,15 +216,18 @@ async function rebuiltFromEveryVersion(
     readonly newestRead: { readonly deposits: FiledPoolVersion[]; readonly payments: FiledPoolVersion[] };
     readonly journals: (deposits: readonly (FiledPoolVersion | PassedOverVersion)[], payments: readonly (FiledPoolVersion | PassedOverVersion)[]) => Promise<ReturnType<typeof attemptsFromJournalVersions>>;
   },
-): Promise<VaultRebuilt> {
+): Promise<{ readonly rebuilt: VaultRebuilt; readonly whole: boolean }> {
+  let whole = true;
   const every = async (record: 'pool' | 'deposit-journal' | 'payment-journal'): Promise<FiledPoolVersion[]> => {
     try {
       /* A version the company's records do not believe is said and left out; every other version is still read. */
       const listed = await versionsBelievedOf(doors.records(record), vault);
+      if (listed.refused.length > 0) whole = false;
       for (const r of listed.refused) said.push(`version ${r.version} of this vault's ${record} is not believed, because ${r.why}, so it is left out and every other version is read`);
       return listed.versions.filter((v): v is FiledPoolVersion => v.neverEntered !== true);
     } catch (e) {
       said.push(`every version of this vault's ${record} was not read: ${failedSaying(e)}`);
+      whole = false;
       return [];
     }
   };
@@ -196,19 +238,22 @@ async function rebuiltFromEveryVersion(
       if (Array.isArray(page.notes)) versions.push({ version: v.version, notes: (page.notes as Note[]).map(coinWire) });
     } catch (e) {
       said.push(`version ${v.version} of this vault's pool does not open for this signer: ${failedSaying(e)}`);
+      whole = false;
     }
   }
   if (loaded !== null && !versions.some((v) => v.version === loaded!.readAt.version)) versions.push(asked.versions[0]!);
   /* Each journal's newest version read above is kept even when every version could not be listed, as the pool's is. */
   const withNewest = (all: FiledPoolVersion[], read: FiledPoolVersion[]) => [...all, ...read.filter((n) => !all.some((v) => v.version === n.version))];
   const all = await journals(withNewest(await every('deposit-journal'), newestRead.deposits), withNewest(await every('payment-journal'), newestRead.payments));
+  if (all.unread.length > 0) whole = false;
   const amounts = new Map<string, { token: string; value: string }>();
   for (const c of [...all.deposits.map(coinWire), ...versions.flatMap((v) => v.notes), ...kept]) amounts.set(`${c.token}:${c.value}`, { token: c.token, value: c.value });
-  return rebuild({
+  const rebuilt = await rebuild({
     ...asked, secrets, versions, ...(copySecret === undefined ? {} : { copySecret }),
     attempted: { deposits: all.deposits.map(coinWire), payments: all.payments.map(stepWire) },
     walk: { deposited: [...amounts.values()], paid: all.payments.filter((p) => p.merge !== true).map((p) => ({ token: p.spent.token, amount: p.amount.toString() })) },
   });
+  return { rebuilt, whole };
 }
 
 /**
@@ -288,17 +333,19 @@ async function filedIfItChanges(
   return { of: 'filed', notes: next, unexplained: unexplained, said };
 }
 
-/** The vault's nonce secrets, opened from the company's records with this signer's records key; none, and said, when they cannot be. */
-async function nonceSecretsHere(doors: RebuildDoors, vault: Hex, said: string[]): Promise<string[]> {
-let secrets: string[] = [];
-try {
-  const filed = await doors.records('nonce-secret').get(vault);
-  if (filed === null) said.push('the company\'s records hold no nonce secret for this vault');
-  else secrets = [...openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey)).secrets];
-} catch (e) {
-  said.push(`the vault's nonce secret was not read from the company's records: ${failedSaying(e)}`);
-}
-  return secrets;
+/**
+ * The vault's nonce secrets, opened from the company's records with this signer's records key, and the version they were
+ * read at (0 for none); none, and said, when they cannot be.
+ */
+async function nonceSecretsHere(doors: RebuildDoors, vault: Hex, said: string[]): Promise<{ readonly secrets: string[]; readonly version: number }> {
+  try {
+    const filed = await doors.records('nonce-secret').get(vault);
+    if (filed !== null) return { secrets: [...openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey)).secrets], version: filed.version };
+    said.push('the company\'s records hold no nonce secret for this vault');
+  } catch (e) {
+    said.push(`the vault's nonce secret was not read from the company's records: ${failedSaying(e)}`);
+  }
+  return { secrets: [], version: 0 };
 }
 
 /** The coins this device keeps for the vault; none, and said, when they cannot be read. */
@@ -483,7 +530,7 @@ async function rebuiltOnce(
   }
 
   /* ---- 1: the newest of each record, the secrets, the coins kept here ---- */
-  const secrets = await nonceSecretsHere(doors, vault, said);
+  const { secrets, version: nonceSecret } = await nonceSecretsHere(doors, vault, said);
   const journals = (deposits: readonly (FiledPoolVersion | PassedOverVersion)[], payments: readonly (FiledPoolVersion | PassedOverVersion)[]) =>
     journalsRead(doors, vault, { deposits, payments, everCreated: view.everCreated }, said);
   const kept = await coinsKeptFor(doors, vault, said);
@@ -504,14 +551,21 @@ async function rebuiltOnce(
   const first = await rebuiltWithOwnCopy(doors.me, (i) => doors.builder.vaultRebuilt!(i), vault, asked, secrets, said);
   let rebuilt = first.rebuilt;
 
-  /* ---- 2: every version and the walk, only for a note still unnamed ---- */
-  const unnamedKey = `${vault}:${[...rebuilt.unexplained].sort().join(',')}`;
-  if (rebuilt.unexplained.length > 0 && !UNNAMED_THIS_SESSION.has(unnamedKey)) {
-    rebuilt = await rebuiltFromEveryVersion(doors, vault, said, (i) => doors.builder.vaultRebuilt!(i), {
+  /* ---- 2: every version and the walk, only for a note still unnamed and not looked for in these same records ---- */
+  const at: LookedForIn = {
+    signer: doors.me.signerId, pool: loaded?.readAt.version ?? 0, deposits: newestOf(newestRead.deposits), payments: newestOf(newestRead.payments), nonceSecret,
+  };
+  const [lookedFor, lookedIn] = [rebuilt.unexplained.map((note) => `${vault}:${note}`), lookedForText(at)];
+  if (rebuilt.unexplained.length > 0 && !(await everyLookedIn(doors.unnamed, lookedFor, lookedIn))) {
+    const slow = await rebuiltFromEveryVersion(doors, vault, said, (i) => doors.builder.vaultRebuilt!(i), {
       asked, secrets, copySecret: first.copySecret, loaded, kept, newestRead, journals,
     });
-    /* Remembered under the key it is checked by: the notes the fast pass left unnamed. */
-    if (rebuilt.unexplained.length > 0) UNNAMED_THIS_SESSION.add(unnamedKey);
+    rebuilt = slow.rebuilt;
+    /*
+     * Kept only for the notes a slow pass that read every version still leaves unnamed. A note it named stays unkept, so
+     * every later read looks for it again until a pool version names it; a pass that missed a version keeps nothing.
+     */
+    if (rebuilt.unexplained.length > 0 && slow.whole) await doors.unnamed?.keep(rebuilt.unexplained.map((note) => `${vault}:${note}`), lookedIn);
   }
   said.push(...rebuilt.said);
   if (rebuilt.unexplained.length > 0) {

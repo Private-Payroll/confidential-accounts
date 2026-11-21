@@ -7,7 +7,7 @@ import type { Ask, KeyringRequest } from 'midnight-identity/profile/request';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import type { Openable } from 'vaults-web-shared/wallet-sign-in.js';
-import type { CompanyToFound } from 'vaults-web-shared/keyring.js';
+import type { CompanyToFound } from 'vaults-web-shared/company-creation.js';
 import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../testing/a-wallet-founds-a-company.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { Sealed } from './crypto.js';
@@ -305,6 +305,16 @@ afterEach(async () => {
   keyring.forgetLocally();
 });
 
+type TheKeyringAndItsJourneys = typeof import('vaults-web-shared/keyring.js')
+  & typeof import('vaults-web-shared/company-creation.js') & typeof import('vaults-web-shared/service-transport.js');
+
+/** What the page's keys, its company creation and its service transport export, as one object, for a test that drives all three. */
+const theKeyringAndItsJourneys = async (): Promise<TheKeyringAndItsJourneys> => ({
+  ...(await import('vaults-web-shared/keyring.js')),
+  ...(await import('vaults-web-shared/company-creation.js')),
+  ...(await import('vaults-web-shared/service-transport.js')),
+});
+
 /** The founding signer's own wallet, signed in, in a tab at `origin`. */
 async function signedInWith(
   server: ReturnType<typeof aServer>,
@@ -316,7 +326,7 @@ async function signedInWith(
 ) {
   const view = new WalletAtTheOtherEnd(honestly(words, address), origin);
   inABrowser(view, through(view), origin);
-  const keyring = await import('vaults-web-shared/keyring.js');
+  const keyring = await theKeyringAndItsJourneys();
   await keyring.signInWithWallet(WALLET, undefined, thisBrowsersWindow());
   return { view, keyring };
 }
@@ -351,7 +361,7 @@ const theSignInEndsOnTheFirstSave = (server: ReturnType<typeof aServer>) => {
 /* ======================================================================== */
 
 /** The first press for `NORTHWIND`, and the id of the company it made. */
-const startedBy = async (view: WalletAtTheOtherEnd, keyring: typeof import('vaults-web-shared/keyring.js'), company = NORTHWIND) => {
+const startedBy = async (view: WalletAtTheOtherEnd, keyring: TheKeyringAndItsJourneys, company = NORTHWIND) => {
   const started = await keyring.startCompanyHeldFromTheStart(company, WALLET, view, US);
   return started.accountId;
 };
@@ -495,9 +505,9 @@ describe('§3 - NO PASSWORD, ANYWHERE ON THIS JOURNEY', () => {
      * to one here. The whole-file claim against built output belongs to a
      * build check, and no build of `apps/web` makes it yet.
      */
-    const src = readFileSync(new URL('../../packages/web-shared/src/keyring.ts', import.meta.url), 'utf8');
+    const src = readFileSync(new URL('../../packages/web-shared/src/company-creation.ts', import.meta.url), 'utf8');
     const opens = src.indexOf('/* ---------------- bringing a company into being');
-    const closes = src.indexOf(' * Opens an account the server just served us.');
+    const closes = src.length;
     /* The markers are asserted before the slice is used. A slice taken between
      * two indexes that have moved is a test that passes over the wrong text —
      * which is the shape of every vacuous grep this project has written. */
@@ -667,7 +677,7 @@ describe('§5 - WHAT IS REFUSED, AND BEFORE WHAT', () => {
       const server = aServer();
       const view = new WalletAtTheOtherEnd(honestly(FOUNDER_WORDS, FOUNDER_ADDRESS));
       inABrowser(view, server.fetchImpl);
-      const keyring = await import('vaults-web-shared/keyring.js');
+      const keyring = await theKeyringAndItsJourneys();
       expect(await keyring.resumeSession()).toMatchObject({ id: PERSON });
       expect(keyring.signedInWallet()).toBeNull();
 

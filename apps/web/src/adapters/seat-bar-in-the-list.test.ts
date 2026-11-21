@@ -5,16 +5,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * THE SEAT BAR IN THE ONE LIST OF COMPANIES. The wallet's read of the chain is stood in for by the figures it would give;
  * the rule that turns them into the seat bar and its reason is `whatAChangeCosts`'s own (`change-costs.test.ts`).
  */
-const chain = vi.hoisted(() => ({ asking: 0, mostAtOnce: 0, asked: [] as string[], approvals: 2, policyBar: null as number | null, vaultThresholds: [] as { vault: string; threshold: number }[], seats: ['a', 'b', 'c'] }));
+const chain = vi.hoisted(() => ({ asking: 0, mostAtOnce: 0, asked: [] as string[], approvals: 2, policyBar: null as number | null, vaultThresholds: [] as { vault: string; threshold: number }[], seats: ['a', 'b', 'c'], rows: [] as readonly object[] }));
+/* Each company's account as the service keeps it: the list's own row for it. */
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : chain.rows.find((r) => path === `/api/accounts/${(r as { id?: string }).id}`) ?? null),
+}));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  currentUser: () => ({ id: 'u1' }),
+  currentUser: () => ({ id: 'u1' })}));
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   companiesBeingCreated: () => [],
+}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   holdersFromTheWallet: async (_origin: string, ask: { account: string }) => {
     chain.asking += 1; chain.mostAtOnce = Math.max(chain.mostAtOnce, chain.asking); chain.asked.push(ask.account);
     await new Promise((r) => setTimeout(r, 1));
     chain.asking -= 1;
-    return { holders: { ...chain, seatBar: 0 }, indexer: null };
+    return { holders: { ...chain, seatBar: 0, committee: [], threshold: 1, adoptedVaults: [] }, indexer: null };
   },
 }));
 
@@ -23,6 +33,7 @@ const row = { id: 'c1', createdAt: 'x', signerCount: 3, threshold: 1, companyLab
 
 async function barOfTheList(rows: readonly object[] = [row]) {
   vi.resetModules();
+  chain.rows = rows;
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ user: { id: 'u1', name: 'Priya' }, accounts: rows }), { status: 200 })));
   const session = await import('./session.js');
   await session.whoIsSignedIn();

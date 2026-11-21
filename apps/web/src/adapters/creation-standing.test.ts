@@ -31,7 +31,13 @@ const kr = vi.hoisted(() => ({
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.who,
+  canOpenCompanies: () => kr.open}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
   api: async (path: string) => { kr.asked.push(path); return kr.sealed; },
+}));
+vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   companyCreationStanding: async (id: string) => {
     kr.standings.push(id);
     if (kr.standingNever) return new Promise<never>(() => {});
@@ -43,7 +49,6 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     if (kr.holdersFail) throw new Error('the wallet did not answer');
     return kr.payments && kr.committed !== null;
   },
-  canOpenCompanies: () => kr.open,
   companyBeingCreatedLabel: (id: string) => { kr.labelAsked.push(id); return kr.label; },
   keptCreationShowsItsKeyCommitted: async (id: string, origin: string) => {
     kr.keptAsked.push({ id, origin });
@@ -262,7 +267,7 @@ describe('why a company\'s creation could not be read', () => {
   /* RED WHEN: a service that refuses the read as signed out is told apart from one that failed by nothing, so a signed-out person is shown a read that merely failed, or no failure at all. */
   it('says signed out when the service refuses the read as signed out, and failed for any other error', async () => {
     const { creationOf, creationChanged } = await load();
-    const { AuthError } = await import('vaults-web-shared/keyring.js');
+    const { AuthError } = await import('vaults-web-shared/service-transport.js');
     kr.standingFails = true;
     kr.standingError = new AuthError('not signed in');
     expect(await creationOf('c-1')).toMatchObject({ standing: null, failure: 'signed-out' });
@@ -274,7 +279,7 @@ describe('why a company\'s creation could not be read', () => {
   /* RED WHEN: a service that could not check the sign-in (503 could-not-check) is read as the person being signed out. */
   it('says failed, never signed out, when the service could not check the sign-in', async () => {
     const { creationOf } = await load();
-    const { CouldNotCheckError } = await import('vaults-web-shared/keyring.js');
+    const { CouldNotCheckError } = await import('vaults-web-shared/service-transport.js');
     kr.standingFails = true;
     kr.standingError = new CouldNotCheckError('the service could not check your sign-in');
     expect(await creationOf('c-1')).toMatchObject({ standing: null, failure: 'failed' });

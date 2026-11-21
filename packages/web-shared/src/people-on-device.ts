@@ -58,25 +58,30 @@ import { joinCodeSignedBy, type JoinCode, type PayeeParts } from 'midnight-ident
 import { payeeCodeFingerprint, tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { judgeIn, kindAsked, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
 import { mayFileHere } from './may-file-here.js';
-import { payeeAt, type InvitationSend, type InvitingCompany } from './invitation-on-device.js';
+import { payeeAt, writtenOrRefused, type InvitingCompany } from './invitation-on-device.js';
+import { serviceNotReached } from './hand-over.js';
+import type { CompanyWrites, RecordWrite } from './records-source.js';
 import {
   readClaimedHandover, typedAddressIsShielded, type AddressClaim,
 } from 'midnight-identity/profile/address-claim';
 import { readJoinParts } from 'midnight-identity/profile/join-code';
 import {
-  answered, at, claimFor, readPeopleHere, typedAddressOf, type ClaimRefusal, type PeopleHere, type PersonHere,
+  claimFor, readPeopleHere, typedAddressOf, type ClaimRefusal, type ListsView, type PeopleHere, type PersonHere,
 } from './people-read-here.js';
 
 export { claimFor, readPeopleHere, type ClaimRefusal, type PeopleHere, type PeopleReader, type PersonHere } from './people-read-here.js';
 
-/** What a device acting on a company's people needs: the company opened, its seat, and how it reaches the service. */
+/** What a device acting on a company's people needs: the company opened, its seat, and the company's view it reads through. */
 export interface PeopleDevice {
   readonly company: InvitingCompany;
   /** This seat's filing key: every version filed here is signed with it. */
   readonly signingSecret: Hex;
   /** The id the person acting signed in with. */
   readonly signedInAs: string;
-  readonly send: InvitationSend;
+  /** The company's view: its lists, the versions of its records, and what its people and vendors handed over. */
+  readonly view: ListsView;
+  /** The company's writes: each of a person's next entries is filed through them. */
+  readonly writes: CompanyWrites;
   /** The company's directory as this device believes it, read afresh for every step (`directoryHere`): who filed a version, and whose wallet a seat's is. */
   readonly directory: DirectoryRead;
   readonly network: NetworkName;
@@ -99,21 +104,21 @@ export class PersonNotChanged extends Error {
 export const madeHere = (signingSecret: Hex): MadeBy => ({ madeBy: signingPublicKeyOf(signingSecret), madeAt: utcMomentOf(Date.now()) });
 
 /**
- * **A VERSION OF A PERSON, SEALED AND SIGNED ON THIS DEVICE, FILED AT `path`
- * AND ENTERED IN THE COMPANY'S RECORDS** - the one filing call - once the
- * service has kept it. Refused first, with what resolves it, when this seat's role may not file a person's record; a seat
+ * **A VERSION OF A PERSON, SEALED AND SIGNED ON THIS DEVICE, FILED BY THE WRITE
+ * `write` MAKES OF IT AND ENTERED IN THE COMPANY'S RECORDS** - the one filing
+ * call - once the service has kept it. Refused first, with what resolves it, when this seat's role may not file a person's record; a seat
  * this device does not believe is not judged here, and every reader refuses what it files. Returns the version as filed,
  * naming this seat as its maker.
  */
 const filedAndEntered = async (
-  d: PeopleDevice, path: string, person: RosterEmployee, version: number, made: MadeBy = madeHere(d.signingSecret),
+  d: PeopleDevice, write: (body: unknown) => RecordWrite, person: RosterEmployee, version: number, made: MadeBy = madeHere(d.signingSecret),
 ): Promise<RosterEmployee> => {
   const refused = await mayFileHere(() => d.directory(), signingPublicKeyOf(d.signingSecret), 'person');
   if (refused?.why === 'role') throw new PersonNotChanged(refused.says);
   const filed: RosterEmployee = { ...person, ...made };
   const sealing = sealingWith(d.company.viewingKey, d.company.keyEpoch);
   const rec = signedWithItsEntry(sealPerson(filed, version, sealing.epoch, sealing.key), d.signingSecret);
-  answered(await d.send(path, { method: 'POST', body: JSON.stringify({ person: toCompanyWire(rec) }) }), 201);
+  await writtenOrRefused(d.writes, d.company.id, write({ person: toCompanyWire(rec) }));
   await d.entered.enter([companyRecordEntry(rec)]);
   return filed;
 };
@@ -152,7 +157,7 @@ export async function setStatusHere(
     const why = stopDateRefusal(stop.day, stop.said, await leaving.pastDraft());
     if (why !== null) throw new PersonNotChanged(`${p.name} is not made a leaver: ${why}.`);
   }
-  return filedAndEntered(d, `/api/people/${encodeURIComponent(p.id)}/status`, next, here.version + 1);
+  return filedAndEntered(d, (body) => ({ to: 'person', id: p.id, act: 'status', body }), next, here.version + 1);
 }
 
 
@@ -173,7 +178,7 @@ export async function changePersonHere(
   } catch (e) {
     throw new PersonNotChanged(`${here.person.name} is not changed: ${String((e as Error)?.message ?? e).replace(/\.?\s*$/u, '')}.`);
   }
-  return filedAndEntered(d, `/api/people/${encodeURIComponent(here.person.id)}/details`, next, here.version + 1, made);
+  return filedAndEntered(d, (body) => ({ to: 'person', id: here.person.id, act: 'details', body }), next, here.version + 1, made);
 }
 
 /** The address a payee's code names, decoded as the platform decodes one, at this device's network. */
@@ -271,6 +276,27 @@ export async function payeeCodeHandedOver(
   return { code, claim: byClaim ? claimed!.claim : null };
 }
 
+/** A read an admission rests on that the service refused or never answered: nothing was filed. */
+export class AdmissionNotRead extends Error {
+  constructor(what: string, cause: unknown) {
+    super(`${what} could not be read, so nothing was filed (${(cause as Error)?.message ?? String(cause)})`, { cause });
+    this.name = 'AdmissionNotRead';
+  }
+}
+
+/**
+ * One read an admission rests on, `what` named: a refusal or no answer from the service is said as that read failing,
+ * with nothing filed (`AdmissionNotRead`); any other stop is passed on as it came.
+ */
+export const readForTheAdmission = async <T>(what: string, read: () => Promise<T>): Promise<T> => {
+  try {
+    return await read();
+  } catch (e) {
+    if (typeof (e as { status?: unknown } | null)?.status === 'number' || serviceNotReached(e)) throw new AdmissionNotRead(what, e);
+    throw e;
+  }
+};
+
 /**
  * **ADMITTING A PERSON: THE DECISION THAT MAKES THEM PAYABLE, MADE HERE.**
  * `readOut` is the fingerprint the payee read off their own device; it must be
@@ -286,7 +312,7 @@ export async function payeeCodeHandedOver(
 export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: string): Promise<RosterEmployee> {
   const id = here.person.id;
   if (here.person.status === 'active') throw new PersonNotChanged(`${here.person.name} has already been admitted.`);
-  const box = answered(await d.send(`/api/employees/${encodeURIComponent(id)}/handover`, { method: 'GET' }), 200).inbox as Invite['handover'];
+  const box = ((await readForTheAdmission(`what ${here.person.name} handed over`, () => d.view.handovers([id])))[0] as { readonly inbox?: Invite['handover'] } | undefined)?.inbox;
   if (!box) throw new PersonNotChanged(`${here.person.name} has not handed anything over yet, so there is nothing to admit.`);
   /* Version 1 is the record being admitted when nothing was filed for them since the invitation; otherwise it is read. */
   const first = here.version === 1 ? { typed: here.person.invitedAddress ?? null }
@@ -298,7 +324,7 @@ export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: stri
   const typed = first.typed;
   const byAddress = typed !== null;
   const { code, claim } = await payeeCodeHandedOver(d, here.person, box, readOut, typed);
-  const invites = answered(await d.send(at(d, '/invites'), { method: 'GET' }), 200) as unknown as (Invite & { subjectId?: string })[];
+  const invites = await readForTheAdmission('the company\'s invitations', () => d.view.list('invites')) as (Invite & { subjectId?: string })[];
   const invite = (Array.isArray(invites) ? invites : []).filter((i) => i.subjectId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (invite === undefined) throw new PersonNotChanged(`there is no invitation on record for ${here.person.name}, so there is no way to tell who set this address. Invite them again rather than admitting it.`);
   if (typeof invite.revokedAt === 'string') {
@@ -318,7 +344,7 @@ export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: stri
     selfRaised: raisedBy === code.committeeKey.value, payeeCode: code,
     ...(claim !== null ? { addressClaim: claim } : {}),
   };
-  return filedAndEntered(d, `/api/employees/${encodeURIComponent(id)}/admit`, admitted, here.version + 1);
+  return filedAndEntered(d, (body) => ({ to: 'person', id, act: 'admit', body }), admitted, here.version + 1);
 }
 
 /**
@@ -365,5 +391,5 @@ export async function makeMyselfPayableHere(d: PeopleDevice, code: JoinCode, pay
     ...person, address, wrappingPublicKey: (code.parts as PayeeParts).payslipKey, payslipKeyFrom: code.company,
     handedOverBy: code.committeeKey.value, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(), payeeCode: code,
   };
-  return filedAndEntered(d, at(d, '/self-payee'), payable, 1, made);
+  return filedAndEntered(d, (body) => ({ to: 'self-payee', body }), payable, 1, made);
 }

@@ -17,10 +17,10 @@ import type { CompanyCreation } from '../adapters/creation-standing.js';
 const SRC = fileURLToPath(new URL('../', import.meta.url));
 const read = (p: string): string => readFileSync(SRC + p, 'utf8');
 const ACTIONS = 'actions';
-const actionFiles = (): string[] => readdirSync(SRC + ACTIONS).filter((n) => /\.tsx?$/.test(n) && !/\.test\./.test(n)).sort();
+const actionFiles = (): string[] => readdirSync(SRC + ACTIONS).filter((n) => /\.tsx?$/.test(n) && !/\.test(-support)?\./.test(n)).sort();
 /** Every file of the application's own source, relative to it, but tests. */
 const everyFile = (dir = ''): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? everyFile(`${dir}${e.name}/`) : /\.tsx?$/.test(e.name) && !/\.test\./.test(e.name) ? [`${dir}${e.name}`] : []);
+  e.isDirectory() ? everyFile(`${dir}${e.name}/`) : /\.tsx?$/.test(e.name) && !/\.test(-support)?\./.test(e.name) ? [`${dir}${e.name}`] : []);
 /** Every name a file exports, however it is written. */
 const exportedNames = (text: string): string[] => [
   ...[...text.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+(\w+)/g)].map((m) => m[1]!),
@@ -70,9 +70,8 @@ const ACTS_FOR: Record<string, string> = {
   /* Setting how long a recovery waits, from the recovery page, acts through its own adapter. */
   'recovery-window.tsx': 'adapters/recovery-window.js',
 };
-/** Files other than the action's own that may import its adapter, because they only read what it names: the vault adapter's `namedFor` is the one source of a company's record, label and account (the invite, signer, person, proposal, recovery window and service acts all ask it), and the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts, and its private-address check by the roles adapter, which holds a role change's typed address to it; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the proposals adapter's reason codes and result kinds are read by the shared proposal-act hook and display (`records/proposal-act.tsx`), and its can-approve and can-withdraw questions by the proposals page, which never calls its acts; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
+/** Files other than the action's own that may import its adapter, because they only read what it names: the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts, and its private-address check by the roles adapter, which holds a role change's typed address to it; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the proposals adapter's reason codes and result kinds are read by the shared proposal-act hook and display (`records/proposal-act.tsx`), and its can-approve and can-withdraw questions by the proposals page, which never calls its acts; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
 const ALSO_READ_BY: Record<string, string[]> = {
-  'adapters/create-vault.js': ['adapters/grants-here.ts', 'adapters/invite.ts', 'adapters/person-acts.ts', 'adapters/policy-acts.ts', 'adapters/proposal-acts.ts', 'adapters/recovery-window.ts', 'adapters/service-acts.ts', 'adapters/signer-acts.ts'],
   'adapters/person-acts.js': ['records/parts.tsx'],
   'adapters/proposal-acts.js': ['records/proposal-act.tsx', 'screens/proposals.tsx'],
   'adapters/invite.js': ['actions/signers.tsx', 'actions/vendor-panel.tsx', 'adapters/person-acts.ts', 'adapters/roles-here.ts', 'fields/form-fields.tsx', 'screens/vendors.tsx'],
@@ -279,7 +278,7 @@ describe('the vault step', () => {
    * a standing not known; or one the committee holds does not.
    */
   it('is done only by a vault the company\'s committee holds', async () => {
-    const { VAULT } = await import('../adapters/company-records.js');
+    const { VAULT } = await import('../adapters/company-rows.js');
     const { wasHandedOver } = await import('../adapters/vault-rows.js');
     const held = Object.values(VAULT).filter((standing) => wasHandedOver({ standing }));
     expect(held.sort()).toEqual([VAULT.accountNotFundable, VAULT.accountNotHandedOver, VAULT.held, VAULT.notFundable].sort());

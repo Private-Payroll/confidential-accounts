@@ -28,7 +28,11 @@ vi.mock('midnight-identity', async (importOriginal) => {
 
 vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => ({
   ...await importOriginal<typeof import('midnight-identity/profile/act-intents')>(),
-  ACT_INTENTS: Object.freeze({ 'private-deposit': { fields: { vault: 'vault' } } }),
+  ACT_INTENTS: Object.freeze({
+    'private-deposit': { fields: { vault: 'vault' } },
+    /* An action whose only cost from the account picked is a call's network fee. */
+    'give-vault-keys': { fields: { vault: 'vault' }, calls: [{ method: 'POST', path: '/api/sent', sends: true }] },
+  }),
 }));
 
 /* The account each run paid from, as the action's own step reads it. */
@@ -49,7 +53,7 @@ vi.mock('../actions/registry.js', async () => {
     check: async () => null,
     steps: () => [pays],
   };
-  const acts: Record<string, unknown> = { 'private-deposit': action };
+  const acts: Record<string, unknown> = { 'private-deposit': action, 'give-vault-keys': action };
   return { ACTIONS: acts, actionFor: (name: string) => acts[name] ?? null };
 });
 
@@ -197,6 +201,35 @@ describe('the window before the passkey of a paying action', () => {
   });
 });
 
+describe('the window before the passkey says what the account picked pays', () => {
+  it('a fee-only action says the fee, starts on the account kept for the site, and checks no account', async () => {
+    await twoWallets();
+    asking = { ...depositAsk(), intent: { name: 'give-vault-keys', vault: VAULT } };
+    render(<SessionProvider><App /></SessionProvider>);
+    await until(() => expect(document.querySelector('[data-accounts-to-choose]')).not.toBeNull());
+    const said = document.body.textContent ?? '';
+    /* RED WHEN: the window tells the person the coins of a fee-only action come from the account they pick. */
+    expect(said).toContain('If a network fee for what this sends is not covered for you');
+    expect(said).not.toContain('The coins come from the account you pick here');
+    /* RED WHEN: the fee-only window promises balances once open, which an act that starts at once never shows. */
+    expect(said).not.toContain('Balances are shown once the wallet is open');
+    /* RED WHEN: a fee-only action's pick starts on a fixed account rather than the one kept for the site. */
+    expect(document.querySelector('[data-pays-from-offered]')).not.toBeNull();
+    expect([...document.querySelectorAll<HTMLInputElement>('[data-pays-from]')].filter((r) => r.checked)).toEqual([]);
+  });
+
+  it('a deposit says the coins, and starts on the main account of the wallet that opens', async () => {
+    const { everyday } = await twoWallets();
+    asking = depositAsk();
+    render(<SessionProvider><App /></SessionProvider>);
+    await until(() => expect(document.querySelector('[data-accounts-to-choose]')).not.toBeNull());
+    /* RED WHEN: a deposit's window says only a fee is paid, or its pick no longer starts on the main account. */
+    expect(document.body.textContent).toContain('The coins come from the account you pick here');
+    expect(document.querySelector('[data-pays-from-offered]')).toBeNull();
+    expect((document.querySelector(`[data-pays-from="${everyday.id}:0"]`) as HTMLInputElement | null)?.checked).toBe(true);
+  });
+});
+
 describe('a paying action pays from the account picked before the passkey', () => {
   it('pays from the account picked, not the one open last, and asks no second choice', async () => {
     const { work } = await twoWallets();
@@ -332,7 +365,7 @@ describe('every ask that pays is picked once, before the passkey', () => {
 
   it('an account another site already has is said beside the account that pays', async () => {
     const { work } = await twoWallets();
-    render(<SessionProvider><PaysFromAccount secret={work.secret} account={3} shared={['https://other.example']} /></SessionProvider>);
+    render(<SessionProvider><PaysFromAccount request={parseAsk(depositAsk(), ASKER, Date.now())} how="before" secret={work.secret} account={3} shared={['https://other.example']} /></SessionProvider>);
     /* RED WHEN: paying from an account whose address another site holds is not said before the press. */
     expect(document.querySelector('[data-pays-from-shared]')?.textContent).toContain('https://other.example');
   });
@@ -360,7 +393,7 @@ describe('every ask that pays is picked once, before the passkey', () => {
     keepPayingPick(first, { walletId: work.id, fingerprint: work.fingerprint, account: 3 });
     const shown = (a: Ask) => (
       <SessionProvider>
-        <PaysWhenPicked request={a} thisWallet={work.fingerprint} secret={work.secret} onDecline={() => undefined} render={(n) => <p data-runs-from={n} />} />
+        <PaysWhenPicked request={a} thisWallet={work.fingerprint} secret={work.secret} onDecline={() => undefined} offered={null} render={(n) => <p data-runs-from={n} />} />
       </SessionProvider>
     );
     const { rerender } = render(shown(first));

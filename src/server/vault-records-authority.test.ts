@@ -28,33 +28,33 @@ const may = (accountOf: VaultAccountReader, list = companies) => signersOfTheVau
 describe('who may touch a vault\'s records', () => {
   it('A SIGNER OF THE COMPANY THE VAULT IS PINNED TO MAY READ AND FILE, and nobody else may', async () => {
     const m = may(pinnedTo(COMPANY));
-    expect(await m('ada', VAULT, 'pool', 'read'), 'RED WHEN: a signer of the vault\'s company is refused').toBe(true);
-    expect(await m('bo', VAULT, 'deposit-journal', 'file', FILER)).toBe(true);
-    expect(await m('eve', VAULT, 'pool', 'read'), 'RED WHEN: a signer of another company reads this vault\'s records').toBe(false);
-    expect(await m('eve', VAULT, 'pool', 'file', FILER), 'RED WHEN: a signer of another company files for this vault').toBe(false);
-    expect(await m('', VAULT, 'pool', 'read')).toBe(false);
+    expect(await m('ada', VAULT, ['pool'], 'read'), 'RED WHEN: a signer of the vault\'s company is refused').toBe(true);
+    expect(await m('bo', VAULT, ['deposit-journal'], 'file', FILER)).toBe(true);
+    expect(await m('eve', VAULT, ['pool'], 'read'), 'RED WHEN: a signer of another company reads this vault\'s records').toBe(false);
+    expect(await m('eve', VAULT, ['pool'], 'file', FILER), 'RED WHEN: a signer of another company files for this vault').toBe(false);
+    expect(await m('', VAULT, ['pool'], 'read')).toBe(false);
   });
 
   it('A FILING WITH NO CHECKED SIGNER IS REFUSED, whoever sends it', async () => {
     const m = may(pinnedTo(COMPANY));
-    expect(await m('ada', VAULT, 'pool', 'file'), 'RED WHEN: an unsigned filing is let through').toBe(false);
-    expect(await m('ada', VAULT, 'pool', 'file', 'zz' as never)).toBe(false);
+    expect(await m('ada', VAULT, ['pool'], 'file'), 'RED WHEN: an unsigned filing is let through').toBe(false);
+    expect(await m('ada', VAULT, ['pool'], 'file', 'zz' as never)).toBe(false);
   });
 
   it('REFUSES a vault the chain does not know, an address no company has, and an address two companies claim', async () => {
-    expect(await may(pinnedTo(COMPANY))('ada', 'cd'.repeat(32), 'pool', 'read'), 'RED WHEN: a vault the chain does not know is answered for').toBe(false);
-    expect(await may(pinnedTo('e0'.repeat(32)))('ada', VAULT, 'pool', 'read'), 'RED WHEN: a vault pinned to nobody here is let in').toBe(false);
+    expect(await may(pinnedTo(COMPANY))('ada', 'cd'.repeat(32), ['pool'], 'read'), 'RED WHEN: a vault the chain does not know is answered for').toBe(false);
+    expect(await may(pinnedTo('e0'.repeat(32)))('ada', VAULT, ['pool'], 'read'), 'RED WHEN: a vault pinned to nobody here is let in').toBe(false);
     const twice = [...companies, { id: 'acc_dup', contractAddress: COMPANY.toUpperCase(), memberUserIds: ['mal'] }];
-    expect(await may(pinnedTo(COMPANY), twice)('ada', VAULT, 'pool', 'read'), 'RED WHEN: a store that disagrees with itself lets anybody in').toBe(false);
-    expect(await may(pinnedTo(COMPANY))('ada', VAULT.toUpperCase(), 'pool', 'read')).toBe(false);
+    expect(await may(pinnedTo(COMPANY), twice)('ada', VAULT, ['pool'], 'read'), 'RED WHEN: a store that disagrees with itself lets anybody in').toBe(false);
+    expect(await may(pinnedTo(COMPANY))('ada', VAULT.toUpperCase(), ['pool'], 'read')).toBe(false);
   });
 
   it('matches the pinned address in any spelling the chain gives, and THROWS for an answer that is not one', async () => {
-    expect(await may(pinnedTo(`0x${COMPANY.toUpperCase()}`))('ada', VAULT, 'pool', 'read')).toBe(true);
-    await expect(may(pinnedTo('nonsense'))('ada', VAULT, 'pool', 'read'),
+    expect(await may(pinnedTo(`0x${COMPANY.toUpperCase()}`))('ada', VAULT, ['pool'], 'read')).toBe(true);
+    await expect(may(pinnedTo('nonsense'))('ada', VAULT, ['pool'], 'read'),
       'RED WHEN: a chain answer that is not an address is read as "nobody may"').rejects.toThrow(/not an address/);
     const down: VaultAccountReader = async () => { throw new Error('the indexer is not answering'); };
-    await expect(may(down)('ada', VAULT, 'pool', 'read'), 'RED WHEN: a chain that cannot be read is answered as a refusal').rejects.toThrow(/not answering/);
+    await expect(may(down)('ada', VAULT, ['pool'], 'read'), 'RED WHEN: a chain that cannot be read is answered as a refusal').rejects.toThrow(/not answering/);
   });
 });
 

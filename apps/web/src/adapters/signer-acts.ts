@@ -1,10 +1,9 @@
 import { removalOutcomeOf, removeSignerInTheWallet, rotateVaultSecretsInTheWallet, rotationOutcomeOf, REMOVE_SIGNER, ROTATE_VAULT_SECRETS, type VaultsTold } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import { admitSignerInTheWallet, approveSignerInTheWallet } from 'vaults-web-shared/signer-in-the-wallet.js';
 import { actOnACompanyInTheWallet } from 'vaults-web-shared/keyring.js';
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { mayInvite } from '../../../../src/midnight/seat-directory.js';
-import { namedFor } from './create-vault.js';
-import { keyringFor } from './keyring-person.js';
+import { namedBefore } from './named-before.js';
+import type { PageView } from './filing-judge.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import type { SignerInvited } from './signers.js';
@@ -140,21 +139,14 @@ function actedOf(act: SignerAct, ended: Ended): SignerActed {
   };
 }
 
-/** What is checked before the wallet is asked: the site is set up, the person is signed in here, the company can be named. */
-async function namedBefore(personId: string, companyId: string): Promise<{ record: string; company: CompanyLabel; account: AccountAddress } | ActRefusal> {
-  if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
-  if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
-  const named = await namedFor(companyId);
-  return named === null ? ACT_REFUSAL.didNotFinish : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
-}
 
 /** Approves the proposal that invites this signer: the wallet opens that proposal itself and approves only what it invites exactly as shown. */
 export async function approveSigner(
-  personId: string, companyId: string, invited: SignerInvited, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, invited: SignerInvited, onStep?: (step: number, steps: number) => void,
 ): Promise<SignerActed> {
   try {
     if (invited.coinKey === null) return refused(ACT_REFUSAL.didNotFinish);
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await approveSignerInTheWallet({
       ...named, proposal: invited.proposal, name: invited.name, role: invited.role, address: invited.address, scope: invited.scope, coinKey: invited.coinKey,
@@ -167,10 +159,10 @@ export async function approveSigner(
 
 /** Finishes adding a signer who took their seat: the wallet files the company's list with them in it and gives them the company's key. */
 export async function admitSigner(
-  personId: string, companyId: string, signer: { readonly id: string; readonly name: string }, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, signer: { readonly id: string; readonly name: string }, onStep?: (step: number, steps: number) => void,
 ): Promise<SignerActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await admitSignerInTheWallet({ ...named, signer: signer.id, name: signer.name }, ACCOUNT_ORIGIN,
       onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
@@ -187,10 +179,10 @@ export async function admitSigner(
  * that holds it, never by this act.
  */
 export async function giveYourKeys(
-  personId: string, companyId: string, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, onStep?: (step: number, steps: number) => void,
 ): Promise<SignerActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await actOnACompanyInTheWallet({ name: SIGNER_ACT.giveKeys, ...named }, ACCOUNT_ORIGIN,
       onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
@@ -206,10 +198,10 @@ export async function giveYourKeys(
  * removal and carries it out once the network counts the approvals it needs; the page names the seat and nothing more.
  */
 export async function removeSigner(
-  personId: string, companyId: string, signer: { readonly leaf: string; readonly threshold?: number }, onStep?: (step: number, steps: number) => void,
+  personId: string, view: PageView, signer: { readonly leaf: string; readonly threshold?: number }, onStep?: (step: number, steps: number) => void,
 ): Promise<SignerActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await removeSignerInTheWallet({ ...named, leaf: signer.leaf, ...(signer.threshold === undefined ? {} : { threshold: signer.threshold }) },
       ACCOUNT_ORIGIN, onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
@@ -220,9 +212,9 @@ export async function removeSigner(
 }
 
 /** Asks the wallet, from a signer who stays, to change the secret of every vault whose change a removal left owed. */
-export async function changeVaultSecrets(personId: string, companyId: string, onStep?: (step: number, steps: number) => void): Promise<SignerActed> {
+export async function changeVaultSecrets(personId: string, view: PageView, onStep?: (step: number, steps: number) => void): Promise<SignerActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await rotateVaultSecretsInTheWallet(named, ACCOUNT_ORIGIN, onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
     return actedOf(SIGNER_ACT.rotate, ended);
@@ -233,9 +225,9 @@ export async function changeVaultSecrets(personId: string, companyId: string, on
 
 
 /** Asks the wallet to repair the company's key from this seat. The wallet refuses a seat that does not hold the newest key, one whose role files no proposal, and a repair that waits on a removal's own change of key; each refusal reaches the page as a code. */
-export async function repairCompanyKey(personId: string, companyId: string, onStep?: (step: number, steps: number) => void): Promise<SignerActed> {
+export async function repairCompanyKey(personId: string, view: PageView, onStep?: (step: number, steps: number) => void): Promise<SignerActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await actOnACompanyInTheWallet({ name: SIGNER_ACT.repair, ...named }, ACCOUNT_ORIGIN, onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
     return actedOf(SIGNER_ACT.repair, ended);
@@ -246,9 +238,9 @@ export async function repairCompanyKey(personId: string, companyId: string, onSt
 
 
 /** Whether this seat is one that repairs the company's key: on the chain, not leaving, a role that may invite and holding the newest key. False when any of it cannot be read, so a repair is never offered on a guess; the wallet checks again before it files anything. */
-export async function repairIsOffered(personId: string, companyId: string): Promise<boolean> {
+export async function repairIsOffered(personId: string, view: PageView): Promise<boolean> {
   try {
-    const here = await seatAndRecordsHere(personId, companyId);
+    const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') return false;
     const { dir, holders } = await here.directory();
     const own = dir.seats.find((s) => s.seat === here.leaf);
@@ -262,10 +254,10 @@ export async function repairIsOffered(personId: string, companyId: string): Prom
 
 /** Runs one act on a person waiting for a seat, or adding one, with these fields, and reads how it ended. */
 async function onAWaitingSigner(
-  act: SignerAct, personId: string, companyId: string, fields: Readonly<Record<string, string>>, onStep?: (step: number, steps: number) => void,
+  act: SignerAct, personId: string, view: PageView, fields: Readonly<Record<string, string>>, onStep?: (step: number, steps: number) => void,
 ): Promise<SignerActed> {
   try {
-    const named = await namedBefore(personId, companyId);
+    const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
     const ended = await actOnACompanyInTheWallet({ name: act, ...named, ...fields }, ACCOUNT_ORIGIN,
       onStep === undefined ? {} : { onStep: (at) => onStep(at.step, at.steps) });
@@ -279,21 +271,21 @@ async function onAWaitingSigner(
  * **WITHDRAWS A PERSON WAITING FOR A SEAT**, from the person's wallet: their request is let go and their invitation's link
  * reads as withdrawn, once the wallet reads on the chain itself that no proposal could still seat them.
  */
-export const withdrawWaitingSigner = (personId: string, companyId: string, signer: { readonly id: string; readonly name: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
-  onAWaitingSigner(SIGNER_ACT.withdraw, personId, companyId, { signer: signer.id, personName: signer.name }, onStep);
+export const withdrawWaitingSigner = (personId: string, view: PageView, signer: { readonly id: string; readonly name: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
+  onAWaitingSigner(SIGNER_ACT.withdraw, personId, view, { signer: signer.id, personName: signer.name }, onStep);
 
 /** **SENDS A SEATED SIGNER'S INVITATION AGAIN**, from the person's wallet, which shows the new link in its own window only. */
-export const reissueInvitation = (personId: string, companyId: string, signer: { readonly leaf: string; readonly name: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
-  onAWaitingSigner(SIGNER_ACT.reissue, personId, companyId, { leaf: signer.leaf.toLowerCase(), personName: signer.name }, onStep);
+export const reissueInvitation = (personId: string, view: PageView, signer: { readonly leaf: string; readonly name: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
+  onAWaitingSigner(SIGNER_ACT.reissue, personId, view, { leaf: signer.leaf.toLowerCase(), personName: signer.name }, onStep);
 
 /** A code's seat is made for every right on every vault, so the person is added as an admin, the one role that holds them. */
 const ROLE_OF_A_CODE = 'admin';
 
 /** **ADDS A SIGNER FROM THE CODE THEIR OWN WALLET MADE**, as an admin: the wallet files their request and tells its id. */
-export const addSignerByCode = (personId: string, companyId: string, asked: { readonly code: string; readonly name: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
-  onAWaitingSigner(SIGNER_ACT.addByCode, personId, companyId, { code: asked.code.trim(), personName: asked.name, role: ROLE_OF_A_CODE }, onStep);
+export const addSignerByCode = (personId: string, view: PageView, asked: { readonly code: string; readonly name: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
+  onAWaitingSigner(SIGNER_ACT.addByCode, personId, view, { code: asked.code.trim(), personName: asked.name, role: ROLE_OF_A_CODE }, onStep);
 
 /** **PROPOSES THE SEAT OF A PERSON WAITING WHO JOINED BY A CODE**, once the fingerprint they read out is the one their request makes. */
-export const raiseWaitingSigner = (personId: string, companyId: string, signer: { readonly id: string; readonly name: string; readonly readOut: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
-  onAWaitingSigner(SIGNER_ACT.raise, personId, companyId, { signer: signer.id, personName: signer.name, readOut: signer.readOut.trim() }, onStep);
+export const raiseWaitingSigner = (personId: string, view: PageView, signer: { readonly id: string; readonly name: string; readonly readOut: string }, onStep?: (step: number, steps: number) => void): Promise<SignerActed> =>
+  onAWaitingSigner(SIGNER_ACT.raise, personId, view, { signer: signer.id, personName: signer.name, readOut: signer.readOut.trim() }, onStep);
 

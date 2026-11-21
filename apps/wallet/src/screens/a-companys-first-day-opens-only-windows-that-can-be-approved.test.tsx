@@ -52,6 +52,7 @@ import { forgetApprovalBeforeThePasskey } from '../framing.js';
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { savePasskey, saveSecret, saveWalletName } from '../accounts/storage.js';
 import * as keyring from '../../../../packages/web-shared/src/keyring.js';
+import * as creation from '../../../../packages/web-shared/src/company-creation.js';
 import type { Openable } from '../../../../packages/web-shared/src/wallet-sign-in.js';
 
 const PAGE = 'https://app.payroll.example';
@@ -163,7 +164,7 @@ describe('a company\'s first day, each step from a fresh page', () => {
   it('Finish creating the company opens one window, the action, which can be approved before the account exists', async () => {
     theService(null);
     /* RED WHEN: a window step 2 opens cannot be approved while the company's account is not yet on the chain. */
-    expect(await theWindowFor((view) => keyring.finishCompanyInTheWallet(COMPANY, WALLET, {}, view, PAGE))).toEqual(
+    expect(await theWindowFor((view) => creation.finishCompanyInTheWallet(COMPANY, WALLET, {}, view, PAGE))).toEqual(
       { kind: 'act', intent: 'finish-company', approvable: true });
   });
 

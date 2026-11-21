@@ -9,6 +9,7 @@
  * Over real HTTP with the company's directory and record tree as the service
  * keeps them, and the test's chain.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { newSymmetricKey, randomBytes, sign, toHex, type Hex } from '../core/crypto.js';
@@ -16,13 +17,15 @@ import { keyCheckOf, sealedPrevious, sealedSeed, wrapsFor } from '../core/compan
 import {
   directoryChangeMessage, type DirectoryFiling, type QuorumChange, type RotateChange,
 } from '../midnight/seat-directory.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import { anchoredOnTheWayIn, anchorServiceFor, directoryChangeFiledHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import { anchoredOnTheWayIn, directoryChangeFiledHere } from 'vaults-web-shared/anchored-on-the-way-in.js';
 import { anchorFunctions, anchorSentInATest } from '../testing/record-tree-double.js';
 import { treeKeptHere, treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectory, acmeDirectoryWithItsFold, ADA, ADDRESS, apiAs, BO, chains, CO, LABEL, seatOf, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
@@ -44,12 +47,12 @@ beforeAll(async () => {
 });
 
 /** A seat's device anchoring, filing through `file` - the service as it is, unless a test says otherwise. */
-const doorsOf = (s: Seat, kept = treeKeptInMemory(), file?: AnchorDoors['fileDirectory']): AnchorDoors => ({
+const doorsOf = (s: Seat, kept = treeKeptInMemory(), file?: AnchorDoors['fileDirectory']): AnchorDoorsBare => ({
   accountId: CO,
   changes: kept.changes,
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(apiAs(s.person)),
-  tree: treeServiceFor(apiAs(s.person)),
+  manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)),
+  tree: treeServiceOf(serviceSource(apiAs(s.person), CO)),
   directory: () => acmeDirectoryWithItsFold(),
   directoryFilings: async () => store.directoryFilingsOf(CO),
   fileDirectory: file ?? (async (filing) => {
@@ -64,7 +67,7 @@ const doorsOf = (s: Seat, kept = treeKeptInMemory(), file?: AnchorDoors['fileDir
       acmeChain.move(previous, batch, held, tag);
     },
     sealedProposals: async (c) => store.listProposals(c),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
 });
@@ -87,14 +90,14 @@ describe('A SIGNED CHANGE FILED FROM A DEVICE', () => {
   it('IS ANCHORED AT ONCE BY THAT DEVICE, AND KEPT THERE UNTIL A VERSION CARRYING IT IS ANCHORED', async () => {
     const kept = treeKeptInMemory();
     const { change, version } = signedNext(retiring(CY), [ADA]);
-    const filed = await directoryChangeFiledHere(doorsOf(ADA, kept), change, version);
+    const filed = await directoryChangeFiledHere(throughAView(doorsOf(ADA, kept)), change, version);
     /* RED WHEN: a change filed waits for a later anchor, so a change of who holds the account can lose it first. */
     expect(filed.anchor).toMatchObject({ anchored: expect.any(Number) });
     expect(await anchoredVersions()).toContain(version);
     expect(await retiredOf(CY)).toEqual({});
     /* Kept until a way in sees a version carrying it anchored; then let go of. RED WHEN: it is kept and filed again for ever. */
     expect((await kept.changes.all(CO)).map((k) => k.signedAt)).toEqual([version]);
-    expect(await anchoredOnTheWayIn(doorsOf(ADA, kept))).not.toHaveProperty('filedAgain');
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(ADA, kept)))).not.toHaveProperty('filedAgain');
     expect(await kept.changes.all(CO)).toEqual([]);
   });
 
@@ -102,12 +105,12 @@ describe('A SIGNED CHANGE FILED FROM A DEVICE', () => {
     const kept = treeKeptInMemory();
     const { change, version } = signedNext(retiring(DEE), [ADA]);
     /* The service answers the filing and keeps nothing of it. */
-    const dropped = await directoryChangeFiledHere(doorsOf(ADA, kept, async () => {}), change, version);
+    const dropped = await directoryChangeFiledHere(throughAView(doorsOf(ADA, kept, async () => {})), change, version);
     expect(dropped.version).toBe(version);
     expect(store.directoryFilingsOf(CO).length).toBe(version - 1);
     expect(await retiredOf(DEE)).toBeNull();
     /* RED WHEN: the device keeps nothing before it files, so a change the service drops is lost and its seats must sign it again. */
-    expect(await anchoredOnTheWayIn(doorsOf(ADA, kept))).toMatchObject({ filedAgain: 'directory-changes', anchored: expect.any(Number) });
+    expect(await anchoredOnTheWayIn(throughAView(doorsOf(ADA, kept)))).toMatchObject({ filedAgain: 'directory-changes', anchored: expect.any(Number) });
     expect(store.directoryFilingsOf(CO)[version - 1]).toEqual({ company: CO, version, change });
     expect(await anchoredVersions()).toContain(version);
     expect(await retiredOf(DEE)).toEqual({});
@@ -118,31 +121,31 @@ describe('A SIGNED CHANGE FILED FROM A DEVICE', () => {
     const { change, version } = signedNext(retiring(FAY), [ADA]);
     /* This device's anchors are not sent: the chain answers nothing to them. */
     const working = doorsOf(ADA, kept);
-    const refusing: AnchorDoors = { ...working, service: { ...working.service, sendProven: async () => { throw new Error('the node is down'); } } };
-    const filed = await directoryChangeFiledHere(refusing, change, version);
+    const refusing: AnchorDoorsBare = { ...working, service: { ...working.service, sendProven: async () => { throw new Error('the node is down'); } } };
+    const filed = await directoryChangeFiledHere(throughAView(refusing), change, version);
     /* RED WHEN: an anchor refused after the change was filed is thrown, so a filing that landed reads as failed. */
     expect(filed).toMatchObject({ version, anchor: { notAnchored: expect.stringMatching(/the anchor was not sent/u) } });
     expect(store.directoryFilingsOf(CO)[version - 1]).toEqual({ company: CO, version, change });
     expect(await anchoredVersions()).not.toContain(version);
     /* RED WHEN: a change filed and not anchored is let go of, so a later loss of it cannot be filed again. */
-    expect(await anchoredOnTheWayIn(refusing)).toHaveProperty('notAnchored');
+    expect(await anchoredOnTheWayIn(throughAView(refusing))).toHaveProperty('notAnchored');
     expect((await kept.changes.all(CO)).map((k) => k.signedAt)).toEqual([version]);
-    expect(await anchoredOnTheWayIn(working)).toMatchObject({ anchored: expect.any(Number) });
+    expect(await anchoredOnTheWayIn(throughAView(working))).toMatchObject({ anchored: expect.any(Number) });
     expect(await anchoredVersions()).toContain(version);
-    await anchoredOnTheWayIn(working);
+    await anchoredOnTheWayIn(throughAView(working));
     expect(await kept.changes.all(CO)).toEqual([]);
   });
 
   it('A CHANGE THE SERVICE DROPS, FILED AGAIN ON A WAY IN WHOSE ANCHOR IS REFUSED, IS SAID AND STAYS KEPT FOR THE NEXT', async () => {
     const kept = treeKeptInMemory();
     const { change, version } = signedNext(retiring(GUS), [ADA]);
-    await directoryChangeFiledHere(doorsOf(ADA, kept, async () => {}), change, version);
+    await directoryChangeFiledHere(throughAView(doorsOf(ADA, kept, async () => {})), change, version);
     const working = doorsOf(ADA, kept);
-    const refusing: AnchorDoors = { ...working, service: { ...working.service, sendProven: async () => { throw new Error('the node is down'); } } };
+    const refusing: AnchorDoorsBare = { ...working, service: { ...working.service, sendProven: async () => { throw new Error('the node is down'); } } };
     /* RED WHEN: a change filed again and then refused its anchor is thrown, or let go of with nothing anchored. */
-    expect(await anchoredOnTheWayIn(refusing)).toMatchObject({ filedAgain: 'directory-changes', notAnchored: expect.stringMatching(/the anchor was not sent/u) });
+    expect(await anchoredOnTheWayIn(throughAView(refusing))).toMatchObject({ filedAgain: 'directory-changes', notAnchored: expect.stringMatching(/the anchor was not sent/u) });
     expect((await kept.changes.all(CO)).map((k) => k.signedAt)).toEqual([version]);
-    expect(await anchoredOnTheWayIn(working)).toMatchObject({ anchored: expect.any(Number) });
+    expect(await anchoredOnTheWayIn(throughAView(working))).toMatchObject({ anchored: expect.any(Number) });
     expect(await retiredOf(GUS)).toEqual({});
   });
 
@@ -150,7 +153,7 @@ describe('A SIGNED CHANGE FILED FROM A DEVICE', () => {
     const kept = treeKeptInMemory();
     const { change, version } = signedNext(retiring(BO), [ADA]);
     /* RED WHEN: a change is filed or kept under signatures that bind another version than the next. */
-    await expect(directoryChangeFiledHere(doorsOf(ADA, kept), change, version - 1)).rejects.toThrow(/have it signed again/iu);
+    await expect(directoryChangeFiledHere(throughAView(doorsOf(ADA, kept)), change, version - 1)).rejects.toThrow(/have it signed again/iu);
     expect(await kept.changes.all(CO)).toEqual([]);
     expect(store.directoryFilingsOf(CO).length).toBe(version - 1);
   });
@@ -174,7 +177,7 @@ describe('A CHANGE OF THE COMPANY\'S KEY IS NEVER KEPT ON THE DEVICE OR FILED AG
   it('a change of key filed from a device is not kept, even when the service drops it', async () => {
     const kept = treeKeptInMemory();
     const { change, version } = rotationNext();
-    await directoryChangeFiledHere(doorsOf(ADA, kept, async () => {}), change, version);
+    await directoryChangeFiledHere(throughAView(doorsOf(ADA, kept, async () => {})), change, version);
     /* RED WHEN: a change of key is kept before it is filed, so a lost one is filed again under its old signatures. */
     expect(await kept.changes.all(CO)).toEqual([]);
     expect(store.directoryFilingsOf(CO).length).toBe(version - 1);
@@ -186,7 +189,7 @@ describe('A CHANGE OF THE COMPANY\'S KEY IS NEVER KEPT ON THE DEVICE OR FILED AG
     /* A store that holds one anyway, at the directory's next version. */
     await kept.changes.keep(CO, { signedAt: version, change });
     const filed: DirectoryFiling[] = [];
-    await anchoredOnTheWayIn(doorsOf(ADA, kept, async (f) => { filed.push(f); }));
+    await anchoredOnTheWayIn(throughAView(doorsOf(ADA, kept, async (f) => { filed.push(f); })));
     /* RED WHEN: a change of key kept on the device is offered to be filed again on the way in. */
     expect(filed.filter((f) => f.change.kind === 'rotate')).toEqual([]);
   });

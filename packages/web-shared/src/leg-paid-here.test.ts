@@ -107,7 +107,7 @@ vi.mock('./vault-public-payout.js', async (real) => {
 let raisedByALeaver = false;
 /* Whether each such ask is written into `calls`, where a test watches its place among the payments. */
 let askedInCalls = false;
-vi.mock('./governed-call-on-device.js', () => ({
+vi.mock('./seats-leaving-here.js', () => ({
   refuseARunALeaverRaisedHere: async (_r: unknown, _a: string, _k: unknown, proposalId: string) => {
     if (askedInCalls) calls.push(`who raised ${proposalId}`);
     if (raisedByALeaver) throw new Error('This was raised by a signer whose removal is raised. Nothing was sent.');

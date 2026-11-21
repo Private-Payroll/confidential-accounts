@@ -17,6 +17,7 @@ import {
 } from '../../../../src/server/a-company-whose-signers-change-on-the-chain.test-support.js';
 import { grantsDoorsOf, policyFilingOf, RHEA } from '../../../../src/server/a-read-grant.test-support.js';
 import { spendingPoliciesFor, type SpendingPoliciesReach } from '../../../../packages/web-shared/src/spending-policies-reach.js';
+import { serviceSource } from '../../../../packages/web-shared/src/records-source.js';
 
 type ResealDoors = Parameters<typeof sealPoliciesToNewSignersHere>[0];
 
@@ -24,7 +25,7 @@ aCompanyWhoseSignersChange(2);
 
 /** The part of `s`'s wallet reach its spending policies' readers are read through; the rest refuses, being unused here. */
 const walletReachOf = async (s: Seat): Promise<SpendingPoliciesReach> => ({
-  leaf: s.seat as Hex, companyKey: walletOf(s).companyKey, api: apiAs(s.person), accountId: CO,
+  leaf: s.seat as Hex, companyKey: walletOf(s).companyKey, records: serviceSource(apiAs(s.person), CO).records, accountId: CO,
   keys: async () => { throw new Error('the policy readers make no policy keys'); },
   roles: async () => { throw new Error('the policy readers read no entry of the chain'); },
   directory: directoryOf(s),

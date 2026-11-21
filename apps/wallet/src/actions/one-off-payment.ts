@@ -10,11 +10,10 @@ import { payeeOf } from '../../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { periodOf, periodWindowOf } from '../../../../src/midnight/spending-policy-record.js';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import {
-  ApprovalNotOwed, governedCallServiceFor, theRoundAsked, nothingWasSentBy, notEnoughApprovalsYet, type GovernedCallDoors, type RoundOnThePage,
-} from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { theRoundAsked, nothingWasSentBy, type GovernedCallDoors, type RoundOnThePage } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { ApprovalNotOwed, notEnoughApprovalsYet } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import type { AccountGovernance } from 'midnight-identity/profile/records-key';
-import { HttpCompanyRecordStore } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere } from '../../../../packages/web-shared/src/one-off-here.js';
 import { oneOffToPayHere, type OneOffAsked, type OneOffRaiseDoors } from '../../../../packages/web-shared/src/one-off-raised-here.js';
 import { approveWith, chargeWith, raiseOneOffWith, spendingPolicyWith } from '../../../../packages/web-shared/src/one-off-in-the-wallet.js';
@@ -28,18 +27,18 @@ import { PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentS
 import { seatHereIn, vaultNotesHere } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { type SecretKeptHere } from '../../../../packages/web-shared/src/vault-doors.js';
 import { browserChargesInFlight, browserInFlightRecords, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
-import {
-  deviceRecordsFor, deviceSignerFrom, readersIn, vaultServiceFor,
-} from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { deviceRecordsFor, deviceSignerFrom, readersIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import { HttpCompanyRecordStore, readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { stopsFor } from './leaving-read-in-the-wallet.js';
+import { vaultServiceThrough } from '../../../../packages/web-shared/src/vault-service-through-the-view.js';
 import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { NETWORK } from 'midnight-identity/network';
-import {
-  companyReachFor, companyRecordsFor, enteredFor, handOverMarked, keptReach, paidAmongFor, pureCircuits, type CompanyChain, type CompanyReach,
-  type CompanyRecordsInTheWallet, type PureCircuits,
-} from './company-reach.js';
+import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyRecordsFor, paidAmongFor, pureCircuits, type CompanyRecordsInTheWallet, type PureCircuits } from './company-records-in-the-wallet.js';
+import { handOverMarked } from './hand-over-in-the-wallet.js';
 import { anchorDoorsIn, anchoredAtTheEnd, rebuildDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
@@ -182,7 +181,7 @@ export function payDoorsFor(
   const kept = (reach.kept ?? keptInTheWallet)(opener);
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-  const base = vaultServiceFor(r.api, r.accountId, r.roster);
+  const base = vaultServiceThrough(r.stepView);
   return {
     sleep: (ms) => reach.pause(ms, ctx.signal),
     service: {
@@ -199,13 +198,13 @@ export function payDoorsFor(
     me,
     myRecordsKey: recordsKeypairFrom(fromHex(r.companyKey)).publicKey as Hex,
     signers: readersIn(directory).signers,
-    records: deviceRecordsFor(r.seat.signingSecret, judge, () => person, enteredFor(r), r.send),
+    records: deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
     ...(kept.coins === undefined ? {} : { kept: kept.coins }),
     secretKeptHere: reach.secrets(person),
     inFlight: kept.payments,
     seatHere: () => seatHereIn(directory, r.seat.signingSecret),
     now: () => new Date(reach.now()),
-    charge: (id, body) => { handed.over = true; return governedCallServiceFor(r.api).charge!(id, body); },
+    charge: (id, body) => { handed.over = true; return governedCallServiceThrough(r.stepView).charge!(id, body); },
     filer: signingPublicKeyOf(r.seat.signingSecret).toLowerCase() as Hex,
     chargesInFlight: kept.charges,
     paidYet: async () => null,
@@ -223,18 +222,13 @@ interface Handed { over: boolean }
 export const governedDoorsFor = (
   ctx: StepContext, r: CompanyReach, reach: OneOffPaymentReach, records: CompanyRecordsHere, handed: Handed = { over: false },
 ): GovernedCallDoors => {
-  const service = governedCallServiceFor(r.api);
+  const service = governedCallServiceThrough(r.stepView);
   return {
     service: {
       ...service,
       file: (accountId, body) => { if (body.tx !== undefined) handed.over = true; return service.file!(accountId, body); },
       approve: (id, body) => { handed.over = true; return service.approve(id, body); },
       send: (id, body) => { handed.over = true; return service.send(id, body); },
-      callState: async () => {
-        const chain = await r.chain.callState(r.account);
-        if (chain === null) throw new Error('this wallet could not read the company\'s account at one block, so nothing was built or sent.');
-        return { ...chain, account: r.account };
-      },
     },
     builder: r.builder,
     material: signerMaterialOf(r.seat),
@@ -262,7 +256,7 @@ export function raiseDoorsFor(
 ): OneOffRaiseDoors {
   const pay = payDoorsFor(ctx, r, reach);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-  const filing = new HttpCompanyRecordStore(r.accountId, r.send, r.seat.signingSecret as Hex, judge);
+  const filing = new HttpCompanyRecordStore(r.accountId, readsJoinedIn(r.stepView), r.seat.signingSecret as Hex, judge);
   const pool = new SealedNotePool(pay.records('pool'), { signerId: pay.me.signerId, wrappingSecret: pay.me.wrappingSecret }, pay.signers);
   return {
     ...governedDoorsFor(ctx, r, reach, records, handed),
@@ -275,7 +269,7 @@ export function raiseDoorsFor(
         notes: notes.map(wireOf), payments: payments.map((p) => ({ token: p.token, amount: p.amount.toString() })),
       }),
       fileAgain: async (v) => {
-        const rebuilt = await vaultNotesHere(rebuildDoorsIn(ctx, r, r.api, r.send, { coins: () => pay.kept }), v);
+        const rebuilt = await vaultNotesHere(rebuildDoorsIn(ctx, r, { coins: () => pay.kept }), v);
         const cured = rebuilt.of === 'as-filed' || rebuilt.of === 'filed';
         return {
           answer: 'the-newest', said: cured ? [] : [...(rebuilt.leaver ?? []), ...rebuilt.said],
@@ -287,7 +281,7 @@ export function raiseDoorsFor(
     oneOffFiling: { put: (rec) => filing.put(rec), served: async () => null },
     filing: { seat: r.leaf, keyEpoch: r.companyKeys.epoch, newId: () => newProposalId() },
     runs: { runPayload: pure.account.runPayload, proposalIdOf: pure.account.proposalIdOf, retrySaltOf: pure.account.retrySaltOf, noVault: pure.account.noVault },
-    recorded: { entered: enteredFor(r), anchor: async () => anchoredAtTheEnd(await anchorDoorsIn(r, r.api)) },
+    recorded: { entered: enteredFor(r), anchor: async () => anchoredAtTheEnd(await anchorDoorsIn(r)) },
     now: () => new Date(reach.now()),
   };
 }
@@ -514,7 +508,7 @@ export function oneOffKind(reach: OneOffPaymentReach): ProposalKind {
     approve: async (ctx, r, _intent, round, handed) => {
       const records = companyRecordsFor(r, reach, await pureCircuits());
       try {
-        const served = theRoundAsked(await governedCallServiceFor(r.api).standing(round.id), round.id, round.chainId);
+        const served = theRoundAsked(await governedCallServiceThrough(r.stepView).standing(round.id), round.id, round.chainId);
         await approveWith(governedDoorsFor(ctx, r, reach, records, handed), { ...served, id: round.id, chainId: round.chainId }, r.companyKeys);
       } catch (e) {
         if (e instanceof ApprovalNotOwed && e.why === 'counted') throw e;

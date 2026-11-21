@@ -21,6 +21,10 @@ import { ENGLISH } from './english.test-support.js';
  * never for a fixed number of turns.
  */
 const records = vi.hoisted(() => ({ company: { of: 'locked' } as unknown }));
+/* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
+vi.mock('./adapters/filing-judge.js', async (real) => ({
+  ...(await real<typeof import('./adapters/filing-judge.js')>()),
+}));
 vi.mock('./adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('./adapters/company-records.js')>()),
   readCompany: async () => records.company,

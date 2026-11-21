@@ -26,15 +26,22 @@ import type { RoundOnChain } from 'vaults-web-shared/governed-call-builder.js';
 import { theNetwork } from '../midnight/network.js';
 import { signCompanyFiling, toCompanyWire } from '../midnight/sealed-record-wire.js';
 import { payeeFor } from '../testing/payees.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
-import { admitHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
+import { admitHere, changePersonHere, readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
+import { companyViewFor, viewHeldOver } from 'vaults-web-shared/company-view.js';
+import { CompanyChangedMeanwhile } from 'vaults-web-shared/company-view-probe.js';
+import { serviceSource } from 'vaults-web-shared/records-source.js';
+import { treeKeptInMemory } from 'vaults-web-shared/tree-kept-here.js';
+import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
-import { drawRunHere, fileRunDrawnHere, runDrawnHere, RunNotDrawnHere, samePeopleAsDrawn, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
+import { drawnFromIn, drawRunHere, fileRunDrawnHere, runDrawnHere, RunNotDrawnHere, samePeopleAsDrawn, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
 import { runRoutes } from './run-routes.js';
 import {
-  aCompanyOfTwoSeats, acmeDirectory, ACME, ADA, ADDRESS, aVersionNoSeatSigned, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, OTHER, personVersions,
-  personFiledBy, sendAs, store, type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  aCompanyOfTwoSeats, acmeChain, acmeDirectory, acmeReads, ACME, ADA, ADDRESS, aVersionNoSeatSigned, CO, fromAda, KEY, LABEL, newestPerson, ORIGIN, OTHER, personVersions,
+  personFiledBy, sendAs, store, type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, viewOver, writesOver } from '../testing/writes-over-a-send.js';
+import { readRoutesOver } from '../testing/service-routes-in-memory.js';
 import { enteredHere } from '../testing/records-entered.js';
 import { pureCircuits } from '../../contracts/managed/contract/index.js';
 
@@ -52,14 +59,14 @@ const MONTH = '2026-11';
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 500000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A payee invited, accepted with the code their own wallet signed (their payslip key one this test holds the secret of), and maybe admitted. */
 const aPayee = async (n: number, admit = true) => {
   const slip = newWrappingKeypair();
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: addressOf(n), payslipKey: slip.publicKey });
-  const made = await inviteHere(ACME, ADA, 'employee', pay(n), ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', pay(n), ORIGIN, writesOver(fromAda));
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   if (admit) {
     const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
@@ -70,12 +77,20 @@ const aPayee = async (n: number, admit = true) => {
 /** This file's chain, as the person's own wallet reads it: where each proposal stands, by its identity on chain; never held unless set. */
 const onChain = new Map<string, RoundOnChain>();
 /** One seat's device, drawing a run. */
-const drawingOn = (s: Seat): RunDrawDoors => ({
-  api: async (path, init) => {
-    const r = await sendAs(s.person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
-    if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
-    return r.body;
-  },
+/** One seat's calls to the service, each that is not a read (a GET, or a POST that only reads) logged in `written` when given. */
+const serviceOf = (s: Seat, written?: string[]) => async (path: string, init?: RequestInit): Promise<unknown> => {
+  if (written !== undefined && (init?.method ?? 'GET') !== 'GET' && (init as { read?: boolean } | undefined)?.read !== true) written.push(path);
+  const r = await sendAs(s.person)(path, { method: (init?.method ?? 'GET') as never, ...(init?.body === undefined ? {} : { body: String(init.body) }) });
+  if (r.status >= 300) throw Object.assign(new Error(String((r.body as { error?: string }).error ?? r.status)), { status: r.status, body: r.body });
+  return r.body;
+};
+/** A step's own view of Acme for `s`'s device, checked before every write as a wallet step's is. */
+const viewOfAStep = (s: Seat) => viewHeldOver(() => companyViewFor(serviceSource(serviceOf(s), CO), {
+  holders: acmeReads.holders as () => Promise<AccountHoldersRead>, onChain: acmeChain.onChain,
+  builder: { anchorHeads: async () => { throw new Error('this test reads no heads'); } }, kept: () => treeKeptInMemory(),
+}, async () => { throw new Error('this test reads nothing held'); }));
+const drawingOn = (s: Seat, written?: string[]): RunDrawDoors => ({
+  view: viewOver(serviceOf(s, written), CO),
   accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: {
     people: () => readPeopleHere(peopleOn(s)), runs: async () => store.listRuns(CO), proposals: async () => store.listProposals(CO), directory: acmeDirectory,
@@ -203,27 +218,50 @@ describe('A RUN IS DRAWN ON A SIGNER\'S DEVICE', () => {
 
   it('A RUN DRAWN FOR A PERSON TO CONFIRM SENDS NOTHING UNTIL IT IS FILED, AND IS NOT FILED OVER A RUN FOR ITS MONTH RAISED MEANWHILE', async () => {
     const written: string[] = [];
-    const doors = drawingOn(ADA);
-    const watched: RunDrawDoors = { ...doors, api: (path, init) => { if ((init?.method ?? 'GET') !== 'GET') written.push(path); return doors.api(path, init); } };
+    const watched = drawingOn(ADA, written);
     const before = runsKept();
     const shown = await runDrawnHere(watched, { period: '2027-07' });
     /* RED WHEN: drawing a run to show a person sends, files or enters anything before they confirm it. */
     expect(written).toEqual([]);
     expect(runsKept()).toBe(before);
     expect(shown.employees.length).toBeGreaterThan(0);
-    const meanwhile = await fileRunDrawnHere(watched, await runDrawnHere(watched, { period: '2027-07' }));
+    const meanwhile = await fileRunDrawnHere(watched, await runDrawnHere(watched, { period: '2027-07' }), []);
     expect(written).toEqual([`/api/accounts/${CO}/runs`]);
     await raisedAsARaiseLeavesIt(meanwhile.id);
     /* RED WHEN: a run confirmed after another run for its month was raised is filed beside it. */
-    await expect(fileRunDrawnHere(watched, shown)).rejects.toThrow(/a run for 2027-07 already exists/u);
-    await expect(fileRunDrawnHere(watched, shown)).rejects.toBeInstanceOf(RunNotDrawnHere);
+    await expect(fileRunDrawnHere(watched, shown, [])).rejects.toThrow(/a run for 2027-07 already exists/u);
+    await expect(fileRunDrawnHere(watched, shown, [])).rejects.toBeInstanceOf(RunNotDrawnHere);
     expect(store.getRun(shown.id)).toBeFalsy();
     expect(written).toHaveLength(1);
   });
 
+  it('A RUN CONFIRMED IS NOT FILED WHEN A PERSON IT WAS DRAWN FROM CHANGED SINCE, AND IS FILED WHEN NOBODY DID', async () => {
+    const p = await aPayee(58);
+    const name = { store: 'company' as const, kind: 'person' as const, id: p.id };
+    /* The step that draws reads the person through its view; the step that files has a view of its own. */
+    const drawing = viewOfAStep(ADA).current();
+    const drawn = await runDrawnHere(drawingOn(ADA), { period: '2028-01' });
+    const [version] = await drawing.newest([name]);
+    const drawnFrom = drawnFromIn(drawing, 'employees');
+    expect(drawnFrom).toContainEqual({ name, version });
+    const here = (await readPeopleHere(peopleOn(ADA))).people.find((x) => x.person.id === p.id)!;
+    await changePersonHere(peopleOn(ADA), here, { pay: { amount: 700000n, from: '2028-03-01' } }, async () => []);
+    /* The filing step's own view has read the person as they are now, after the change. */
+    const filing = viewOfAStep(ADA);
+    await filing.current().newest([name]);
+    /* RED WHEN: a person changed between the draw and the filing, the run drawn over their old record is filed all the same. */
+    await expect(fileRunDrawnHere({ ...drawingOn(ADA), view: filing }, drawn, drawnFrom)).rejects.toBeInstanceOf(CompanyChangedMeanwhile);
+    expect(store.getRun(drawn.id)).toBeFalsy();
+    const again = await runDrawnHere(drawingOn(ADA), { period: '2028-01' });
+    const readNow = viewOfAStep(ADA).current();
+    await readNow.newest([name]);
+    const filed = await fileRunDrawnHere({ ...drawingOn(ADA), view: viewOfAStep(ADA) }, again, drawnFromIn(readNow, 'employees'));
+    expect(store.getRun(filed.id)).toBeTruthy();
+  });
+
   it('A RUN FILED AND OPENED AGAIN PAYS THE SAME PEOPLE AS THE RUN DRAWN, AND ONE WITH A PERSON SWAPPED DOES NOT', async () => {
     const drawn = await runDrawnHere(drawingOn(ADA), { period: '2027-08' });
-    await fileRunDrawnHere(drawingOn(ADA), drawn);
+    await fileRunDrawnHere(drawingOn(ADA), drawn, []);
     const kept = openSealedRun(store.getRun(drawn.id)!, KEY);
     /* RED WHEN: the run as the company's records hold it, sealed and opened again, is not taken for the run confirmed. */
     expect(samePeopleAsDrawn(kept, drawn)).toBe(true);
@@ -322,12 +360,12 @@ describe('A PERSON FILED WITH THEIR PAYSLIP KEY BESIDE THE SEAL IS REFUSED ALONE
     } as never, ADA.signingSecret);
     const servedWithOld = (s: Seat): PeopleDevice => ({
       ...peopleOn(s),
-      send: async (path, init) => {
+      view: listsOver(async (path, init) => {
         const r = await sendAs(s.person)(path, init);
         if (init?.method !== 'GET' || !path.endsWith('/people')) return r;
         const body = r.body as { people: unknown[] };
         return { ...r, body: { ...body, people: [...body.people, { filed: toCompanyWire(old), handedOver: false }] } };
-      },
+      }, ACME.id),
     });
     const read = await readPeopleHere(servedWithOld(ADA));
     /* RED WHEN: one person filed the old way stops the reading of everybody, so nobody is paid. */
@@ -349,7 +387,7 @@ describe('A PERSON FILED WITH THEIR PAYSLIP KEY BESIDE THE SEAL IS REFUSED ALONE
 describe('THE SERVICE KEEPS A RUN ONLY AS THE SIGNED-IN PERSON\'S OWN SEAT SIGNED IT, WHOLE', () => {
   const aDrawnRun = async () => {
     /* Drawn and sealed here, kept nowhere: so nothing of it is entered either. */
-    const run = await drawRunHere({ ...drawingOn(ADA), api: async () => ({}), entered: enteredHere() }, { period: '2027-03' });
+    const run = await drawRunHere({ ...drawingOn(ADA), view: viewOver(readRoutesOver(async () => ({}), { directory: 'empty', newest: 'none-entered' }), CO), entered: enteredHere() }, { period: '2027-03' });
     return sealedRunOf(run, KEY, 0);
   };
   const keep = (person: string, body: unknown) => sendAs(person)(`/api/accounts/${CO}/runs`, { method: 'POST', body: JSON.stringify(body) });

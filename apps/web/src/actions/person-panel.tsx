@@ -1,11 +1,12 @@
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { Button, Field, FieldDescription, FieldLabel, Section, SectionRow, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, useText } from 'vaults-ui';
-import { OPENED, READ, type PersonRow } from '../adapters/company-records.js';
+import { OPENED, READ } from '../adapters/company-records.js';
+import { type PersonRow } from '../adapters/company-rows.js';
 import { CHANGE, changePerson, CLASSIFICATIONS, PERSON_ACT, type PersonActed, type PersonChange } from '../adapters/person-acts.js';
 import { Details } from '../records/details.js';
 import { CalendarDate, PaidWords, PayAmount, PayOf, StandingBadge, UnbuiltAction, useDayAsWritten, useMoment, WithRecords } from '../records/parts.js';
 import { AmountInput, DATE, DateField, DayForm } from '../fields/form-fields.js';
-import { useCompanyRecords } from '../records/company-records.js';
+import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
 import { useSession } from '../session.js';
 import { ActedSays, ActWorking, AdmitPerson, changesRecords, useAdmitBySays, useLockedSays } from './admit.js';
 
@@ -40,8 +41,9 @@ export function PersonPanel({ id }: { id: string }) {
 }
 
 function Body({ person, reading }: { person: PersonRow; reading: boolean }) {
+  const view = useCompanyView();
   const t = useText();
-  const { person: me, company } = useSession();
+  const { person: me } = useSession();
   const { reload } = useCompanyRecords();
   const [phase, setPhase] = useState<Phase | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -58,10 +60,10 @@ function Body({ person, reading }: { person: PersonRow; reading: boolean }) {
   const off = busy || changeWhy !== null;
 
   const run = async (change: PersonChange): Promise<void> => {
-    if (company === null || busy) return;
+    if (view === null || busy) return;
     setAnswer(null);
     setPhase({ form: change.kind, step: 0, steps: 0 });
-    const ended = await changePerson(me.id, company, { id: person.id, name: person.name, asset: person.asset }, change, (step, steps) => setPhase({ form: change.kind, step, steps }));
+    const ended = await changePerson(me.id, view, { id: person.id, name: person.name, asset: person.asset }, change, (step, steps) => setPhase({ form: change.kind, step, steps }));
     setPhase(null);
     setAnswer({ form: change.kind, acted: ended });
     if (changesRecords(ended)) reload();

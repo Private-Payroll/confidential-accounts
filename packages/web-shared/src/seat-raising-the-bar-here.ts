@@ -5,7 +5,7 @@
  */
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { OpenedRound } from './governed-call-builder.js';
-import type { LeavingReads } from './governed-call-on-device.js';
+import type { LeavingReads } from './seats-leaving-here.js';
 import { blockingProposalSaid, passedOverAs } from './blocking-proposal-said.js';
 import { NotOpenedOnThisDevice, openTheRoundHere } from './round-opened-here.js';
 import { standingOnChainHere } from './run-rebuilt-here.js';

@@ -9,6 +9,7 @@ import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identi
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { VaultAskFailed } from './vault-worker-client.js';
 import { ReadRanOutOfTime } from './read-bound.js';
+import { CompanyChangedMeanwhile, VaultNotAdopted } from './company-view-probe.js';
 import type { VaultService } from './vault-service.js';
 import { sentNothing } from './vault-start-stops.js';
 import { type ChainHereDoors, type Pacing, type VaultOnChainDoors, until } from './vault-doors.js';
@@ -66,6 +67,35 @@ export class PublicDepositNotAsBuilt extends PublicDepositSignedNotSent {
     this.name = 'PublicDepositNotAsBuilt';
   }
 }
+
+/**
+ * **THE COMPANY CHANGED WHILE THE PERSON APPROVED A PUBLIC DEPOSIT, AND THIS PAGE DID NOT SEND IT.** The company is
+ * read again immediately before the send; this is a deposit that check stopped, because the company no longer adopts
+ * the vault (`notAdopted`) or because who holds the company, or its records, moved meanwhile. As for any signed public
+ * deposit this page did not send, the money is not put in again before it can no longer land.
+ */
+export class PublicDepositStoppedByAChange extends PublicDepositSignedNotSent {
+  constructor(vault: Hex, until: number, readonly notAdopted: boolean, refusal: unknown) {
+    super(vault, until, refusal);
+    const at = new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString();
+    this.message = (notAdopted
+      ? 'this page did not send the public deposit, because the company no longer adopts this vault: it was retired after this page first checked it. '
+      : 'this page did not send the public deposit, because the company changed while you approved it in your wallet, so it was not sent on what was read before. ')
+      + `No money moved. Your wallet already signed the deposit, and until ${at} anyone holding it can still send it. If anyone does, `
+      + (notAdopted ? 'the money goes into this retired vault, and no payout can be approved from it until the company adopts it again. ' : 'the money goes into this vault. ')
+      + `Do not put money in again before ${at}.`;
+    this.name = 'PublicDepositStoppedByAChange';
+  }
+}
+
+/** The change the company's check found before a send, read from the refusal and what caused it, or null for any other refusal. */
+const changeFoundIn = (e: unknown): 'not-adopted' | 'changed' | null => {
+  for (let at: unknown = e, depth = 0; at instanceof Error && depth < 4; at = at.cause, depth += 1) {
+    if (at instanceof VaultNotAdopted) return 'not-adopted';
+    if (at instanceof CompanyChangedMeanwhile) return 'changed';
+  }
+  return null;
+};
 
 /**
  * **THE CHAIN TOOK THIS PUBLIC DEPOSIT AND REFUSED IT.** The part of the transaction that carries the vault's public
@@ -295,6 +325,8 @@ export async function depositPubliclyIntoCompanyVault(
     sent = await doors.service.depositPublicly(vault, paid.transaction);
   } catch (e) {
     if (!sentNothing(e)) throw new PublicDepositNotYetSeen(vault, livesUntil);
+    const change = changeFoundIn(e);
+    if (change !== null) throw new PublicDepositStoppedByAChange(vault, livesUntil, change === 'not-adopted', e);
     throw new PublicDepositSignedNotSent(vault, livesUntil, e);
   }
   const transactionHash = await publicDepositSeenOnChain(doors, vault, paid.transaction, livesUntil);

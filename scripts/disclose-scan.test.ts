@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { blankNonCode, scanSource, scanSourceFile } from './disclose-scan.js';
+import { contractSources } from './contract-sources.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const own = (cs: ReturnType<typeof scanSource>, name: string) => cs.find((c) => c.name === name)?.discloses.filter((d) => d.via.length === 0) ?? [];
@@ -147,27 +148,27 @@ describe('THE CLOSURE — a helper’s disclosures belong to its callers too', (
 describe('the real sources', () => {
   it('counts SITES rather than lines, and the counts are the measured ones', () => {
     // `grep -c disclose` reports 80 and 52 LINES. There are 68 and 48 SITES:
-    // comments overcount and multi-site lines undercount. (The account read 76
-    // before `S35c`, 75 after it, and 80 after `S48` — whose sixty-five-line
+    // comments overcount and multi-site lines undercount. (The account read 76,
+    // then 75, then 80 after an edit whose sixty-five-line
     // comment at `ConfidentialAccount.compact:2129-2191` is five more lines of
     // PROSE saying `disclose`. The SITE count moved by ONE over that same edit.
     // A line count would have reported five times the change; that is the whole
     // reason this counts sites.)
     
-    // THE ACCOUNT'S SITE COUNT MOVED ON 2 Sep, AND `S35d` IS WHY: 68 -> 67.
+    // THE ACCOUNT'S SITE COUNT MOVED ON 2 Sep: 68 -> 67.
     // MINUS TWO for the constructor's deleted threshold argument — its floor
-    // assert and its assignment to the ledger field, `C340` + `C343`. PLUS ONE
-    // for `C363`'s `assert(disclose(vault) == noVault(), …)` in `propose`'s
+    // assert and its assignment to the ledger field. PLUS ONE
+    // for `assert(disclose(vault) == noVault(), …)` in `propose`'s
     // governance branch. Read off `scanSourceFile` rather than derived from
-    // those three, because rule 9 wants the instrument's number and not the
-    // arithmetic. The vault's 48 is unchanged: `S35d` added only comments there.
+    // those three: the instrument's number, not the arithmetic. The vault's 48
+    // is unchanged: only comments were added there.
     
-    // AND IT MOVED AGAIN ON 3 Sep, `S48`: 67 -> 68. ONE site,
+    // AND IT MOVED AGAIN ON 3 Sep: 67 -> 68. ONE site,
     // `ConfidentialAccount.compact:2192`, in `propose`'s RUN branch —
     //     assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
-    // — `C363`'s mirror: `:2319` says a governance proposal names NO vault,
-    // this says a run names ONE. Raised here by `S49`, 4 Sep, board `2y7d5c`,
-    // `C388`. The vault's 48 is again unchanged; `S48` did not touch that file.
+    // — the mirror of the governance branch: `:2319` says a governance proposal
+    // names NO vault, this says a run names ONE. The vault's 48 is again
+    // unchanged; that edit did not touch the file.
     
     // ======================================================================
     // WHY THAT SITE PUBLISHES NOTHING NEW. THE PIN EXISTS BECAUSE A `disclose()`
@@ -201,7 +202,7 @@ describe('the real sources', () => {
     //      a hash of a padded literal with no witness and no ledger read
     //      (`compact:1014-1016`; `index.js:1471-1473` is the same constant with
     //      the string already resolved to bytes). AND THE CHANGE SHRINKS THE
-    //      OBSERVABLE SURFACE RATHER THAN WIDENING IT: before `S48` a run raised
+    //      OBSERVABLE SURFACE RATHER THAN WIDENING IT: before it, a run raised
     //      at the sentinel LANDED and took a `runWindow` row that opened and
     //      closed with no settlement against any vault, which is a
     //      LOUDER signal than that run simply not existing.
@@ -216,25 +217,25 @@ describe('the real sources', () => {
     // compiled artifacts contain ZERO occurrences of it against these 68 and 48
     // sites (`scripts/disclose-scan.ts:5-9`, measured again 4 Sep) — SO WHAT IS
     // PUBLIC IS MEASURED OVER LEDGER WRITES *AND OVER WHAT A TRANSACTION CANNOT
-    // HIDE*, NEVER OVER `disclose()` CALLS. Reading it the other way is what
-    // `C356` cost.
+    // HIDE*, NEVER OVER `disclose()` CALLS. Reading it the other way has cost
+    // this project once already.
     // THE SECOND CLAUSE IS THE ONE THAT BITES HERE: a `disclose()` feeding a
     // ledger READ writes no field and still pushes its value into the public
     // transcript VERBATIM. Which is why point 1 above is a measurement over the
-    // artifact and NOT the argument `C388`'s cell records — *`vault` is already
+    // artifact and NOT the argument first recorded for it — *`vault` is already
     // disclosed in the same branch at `:2200`, so `:2192` is free*.
     
-    // RULE 20, BOTH POSITIONS, NEITHER MARKED CORRECT. THAT ARGUMENT IS TRUE AND
-    // `S49` DID NOT USE IT: `:2200` discloses `vault` INTO A SALTED COMMITMENT
+    // BOTH POSITIONS, NEITHER MARKED CORRECT. THAT ARGUMENT IS TRUE AND
+    // THIS PIN DOES NOT USE IT: `:2200` discloses `vault` INTO A SALTED COMMITMENT
     // and `:2192` discloses it INTO A CONDITION GATING PUBLIC STATE — the
     // language reference's paths (a) and (c), which are different channels
-    // (`docs/midnight/01-compact-language-and-stdlib.md:1398-1402`). *Already
+    // (its section on what `disclose` does). *Already
     // disclosed once, therefore free to disclose again* is not sound in general,
     // and it is close in shape to reasoning this project has already struck out
-    // once: `BACKLOG.md:305-311`, *"A leaf is already a blinded commitment, so
-    // publishing a revoked one names nobody"*, retracted 14 Aug as *"a serious
-    // privacy regression"*. `S49` reached `C388`'s CONCLUSION and not its
-    // reasoning, and this is where a later reader is told so.
+    // once: *"A leaf is already a blinded commitment, so publishing a revoked
+    // one names nobody"*, retracted 14 Aug as *"a serious privacy regression"*.
+    // This pin reaches the same CONCLUSION and not by that reasoning, and this
+    // is where a later reader is told so.
     
     // AND THE RESIDUAL, NAMED SO NOBODY READS THIS NUMBER AS SOMETHING IT IS NOT.
     // THIS IS A COUNT OF SITES AND IT IS NOT A PRIVACY BUDGET. What makes 68 safe
@@ -287,7 +288,7 @@ describe('the real sources', () => {
     //     and links no two payments, and every payment writes exactly two values,
     //     so the count says nothing new. With the key - every signer, and every
     //     signer who has left - whether a named person was paid for a month can
-    //     be tested against the public set; the founder accepted that on 29 Sep.
+    //     be tested against the public set; that was accepted on 29 Sep.
     //   `sealPayKey` `proposal` and the proposal-id comparison: what every
     //     governance circuit publishes. Nothing new.
     //   `sealPayKey` `commitment`, x2: NEW once, written into `signerRoles`: a
@@ -486,8 +487,12 @@ describe('the real sources', () => {
 
   it('every site is attributed — nothing floats outside a body', () => {
     for (const f of ['contracts/src/ConfidentialAccount.compact', 'contracts/src/Vault.compact']) {
-      const text = readFileSync(join(ROOT, f), 'utf8');
-      const inCode = (blankNonCode(text).match(/\bdisclose\s*\(/g) ?? []).length;
+      // Every file the main file imports, read here by its own import lines rather than through the list the
+      // scan uses, so a list that drops a module changes one side only.
+      const own = [f, ...[...readFileSync(join(ROOT, f), 'utf8').matchAll(/^import "([^"]+)";/gm)].map((m) => `contracts/src/${m[1]}.compact`)];
+      expect(own).toEqual(contractSources(ROOT, f));
+      const inCode = own
+        .reduce((n: number, g: string) => n + (blankNonCode(readFileSync(join(ROOT, g), 'utf8')).match(/\bdisclose\s*\(/g) ?? []).length, 0);
       const attributed = scanSourceFile(ROOT, f).reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
       expect(attributed).toBe(inCode);
     }
@@ -506,8 +511,8 @@ describe('the real sources', () => {
   });
 
   it('AGREES WITH THE FILE ABOUT THE LINE AND THE TEXT, not only the count', () => {
-    // Every assertion in this file used to be a length or a `via` chain, and an
-    // auditor showed what that misses: `text.slice(openParen + 1, …)` off by
+    // Every assertion in this file used to be a length or a `via` chain, and a
+    // review showed what that misses: `text.slice(openParen + 1, …)` off by
     // one — dropping the first character of EVERY disclosed expression — and
     // `lineOf(...) + 1` — moving every generated `file:line` citation one line
     // off — both stayed green. The citation check cannot see the second

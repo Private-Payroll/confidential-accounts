@@ -8,17 +8,14 @@
  * (copies not yet written, a record behind the chain) is left to the press. A read that fails names the vault as unread
  * and never counts it as owing nothing.
  */
-import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import type { SealedAccount } from '../../../../src/core/types.js';
+import type { PageView } from './filing-judge.js';
+import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../../src/core/crypto.js';
-import { api, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
-import { readHere } from 'vaults-web-shared/vault-read-here.js';
 import { removalsOnTheChainHere } from 'vaults-web-shared/removals-on-the-chain.js';
 import { removedSinceSet, whenTheSecretWasSetHere } from 'vaults-web-shared/who-holds-the-vaults-secret.js';
-import type { VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
-import { companyRoute } from './handover-state.js';
+import type { VaultBuilderClient, VaultOnChainOnTheWire } from 'vaults-web-shared/vault-worker-client.js';
+import { onTheChainIn, vaultOnChainIn, walletIndexerIn } from './filing-judge.js';
 import { keyringFor } from './keyring-person.js';
-import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
 
 /** What the read found: the vaults owing a new secret and those the chain could not be read for, or that nothing could be read. */
@@ -35,12 +32,11 @@ interface OwedDoors { readonly account: AccountAddress; readonly builder: VaultB
 const HEX64 = /^[0-9a-f]{64}$/u;
 
 /**
- * Whether the chain shows a signer removed after `vault`'s secret was set. A vault whose secret is not set yet owes
- * nothing, since it takes no money until it is. Null when the chain shows no vault at the address yet; throws when the
- * vault or the account cannot be read at the indexer.
+ * Whether the chain shows a signer removed after `vault`'s secret was set, `read` being the vault as the chain holds
+ * it. A vault whose secret is not set yet owes nothing, since it takes no money until it is. Null when the chain shows
+ * no vault at the address yet; throws when the account cannot be read at the indexer.
  */
-async function owedOnTheChain(doors: OwedDoors, vault: Hex): Promise<boolean | null> {
-  const read = await readHere(doors, vault);
+async function owedOnTheChain(doors: OwedDoors, vault: Hex, read: VaultOnChainOnTheWire): Promise<boolean | null> {
   if (!read.onChain) return null;
   const commitment = (typeof read.nonceCommitment === 'string' ? read.nonceCommitment.toLowerCase() : '') as Hex;
   if (!HEX64.test(commitment) || /^0+$/u.test(commitment)) return false;
@@ -53,26 +49,33 @@ async function owedOnTheChain(doors: OwedDoors, vault: Hex): Promise<boolean | n
  * when the service could not be asked who is signed in or the wallet did not say which vaults the company holds; null
  * for a person not signed in or a company with no account on the chain yet, where no vault can owe anything.
  */
-export async function vaultSecretsOwed(personId: string, companyId: string): Promise<VaultSecretsOwed | null> {
+export async function vaultSecretsOwed(personId: string, view: PageView): Promise<VaultSecretsOwed | null> {
   let doors: OwedDoors;
-  let vaults: readonly string[];
+  let vaults: readonly Hex[];
+  let indexer: Indexer;
   try {
     if (!(await keyringFor(personId))) return null;
-    const sealed = await api(companyRoute(companyId)) as SealedAccount;
-    const company = (sealed.companyLabel ?? null) as CompanyLabel | null;
-    const account = (sealed.contractAddress ?? null) as AccountAddress | null;
-    if (company === null || account === null) return null;
-    const held = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company, account });
-    vaults = held.holders.adoptedVaults;
-    doors = { account, builder: await theVaultBuilder(), indexer: async () => held.indexer };
+    const where = await onTheChainIn(view);
+    if (where === null) return null;
+    vaults = (await view.holders()).adoptedVaults.map((v) => v.toLowerCase() as Hex);
+    indexer = await walletIndexerIn(view);
+    const named = indexer;
+    doors = { account: where.account, builder: await theVaultBuilder(), indexer: async () => named };
   } catch {
     /* Nothing was read, so nothing is said to be owed or not: the page says the read failed. */
     return { of: OWED_READ.unread };
   }
-  const found = await Promise.all(vaults.map(async (v) => {
-    const vault = v.toLowerCase() as Hex;
+  /* Every vault read through the view in one ask at the indexer the wallet names; when it fails, each on its own. */
+  const at = indexer;
+  const reads = at === null || vaults.length === 0 ? null
+    : await Promise.all(vaults.map((v) => vaultOnChainIn(view, v, at).then((read) => ({ ok: true as const, read }), () => ({ ok: false as const }))));
+  const found = await Promise.all(vaults.map(async (vault, i) => {
+    const got = reads?.[i];
+    /* A wallet that names no indexer, or a vault whose own read failed, leaves that vault named unread, never owing nothing. */
+    if (got === undefined || !got.ok) return { vault, owed: null };
+    const { read } = got;
     try {
-      return { vault, owed: await owedOnTheChain(doors, vault) };
+      return { vault, owed: await owedOnTheChain(doors, vault, read) };
     } catch {
       /* This vault's read failed: it is named unread, never counted as owing nothing. */
       return { vault, owed: null };

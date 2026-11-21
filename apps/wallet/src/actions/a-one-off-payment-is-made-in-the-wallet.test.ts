@@ -7,6 +7,7 @@ import { PUBLIC_PAYMENT_SAYS } from '../../../../src/core/movement.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
 import { payeeFor, unshieldedPayeeFor } from '../../../../src/testing/payees.js';
 import { StepRefused, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A ONE-OFF PAYMENT IS MADE IN THE WALLET, IN ONE WINDOW, FROM ITS OWN READS.** The steps it takes and the shared
@@ -45,8 +46,8 @@ vi.mock('../../../../packages/web-shared/src/vault-public-payout.js', async (rea
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-public-payout.js')>()),
   payPubliclyFromCompanyVault: (doors: any, input: any) => { t.calls.push('pay-publicly'); return t.payPublicly!(doors, input); },
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>()),
+vi.mock('../../../../packages/web-shared/src/proposal-approved-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/proposal-approved-on-device.js')>()),
   approveOnDevice: (doors: any, input: any) => { t.calls.push('approve'); return t.approve!(doors, input); },
 }));
 vi.mock('../../../../packages/web-shared/src/one-off-here.js', async (real) => ({
@@ -65,17 +66,17 @@ vi.mock('./upkeep.js', async (real) => {
     }),
   };
 });
-vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (real) => ({
-  ...(await real<typeof import('../../../../packages/web-shared/src/spending-policy-here.js')>()),
+vi.mock('../../../../packages/web-shared/src/spending-policy-read-here.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/spending-policy-read-here.js')>()),
   spendingPolicyHere: (...a: any[]) => t.policy!(...a),
 }));
 
 const { oneOffPaymentAction, oneOffAskedOf, payDoorsFor } = await import('./one-off-payment.js');
-const { companyRecordsFor } = await import('./company-reach.js');
+const { companyRecordsFor } = await import('./company-records-in-the-wallet.js');
 const { OneOffRefused } = await import('../../../../src/midnight/one-off-kind.js');
 const op = await import('../../../../packages/web-shared/src/vault-payment-in-flight.js');
 const { LegNotRaisedHere } = await import('../../../../packages/web-shared/src/run-raised-here.js');
-const { ApprovalNotOwed } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
+const { ApprovalNotOwed } = await import('../../../../packages/web-shared/src/proposal-approved-on-device.js');
 const { approveProposalAction } = await import('./approve-proposal.js');
 /* No removal is carried out in these tests: the hook that changes the vault secrets after one is never reached. */
 const AFTER_A_REMOVAL = { afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); } };
@@ -107,21 +108,20 @@ const BARE_PROPOSAL = intent({ vault: undefined, token: undefined, amount: undef
 const ctxWith = (i: ActIntent = intent()) => {
   const calls: string[] = [];
   const told: Record<string, unknown> = {};
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 6 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a one-off payment is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => { calls.push(`${method} ${path}`); return { status: 200, body: {} }; },
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, calls, told };
 };
 
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
 const chainSays = { now: [] as Array<Record<string, unknown>> };
-const reachOf = (over: Record<string, unknown> = {}) => ({
+const reachOf = (over: Record<string, unknown> = {}) => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
-  stepTo: () => {},
   api: async (path: string, init?: RequestInit) => {
     t.calls.push(`api ${init?.method ?? 'GET'} ${path}`);
     /* The service's answer of where the proposal stands names the proposal asked about, unless a case says otherwise. */

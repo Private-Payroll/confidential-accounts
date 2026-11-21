@@ -3,6 +3,7 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { StepContext } from './definition.js';
+import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **THE REMOVAL OF A SEAT THE COMPANY'S ROSTER NAMES NO ONE FOR GOES PAST THE UPKEEP AND THE DEVICE'S OWN COUNT.** While
@@ -19,8 +20,8 @@ vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (re
   ...(await real<typeof import('../../../../packages/web-shared/src/spending-policy-here.js')>()),
   bandsInForceHere: async (here: object) => { t.keysCounted.push(keysIn(here)); return []; },
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => {
-  const actual = await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>();
+vi.mock('../../../../packages/web-shared/src/signer-removed-on-device.js', async (real) => {
+  const actual = await real<typeof import('../../../../packages/web-shared/src/signer-removed-on-device.js')>();
   const { removalApproversHere } = await import('../../../../packages/web-shared/src/removal-approvers-here.js');
   return {
     ...actual,
@@ -34,6 +35,11 @@ vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async 
   };
 });
 
+/*
+ * The change to the company is loaded first: the modules stood in for above reach it through their own imports, and
+ * loaded first it is not loaded in the middle of them, so every reader it brings in takes the stand-ins.
+ */
+await import('../../../../packages/web-shared/src/company-change-on-device.js');
 const { removeSignerAction } = await import('./remove-signer.js');
 const { RosterNotBelieved } = await import('../../../../packages/web-shared/src/roster-here.js');
 const { seatingRefusedHolding } = await import('../../../../packages/web-shared/src/roster-seating-refused.js');
@@ -60,7 +66,7 @@ const seatingStop = () => seatingRefusedHolding(new RosterNotBelieved('The netwo
 /* The company as this wallet reaches it: the chain's reads answer, and every read of the roster, direct or through a judge, stops. */
 const reachOf = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'cc'.repeat(32) },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepTo: () => {}, sealed: { id: 'acc_1' }, companyKeys: KEYS,
+  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED, sealed: { id: 'acc_1' }, companyKeys: KEYS,
   api: async () => { throw seatingStop(); },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({ seats: SEATS, committee: [], approvals: 1, seatBar: 1, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
@@ -83,7 +89,7 @@ const reachOf = () => ({
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   const confirmed: unknown[] = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity: identityFromSecret(newSecret()), account: 0 }, at: { step: 1, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a removal is sent through its calls, never a bare relay'); },
@@ -92,7 +98,7 @@ const ctxOf = (i: ActIntent) => {
     show: () => {},
     confirm: async (lines: unknown) => { confirmed.push(lines); },
     keyring: null,
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told, confirmed };
 };
 

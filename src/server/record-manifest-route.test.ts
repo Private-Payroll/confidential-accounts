@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { aCompanyOfTwoSeats, acmeChain, ADA, apiAs, aRecordFiledBy, BO, CO, EVE, sendAs, store } from './a-company-of-two-seats.test-support.js';
 import { treeHeaderHere } from 'vaults-web-shared/records-anchored-here.js';
-import { treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
+import { serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
 import {
   directoryEntry, entryIdOf, proposalEntry, runEntry, signManifestEntry, type BatchHolders, type ManifestEntry, type ManifestEntryBody,
 } from '../midnight/record-manifest.js';
@@ -199,7 +199,7 @@ describe('THE COMPANY\'S RECORD TREE ON THE SERVICE', () => {
     expect((await enter('ada', [e])).status).toBe(201);
     const f = founding();
     const before = { seq: f.seq, head: acmeChain.landed[0]!.head as Hex, root: f.root, dirVersion: f.dirVersion };
-    const made = (await treeHeaderHere({ accountId: CO, tree: treeServiceFor(apiAs('ada')), signingSecret: ADA.signingSecret as Hex, tag: tagInATest(ADA.signingSecret as Hex), held: HELD, at: new Date() }, before, [e]))!;
+    const made = (await treeHeaderHere({ accountId: CO, tree: treeServiceOf(serviceSource(apiAs('ada'), CO)), signingSecret: ADA.signingSecret as Hex, tag: tagInATest(ADA.signingSecret as Hex), held: HELD, at: new Date() }, before, [e]))!;
     return { e, made };
   };
 
@@ -292,7 +292,7 @@ describe('THE COMPANY\'S RECORD TREE ON THE SERVICE', () => {
     }
   });
   it('reads the tree through the page\'s own client: a page, the proofs, the entries not yet anchored, and a root not kept answered as none', async () => {
-    const client = treeServiceFor(apiAs('ada'));
+    const client = treeServiceOf(serviceSource(apiAs('ada'), CO));
     const kept = founding();
     /* RED WHEN: the client drops the entries or the older leaves a page carries, or reads a page that is not one. */
     const p = await client.headersAfter(CO, -1, 1);
@@ -406,7 +406,7 @@ describe('A HEADER FILED AGAIN WITH ITS ENTRIES, WHERE THE SERVICE NO LONGER HOL
     const before = { seq: f.seq, head: acmeChain.landed[0]!.head as Hex, root: f.root, dirVersion: f.dirVersion };
     /* A header racing the one the chain holds, signed by Ada's seat, which may anchor, naming a high version of a person record. */
     const headerNaming = async (e: ManifestEntry) => (await treeHeaderHere({
-      accountId: CO, tree: treeServiceFor(apiAs('ada')), signingSecret: ADA.signingSecret as Hex, tag: tagInATest(ADA.signingSecret as Hex), held: HELD, at: new Date(),
+      accountId: CO, tree: treeServiceOf(serviceSource(apiAs('ada'), CO)), signingSecret: ADA.signingSecret as Hex, tag: tagInATest(ADA.signingSecret as Hex), held: HELD, at: new Date(),
     }, before, [e]))!.header;
     /* Bo held no seat at the version that header names, and a stranger's key holds none at all. */
     for (const by of [BO.signingSecret as Hex, STRANGER.secret]) {

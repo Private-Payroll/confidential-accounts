@@ -23,7 +23,7 @@ import { filingRefusalOf } from '../midnight/seat-directory.js';
 import { openSpendingPolicy, SPENDING_POLICY_KIND } from '../midnight/spending-policy-record.js';
 import { companyKeyHere, rotateTheCompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { grantsHere, revokedAtHere } from 'vaults-web-shared/purpose-wraps.js';
-import { removeSignerOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { removeSignerOnDevice } from 'vaults-web-shared/signer-removed-on-device.js';
 import { keysByPurpose } from 'vaults-web-shared/keys-by-purpose.js';
 import { sealPoliciesToNewSignersHere } from 'vaults-web-shared/spending-policy-here.js';
 import { grantsChangeFiledHere, grantsWrappedAgainHere } from 'vaults-web-shared/grants-filed-here.js';

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
+import { viewOverItsApi } from './step-views.test-support.js';
 
 /*
  * **WHAT A SEAT WHOSE REMOVAL IS APPROVED FILES IS NOT ENTERED IN THE COMPANY'S RECORDS FROM ITS OWN WALLET.** Every
@@ -31,6 +32,11 @@ vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real)
   },
 }));
 
+/*
+ * The change to the company is loaded first: the real opener of a proposal, stood in for above, reaches it through its
+ * own imports, and loaded first it is not loaded in the middle of them, so who is leaving is read through the stand-in.
+ */
+await import('../../../../packages/web-shared/src/company-change-on-device.js');
 const { enteredFor } = await import('./company-reach.js');
 const { leavingForTheAnchor } = await import('./leaving-read-in-the-wallet.js');
 const { FiledNotEntered } = await import('../../../../packages/web-shared/src/record-entered-here.js');
@@ -56,7 +62,7 @@ const companyOf = (o: { readonly approvals: number; readonly bar?: number; reado
     records: { history: new Map(), notYetAnchored: [] },
     another: new Set(o.notAttested === true ? [RAISER] : []),
   });
-  const r = {
+  const r = viewOverItsApi({
     accountId: 'acc_1', label: drawCompanyLabel(), account: 'c0'.repeat(32), api,
     seat: { signerId: 's1', signingSecret: SECRET, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) },
     companyKeys: { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32) },
@@ -67,7 +73,7 @@ const companyOf = (o: { readonly approvals: number; readonly bar?: number; reado
     roster: o.roster ?? (async () => ({ signers: [] })),
     builder: { roundsOnChain: async () => ({ ['c1'.repeat(32)]: { held: 'open', approvals: o.approvals, raisedAt: 1 } }) },
     chain: { indexer: {} },
-  } as never;
+  }) as never;
   return { r, api, sent };
 };
 
@@ -155,9 +161,9 @@ describe('THE ANCHOR READS WHO IS LEAVING ON THE WALLET\'S OWN READS', () => {
     const approved = companyOf({ approvals: 2, bar: 2 });
     const unread: string[] = [];
     /* RED WHEN: the anchor in the wallet is not told of an approved removal, so it anchors what the leaver files after it. */
-    expect([...(await leavingForTheAnchor(approved.r, approved.api as never, '11'.repeat(32), (why) => unread.push(why))()).keys()]).toEqual([MINE]);
+    expect([...(await leavingForTheAnchor(approved.r, '11'.repeat(32), (why) => unread.push(why))()).keys()]).toEqual([MINE]);
     const notRead = companyOf({ approvals: 2 });
-    expect((await leavingForTheAnchor(notRead.r, notRead.api as never, '11'.repeat(32), (why) => unread.push(why))()).size).toBe(0);
+    expect((await leavingForTheAnchor(notRead.r, '11'.repeat(32), (why) => unread.push(why))()).size).toBe(0);
     /* RED WHEN: who is leaving goes unread and the act still reads as done in full. */
     expect(unread).toEqual([expect.stringMatching(/seat bar|approvals a change of who is seated needs/u)]);
   });
@@ -166,7 +172,7 @@ describe('THE ANCHOR READS WHO IS LEAVING ON THE WALLET\'S OWN READS', () => {
     t.opens = 'fails';
     const c = companyOf({ approvals: 2, bar: 2 });
     const unread: string[] = [];
-    expect((await leavingForTheAnchor(c.r, c.api as never, '11'.repeat(32), (why) => unread.push(why))()).size).toBe(0);
+    expect((await leavingForTheAnchor(c.r, '11'.repeat(32), (why) => unread.push(why))()).size).toBe(0);
     /* RED WHEN: the anchor binds over a removal it could not read and the upkeep says nothing of it. */
     expect(unread).toEqual([expect.stringMatching(/proposal prp_9 did not open on this device/u)]);
   });

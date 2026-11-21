@@ -17,12 +17,12 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
 import { companyRecordEntry, ENTRIES_AT_ONCE, entryIdOf, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
-import { FOUNDING_RECORDS, heldStandingOf, type RecordsHeld } from '../../../src/midnight/records-held.js';
+import { FOUNDING_RECORDS, heldStandingOf, type RecordsAsked, type RecordsHeld } from '../../../src/midnight/records-held.js';
 import {
-  companyWirePaths, fromCompanyWire, verifiedCompanyFiler, type CompanyRecordKind, type SealedCompanyRecord,
+  fromCompanyWire, verifiedCompanyFiler, type CompanyRecordKind, type SealedCompanyRecord,
 } from '../../../src/midnight/sealed-record-wire.js';
-import { manifestServiceFor, type ManifestService } from './record-entered-here.js';
-import type { DirectoryRead } from './vault-page-doors.js';
+import type { ManifestService } from './record-entered-here.js';
+import type { CompanyView } from './company-view.js';
 
 /** How many carried entries were entered, and why the rest were not when the service refused them; null when none was refused. */
 interface CarriedEntered { readonly entered: number; readonly refused: string | null }
@@ -69,20 +69,40 @@ export async function carriedEntriesEntered(
   return { entered, refused: null };
 }
 
+/** The company's records as one record's sweep reads them through the step's view: versions, directory, held and entries. */
+interface EnteredThroughTheView {
+  readonly accountId: string;
+  readonly view: Pick<CompanyView<unknown>, 'company' | 'records' | 'manifest' | 'declare' | 'directory'> & {
+    /** The records held as the anchor holds them, for the records asked: all the sweep reads of a held read. */
+    held(more: RecordsAsked): Promise<{ readonly records: RecordsHeld }>;
+  };
+}
+
+/** Every served version of the record, and the records as the company holds them for it, read through the view. */
+async function sweptThroughTheView(doors: EnteredThroughTheView, kind: CompanyRecordKind, id: string) {
+  const { view } = doors;
+  if (view.company !== doors.accountId) {
+    throw new Error(`the read of company ${view.company} was handed in for company ${doors.accountId}, so nothing of either is entered through it.`);
+  }
+  const name = { store: 'company' as const, kind, id };
+  view.declare({ records: [name] });
+  const [versions] = await view.records([{ kind, id, every: true }]);
+  await view.directory();
+  return { versions, held: (await view.held({ records: [name] })).records, manifest: view.manifest };
+}
+
 /**
  * The sweep over every served version of one company record: read as the
  * company's records hold it now, and each owed carried entry entered. The
- * caller reads the record again when anything was entered.
+ * caller reads the record again when anything was entered. Every read and
+ * entry goes through the step's view.
  */
-export async function recordEnteredHere(
-  doors: { readonly accountId: string; readonly api: (path: string, init?: RequestInit) => Promise<unknown>; readonly directory: DirectoryRead },
-  kind: CompanyRecordKind, id: string,
-): Promise<CarriedEntered> {
-  const b = await doors.api(companyWirePaths.versions(doors.accountId, kind, id)) as { versions?: unknown } | null;
+export async function recordEnteredHere(doors: EnteredThroughTheView, kind: CompanyRecordKind, id: string): Promise<CarriedEntered> {
+  const read = await sweptThroughTheView(doors, kind, id);
+  const b = read.versions as { versions?: unknown } | null | undefined;
   if (!Array.isArray(b?.versions)) return { entered: 0, refused: 'the service did not answer with the record\'s versions' };
   const served = b.versions.map((w: unknown) => fromCompanyWire(w, { company: doors.accountId, kind, id }).sealed);
-  const held = (await doors.directory({ records: [{ store: 'company', kind, id }] })).records;
-  return carriedEntriesEntered({ accountId: doors.accountId, manifest: manifestServiceFor(doors.api) }, held, served);
+  return carriedEntriesEntered({ accountId: doors.accountId, manifest: read.manifest }, read.held, served);
 }
 
 /**

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { openViewOf, type PageView } from './filing-judge.js';
 import { seatOpenedFor } from '../../../../src/testing/directory-seats.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_ROOT } from '../../../../src/midnight/record-tree.js';
@@ -89,11 +90,16 @@ const kr = vi.hoisted(() => ({
   /* The worker fails when it reads how the sent vault was created. */
   readAsBornFails: false,
 }));
-vi.mock('./filing-judge.js', async (real) => ({
-  ...(await real<typeof import('./filing-judge.js')>()),
+/* Each read here stands for a page opened afresh, so each is handed a view of its own, as the page opens it. */
+const aViewOf = (company: string): PageView => openViewOf(company);
+vi.mock('./filing-judge.js', async (real) => {
+  const judge = await real<typeof import('./filing-judge.js')>();
+  return {
+  ...judge,
   /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
   companyKeysFor: async () => ({ epoch: 0, newest: 0, key: '5e'.repeat(32), keyAt: () => '5e'.repeat(32), sealing: () => ({ key: '5e'.repeat(32), epoch: 0 }) }),
-}));
+};
+});
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   /* This signer's signed directory entry, kept until it is filed; what becomes of it is `vault-keys.test.ts`'s. */
@@ -117,7 +123,6 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   }),
   /* The company's viewing key, which opens every directory entry's proof here. */
   viewingKeyFor: () => '5e'.repeat(32),
-  openAccount: () => kr.roster,
   companyKeysForVaults: async () => {
     kr.log.push('account asked');
     if (kr.keysFail !== null) throw kr.keysFail;
@@ -126,6 +131,9 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
     return { companyKey: '11'.repeat(32), committeeKey: committeeOf(fromSecret(new Uint8Array(32).fill(1)), `co_${'c1'.repeat(32)}` as never), company: `co_${'c1'.repeat(32)}`, account: COMPANY };
   },
+}));
+vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   /* The person's account signs their records key for the seat the page names, and says who holds the company. */
   recordsKeyFromTheWallet: async (_origin: string, ask: {
     company: string; account: string; seat: string; vault?: string; signingKey?: string;
@@ -166,26 +174,43 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
       indexer: { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' },
     };
   },
-  api: async (path: string, opts?: RequestInit) => {
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => {
+  const api = async (path: string, opts?: RequestInit) => {
     const method = String(opts?.method ?? 'GET');
+    /* What the company's view reads besides: no newer version of any record, and no record by name. Not written down. */
+    if (path.endsWith('/manifest/newest')) return { versions: (JSON.parse(String(opts?.body)) as { records: unknown[] }).records.map(() => 0) };
+    if (path.endsWith('/records/read')) {
+      return { records: (JSON.parse(String(opts?.body)) as { records: { kind: string; id: string; every?: boolean }[] }).records.map((r) => (r.every === true ? { kind: r.kind, id: r.id, versions: [] } : { kind: r.kind, id: r.id, filed: null })) };
+    }
     kr.log.push(`${method} ${path}`);
     const a = kr.answers[`${method} ${path}`] ?? kr.answers[path];
     if (a === undefined) throw new Error(`no answer for ${method} ${path}`);
     if (a instanceof Error) throw a;
     if (typeof a === 'function') return a(opts?.body === undefined ? undefined : JSON.parse(String(opts.body)));
     return Array.isArray(a) ? (a.length > 1 ? a.shift() : a[0]) : a;
-  },
+  };
+  /* The page's one transport and its older name are the same function, as in the product. */
+  return { ...(await real<typeof import('vaults-web-shared/service-transport.js')>()), api, serviceCall: api };
+});
+/* The company's roster as this device opens it, stood in for where the page's judges open it. */
+vi.mock('vaults-web-shared/company-judges.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/company-judges.js')>()),
+  openAccountWith: async () => kr.roster,
 }));
 /* Offering and folding vault keys are their own tests' (`vault-keys-are-offered-and-folded.test.ts`); here each is written down. */
-vi.mock('vaults-web-shared/roster-here.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/roster-here.js')>()),
+vi.mock('vaults-web-shared/roster-filed-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/roster-filed-here.js')>()),
   offerVaultKeysHere: async () => { kr.log.push('keys offered'); },
   foldOffersHere: async () => { kr.log.push('offers folded'); return { folded: [], refused: [] }; },
 }));
-vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
-  ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
+vi.mock('vaults-web-shared/directory-filed-here.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/directory-filed-here.js')>()),
   /* This signer's entry in the seat directory; whether it is filed is `vault-keys`' own test's. */
   fileTheOwedDirectoryEntry: async () => 'filed',
+}));
+vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
+  ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
   /* The company's records, kept here for the length of one test. */
   deviceRecordsFor: () => (record: string) => {
     if (!kr.records.has(record)) kr.records.set(record, new MemorySealedPoolStore());
@@ -333,7 +358,7 @@ const startRoutes = () => {
   kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`] = () => { kr.start.set = true; return { txRef: 'secret' }; };
   kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`] = () => { kr.start.written = true; return { txRef: 'copy' }; };
 };
-beforeEach(() => {
+beforeEach(async () => {
   kr.log = []; kr.answers = {}; kr.canOpen = true; kr.keysFail = null; kr.acts = []; kr.actFails = null; kr.steps = []; kr.ended = { of: 'done', steps: 1, relayed: 0 }; kr.seatHeld = true; kr.vaultHeld = 'company';
   kr.start = { adopted: false, open: false, approvals: 0, set: false, run: false, runApprovals: 0, written: false, needed: 1 };
   kr.records = new Map();
@@ -371,9 +396,9 @@ describe('creating a vault is one action in the person\'s wallet', () => {
     const m = await load();
     named();
     kr.ended = { of: 'done', steps: 3, relayed: 7, outcome: { vault: VAULT_C1 } };
-    expect(await m.createVault('u1', 'c1', () => {}, { name: ' Payroll ', description: 'Monthly ' })).toEqual({ of: 'done', vault: VAULT_C1 });
+    expect(await m.createVault('u1', aViewOf('c1'), () => {}, { name: ' Payroll ', description: 'Monthly ' })).toEqual({ of: 'done', vault: VAULT_C1 });
     expect(kr.acts).toEqual([{ name: 'create-vault', record: 'c1', company: LABEL_C1, account: ACCOUNT_C1, title: 'Payroll', about: 'Monthly' }]);
-    expect(await m.finishStarting('u1', 'c1', VAULT_C1.toUpperCase(), () => {})).toEqual({ of: 'done', vault: VAULT_C1 });
+    expect(await m.finishStarting('u1', aViewOf('c1'), VAULT_C1.toUpperCase(), () => {})).toEqual({ of: 'done', vault: VAULT_C1 });
     expect(kr.acts[1]).toEqual({ name: 'create-vault', record: 'c1', company: LABEL_C1, account: ACCOUNT_C1, vault: VAULT_C1 });
     expect(kr.log).not.toContain('keys opened with the account');
   });
@@ -383,7 +408,7 @@ describe('creating a vault is one action in the person\'s wallet', () => {
     const m = await load();
     named();
     kr.ended = { of: 'done', steps: 3, relayed: 4, outcome: { vault: VAULT_C1, round: 'first-secret', approvals: 1, needed: 2, said: 'proposal-not-written-down,not-a-code' } };
-    expect(await m.createVault('u1', 'c1', () => {})).toEqual({
+    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({
       of: 'awaiting-approvals', vault: VAULT_C1, round: 'first-secret', approvals: 1, needed: 2, said: ['proposal-not-written-down'],
     });
   });
@@ -399,7 +424,7 @@ describe('creating a vault is one action in the person\'s wallet', () => {
     kr.steps = [1, 2, 3, 4, 5].map((step) => ({ step, steps: 5 }));
     kr.ended = { of: 'done', steps: 5, relayed: 3, outcome: { vault: VAULT_C1 } };
     const seen: string[] = [];
-    await m.createVault('u1', 'c1', (stage) => { seen.push(stage); });
+    await m.createVault('u1', aViewOf('c1'), (stage) => { seen.push(stage); });
     expect(seen).toEqual(['checking', 'checking', 'checking', 'checking', 'building', 'checking', 'done']);
   });
 
@@ -408,23 +433,23 @@ describe('creating a vault is one action in the person\'s wallet', () => {
     const m = await load();
     named();
     kr.ended = { of: 'stopped', step: 3, steps: 3, relayed: 2, unconfirmed: 0, why: 'check-failed', outcome: { vault: VAULT_C1, stopped: 'signer-left-out' } };
-    expect(await m.createVault('u1', 'c1', () => {})).toEqual({ of: 'start-owed', vault: VAULT_C1, stopped: 'mismatch' });
+    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({ of: 'start-owed', vault: VAULT_C1, stopped: 'mismatch' });
     kr.ended = { of: 'stopped', step: 3, steps: 3, relayed: 2, unconfirmed: 0, why: 'stopped', outcome: { vault: VAULT_C1, stopped: 'made-up' } };
     /* RED WHEN: a reason the wallet named that this page has no words for is passed on as one. */
-    expect(await m.createVault('u1', 'c1', () => {})).toStrictEqual({ of: 'start-owed', vault: VAULT_C1 });
+    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toStrictEqual({ of: 'start-owed', vault: VAULT_C1 });
     kr.ended = { of: 'stopped', step: 1, steps: 3, relayed: 0, unconfirmed: 0, why: 'check-failed' };
-    expect(await m.createVault('u1', 'c1', () => {})).toEqual({ of: 'refused', why: 'did-not-finish' });
+    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({ of: 'refused', why: 'did-not-finish' });
   });
 
   /* RED WHEN: a company with no account on the chain is put to the wallet, or a wallet that could not be reached is said as anything but that. */
   it('asks nothing of a company not on the chain, and says a press that did not reach the wallet as such', async () => {
     const m = await load();
     kr.answers[ROUTE()] = { id: 'c1' };
-    expect(await m.createVault('u1', 'c1', () => {})).toEqual({ of: 'refused', why: 'did-not-finish' });
+    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({ of: 'refused', why: 'did-not-finish' });
     expect(kr.acts).toEqual([]);
     named();
     kr.actFails = new Error('the wallet window was closed');
-    expect((await m.createVault('u1', 'c1', () => {})).of).toBe('refused');
+    expect((await m.createVault('u1', aViewOf('c1'), () => {})).of).toBe('refused');
   });
 
   /* RED WHEN: giving your vault keys on its own is anything but the one action, naming only the company. */
@@ -432,10 +457,10 @@ describe('creating a vault is one action in the person\'s wallet', () => {
     const m = await load();
     named();
     kr.ended = { of: 'done', steps: 2, relayed: 0 };
-    expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'done' });
+    expect(await m.giveYourVaultKeys('u1', aViewOf('c1'))).toEqual({ of: 'done' });
     expect(kr.acts).toEqual([{ name: 'give-vault-keys', record: 'c1', company: LABEL_C1, account: ACCOUNT_C1 }]);
     kr.ended = { of: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 0, why: 'call-refused' };
-    expect(await m.giveYourVaultKeys('u1', 'c1')).toEqual({ of: 'refused', why: 'did-not-finish' });
+    expect(await m.giveYourVaultKeys('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'did-not-finish' });
   });
 });
 
@@ -448,13 +473,13 @@ describe('keys not open', () => {
   it('says the keys are not open yet, asks the account only when the person acts, and opens them', async () => {
     const m = await load();
     kr.canOpen = false; kr.keys = null;
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'locked' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'locked' });
     expect(kr.log).not.toContain('keys opened with the account');
     expect(await m.openYourKeys('u1')).toEqual({ of: 'done' });
     expect(kr.log).toContain('keys opened with the account');
     kr.canOpen = false; kr.log = [];
     named();
-    await m.createVault('u1', 'c1', () => {});
+    await m.createVault('u1', aViewOf('c1'), () => {});
     /* The press is the wallet's one action: this page does not open the person's keys for it. */
     expect(kr.log).not.toContain('keys opened with the account');
   });
@@ -482,7 +507,7 @@ describe('whether a vault can be created', () => {
       id: 's2', userId: 'u2', name: 'Sam', status: 'active', signingPublicKey: OTHER.publicKey, wrappingPublicKey: 'ee'.repeat(32), leafCommitment: '99'.repeat(32),
     }],
   });
-  beforeEach(() => {
+  beforeEach(async () => {
     kr.answers[ROUTE()] = { id: 'c1', companyLabel: LABEL, contractAddress: COMPANY };
     kr.answers[ROUTE('/authority')] = { company: { threshold: 1, signerCount: 1 } };
     kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [] };
@@ -493,14 +518,14 @@ describe('whether a vault can be created', () => {
     const m = await load();
     kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [] };
     /* Folded into the roster: the offer this signer made earlier. */
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'ready' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
     /* Still open on the service. */
     kr.roster = mineUnfolded();
     kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [offerOf('s1', SEAT, FILING)] };
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'ready' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
     /* A committee reported with this signer's offer nowhere: their keys are missing, not the vault ready. */
     kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [] };
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'yours-missing' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
   });
 
   /* RED WHEN: an offer this device cannot open or that is not the signer's own counts as given: one sealed under another key, one signed by another key than the roster's for the signer, one for another seat, or one whose directory entry names another records key than its keys. */
@@ -516,7 +541,7 @@ describe('whether a vault can be created', () => {
       offerOf('s1', SEAT, FILING, '5e'.repeat(32), '22'.repeat(32)),
     ]) {
       kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [offer] };
-      expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'yours-missing' });
+      expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
     }
   });
 
@@ -524,38 +549,38 @@ describe('whether a vault can be created', () => {
   it('is not ready while another signer has no offer it can open, or none on a seat it believes', async () => {
     const m = await load();
     kr.roster = withOther(rosterWith(MINE));
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'others-missing' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'others-missing' });
     /* An offer that opens and is theirs, on a seat the company's directory holds no entry for. */
     kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [offerOf('s2', '99'.repeat(32), OTHER)] };
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'others-missing' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'others-missing' });
     /* This signer's own are missing too: it is theirs that is said. */
     kr.roster = withOther(mineUnfolded());
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'yours-missing' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
   });
 
   /* RED WHEN: a signer's keys count as given while the company's directory holds no entry for their seat, which makes no reader of it. */
   it('is not ready for keys whose seat the company\'s directory does not hold', async () => {
     const m = await load();
     kr.answers[ROUTE('/directory')] = { filings: [] };
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'yours-missing' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
   });
 
   /* RED WHEN: a vault is said ready while the first secret's own check of the signers against the account would refuse: the account seats a signer the roster does not name (a); an open offer the fold would refuse counts (b); a signer's records key is signed for a seat the account no longer holds, though another row attests the seat (c). */
   describe('says ready only when the first secret\'s own check would pass', () => {
     it('(a) is not ready while the account seats a signer the roster does not name', async () => {
       const m = await load();
-      expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'ready' });
+      expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
       kr.seatsAlso = ['98'.repeat(32)];
-      expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'others-missing' });
+      expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'others-missing' });
     });
 
     it('(b) counts no open offer the fold would refuse, here one for a seat the directory holds for another person', async () => {
       const m = await load();
       kr.roster = mineUnfolded('u9');
       kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [offerOf('s1', SEAT, FILING)] };
-      expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'yours-missing' });
+      expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
       kr.roster = mineUnfolded();
-      expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'ready' });
+      expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
     });
 
     it('(c) is not ready when a signer\'s records key is signed for a seat the account no longer holds, though another row attests the seat', async () => {
@@ -569,7 +594,7 @@ describe('whether a vault can be created', () => {
         }, SIGNER.secret) },
         { ...roster.signers[0]!, id: 's0', status: 'removed', leafCommitment: null },
       ] };
-      expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'others-missing' });
+      expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'others-missing' });
     });
   });
 
@@ -577,11 +602,11 @@ describe('whether a vault can be created', () => {
   it('says a company not on the chain, and a read that fails, as what they are', async () => {
     const m = await load();
     kr.answers[ROUTE('/authority')] = { company: null };
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'not-on-chain' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'not-on-chain' });
     /* An answer that does not say the company is off the chain is not taken for one that does. */
     kr.answers[ROUTE('/authority')] = {};
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'ready' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
     kr.answers[ROUTE()] = new TypeError('fetch failed');
-    expect(await m.readVaultReadiness('u1', 'c1')).toEqual({ of: 'refused', why: 'unreachable' });
+    expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'unreachable' });
   });
 });

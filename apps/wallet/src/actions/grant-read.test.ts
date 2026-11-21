@@ -16,7 +16,8 @@ import type { StepContext, Words } from './definition.js';
 import type { CompanyReach } from './company-reach.js';
 
 const unreachedAtAll = (): never => { throw new Error('nothing is reached'); };
-import { confirmWhatAGiveReplaces, grantAskedOf, grantReadAction } from './grant-read.js';
+import { confirmWhatAGiveReplaces, grantAskedOf, grantReadAction, grantsFilingDoorsIn } from './grant-read.js';
+import { NO_VIEW_OPENED } from './step-views.test-support.js';
 
 const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
 
@@ -113,11 +114,23 @@ describe('THE GRANT-READ ACT', () => {
     const asked: (readonly Words[])[] = [];
     const steps = grantReadAction({
       chain: unreachedAtAll, builder: unreachedAtAll,
-      reachFor: async () => ({ stepTo: () => {} }) as unknown as CompanyReach, inForceFor: async () => [rhea],
+      reachFor: async () => ({ stepView: NO_VIEW_OPENED }) as unknown as CompanyReach, inForceFor: async () => [rhea],
     }).steps(ask({ code: writeJoinCode(signJoinCode(identityFromSecret(new Uint8Array(32).fill(8)), CO, 'rhea', { kind: 'reader', readerKey: 'cd'.repeat(32) })), role: 'limited' }));
     await steps[0]!.run({ confirm: async (lines: readonly Words[]) => { asked.push(lines); } } as unknown as StepContext);
     /* RED WHEN: the act signs a give that replaces a reader in force without the person confirming whom it replaces. */
     expect(asked.map((l) => l[0]!.key)).toEqual(['act.grant-read.confirm.replaces']);
   });
-});
 
+  it('reads every version of the grants through the step\'s view, never by a request of its own', async () => {
+    const asked: unknown[] = [];
+    const view = { current: () => ({ records: async (a: readonly unknown[]) => { asked.push(...a); return [{ versions: [] }]; } }) };
+    const doors = grantsFilingDoorsIn({
+      accountId: 'acc_1', label: CO, account: 'c0'.repeat(32), leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32), seat: { signingSecret: '01'.repeat(32) },
+      stepView: view, api: unreachedAtAll, send: unreachedAtAll,
+      judges: { directoryHereFor: () => unreachedAtAll, filingJudgeFor: () => unreachedAtAll }, roster: unreachedAtAll,
+    } as unknown as CompanyReach);
+    /* RED WHEN: the grants are read around the step's view, so the check and the reads joined in it are skipped. */
+    expect(await doors.versions()).toEqual([]);
+    expect(asked).toEqual([{ kind: 'grants', id: 'read-grants', every: true }]);
+  });
+});

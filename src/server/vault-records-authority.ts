@@ -61,7 +61,9 @@ export type MayFileUnder = (companyId: string, person: string, filer: Hex) => bo
 
 /**
  * **THE ANSWER TO WHO MAY TOUCH WHICH VAULT'S RECORDS**, from the chain's pin,
- * this product's rosters and the company's seat directory.
+ * this product's rosters and the company's seat directory. The pin is read once
+ * per answer, however many records it covers: a member of the vault's company
+ * may read every record of it, so which records are named changes nothing.
  */
 export const signersOfTheVaultsCompany = (deps: {
   readonly accountOf: VaultAccountReader;
@@ -73,7 +75,7 @@ export const signersOfTheVaultsCompany = (deps: {
    * files under a key their own wallet did not sign for.
    */
   readonly mayFileUnder: MayFileUnder;
-}): MayTouchVaultRecords => async (person: string, vault: string, record: WireRecord, act, filer?: Hex) => {
+}): MayTouchVaultRecords => async (person: string, vault: string, _records: readonly WireRecord[], act, filer?: Hex, ofCompany?: string) => {
   if (typeof person !== 'string' || person.length === 0) return false;
   if (!HEX64.test(vault)) return false;
   if (act === 'file' && (typeof filer !== 'string' || !HEX64.test(filer))) return false;
@@ -98,6 +100,7 @@ export const signersOfTheVaultsCompany = (deps: {
   /* Two companies claiming one account is this store disagreeing with itself; nobody is let in on it. */
   if (matches.length !== 1) return false;
   const company = matches[0]!;
+  if (ofCompany !== undefined && company.id !== ofCompany) return false;
   if (!company.memberUserIds.includes(person)) return false;
   if (act !== 'file') return true;
   return deps.mayFileUnder(company.id, person, fold(filer!) as Hex);
@@ -154,6 +157,7 @@ export const mountVaultRecords = (app: express.Express, deps: {
   readonly mayFileUnder: MayFileUnder;
 }): void => {
   app.use('/api/vaults', deps.signedIn, express.json({ limit: VAULT_RECORD_BODY_LIMIT }));
+  app.use('/api/accounts/:id/vault-records', deps.signedIn);
   app.use(vaultRecordsRoutes({
     records: deps.records,
     mayTouch: signersOfTheVaultsCompany({

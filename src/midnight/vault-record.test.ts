@@ -746,6 +746,8 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
    * vault there, and there is no record of named vaults to ask. Every other file here reads the list of vault addresses a
    * seat's rights name (`readonly Hex[]`, never a map from names): on a seat
    * invitation's terms, on a rights record, or on what a signer is offered.
+   * The vault worker's ask for the vaults on the chain carries its own `vaults`,
+   * the addresses it reads, and the list of pages names one `'vaults'`.
    * None of those files imports the vault record. Only these readings are
    * taken out, so any other reach into a map of vaults in those files is still
    * a lookup.
@@ -797,6 +799,24 @@ describe('nothing resolves a vault name to a vault outside this module', () => {
     ],
     /* `r` is a seat's rights record (`RightsRecord`), turned into the rights the circuit reads. */
     'packages/web-shared/src/private-state.ts': ['vaults: r.vaults.map((v) => fromHex(v))'],
+    /* `ask` is the vault worker's ask for the vaults on the chain: `vaults` the addresses it reads. */
+    'packages/web-shared/src/chain-reads-answered.ts': ['readVaultsOnChain(d, source, ask.vaults, ask.account)'],
+    /* `i` is the vault worker's ask for the vaults on the chain, answered on the device: `vaults` the addresses it reads. */
+    'packages/web-shared/src/vault-operation.test-support.ts': ['Promise.all(i.vaults.map((vault) => readOnTheDevice('],
+    /* `input` is the vault worker's ask for the vaults on the chain: `vaults` the addresses it reads, sent as they are. */
+    'packages/web-shared/src/vault-worker-client.ts': [
+      'vaultsOnChain(input: { vaults: readonly string[];', 'everyVaultAnswered(input.vaults,', 'vaults: [...input.vaults]',
+    ],
+    /* `ask` is the vault worker's ask for the vaults on the chain (`VaultsAsk`): `vaults` the addresses it reads. */
+    'packages/web-shared/src/vaults-read-in-the-view.ts': [
+      'reads.length === ask.vaults.length',
+      'if (ask.vaults.length <= 1) return ask.vaults.map(() => at({ failed: short(ask.vaults.length, reads) }));',
+      'if (ask.vaults.length <= 1) return ask.vaults.map(() => at({ failed }));',
+      'return ask.vaults.map((vault) => ({ settled: oneVaultRead(',
+      '{ vaults, indexer }', '{ vaults, account, indexer }',
+    ],
+    /* `pages` names the pages a screen is drawn on: `'vaults'` is the name of the page that lists them. */
+    'packages/web-shared/src/company-view-inventory.ts': ["pages: ['vaults']"],
   };
   const withoutReadingsThatAreNotTheMap = (file: string, text: string): string =>
     Object.entries(READINGS_THAT_ARE_NOT_THE_MAP)

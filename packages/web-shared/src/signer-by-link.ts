@@ -17,12 +17,13 @@ import {
 import { addSignerByLeafIn, type AddSignerByLeaf } from '../../../src/core/add-signer-filing.js';
 import { seatAddressSignedFor, type InviteAddressOf, type SeatAddress } from '../../../src/core/seat-address.js';
 import type { PendingSignerPayload, SealedProposal } from '../../../src/core/types.js';
-import {
-  InvitationNotBound, NotOpenedOnThisDevice, proposalIdentityOn, raiseTheSeatHere, type GovernanceDoors, type GovernedOutcome,
-} from './governed-call-on-device.js';
+import { NotOpenedOnThisDevice } from './governed-call-on-device.js';
+import { InvitationNotBound, proposalIdentityOn, type GovernanceDoors, type GovernedOutcome } from './company-change-on-device.js';
+import { raiseTheSeatHere } from './seat-invited-on-device.js';
 import { linkInvitationRefusal } from './invitation-signed-by-a-seat.js';
 import { addressReadsOf, addressSeatedOrInvitedRefusal } from './address-seated-or-invited.js';
-import { admitSignerHere, rosterHere, seatingOf, waitingHere, type RosterDoors } from './roster-here.js';
+import { rosterHere, seatingOf, waitingHere, type RosterDoors } from './roster-here.js';
+import { admitSignerHere } from './roster-filed-here.js';
 import { seatRequestFingerprint } from './seat-request-fingerprint.js';
 
 /**

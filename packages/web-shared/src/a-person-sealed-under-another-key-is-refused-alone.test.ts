@@ -12,6 +12,9 @@ import { openRecord, purposeKey, sealRecord, type PurposeKeys } from '../../../s
 import { openPerson, sealPerson } from '../../../src/core/person-record.js';
 import { fromCompanyWire, signCompanyFiling, toCompanyWire, type CompanyWireVersion } from '../../../src/midnight/sealed-record-wire.js';
 import type { RosterEmployee } from '../../../src/core/types.js';
+import { serviceCallOf, type RecordWrite } from './records-source.js';
+import { viewOver } from '../../../src/testing/writes-over-a-send.js';
+import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js';
 
 /* The company's records believe every filing here, and this seat may file people, so a read turns only on whether each record opens. */
 vi.mock('./vault-page-doors.js', async (real) => ({
@@ -41,15 +44,20 @@ const boUnderThePayrollKey = signCompanyFiling({ ...sealPerson(bo, 1, 0, KEY), s
 const cyUnderTheVendorsKey = toCompanyWire(signCompanyFiling({ ...sealPerson(cy, 1, 0, KEY), sealed: sealRecord('vendors', CO, cySecrets, KEY) }, SEAT));
 
 const posted: CompanyWireVersion[] = [];
-const device = (people: readonly unknown[]) => ({
-  company: { id: CO, label: 'acme', viewingKey: KEYS, keyEpoch: 0 }, network: 'stagenet', claimRefusal: async () => null,
-  signingSecret: SEAT, signedInAs: 'usr_1', directory: async () => ({}), entered: { enter: async () => undefined },
-  send: async (path: string, init?: { body?: string }) => {
-    if (path.endsWith('/people')) return { status: 200, body: { people: people.map((filed) => ({ filed, handedOver: false })) } };
-    if (path.endsWith('/status')) { posted.push(JSON.parse(init!.body!).person); return { status: 201, body: {} }; }
-    return { status: 404, body: {} };
-  },
-}) as never;
+/* The service as this test answers it: the people listed, and a status filed kept as posted. */
+const serviceOf = (people: readonly unknown[]) => async (path: string, init?: { body?: string }) => {
+  if (path.endsWith('/people')) return { status: 200, body: { people: people.map((filed) => ({ filed, handedOver: false })) } };
+  if (path.endsWith('/status')) { posted.push(JSON.parse(init!.body!).person); return { status: 201, body: {} }; }
+  return { status: 404, body: {} };
+};
+const device = (people: readonly unknown[]) => {
+  const held = viewOver(readRoutesOver(serviceCallOf(serviceOf(people)), { directory: 'empty', newest: 'none-entered' }), CO);
+  return {
+    company: { id: CO, label: 'acme', viewingKey: KEYS, keyEpoch: 0 }, network: 'stagenet', claimRefusal: async () => null,
+    signingSecret: SEAT, signedInAs: 'usr_1', directory: async () => ({}), entered: { enter: async () => undefined },
+    view: held.current(), writes: async (_company: string, w: RecordWrite) => (await held.current().write([w]))[0],
+  } as never;
+};
 
 const only = (purpose: 'roster' | 'payroll'): PurposeKeys => ({ keyFor: (p, c) => (p === purpose ? purposeKey(KEY, c, p) : null) });
 

@@ -19,6 +19,8 @@ vi.mock('vaults-web-shared/keyring.js', () => ({
   resumeSession: async (carried: unknown = null) => { kr.asked.push('resume'); kr.resumedWith.push(carried); kr.user = { id: 'u1' }; return kr.user; },
   canOpenCompanies: () => kr.canOpen,
   seatHeldHere: (id: string) => { kr.asked.push(`seat ${id}`); return kr.keys; },
+}));
+vi.mock('vaults-web-shared/service-transport.js', () => ({
   api: async () => { throw new Error('nothing is asked of the service on the way into a company'); },
 }));
 const { keyringFor, keysOnTheWayIn } = await import('./keyring-person.js');

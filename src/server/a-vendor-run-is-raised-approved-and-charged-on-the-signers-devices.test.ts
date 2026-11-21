@@ -10,6 +10,7 @@
  * Over real HTTP, with the vendors added, accepted and admitted on devices. The chain is the test's stand-in: it counts
  * approvals by who sent them, takes a charge without counting them, and runs none of the contract's circuits.
  */
+import { throughAView } from '../testing/anchor-doors-through-a-view.js';
 import { describe, it, expect, vi } from 'vitest';
 import { TEST_NETWORK_COLOUR } from '../testing/a-test-network.js';
 vi.mock('midnight-identity/network', async (original) => (await import('../testing/a-test-network.js')).aBuildForTheTestNetwork(original));
@@ -28,7 +29,10 @@ import { aVaultHolding } from '../testing/assets.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { anchoredOver } from '../testing/record-tree-double.js';
 import { periodsPastDraftHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
-import { approveOnDevice, governedCallServiceFor, raiseRunOnDevice, withdrawOnDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
+import { raiseRunOnDevice } from 'vaults-web-shared/payroll-run-on-device.js';
+import { approveOnDevice } from 'vaults-web-shared/proposal-approved-on-device.js';
+import { withdrawOnDevice } from 'vaults-web-shared/proposal-withdrawn-on-device.js';
 import type { LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import { drawRunHere } from 'vaults-web-shared/run-drawn-here.js';
 import { legToPayHere } from 'vaults-web-shared/payments-made-here.js';
@@ -38,11 +42,13 @@ import { inFlightInMemory, sealedOnThisDevice } from 'vaults-web-shared/in-fligh
 import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
 import { directoryHere } from 'vaults-web-shared/vault-page-doors.js';
 import { anchorTheRecordsHere } from 'vaults-web-shared/records-anchored-here.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { readPeopleHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { admitVendorHere, changeVendorHere, readVendorsHere } from 'vaults-web-shared/vendors-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { ACME, acmeDirectory, acmeDirectoryDeps, fromAda, ORIGIN, wire } from './a-company-of-two-seats.test-support.js';
+import { listsOver, writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import {
   aCompanyWhoseSignersChange, acmeChain, ADA, ADDRESS, BO, anchorDoorsOf, aPolicyFiledBy, api, apiAs, attestedByTheRoster, chargedOnChain, CO, CY,
   deviceOf, KEY, LABEL, oneOffRecordsOf, recordsSecretOf, sendAs, store, VAULT, type Seat,
@@ -57,7 +63,7 @@ const NETWORK = theNetwork();
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const MONTHLY = { kind: 'monthly' as const, asset: TEST_NETWORK_COLOUR, amount: 90000n };
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 /** A vendor paid monthly, added by `address` (paid at it at once, no payslip key) or invited by link and admitted on their fingerprint. */
@@ -65,7 +71,7 @@ const aVendor = async (n: number, how: 'address' | 'link'): Promise<string> => {
   const made = await inviteHere(ACME, ADA, 'vendor', {
     name: `Vendor ${n}`, email: `vendor${n}@vendors.co`, startDate: '2026-10-01', terms: MONTHLY, network: NETWORK,
     ...(how === 'address' ? { address: addressOf(n) } : {}),
-  }, ORIGIN, fromAda, { vendors: () => readVendorsHere(peopleOn(ADA)) });
+  }, ORIGIN, writesOver(fromAda), { vendors: () => readVendorsHere(peopleOn(ADA)) });
   if (how === 'link') {
     const code = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, made.person!, { kind: 'payee', address: addressOf(n), payslipKey: 'cd'.repeat(32) });
     const { fingerprint } = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_v${n}`));
@@ -93,7 +99,7 @@ const recordsOf = (s: Seat): CompanyRecordsHere & { readonly proposals: () => Pr
   };
 };
 const drawingOn = (s: Seat) => ({
-  api: api(s.person), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
+  view: viewOver(api(s.person), CO), accountId: CO, viewingKey: KEY, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: recordsOf(s) as never, by: s.person, entered: s.entered,
 });
 const raisingOn = (s: Seat): LegRaiseDoors => {
@@ -108,7 +114,7 @@ const raisingOn = (s: Seat): LegRaiseDoors => {
       retrySaltOf: pureCircuits.retrySaltOf, buildRun, buildRetryRun, rootOfPayments,
     },
     waitMs: 50, everyMs: 10, sleep: async () => undefined,
-    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(anchorDoorsOf(s)) },
+    recorded: { entered: s.entered, anchor: () => anchorTheRecordsHere(throughAView(anchorDoorsOf(s))) },
   };
 };
 /** `s`'s device as it charges a run: its vault worker stood in, and the charge relayed through the service's own route. */
@@ -125,7 +131,7 @@ const chargingOn = (s: Seat, records: CompanyRecordsHere) => ({
     periodTotal: async () => { throw new Error('no period total is read in this test'); },
     runCharged: async (input: { proposal: string }) => (chargedOnChain.has(String(input.proposal).toLowerCase()) ? 'charged' : 'open'),
   },
-  charge: (id: string, body: { tx: string; filer: string }) => governedCallServiceFor(api(s.person)).charge!(id, body),
+  charge: (id: string, body: { tx: string; filer: string }) => governedCallServiceThrough(viewOver(api(s.person), CO)).charge!(id, body),
   filer: signingPublicKeyOf(s.signingSecret as Hex) as Hex,
   chargesInFlight: sealedOnThisDevice<ChargeInFlight>(inFlightInMemory(), { signerId: s.seat, wrappingSecret: recordsSecretOf(s) as never }, 'charge'),
   sleep: async () => undefined, waitMs: 40, everyMs: 1,

@@ -40,16 +40,16 @@ import {
 import { vendorAmountOnTheRun, type VendorRecord } from '../../../src/core/vendor-record.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
 import type { RecordsEntered } from './record-entered-here.js';
+import type { CompanyView, RecordReadAt } from './company-view.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
   payeesHere, payrollRoundsHere, proposalsListedHere, runsListedHere, twoEntriesAtOneAddress, type CompanyRecordsHere, type ListPayee, type PayeesHere,
 } from './run-rebuilt-here.js';
 
-type Api = (path: string, init?: RequestInit) => Promise<any>;
-
 /** What drawing a run on this device needs. */
 export interface RunDrawDoors {
-  readonly api: Api;
+  /** The step's view of the company: the run is filed through its write, after its check that nothing moved. */
+  readonly view: { current(): Pick<CompanyView<unknown>, 'write' | 'readBefore'> };
   readonly accountId: string;
   readonly viewingKey: KeysHeld;
   /** The key epoch a bare key seals under; the company's keys seal at the epoch in force. */
@@ -289,11 +289,20 @@ export async function runDrawnHere(doors: RunDrawDoors, asked: RunAsked): Promis
  * filing time passes (a person reads the run and confirms it), so the runs and rounds are read
  * again and the filing is refused, with nothing filed, when a run for the month on the same list
  * has been raised or a round for it may be on the chain since. A repeat is not filed this way:
- * its confirmation names the runs read at the draw. Returns the run as filed; filed by `drawRunHere`.
+ * its confirmation names the runs read at the draw. `drawnFrom` names the people's or vendors' records the draw read,
+ * at the versions it read them (`drawnFromIn`): the check before the filing stops it when any has changed since.
+ * Returns the run as filed; filed by `drawRunHere`.
  */
-export async function fileRunDrawnHere(doors: RunDrawDoors, run: PayrollRun): Promise<PayrollRun> {
-  return drawRunHere(doors, { period: run.period, list: listOfRun(run) }, run);
+export async function fileRunDrawnHere(doors: RunDrawDoors, run: PayrollRun, drawnFrom: readonly RecordReadAt[]): Promise<PayrollRun> {
+  return drawRunHere(doors, { period: run.period, list: listOfRun(run) }, run, drawnFrom);
 }
+
+/** The records of the people on `list` a draw read through `view`, each at the newest version the view served of it. */
+export const drawnFromIn = (view: Pick<CompanyView<unknown>, 'carried'>, list: RunList): readonly RecordReadAt[] => {
+  const read = view.carried();
+  const kind = list === 'vendors' ? 'vendor' : 'person';
+  return read.names().filter((n) => n.store === 'company' && n.kind === kind).map((name) => ({ name, version: read.versionOf(name)! }));
+};
 
 /** The run drawn earlier, once its month is read again and is still open for it; refused, with nothing filed, otherwise. */
 const stillOpenFor = async (doors: RunDrawDoors, run: PayrollRun): Promise<PayrollRun> => {
@@ -308,15 +317,18 @@ const stillOpenFor = async (doors: RunDrawDoors, run: PayrollRun): Promise<Payro
 /**
  * **DRAWS A RUN FOR `asked.period` OVER ONE LIST ON THIS DEVICE, AND FILES IT**, refused as
  * `runDrawnHere` refuses, with nothing filed. With `confirmed`, a run `runDrawnHere` drew earlier,
- * it draws nothing and files that run, once `stillOpenFor` reads its month still open. The run is
- * sealed under the company's key in force, signed with this seat's filing key, filed and entered.
+ * it draws nothing and files that run, once `stillOpenFor` reads its month still open, and the check before
+ * the filing also asks again for the records it was drawn from (`drawnFrom`). The run is sealed under the
+ * company's key in force, signed with this seat's filing key, filed through the step's view and entered.
  * Returns the run as filed.
  */
-export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked, confirmed?: PayrollRun): Promise<PayrollRun> {
+export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked, confirmed?: PayrollRun, drawnFrom: readonly RecordReadAt[] = []): Promise<PayrollRun> {
   const run = confirmed === undefined ? await runDrawnHere(doors, asked) : await stillOpenFor(doors, confirmed);
   const sealing = sealingWith(doors.viewingKey, doors.keyEpoch);
   const filing = signRunFiling(doors.accountId, sealedRunOf(run, sealing.key, sealing.epoch), doors.signingSecret);
-  await doors.api(`/api/accounts/${encodeURIComponent(doors.accountId)}/runs`, { method: 'POST', body: JSON.stringify({ run: filing }) });
+  const view = doors.view.current();
+  view.readBefore(drawnFrom);
+  await view.write([{ to: 'run', body: { run: filing } }]);
   await doors.entered.enter([{ store: 'run', run: filing }]);
   return run;
 }

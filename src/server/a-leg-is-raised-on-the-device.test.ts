@@ -93,13 +93,15 @@ import { theNetwork } from '../midnight/network.js';
 import { payeeFor, unshieldedPayeeFor } from '../testing/payees.js';
 import { vaultDetails } from '../testing/vault-details.js';
 import { checkedHeadsInMemory } from 'vaults-web-shared/tree-kept-here.js';
-import { acceptAsPayeeHere, inviteHere, openInvitationHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { inviteHere, type InvitingCompany } from 'vaults-web-shared/invitation-on-device.js';
+import { acceptAsPayeeHere, openInvitationHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { admitHere, readPeopleHere, setStatusHere, type PeopleDevice } from 'vaults-web-shared/people-on-device.js';
 import { signedClaimRefusal } from 'vaults-web-shared/signed-claim-refusal.js';
 import { drawRunHere, type RunDrawDoors } from 'vaults-web-shared/run-drawn-here.js';
-import { openTheRoundHere, raiseRetryOnDevice, raiseRunOnDevice, SentAndNotYetSeen, sendRaiseFromDevice, sendRetryFromDevice } from 'vaults-web-shared/governed-call-on-device.js';
+import { openTheRoundHere, SentAndNotYetSeen } from 'vaults-web-shared/governed-call-on-device.js';
+import { raiseRetryOnDevice, raiseRunOnDevice, sendRaiseFromDevice, sendRetryFromDevice } from 'vaults-web-shared/payroll-run-on-device.js';
 import { paymentChecked, paymentsCheckedDigest, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED } from '../core/device-raise.js';
-import { governedCallServiceFor } from 'vaults-web-shared/governed-call-on-device.js';
+import { governedCallServiceThrough } from 'vaults-web-shared/governed-call-through-the-view.js';
 import { LegNotRaisedHere, type LegRaiseDoors } from 'vaults-web-shared/run-raised-here.js';
 import { believedProposalIdsOnChainHere, keptRunHere, runRebuiltHere, signedStateHere, type CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { RAISE_CHECKS, type RaiseCheck } from 'vaults-web-shared/raise-checks-here.js';
@@ -119,8 +121,8 @@ import { runRoutes } from './run-routes.js';
 import { proposalRelayRoutes } from './proposal-relays.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectory, acmeDirectoryDeps, ACME, ADA, ADDRESS, apiAs, BO, CO, fromAda, KEY, LABEL, ORIGIN, OTHER,
-  sendAs, store, wire, type Seat,
-} from './a-company-of-two-seats.test-support.js';
+  sendAs, store, wire, type Seat } from './a-company-of-two-seats.test-support.js';
+import { listsOver, onlyReads, writesOver, viewOver } from '../testing/writes-over-a-send.js';
 import { anchoredOver, headsCheckedHere, heldServing, roundsOnATestChain } from '../testing/record-tree-double.js';
 import { vouchedFreshOf } from '../midnight/record-tree.js';
 import { noOneOffsHere } from '../testing/no-one-offs.js';
@@ -211,12 +213,12 @@ const WINDOW = { opensAt: String(NOW + 3600), closesAt: String(NOW + 7200) };
 const addressOf = (n: number) => payeeFor(n.toString(16).padStart(2, '0').repeat(32), NETWORK).bech32;
 const pay = (n: number) => ({ name: `Payee ${n}`, email: `payee${n}@acme.co`, title: 'Engineer', asset: TEST_NETWORK_COLOUR, baseAmount: 700000n + BigInt(n), classification: 'full-time' as const, startDate: '2026-10-01' });
 const peopleOn = (s: Seat): PeopleDevice => ({
-  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, send: sendAs(s.person), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
+  company: ACME as InvitingCompany, signingSecret: s.signingSecret, signedInAs: s.person, view: listsOver(sendAs(s.person), ACME.id), writes: writesOver(sendAs(s.person)), directory: acmeDirectory, network: NETWORK, claimRefusal: signedClaimRefusal,
   entered: s.entered,
 });
 const aPayee = async (n: number, paidAt = n, paid: { address: string; asset: string } = { address: addressOf(paidAt), asset: TEST_NETWORK_COLOUR }) => {
   const code: JoinCode = signJoinCode(identityFromSecret(new Uint8Array(32).fill(n)), LABEL, `usr_${n}`, { kind: 'payee', address: paid.address, payslipKey: newWrappingKeypair().publicKey });
-  const made = await inviteHere(ACME, ADA, 'employee', { ...pay(n), asset: paid.asset as never }, ORIGIN, fromAda);
+  const made = await inviteHere(ACME, ADA, 'employee', { ...pay(n), asset: paid.asset as never }, ORIGIN, writesOver(fromAda));
   const accepted = await acceptAsPayeeHere(await openInvitationHere(made.link, sendAs(null)), code, sendAs(`usr_${n}`));
   const here = (await readPeopleHere(peopleOn(ADA))).people.find((p) => p.person.id === made.person)!;
   await admitHere(peopleOn(ADA), here, accepted.fingerprint);
@@ -295,7 +297,7 @@ const DRAWS_OVER_EVERY_EPOCH = {
   sealing: () => ({ key: KEY, epoch: 0 }),
 };
 const drawingOn = (s: Seat): RunDrawDoors => ({
-  api: api(s), accountId: CO, viewingKey: DRAWS_OVER_EVERY_EPOCH, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
+  view: viewOver(api(s), CO), accountId: CO, viewingKey: DRAWS_OVER_EVERY_EPOCH, keyEpoch: 0, signingSecret: s.signingSecret as Hex, company: { account: ADDRESS, label: LABEL },
   records: recordsOn(s), by: s.person, entered: s.entered,
 });
 
@@ -320,7 +322,7 @@ const builder = {
 };
 let policy: Record<string, unknown> = { threshold: 1, limitsByRole: {} };
 const raisingOn = (s: Seat, at?: number): LegRaiseDoors => ({
-  service: { ...governedCallServiceFor(api(s)), callState: async () => ({ account: ADDRESS, accountState: '', parameters: '' }) as never },
+  service: { ...governedCallServiceThrough(viewOver(api(s), CO)), callState: async () => ({ account: ADDRESS, accountState: '', parameters: '' }) as never },
   builder: builder as never,
   material: { signingSecret: s.signingSecret as Hex, blinding: '00'.repeat(32) as Hex } as never,
   accountId: CO,
@@ -347,7 +349,7 @@ const raisingOn = (s: Seat, at?: number): LegRaiseDoors => ({
 const anchorsAsked: string[] = [];
 const RAISE = { viewingKey: KEY, vault: VAULT, ...WINDOW };
 /** A signer's service doors, reading the company's proposals sealed as the service stores them. */
-const storedFor = (s: Seat) => ({ ...governedCallServiceFor(api(s)), sealedProposals: async () => store.listProposals(CO) });
+const storedFor = (s: Seat) => ({ ...governedCallServiceThrough(viewOver(api(s), CO)), sealedProposals: async () => store.listProposals(CO) });
 /** A raise this file posted to the service itself, entered in the company's records as the raising device enters it once the service has it. */
 const enteredAsTheDeviceEntersIt = async (b: { readonly run?: unknown; readonly proposal: unknown }): Promise<void> => {
   await ADA.entered.enter([{ store: 'run', run: b.run as never }, proposalEntry(CO, b.proposal as never)]);
@@ -488,7 +490,7 @@ describe('A LEG IS RAISED ON THE SIGNER\'S DEVICE, AND THE SERVICE FILES AND REL
      * RED WHEN: anything the raise files names a person, or any request of it names the payslip key a slip is sealed to,
      * in the clear. A person's own record is read by its id, as every record of the company is.
      */
-    const filed = sent.filter((w) => !w.startsWith('GET '));
+    const filed = sent.filter((w) => !onlyReads(w));
     for (const v of people) expect(filed.filter((w) => w.toLowerCase().includes(v.toLowerCase()))).toEqual([]);
     for (const v of payslipKeys) expect(sent.filter((w) => w.toLowerCase().includes(v.toLowerCase()))).toEqual([]);
     /* RED WHEN: the raise's run filing carries a payslip with anything beside its ciphertext, or anything it files names the company's label. */
@@ -1440,7 +1442,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
     await expect(raiseRunOnDevice(raisingOn(ADA), { runId, ...RAISE, asset: TEST_NETWORK_COLOUR, viewingKey: paused })).rejects.toThrow(CompanyKeyBeingChanged);
     expect(filedNow()).toEqual(before);
     /* RED WHEN: a person invited while sealing is paused is sealed under the key the signer who left holds. */
-    await expect(inviteHere({ ...ACME, viewingKey: paused } as InvitingCompany, ADA, 'employee', pay(78), ORIGIN, fromAda)).rejects.toThrow(CompanyKeyBeingChanged);
+    await expect(inviteHere({ ...ACME, viewingKey: paused } as InvitingCompany, ADA, 'employee', pay(78), ORIGIN, writesOver(fromAda))).rejects.toThrow(CompanyKeyBeingChanged);
     /* RED WHEN: a person's record changed while sealing is paused is sealed under that key. */
     const here = (await readPeopleHere({ ...peopleOn(ADA), company: { ...ACME, viewingKey: paused } as never })).people[0]!;
     const kept = (await records.get(CO, 'person', here.person.id))!.version;
@@ -1529,7 +1531,7 @@ describe('AFTER THE COMPANY\'S KEY CHANGES, A RUN IS RAISED, BUILT AGAIN AND PAI
     const drawn = await drawRunHere({ ...drawingOn(ADA), viewingKey: AFTER_THE_CHANGE, records: readsAfter }, { period: nextPeriod() });
     expect(store.getRun(drawn.id)!.keyEpoch).toBe(2);
     /* A person invited after the change. Last in this file: a device holding only the founding key now reads no run. */
-    const invited = await inviteHere({ ...ACME, viewingKey: AFTER_THE_CHANGE } as InvitingCompany, ADA, 'employee', pay(77), ORIGIN, fromAda);
+    const invited = await inviteHere({ ...ACME, viewingKey: AFTER_THE_CHANGE } as InvitingCompany, ADA, 'employee', pay(77), ORIGIN, writesOver(fromAda));
     /* RED WHEN: a person's record made after the change is sealed at the epoch of a key the signer who left still holds. */
     expect((await records.get(CO, 'person', invited.person!))!.keyEpoch).toBe(2);
     /* RED WHEN: a staying device opens a person sealed after the change under the founding key. */

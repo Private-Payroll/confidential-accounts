@@ -1,11 +1,12 @@
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { AssetId } from '../../../src/core/assets.js';
 import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import { approveOnDevice, type GovernedCallDoors, type RoundOnThePage } from './governed-call-on-device.js';
+import type { GovernedCallDoors, RoundOnThePage } from './governed-call-on-device.js';
+import { approveOnDevice } from './proposal-approved-on-device.js';
 import { raiseOneOffHere, type OneOffAsked, type OneOffRaiseDoors } from './one-off-raised-here.js';
 import { chargeTheRunHere, type ChargeDoors } from './run-charged-here.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
-import { spendingPolicyHere } from './spending-policy-here.js';
+import { spendingPolicyHere } from './spending-policy-read-here.js';
 
 /*
  * THE ONE-OFF PAYMENT'S SHARED STEPS AS THE WALLET CALLS THEM, each handed the company's keys this device holds as

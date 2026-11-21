@@ -6,6 +6,7 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { inboxPublicKey, sealToInbox } from '../../../../src/core/sealed-records.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { StepRefused, type Held, type StepContext } from './definition.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **A PERSON WAITING FOR A SEAT IS WITHDRAWN OR PROPOSED, A SIGNER IS ADDED FROM THEIR CODE, AND AN INVITATION IS SENT
@@ -34,6 +35,9 @@ vi.mock('../../../../packages/web-shared/src/waiting-signer-withdrawn.js', async
 vi.mock('../../../../packages/web-shared/src/invitation-on-device.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/invitation-on-device.js')>()),
   reissueInvitationHere: (...a: any[]) => { t.calls.push('reissue'); return t.reissue!(...a); },
+}));
+vi.mock('../../../../packages/web-shared/src/invitation-taken-on-device.js', async (real) => ({
+  ...(await real<typeof import('../../../../packages/web-shared/src/invitation-taken-on-device.js')>()),
   takeTheReissueHere: (...a: any[]) => { t.calls.push('take'); return t.take!(...a); },
 }));
 vi.mock('../../../../packages/web-shared/src/invitation-by-code.js', async (real) => ({
@@ -79,7 +83,7 @@ const { addSignerByCodeAction, ADD_BY_CODE_STATE } = await import('./add-signer-
 const { raiseWaitingSignerAction } = await import('./raise-waiting-signer.js');
 const { SeatMayNotInvite, InvitationRefused } = await import('../../../../packages/web-shared/src/invitation-on-device.js');
 const { CodeNotTaken } = await import('../../../../packages/web-shared/src/invitation-by-code.js');
-const { InvitationNotBound } = await import('../../../../packages/web-shared/src/governed-call-on-device.js');
+const { InvitationNotBound } = await import('../../../../packages/web-shared/src/company-change-on-device.js');
 const { kindKeyOf } = await import('../../../../src/midnight/records-held.js');
 const { invitationIdOf } = await import('../../../../src/core/invitation.js');
 
@@ -104,8 +108,8 @@ const PROPOSALS = [{ id: 'prp_one', accountId: 'acc_1' }];
 /** A request waiting for a seat, sealed to the company as the person's device sealed it. */
 const waitingFor = (opening: unknown) => ({ id: 'sgn_wes', sealed: sealToInbox({ name: 'Wes', opening }, inboxPublicKey(KEY, 'acc_1')) });
 let pending: unknown[] = [];
-const reachOf = () => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, leaf: LEAF, companyKey: KEY, companyKeys: KEY, stepTo: () => {},
+const reachOf = () => viewOverItsApi({
+  accountId: 'acc_1', label: LABEL, account: ACCOUNT, leaf: LEAF, companyKey: KEY, companyKeys: KEY,
   seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '0e'.repeat(32) },
   api: async (path: string) => { t.calls.push(`GET ${path}`); return path === '/api/accounts/acc_1/proposals' ? PROPOSALS : []; },
   send: async () => ({ status: 404, body: {} }),
@@ -127,7 +131,7 @@ const ctxOf = (i: ActIntent, person: string | null = 'usr_a') => {
   const told: Array<Record<string, unknown>> = [];
   const shown: Array<{ key: string; values?: Record<string, unknown> }> = [];
   const called: string[] = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person,
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('these actions send through their calls, never a bare relay'); },
@@ -135,7 +139,7 @@ const ctxOf = (i: ActIntent, person: string | null = 'usr_a') => {
     tell: (x: Record<string, unknown>) => { told.push(x); },
     show: (w: { key: string; values?: Record<string, unknown> }) => { shown.push(w); },
     keyring: { open: () => ({ read: () => kept }), keep: async (f: (k: unknown) => unknown) => { kept = f(kept) as Record<string, unknown>; } },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, told, shown, called };
 };
 const REACH = { chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, commitments: async () => ({ inviteAddressOf: () => 'ee'.repeat(32) as Hex }), reachFor: async () => reachOf() as never };

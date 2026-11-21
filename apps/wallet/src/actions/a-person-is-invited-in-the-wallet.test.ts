@@ -24,6 +24,7 @@ import { withSeatInvitationKept } from '../../../../packages/web-shared/src/kept
 import type { KeptSeatInvitation } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { scopeOfRole } from '../../../../src/core/seat-rights.js';
+import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 
 /*
  * **SOMEBODY IS INVITED FROM THE WALLET, IN ONE WINDOW, WITH THE WALLET'S OWN SEAT.** What the action asks of the
@@ -62,8 +63,8 @@ vi.mock('../../../../packages/web-shared/src/invitation-on-device.js', async (re
   ...(await real<typeof import('../../../../packages/web-shared/src/invitation-on-device.js')>()),
   inviteHere: (...a: any[]) => { t.calls.push(`invite ${a[2]}`); return t.invite!(...a); },
 }));
-vi.mock('../../../../packages/web-shared/src/governed-call-on-device.js', async (real) => {
-  const actual = await real<typeof import('../../../../packages/web-shared/src/governed-call-on-device.js')>();
+vi.mock('../../../../packages/web-shared/src/seat-invited-on-device.js', async (real) => {
+  const actual = await real<typeof import('../../../../packages/web-shared/src/seat-invited-on-device.js')>();
   return { ...actual, signerByAddressDoorsOf: (doors: any, ...rest: any[]) => { t.governance = doors; return (actual.signerByAddressDoorsOf as any)(doors, ...rest); } };
 });
 vi.mock('./upkeep.js', async (real) => {
@@ -172,14 +173,12 @@ const ctxWith = (i: ActIntent, o: { keyring?: Keyring | null; offer?: { status: 
   const shown: Array<{ key: string; values?: Record<string, string> }> = [];
   let held: Keyring = o.keyring ?? { accounts: {} };
   const kept: Keyring[] = [];
-  const ctx = {
+  const ctx = stepOverItsCall({
     intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('an invitation is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => {
       calls.push(`${method} ${path}`);
-      const record = /\/records\/(person|vendor)\/([^/]+)\/versions$/u.exec(path);
-      if (record !== null && t.records !== null) return t.records(record[1]!, record[2]!);
       const only = o.offerAt?.[path.split('/')[3] ?? ''];
       if (only !== undefined && path.endsWith('/offer')) return { status: only.status, body: {} };
       return path.endsWith('/offer') && o.offer !== undefined ? { status: o.offer.status, body: o.offer.body ?? {} } : { status: 404, body: {} };
@@ -190,17 +189,25 @@ const ctxWith = (i: ActIntent, o: { keyring?: Keyring | null; offer?: { status: 
       open: () => ({ read: () => held }),
       keep: async (change: (k: Keyring) => Keyring) => { held = change(held); kept.push(held); t.calls.push('kept'); },
     },
-  } as unknown as StepContext;
+  }) as unknown as StepContext;
   return { ctx, calls, told, shown, kept, held: () => held };
 };
 
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
-const reachOf = (scope = ALL) => ({
+const reachOf = (scope = ALL) => viewOverItsApi({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: seatWith(scope), leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
-  stepTo: () => {},
   api: async (path: string, init?: RequestInit) => {
     t.calls.push(`api ${init?.method ?? 'GET'} ${path}`);
-    if (path.endsWith('/manifest/newest')) return { versions: [t.entered] };
+    if (path.endsWith('/manifest/newest')) return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => t.entered) };
+    if (path.endsWith('/records/read') && t.records !== null) {
+      /* Every version of each record asked, as the records read answers it, or the service's refusal. */
+      const asked = (JSON.parse(String(init?.body)) as { records: { kind: string; id: string }[] }).records;
+      return { records: asked.map((a) => {
+        const answer = t.records!(a.kind, a.id);
+        if (answer.status !== 200) throw Object.assign(new Error(`the service answered ${answer.status}`), { status: answer.status });
+        return { kind: a.kind, id: a.id, ...(answer.body as object) };
+      }) };
+    }
     if (path.endsWith('/manifest/entries')) {
       if (t.enterFails) throw new Error('the service is down');
       t.entries.push(...(JSON.parse(String(init?.body)) as { entries: unknown[] }).entries);
@@ -230,7 +237,7 @@ const reachOf = (scope = ALL) => ({
     indexer: { indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' },
     callState: async () => ({ blockHash: 'b'.repeat(64), accountState: 'AS', parameters: 'PP' }),
   },
-});
+}, { newest: true });
 
 const action = (scope = ALL) => inviteAction({
   chain: () => ({}) as never, builder: () => ({}) as never, now: () => NOW_MS, pause: async () => {},

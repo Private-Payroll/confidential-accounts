@@ -26,12 +26,17 @@ import {
 import { signCompanyFiling, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
 import { heldFiledBy } from '../testing/record-tree-double.js';
-import { HttpCompanyRecordStore, FilingNotBelieved, RecordWithheld, type FreshJudge, type WireSend } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { directoryJudge, fileTheOwedDirectoryEntry, type DirectoryBelieved, type OwedDirectoryEntry, type OwedEntryFiled } from 'vaults-web-shared/vault-page-doors.js';
+import { HttpCompanyRecordStore, FilingNotBelieved, RecordWithheld, type FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { directoryJudge, type DirectoryBelieved } from 'vaults-web-shared/vault-page-doors.js';
+import { fileTheOwedDirectoryEntry, type OwedEntryFiled } from 'vaults-web-shared/directory-filed-here.js';
+import { type OwedDirectoryEntry } from 'vaults-web-shared/keyring-blob.js';
 import { leafOfTheContract, leavesOfTheContract, seatOpenedFor } from '../testing/directory-seats.js';
 import { invitedAsRaised, invitedLeafOfTheTestChain, invitedSeatsOfTheTestChain, proposalIdentityOfTheContract, proposalMadeByHere } from '../testing/invitation-approved.js';
 import { openSeatProof, type SeatOpening } from '../core/seat-opening.js';
 import { invitationIdOf, newInvitationToken } from '../core/invitation.js';
+import { viewOver, storeReachOver } from '../testing/writes-over-a-send.js';
+import { readRoutesOverSend, readRoutesOver } from '../testing/service-routes-in-memory.js';
+import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
 
 const CO = 'acc_route';
 const OTHER = 'acc_other';
@@ -128,6 +133,8 @@ const sendAs = (person: string | null): WireSend => async (path, init) => {
   });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
+/** `sendAs`, the way a device's view reads through it: the directory and the reads of many records are this server's, the newest versions entered are not kept here. */
+const viewedSend = (person: string | null): WireSend => readRoutesOverSend(sendAs(person), { directory: true, joined: true, newest: 'none-entered' });
 const file = (person: string, filing: DirectoryFiling) =>
   sendAs(person)(`/api/accounts/${filing.company}/directory/${filing.version}`, { method: 'PUT', body: JSON.stringify(filing) });
 const claimOf = (s: Seat, version: number, company = CO): DirectoryFiling => ({ company, version, change: { kind: 'claim', entry: s.entry } });
@@ -348,7 +355,7 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS', () => {
       accountId: CO, label: LABEL, viewingKey: VIEWING, holders, attested: everySeatAttested,
       filings: async () => store.directoryFilingsOf(CO), anchored: filedHere, leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     });
-    const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge);
+    const device = new HttpCompanyRecordStore(CO, storeReachOver(viewedSend('ada'), CO), ADA.signing.secret, judge);
     expect((await device.get('proposal', 'p1'))!.version).toBe(1);
     expect((await device.versions('proposal', 'p3')).map((v) => v.version)).toEqual([1]);
     /* RED WHEN: one read's view of who holds the company is kept for the next. */
@@ -362,20 +369,20 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS', () => {
       accountId: CO, label: LABEL, viewingKey: VIEWING, holders, attested: async () => (await everySeatAttested()).filter((x) => x.statement.seat !== BO.seat),
       filings: async () => store.directoryFilingsOf(CO), anchored: filedHere, leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     });
-    await expect(new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, boUnattested).get('proposal', 'p3')).rejects.toBeInstanceOf(FilingNotBelieved);
-    expect((await new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge).get('proposal', 'p3'))!.version).toBe(1);
+    await expect(new HttpCompanyRecordStore(CO, storeReachOver(viewedSend('ada'), CO), ADA.signing.secret, boUnattested).get('proposal', 'p3')).rejects.toBeInstanceOf(FilingNotBelieved);
+    expect((await new HttpCompanyRecordStore(CO, storeReachOver(viewedSend('ada'), CO), ADA.signing.secret, judge).get('proposal', 'p3'))!.version).toBe(1);
     /* RED WHEN: a check made without a fresh answer from the wallet believes anything. */
     const noAnswer: FreshJudge = directoryJudge({
       accountId: CO, label: LABEL, viewingKey: VIEWING, holders: async () => { throw new Error('the wallet did not answer'); }, attested: everySeatAttested,
       filings: async () => store.directoryFilingsOf(CO), anchored: filedHere, leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     });
-    await expect(new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, noAnswer).get('proposal', 'p1')).rejects.toThrow(/could not be checked/);
+    await expect(new HttpCompanyRecordStore(CO, storeReachOver(viewedSend('ada'), CO), ADA.signing.secret, noAnswer).get('proposal', 'p1')).rejects.toThrow(/could not be checked/);
     /* RED WHEN: bytes changed after filing are believed. */
     const tampered: WireSend = async () => {
       const w = toCompanyWire((await records.get(CO, 'proposal', 'p1'))!);
       return { status: 200, body: { kind: 'proposal', id: 'p1', filed: { ...w, body: w.body.replace('"version":1', '"version":1 ') } } };
     };
-    await expect(new HttpCompanyRecordStore(CO, tampered, ADA.signing.secret, judge).get('proposal', 'p1')).rejects.toThrow(/digest/);
+    await expect(new HttpCompanyRecordStore(CO, storeReachOver(readRoutesOverSend(tampered, { directory: 'empty', newest: 'none-entered' }), CO), ADA.signing.secret, judge).get('proposal', 'p1')).rejects.toThrow(/digest/);
   });
 
   it('EACH READ ASKS ITS JUDGE FOR THE ONE RECORD IT READS, SO THAT RECORD IS WHAT IS PROVEN AGAINST THE ANCHOR', async () => {
@@ -383,7 +390,7 @@ describe('A COMPANY\'S OWN RECORDS, FILED BY ITS SEATS', () => {
     const judge = directoryJudge({ accountId: CO, label: LABEL, viewingKey: VIEWING, holders, attested: everySeatAttested, filings: async () => store.directoryFilingsOf(CO), anchored: filedHere, leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain });
     const asked: unknown[] = [];
     const asking: FreshJudge = async (a) => { asked.push(a); return judge(a); };
-    const device = new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, asking);
+    const device = new HttpCompanyRecordStore(CO, storeReachOver(viewedSend('ada'), CO), ADA.signing.secret, asking);
     await device.get('proposal', 'p1');
     await device.versions('proposal', 'p3');
     /* RED WHEN: a read asks for nothing, or for another record than the one it reads - what it judges was never proven for it. */
@@ -448,7 +455,7 @@ describe('THE SERVER BELIEVES THE DIRECTORY A DEVICE BELIEVES, AGAINST THE CHAIN
       anchored: async (directory) => heldFiledBy(CO, [signed], [seat.signing.secret], undefined, directory),
       leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
     });
-    return new HttpCompanyRecordStore(CO, sendAs('ada'), ADA.signing.secret, judge);
+    return new HttpCompanyRecordStore(CO, storeReachOver(viewedSend('ada'), CO), ADA.signing.secret, judge);
   };
 
   it('A RUN THE SERVICE KEEPS NOTHING OF IS WITHHELD ONLY WHEN A SEAT THAT MAY FILE A RUN ENTERED IT', async () => {
@@ -488,6 +495,8 @@ describe('A SIGNER\'S DIRECTORY ENTRY IS KEPT ON THEIR DEVICE UNTIL THE DIRECTOR
     if (r.status >= 300) throw new Error(String((r.body as { error?: unknown }).error ?? r.status));
     return r.body;
   };
+  /** Cy's device's view of the company: the directory is this server's, the newest versions entered are not kept here. */
+  const cysView = () => viewOver(readRoutesOver(cysApi, { directory: true, newest: 'none-entered' }), CO);
   let kept: OwedDirectoryEntry | null = null;
   const owed = { read: () => kept, settle: async () => { kept = null; } };
   /** Cy's filing key and the company's viewing key, as his device holds them once he is admitted. */
@@ -504,27 +513,27 @@ describe('A SIGNER\'S DIRECTORY ENTRY IS KEPT ON THEIR DEVICE UNTIL THE DIRECTOR
     const CYS_INVITATION = openSeatProof(CO, CY.entry.proof, VIEWING)!.invited!;
     /* An entry kept with no opening of its seat is never filed: nothing would prove its key. */
     kept = { person: 'cy', company: LABEL, signed: { committeeKey: CY.committeeKey, entry: CY.statement } };
-    expect(await fileTheOwedDirectoryEntry(cysApi, CO, owed, cysKeys, adaFounded)).toMatchObject({ notYet: expect.stringMatching(/holds no opening of its seat/) });
+    expect(await fileTheOwedDirectoryEntry(CO, owed, cysKeys, adaFounded, cysView())).toMatchObject({ notYet: expect.stringMatching(/holds no opening of its seat/) });
     kept = { person: 'cy', company: LABEL, signed: { committeeKey: CY.committeeKey, entry: CY.statement }, opening: CY.opening, invited: CYS_INVITATION };
     /* RED WHEN: an entry is filed before this device can seal it for the company's members - an invitee not admitted yet - or let go then. */
-    expect(await fileTheOwedDirectoryEntry(cysApi, CO, owed, async () => null, adaFounded)).toMatchObject({ notYet: expect.stringMatching(/cannot open the company's key yet/) });
+    expect(await fileTheOwedDirectoryEntry(CO, owed, async () => null, adaFounded, cysView())).toMatchObject({ notYet: expect.stringMatching(/cannot open the company's key yet/) });
     expect(kept).not.toBeNull();
     const filings = store.directoryFilingsOf(CO).length;
     /* Cy's seat is not held yet. */
     chain = { seats: { committee: [ADA.committeeKey], threshold: 1, seats: [ADA.seat, BO.seat] }, approvals: 2, seatBar: 2 };
-    const notYet: OwedEntryFiled = await fileTheOwedDirectoryEntry(cysApi, CO, owed, cysKeys, adaFounded);
+    const notYet: OwedEntryFiled = await fileTheOwedDirectoryEntry(CO, owed, cysKeys, adaFounded, cysView());
     expect(notYet).toMatchObject({ notYet: expect.stringMatching(/not one the company's account holds now/) });
     expect(kept).not.toBeNull();
     expect(store.directoryFilingsOf(CO).length).toBe(filings);
     /* Cy's seat held, his wallet on no committee: the entry is filed with the opening that proves his key. */
     chain = { seats: { committee: [ADA.committeeKey], threshold: 1, seats: [ADA.seat, BO.seat, CY.seat] }, approvals: 2, seatBar: 2 };
-    expect(await fileTheOwedDirectoryEntry(cysApi, CO, owed, cysKeys, adaFounded)).toBe('filed');
+    expect(await fileTheOwedDirectoryEntry(CO, owed, cysKeys, adaFounded, cysView())).toBe('filed');
     expect(kept).toBeNull();
     expect((await directoryOf(store, chainRead, CO)).dir.seats.find((x) => x.seat === CY.seat)?.person).toBe('cy');
-    expect(await fileTheOwedDirectoryEntry(cysApi, CO, owed, cysKeys, adaFounded)).toBe('nothing-owed');
+    expect(await fileTheOwedDirectoryEntry(CO, owed, cysKeys, adaFounded, cysView())).toBe('nothing-owed');
     /* RED WHEN: an entry already in the directory is filed a second time rather than let go. */
     kept = { person: 'cy', company: LABEL, signed: { committeeKey: CY.committeeKey, entry: CY.statement }, opening: CY.opening, invited: CYS_INVITATION };
-    expect(await fileTheOwedDirectoryEntry(cysApi, CO, owed, cysKeys, adaFounded)).toBe('already-there');
+    expect(await fileTheOwedDirectoryEntry(CO, owed, cysKeys, adaFounded, cysView())).toBe('already-there');
     expect(kept).toBeNull();
     expect(store.directoryFilingsOf(CO).length).toBe(filings + 1);
   });

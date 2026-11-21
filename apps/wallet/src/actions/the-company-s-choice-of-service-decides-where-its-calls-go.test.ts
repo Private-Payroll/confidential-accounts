@@ -13,7 +13,8 @@ import { COMPANY_WRAP_ID, OUR_SERVICE, openedWithTheCompanyKey, sealCompanyServi
 import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
 import { recordKeyOf } from '../../../../src/midnight/record-manifest.js';
 import { handedOver, notThroughOurService } from '../../../../packages/web-shared/src/hand-over.js';
-import { apiOver, companyServiceHere, handOverFor, handOverMarked, serviceFromVersions, serviceOpenerFor, versionsNamedIn } from './company-reach.js';
+import { companyServiceHere, serviceFromVersions, serviceOpenerFor, versionsNamedIn } from './company-service-read.js';
+import { handOverFor, handOverMarked, sponsorFor } from './hand-over-in-the-wallet.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type Held, type StepContext } from './definition.js';
 import { RELAY_PATIENCE_MS, runAction } from './run.js';
 import { readActEnded } from 'midnight-identity/profile/act-channel';
@@ -21,6 +22,10 @@ import type { ActEnded, ActingChannel } from 'midnight-identity/profile/channel'
 import type { ActRequest } from 'midnight-identity/profile/request';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
+import { NO_OWN_CHAIN_READS, viewsOfTheStep } from './step-views.test-support.js';
+import { serviceCallOver, StepViews } from './step-views.js';
+import { writesOfTheStep } from './company-reach.js';
+import { treeKeptInMemory } from '../../../../packages/web-shared/src/tree-kept-here.js';
 
 const COMPANY = 'acc_choice';
 const ACCOUNT = 'ac'.repeat(32);
@@ -63,7 +68,9 @@ const unread = (why: RegExp) => ({ unread: expect.stringMatching(why) });
 const anAct = (fields: Record<string, string>, name = 'approve-proposal', shown: unknown[] = []) => ({
   intent: { name, fields }, held: { identity: {} as never, account: 0 }, signal: new AbortController().signal,
   show: (words: unknown) => { shown.push(words); },
-}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show'>;
+  /* The runner's door for a call this wallet sends itself, with no read of the company to check here. */
+  sendStraight: viewsOfTheStep(async () => { throw new Error('a hand-over reads nothing of the company here'); }).sendStraight,
+}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show' | 'sendStraight'>;
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64');
 const intentOf = (actions: readonly unknown[]) =>
   ({ actions, guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined });
@@ -91,7 +98,7 @@ const aChain = (log: unknown[]) => ({
       revert: async () => undefined,
     }) as never,
   }),
-  fetch: (async (url: string, init: RequestInit) => { log.push({ url, init }); return new Response('{}', { status: 200 }); }) as typeof fetch,
+  ownServiceSend: (async (url: string, init: RequestInit) => { log.push({ url, init }); return new Response('{}', { status: 200 }); }) as typeof fetch,
 });
 /* Our fee sponsorship: hands the call back with one DUST spend added, logging that it was asked. */
 const sponsorship = (log: unknown[]) => async (tx: string) => {
@@ -241,26 +248,30 @@ describe('READING THE CHOICE THROUGH THE PAGE', () => {
     },
     holders: { approvals: 2, policyBar: null }, dir: { seats: [] }, another: new Set(),
   });
-  const reach = (api: (path: string) => Promise<unknown>, directory: () => Promise<unknown> = async () => { throw new Error('the directory could not be read'); }) => ({
-    accountId: COMPANY, api, label: 'l' as never, account: ACCOUNT as never, companyKeys: {} as never, roster: async () => ({}) as never,
+  /* The record's versions as the step's view reads them: one answer for each record asked. */
+  type Records = (asked: readonly { readonly kind: string; readonly id: string; readonly every?: boolean }[]) => Promise<readonly unknown[]>;
+  const reach = (records: Records, directory: () => Promise<unknown> = async () => { throw new Error('the directory could not be read'); }) => ({
+    accountId: COMPANY, records, label: 'l' as never, account: ACCOUNT as never, companyKeys: {} as never, roster: async () => ({}) as never,
     opener: me,
     judges: { directoryHereFor: () => directory } as never,
   });
-  const notFound = async () => { throw Object.assign(new Error('not found'), { status: 404 }); };
+  /* A record of which the service holds no version: nothing in its place. */
+  const notFound: Records = async (asked) => asked.map(() => null);
+  const askedOf = (asked: readonly { readonly kind: string; readonly id: string; readonly every?: boolean }[]) => asked.map((r) => `${r.kind}/${r.id}${r.every === true ? '/versions' : ''}`);
 
   it('a company the anchored records show never chose is our service, and says it has not chosen', async () => {
     const asked: string[] = [];
-    const none = await companyServiceHere(reach(async (path) => { asked.push(path); return notFound(); }, anchoredAs([])), anAct({}));
+    const none = await companyServiceHere(reach(async (r) => { asked.push(...askedOf(r)); return notFound(r); }, anchoredAs([])), anAct({}));
     /* RED WHEN: a company that never chose is sent anywhere but our service, or is not told why. */
     expect(none).toEqual({ choice: OUR_SERVICE, unchosen: expect.stringMatching(/has not chosen a service/u) });
-    expect(asked).toEqual([`/api/accounts/${COMPANY}/records/policy/company-service/versions`]);
-    expect(await companyServiceHere(reach(async () => ({ versions: [] }), anchoredAs([])), anAct({}))).toEqual(none);
+    expect(asked).toEqual(['policy/company-service/versions']);
+    expect(await companyServiceHere(reach(async () => [{ versions: [] }], anchoredAs([])), anAct({}))).toEqual(none);
   });
 
   it('nothing served while the anchored records name a version, anchored or entered, leaves the choice unread', async () => {
     /* RED WHEN: our service answering with nothing turns a company's choice back into our service. */
     expect(await companyServiceHere(reach(notFound, anchoredAs([1, 2])), anAct({}))).toEqual(unread(/did not give it/u));
-    expect(await companyServiceHere(reach(async () => ({ versions: [] }), anchoredAs([], [1])), anAct({}))).toEqual(unread(/did not give it/u));
+    expect(await companyServiceHere(reach(async () => [{ versions: [] }], anchoredAs([], [1])), anAct({}))).toEqual(unread(/did not give it/u));
   });
 
   it('the versions named are those anchored and those entered since, of this record alone', async () => {
@@ -275,12 +286,12 @@ describe('READING THE CHOICE THROUGH THE PAGE', () => {
       .toEqual({ unread: 'the service answered 500' });
     /* RED WHEN: a record read without the anchored records, which would show what was withheld, is read as our service. */
     expect(await companyServiceHere(reach(notFound), anAct({}))).toEqual({ unread: 'the directory could not be read' });
-    expect(await companyServiceHere(reach(async () => ({ versions: [toCompanyWire(filed(1, ADA, OWN))] })), anAct({}))).toEqual({ unread: 'the directory could not be read' });
+    expect(await companyServiceHere(reach(async () => [{ versions: [toCompanyWire(filed(1, ADA, OWN))] }]), anAct({}))).toEqual({ unread: 'the directory could not be read' });
   });
 
   it('an act that may not ask the page for the record asks nothing, and is our service', async () => {
     const asked: string[] = [];
-    const got = await companyServiceHere(reach(async (path) => { asked.push(path); return { versions: [] }; }), anAct({}, 'seat-invited'));
+    const got = await companyServiceHere(reach(async (r) => { asked.push(...askedOf(r)); return [{ versions: [] }]; }), anAct({}, 'seat-invited'));
     /* RED WHEN: an act asks the page for a call its route list does not name, which stops the whole act. */
     expect(asked).toEqual([]);
     expect(got).toEqual({ choice: OUR_SERVICE, unchosen: expect.stringMatching(/does not read the company's choice/u) });
@@ -567,7 +578,8 @@ describe('A CALL OUR SERVICE DID NOT ANSWER IN TIME, WHICH THE CHAIN THEN SHOWS,
       const over = handOverFor(c, onTheChain(log, there), { choice: OUR_SERVICE }, Date.now, sponsorship(log));
       await handedOver(over, {
         tx: b64({ circuit: 'approve', to: ACCOUNT }), call: APPROVE, after: async () => undefined,
-        viaService: async () => { await apiOver(c)('/api/proposals/prp_late/carry', { method: 'POST', body: '{}' }); },
+        /* The call handed to our service, as one of the act's own sending routes: the page never answers it. */
+        viaService: async () => { await c.creation.payKey('acc_1', {}); },
       });
     },
   });
@@ -605,5 +617,102 @@ describe('A CALL OUR SERVICE DID NOT ANSWER IN TIME, WHICH THE CHAIN THEN SHOWS,
     const ended = await ran([carried, refusesAfter]);
     /* RED WHEN: a call the chain shows is still said as one that may still be sent, though the chain read is the evidence it went. */
     expect(ended).toEqual([expect.objectContaining({ ended: 'stopped', why: 'check-failed', step: 2, unconfirmed: 0 })]);
+  });
+});
+
+describe('OUR FEE SPONSORSHIP IS ASKED THROUGH THE COMPANY\'S WRITES, AND ONLY BY AN ACT THAT LISTS IT', () => {
+  it('hands the call to the fee write, takes the call handed back, and tells its booking done', async () => {
+    const written: unknown[] = [];
+    const sponsor = sponsorFor({ name: 'create-vault' } as never, async (w) => { written.push(w); return w.to === 'fee' ? { tx: 'FINISHED', booking: 'bk_1' } : {}; });
+    const back = await sponsor!('RAW', { kind: 'account-call', contract: 'c0', circuit: 'adopt' } as never);
+    await back.done?.();
+    /* RED WHEN: the call goes to another write than the fee's, or its booking is told done by another write or not at all. */
+    expect(written).toEqual([
+      { to: 'fee', body: { tx: 'RAW', kind: 'account-call', contract: 'c0', circuit: 'adopt' } },
+      { to: 'fee-done', body: { booking: 'bk_1' } },
+    ]);
+    expect(back.tx).toBe('FINISHED');
+    /* RED WHEN: an act whose list does not carry the fee route is given a sponsorship that would stop its window. */
+    expect(sponsorFor({ name: 'reader-keys' } as never, async () => ({}))).toBeUndefined();
+  });
+});
+
+describe('A SPONSORED SEND IS TOLD DONE ONCE THE RUNNER HAS TAKEN THE SEND\'S OWN MOVES', () => {
+  /*
+   * One step's view of the company over a service in memory, the runner's door around a call this wallet sends itself
+   * (checked first, the send's declared move taken once it is handed over), and our sponsorship asked through the
+   * step's writes. Who holds the company moves once the call is on the chain: the approval it carries is counted.
+   */
+  const aSponsoredStep = () => {
+    const holders = { seats: [LEAF], approvals: 1, adoptedVaults: [], threshold: 2, committee: [], vaultThresholds: [], policyBar: null,
+      seatBar: 1, founding: '', foundingCommittee: [], account: ACCOUNT } as never as { approvals: number };
+    const asked: { readonly door: 'gate' | 'step'; readonly ask: string }[] = [];
+    const service = (door: 'gate' | 'step') => async (method: 'GET' | 'PUT' | 'POST', path: string, body?: string) => {
+      asked.push({ door, ask: `${method} ${path.replace(`/api/accounts/${COMPANY}`, '')}` });
+      if (path.endsWith('/directory')) return { status: 200, body: { filings: [] } };
+      if (path.endsWith('/manifest/newest')) return { status: 200, body: { versions: (JSON.parse(body!) as { records: unknown[] }).records.map(() => 0) } };
+      if (path.endsWith('/fee')) return { status: 200, body: { tx: b64({ circuit: 'cancel', to: ACCOUNT, fee: true }), booking: 'bk_1' } };
+      if (path.endsWith('/fee/done')) return { status: 200, body: {} };
+      return { status: 404, body: {} };
+    };
+    const views = new StepViews({ inTurn: serviceCallOver(service('step')), direct: serviceCallOver(service('gate')) });
+    const notRead = async (): Promise<never> => { throw new Error('this step reads nothing more of the company'); };
+    const view = views.viewFor(COMPANY, {
+      holders: async () => ({ ...holders }) as never, onChain: notRead, builder: { anchorHeads: notRead }, kept: () => treeKeptInMemory(),
+      directory: notRead, chain: NO_OWN_CHAIN_READS,
+    }, notRead);
+    const CALL = { kind: 'account-call', contract: ACCOUNT, circuit: 'cancel' } as const;
+    /* The step declares its send's move: the approval it carries, once the call is handed over. */
+    views.movesWhoHolds([{ circuit: CALL.circuit, contract: CALL.contract }], (h) => ({ ...h, approvals: h.approvals + 1 }));
+    let handedOver = 0;
+    /* The runner's door, as run.ts holds it: the gate first and again when asked, the send's move taken once handed over. */
+    const sendStraight = async <T>(send: (door: { ready(): Promise<void>; handedOver(): void }) => Promise<T>, into?: { readonly vault: string }, call?: { readonly circuit: string; readonly contract: string }): Promise<T> => {
+      await views.check(into);
+      let handed = false;
+      try {
+        return await send({ ready: () => views.check(into), handedOver: () => { handed = true; handedOver += 1; } });
+      } finally {
+        if (handed) views.sent(call); else views.notSent(call);
+      }
+    };
+    const log: unknown[] = [];
+    const chain = aChain(log);
+    /* The call reaches the chain, and the approval it carries is what the next read of who holds the company shows. */
+    const counting = {
+      ...chain,
+      ownWallet: () => {
+        const own = chain.ownWallet();
+        return { ...own, facade: async () => ({ ...(await own.facade()) as object, submitTransaction: async () => { log.push('sent to the chain'); holders.approvals = 2; } }) as never };
+      },
+    };
+    const act = { ...anAct({}, 'withdraw-proposal'), sendStraight } as never;
+    const sponsor = sponsorFor({ name: 'withdraw-proposal' } as never, (w) => writesOfTheStep({ accountId: COMPANY, stepView: view })(COMPANY, w));
+    const over = handOverFor(act, counting, { choice: NONE }, Date.now, sponsor);
+    return { view, views, asked, log, over, CALL, handed: () => handedOver };
+  };
+
+  it('tells the booking done after the send, and ends the step as sent when the send\'s own approval is what moved', async () => {
+    const s = aSponsoredStep();
+    await s.view.current().holders();
+    await s.over.toChain!(b64({ circuit: 'cancel', to: ACCOUNT }), s.CALL);
+    /* RED WHEN: the booking is told done inside the send, before the runner takes the send's own move, so it is never told. */
+    expect(s.asked.filter((a) => a.ask === 'POST /fee/done')).toHaveLength(1);
+    /* RED WHEN: a send that went through is said to have met a company that changed after sending. */
+    expect(s.views.stoppedWith(s.handed())).toBeNull();
+    expect(s.log).toEqual(['sent to the chain']);
+  });
+
+  it('checks the company twice for a sponsored send, and once more to tell its booking done, and asks nothing else', async () => {
+    const s = aSponsoredStep();
+    await s.view.current().holders();
+    const before = s.asked.length;
+    await s.over.toChain!(b64({ circuit: 'cancel', to: ACCOUNT }), s.CALL);
+    /* RED WHEN: a sponsored send checks the company more or fewer times than the runner's gate and the fee's own write, or tells its booking done otherwise. */
+    expect(s.asked.slice(before)).toEqual([
+      { door: 'gate', ask: 'GET /directory' }, { door: 'gate', ask: 'POST /manifest/newest' },
+      { door: 'step', ask: 'GET /directory' }, { door: 'step', ask: 'POST /manifest/newest' }, { door: 'step', ask: 'POST /fee' },
+      { door: 'step', ask: 'GET /directory' }, { door: 'step', ask: 'POST /manifest/newest' },
+      { door: 'step', ask: 'GET /directory' }, { door: 'step', ask: 'POST /manifest/newest' }, { door: 'step', ask: 'POST /fee/done' },
+    ]);
   });
 });

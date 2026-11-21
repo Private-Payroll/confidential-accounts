@@ -10,7 +10,7 @@ import {
 import { CompanyOnChain, accountCarriesTheLabel, liveLabelReader, useCompanyCheck } from './company-on-chain.js';
 import type { LabelReader } from './company-on-chain.js';
 import type { AccountAddress, VaultAddress } from 'midnight-identity/profile/company-label';
-import { fromIndexerAt, vaultOnChain, type VaultOnChain } from '../chain/company-label-on-chain.js';
+import { fromIndexerAt, vaultOnChain, type VaultOnChain } from '../chain/view-doors.js';
 import { INDEXER_HTTP_URL } from '../config.js';
 import { Button, Section } from 'vaults-ui';
 import { StatusAlert } from '../components/status.js';
@@ -152,6 +152,193 @@ export function FirstSecretToConfirm({ vault, firstSecret }: {
   );
 }
 
+type AccountSeats = NonNullable<Extract<ReturnType<typeof useCompanyCheck>, { of: 'carries' }>['seats']>;
+type VaultHolders = Extract<VaultOnChain, { of: 'read' }>['holders'];
+
+function RecordsKeySent({ request, at }: { readonly request: RecordsKeyRequest; readonly at: number }): ReactNode {
+  return (
+    <>
+      <h1 data-signed-heading>{`You signed your records key for this company, for ${request.requester.origin}`}</h1>
+      <p className="lede" data-signed>
+        {`On ${new Date(at).toLocaleString()} this wallet signed your records key for your seat on this company's account, and handed it back with who holds the account now, as this wallet read it from the network.`}
+      </p>
+      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+    </>
+  );
+}
+
+function FingerprintQuestion({ consent, onChain, onPin, keeping, confirm, onDecline }: {
+  readonly consent: Consent;
+  readonly onChain: boolean;
+  readonly onPin: ((account: AccountAddress, at: number) => Promise<void>) | undefined;
+  readonly keeping: 'idle' | 'keeping' | 'failed';
+  readonly confirm: () => void;
+  readonly onDecline: () => void;
+}): ReactNode {
+  return (
+    <Section
+      list={false} box={false} aria-label="Is this your company?" title="Is this your company?"
+      description="This wallet has not kept an account for this company yet."
+    >
+      <p className="m-0 text-sm text-foreground" data-compare-fingerprint>
+        {`Compare the company's fingerprint above with the one ${COMPARE_WITH_THE_INVITER}.`} If they match, press It matches: this wallet keeps this
+        account as the company&rsquo;s for good and will sign for no other, and you then sign your records key. If they do not
+        match, press It does not match: the page&rsquo;s request is refused, nothing is kept, and you should tell the person
+        who invited you by a call or a message.
+      </p>
+      {keeping === 'failed' && (
+        <StatusAlert tone="danger" title="The account was not kept">
+          <p className="m-0" data-keep-failed>
+            This wallet could not keep the company&rsquo;s account, so nothing has been kept or signed. Try again.
+          </p>
+        </StatusAlert>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="lg" type="button" variant="default" onClick={confirm} data-confirm-fingerprint
+          disabled={!consent.ok || !onChain || onPin === undefined || keeping === 'keeping'}
+        >
+          It matches: keep this account
+        </Button>
+        <Button size="lg" type="button" variant="ghost" data-fingerprint-differs onClick={onDecline}>
+          It does not match
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
+function SeatStatus({ seats, seated, checking }: {
+  readonly seats: AccountSeats | null;
+  readonly seated: boolean;
+  readonly checking: boolean;
+}): ReactNode {
+  return (
+    <>
+      {seats === null ? (checking ? (
+        <p className="m-0 text-sm text-muted-foreground" data-seat-checking>Checking the company&rsquo;s account on the network&hellip;</p>
+      ) : (
+        <p className="m-0 text-sm" data-seat-unread>
+          This wallet could not read the seats of the company&rsquo;s account, so it will not sign. Open this again in a minute.
+        </p>
+      )) : seated ? (
+        <p className="m-0 text-sm" data-seat-held>The company&rsquo;s account holds this seat now.</p>
+      ) : (
+        <StatusAlert tone="danger" role={null} title="The company's account does not hold this seat">
+          <p className="m-0" data-seat-not-held>
+            The account, as this wallet read it from the network, holds no such seat now, so this wallet will not sign
+            it. If you have just been seated, wait a minute and open this again.
+          </p>
+        </StatusAlert>
+      )}
+    </>
+  );
+}
+
+function VaultStatus({ request, vaultCheck, vaultRead }: {
+  readonly request: RecordsKeyRequest;
+  readonly vaultCheck: VaultCheck;
+  readonly vaultRead: VaultHolders | null;
+}): ReactNode {
+  return (
+    <>
+      {request.vault !== undefined && (vaultCheck.of === 'checking' ? (
+        <p className="m-0 text-sm text-muted-foreground" data-vault-checking>Checking the vault on the network&hellip;</p>
+      ) : vaultRead === null ? (
+        <p className="m-0 text-sm" data-vault-unread>
+          This wallet could not read the vault the page names, so it will not sign. Open this again in a minute.
+        </p>
+      ) : vaultRead.account !== request.account ? (
+        <StatusAlert tone="danger" role={null} title="The vault belongs to another company">
+          <p className="m-0" data-vault-other-account>
+            The vault the page names is tied to a different company account from this one, as this wallet read it from
+            the network, so this wallet will not sign.
+          </p>
+        </StatusAlert>
+      ) : (
+        <p className="m-0 text-sm text-muted-foreground" data-vault-read>
+          {`The answer also says who holds the vault: ${vaultRead.committee.length} committee key${vaultRead.committee.length === 1 ? '' : 's'}, ${vaultRead.threshold} of which must sign a change to its rules.`}
+        </p>
+      ))}
+    </>
+  );
+}
+
+function WhatThisWalletSigns({ request, recordsKey, seats, seated, checking, vaultCheck, vaultRead }: {
+  readonly request: RecordsKeyRequest;
+  readonly recordsKey: string;
+  readonly seats: AccountSeats | null;
+  readonly seated: boolean;
+  readonly checking: boolean;
+  readonly vaultCheck: VaultCheck;
+  readonly vaultRead: VaultHolders | null;
+}): ReactNode {
+  return (
+    <Section
+      list={false} box={false} aria-label="What this wallet signs" title="What this wallet signs"
+      description="One statement, with the key you sit on this company's committee with."
+    >
+      <p className="m-0 text-sm text-foreground" data-records-key-signs>
+        That your records key belongs to this company, for the seat you hold on its account. Each of the other
+        signers&rsquo; devices checks it before it approves the secret of one of the company&rsquo;s vaults, so the copy
+        of that secret kept for you is one your own recovery words open. It names only the company, your records key
+        and your seat, and cannot be used to change any of the company&rsquo;s rules.
+      </p>
+      <p className="m-0 text-sm text-muted-foreground">Your records key for this company</p>
+      <p className="m-0 font-mono break-all text-sm" data-records-key>{recordsKey}</p>
+      <p className="m-0 text-sm text-muted-foreground">Your seat, as the page names it</p>
+      <p className="m-0 font-mono break-all text-sm" data-records-key-seat>{request.seat}</p>
+      {request.signingKey !== undefined && (
+        <>
+          <p className="m-0 text-sm text-foreground" data-directory-entry-signs>
+            In the same press, your entry in the company&rsquo;s list of who files its records: the key your filings
+            are signed with, as the page names it, with your records key and your seat. Other signers&rsquo; devices
+            believe a record you file only when this entry checks out against the company&rsquo;s account.
+          </p>
+          <p className="m-0 text-sm text-muted-foreground">The key your filings are signed with, as the page names it</p>
+          <p className="m-0 font-mono break-all text-sm" data-directory-entry-key>{request.signingKey}</p>
+        </>
+      )}
+      <SeatStatus seats={seats} seated={seated} checking={checking} />
+      {seats !== null && (
+        <p className="m-0 text-sm text-muted-foreground" data-seats-read>
+          {`The answer also says who holds the account now: ${seats.committee.length} committee key${seats.committee.length === 1 ? '' : 's'}, ${seats.threshold} of which must sign a change to its rules, and ${seats.seats.length} seat${seats.seats.length === 1 ? '' : 's'}.`}
+          {' '}Committee keys: {seats.committee.map((k) => short(k.value)).join(', ') || 'none'}.
+        </p>
+      )}
+      <VaultStatus request={request} vaultCheck={vaultCheck} vaultRead={vaultRead} />
+    </Section>
+  );
+}
+
+function SignButtons({ enabled, held, sign, onDecline }: {
+  readonly enabled: boolean;
+  readonly held: boolean;
+  readonly sign: () => void;
+  readonly onDecline: () => void;
+}): ReactNode {
+  return (
+    <>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="lg" type="button" variant="default" onClick={sign} data-approve data-sign-records-key
+          disabled={!enabled}
+        >
+          Sign my records key
+        </Button>
+        <Button size="lg" type="button" variant="ghost" data-decline onClick={onDecline}>
+          Do not sign
+        </Button>
+      </div>
+      {held && (
+        <p className="m-0 text-sm text-muted-foreground" data-sign-held>
+          Signing is held until this wallet has kept an account for this company, after you confirm its fingerprint above.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function ApproveRecordsKey({
   request, identity, channel, consent, whoIsAsking, onDecline, now = Date.now, readLabel = liveLabelReader,
   readVault = liveVaultReader, readLeaf = liveLeafReader, pinned = null, onPin, answerAtOnce = false,
@@ -221,17 +408,7 @@ export function ApproveRecordsKey({
   useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && onChain && seated && vaultOk
     && pinned !== null, sign);
 
-  if (stage.of === 'sent') {
-    return (
-      <>
-        <h1 data-signed-heading>{`You signed your records key for this company, for ${request.requester.origin}`}</h1>
-        <p className="lede" data-signed>
-          {`On ${new Date(stage.at).toLocaleString()} this wallet signed your records key for your seat on this company's account, and handed it back with who holds the account now, as this wallet read it from the network.`}
-        </p>
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
-      </>
-    );
-  }
+  if (stage.of === 'sent') return <RecordsKeySent request={request} at={stage.at} />;
 
   return (
     <>
@@ -241,72 +418,10 @@ export function ApproveRecordsKey({
           <p className="m-0" data-records-key-refused>{stage.says}</p>
         </StatusAlert>
       )}
-      <Section
-        list={false} box={false} aria-label="What this wallet signs" title="What this wallet signs"
-        description="One statement, with the key you sit on this company's committee with."
-      >
-        <p className="m-0 text-sm text-foreground" data-records-key-signs>
-          That your records key belongs to this company, for the seat you hold on its account. Each of the other
-          signers&rsquo; devices checks it before it approves the secret of one of the company&rsquo;s vaults, so the copy
-          of that secret kept for you is one your own recovery words open. It names only the company, your records key
-          and your seat, and cannot be used to change any of the company&rsquo;s rules.
-        </p>
-        <p className="m-0 text-sm text-muted-foreground">Your records key for this company</p>
-        <p className="m-0 font-mono break-all text-sm" data-records-key>{recordsKey}</p>
-        <p className="m-0 text-sm text-muted-foreground">Your seat, as the page names it</p>
-        <p className="m-0 font-mono break-all text-sm" data-records-key-seat>{request.seat}</p>
-        {request.signingKey !== undefined && (
-          <>
-            <p className="m-0 text-sm text-foreground" data-directory-entry-signs>
-              In the same press, your entry in the company&rsquo;s list of who files its records: the key your filings
-              are signed with, as the page names it, with your records key and your seat. Other signers&rsquo; devices
-              believe a record you file only when this entry checks out against the company&rsquo;s account.
-            </p>
-            <p className="m-0 text-sm text-muted-foreground">The key your filings are signed with, as the page names it</p>
-            <p className="m-0 font-mono break-all text-sm" data-directory-entry-key>{request.signingKey}</p>
-          </>
-        )}
-        {seats === null ? (check.of === 'checking' ? (
-          <p className="m-0 text-sm text-muted-foreground" data-seat-checking>Checking the company&rsquo;s account on the network&hellip;</p>
-        ) : (
-          <p className="m-0 text-sm" data-seat-unread>
-            This wallet could not read the seats of the company&rsquo;s account, so it will not sign. Open this again in a minute.
-          </p>
-        )) : seated ? (
-          <p className="m-0 text-sm" data-seat-held>The company&rsquo;s account holds this seat now.</p>
-        ) : (
-          <StatusAlert tone="danger" role={null} title="The company's account does not hold this seat">
-            <p className="m-0" data-seat-not-held>
-              The account, as this wallet read it from the network, holds no such seat now, so this wallet will not sign
-              it. If you have just been seated, wait a minute and open this again.
-            </p>
-          </StatusAlert>
-        )}
-        {seats !== null && (
-          <p className="m-0 text-sm text-muted-foreground" data-seats-read>
-            {`The answer also says who holds the account now: ${seats.committee.length} committee key${seats.committee.length === 1 ? '' : 's'}, ${seats.threshold} of which must sign a change to its rules, and ${seats.seats.length} seat${seats.seats.length === 1 ? '' : 's'}.`}
-            {' '}Committee keys: {seats.committee.map((k) => short(k.value)).join(', ') || 'none'}.
-          </p>
-        )}
-        {request.vault !== undefined && (vaultCheck.of === 'checking' ? (
-          <p className="m-0 text-sm text-muted-foreground" data-vault-checking>Checking the vault on the network&hellip;</p>
-        ) : vaultRead === null ? (
-          <p className="m-0 text-sm" data-vault-unread>
-            This wallet could not read the vault the page names, so it will not sign. Open this again in a minute.
-          </p>
-        ) : vaultRead.account !== request.account ? (
-          <StatusAlert tone="danger" role={null} title="The vault belongs to another company">
-            <p className="m-0" data-vault-other-account>
-              The vault the page names is tied to a different company account from this one, as this wallet read it from
-              the network, so this wallet will not sign.
-            </p>
-          </StatusAlert>
-        ) : (
-          <p className="m-0 text-sm text-muted-foreground" data-vault-read>
-            {`The answer also says who holds the vault: ${vaultRead.committee.length} committee key${vaultRead.committee.length === 1 ? '' : 's'}, ${vaultRead.threshold} of which must sign a change to its rules.`}
-          </p>
-        ))}
-      </Section>
+      <WhatThisWalletSigns
+        request={request} recordsKey={recordsKey} seats={seats} seated={seated}
+        checking={check.of === 'checking'} vaultCheck={vaultCheck} vaultRead={vaultRead}
+      />
       {request.vault !== undefined && request.firstSecret !== undefined && (
         <FirstSecretToConfirm vault={request.vault} firstSecret={request.firstSecret} />
       )}
@@ -321,53 +436,15 @@ export function ApproveRecordsKey({
           <p className="m-0" data-invitation-does-not-name-it>{INVITATION_REFUSAL[notInvited]}</p>
         </StatusAlert>
       ) : (
-        <Section
-          list={false} box={false} aria-label="Is this your company?" title="Is this your company?"
-          description="This wallet has not kept an account for this company yet."
-        >
-          <p className="m-0 text-sm text-foreground" data-compare-fingerprint>
-            {`Compare the company's fingerprint above with the one ${COMPARE_WITH_THE_INVITER}.`} If they match, press It matches: this wallet keeps this
-            account as the company&rsquo;s for good and will sign for no other, and you then sign your records key. If they do not
-            match, press It does not match: the page&rsquo;s request is refused, nothing is kept, and you should tell the person
-            who invited you by a call or a message.
-          </p>
-          {keeping === 'failed' && (
-            <StatusAlert tone="danger" title="The account was not kept">
-              <p className="m-0" data-keep-failed>
-                This wallet could not keep the company&rsquo;s account, so nothing has been kept or signed. Try again.
-              </p>
-            </StatusAlert>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="lg" type="button" variant="default" onClick={confirm} data-confirm-fingerprint
-              disabled={!consent.ok || !onChain || onPin === undefined || keeping === 'keeping'}
-            >
-              It matches: keep this account
-            </Button>
-            <Button size="lg" type="button" variant="ghost" data-fingerprint-differs onClick={onDecline}>
-              It does not match
-            </Button>
-          </div>
-        </Section>
+        <FingerprintQuestion
+          consent={consent} onChain={onChain} onPin={onPin} keeping={keeping} confirm={confirm} onDecline={onDecline}
+        />
       ))}
       {whoIsAsking}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="lg" type="button" variant="default" onClick={sign} data-approve data-sign-records-key
-          disabled={!consent.ok || stage.of !== 'ready' || channel === null || !onChain || !seated || !vaultOk || pinned === null}
-        >
-          Sign my records key
-        </Button>
-        <Button size="lg" type="button" variant="ghost" data-decline onClick={onDecline}>
-          Do not sign
-        </Button>
-      </div>
-      {pinned === null && (
-        <p className="m-0 text-sm text-muted-foreground" data-sign-held>
-          Signing is held until this wallet has kept an account for this company, after you confirm its fingerprint above.
-        </p>
-      )}
+      <SignButtons
+        enabled={consent.ok && stage.of === 'ready' && channel !== null && onChain && seated && vaultOk && pinned !== null}
+        held={pinned === null} sign={sign} onDecline={onDecline}
+      />
     </>
   );
 }

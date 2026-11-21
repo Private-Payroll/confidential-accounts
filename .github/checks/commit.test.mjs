@@ -44,8 +44,8 @@ test('THE POSITIVE CONTROL: the shapes this repository actually writes are accep
   // everything, which is the failure mode a wall of refusals hides.
   for (const ok of [
     'feat(vault): refuse a payout the ledger cannot settle',
-    'fix: put the compiled artefact back before the suite reads it',
-    'docs: say what a clone needs before it can build',
+    'fix(build): put the compiled artefact back before the suite reads it',
+    'docs(readme): say what a clone needs before it can build',
     'chore(deps): move the pinned compiler forward',
   ]) {
     accepted(subjectProblem(ok), `subject ${JSON.stringify(ok)}`);
@@ -54,7 +54,7 @@ test('THE POSITIVE CONTROL: the shapes this repository actually writes are accep
     accepted(branchProblem(ok), `branch ${JSON.stringify(ok)}`);
   }
   accepted(
-    messageProblem('fix: put the compiled artefact back\n\nThe suite reads it before any worker starts.\n'),
+    messageProblem('fix(build): put the compiled artefact back\n\nThe suite reads it before any worker starts.\n'),
     'a whole message',
   );
 });
@@ -103,6 +103,8 @@ test('the dependency bot\'s own branch shape is admitted, and nothing else gains
 
 test('a subject line says what changed, so an empty one is refused', () => {
   refused(subjectProblem(''), 'an empty subject');
+  refused(subjectProblem('ci: run each check as its own job'), 'a subject with no part in brackets');
+  refused(subjectProblem('feat: build deposits with the current chain settings'), 'a feature with no part in brackets');
   refused(subjectProblem('   '), 'a subject of spaces');
   refused(messageProblem(''), 'an empty message');
 });
@@ -114,16 +116,16 @@ test('a subject line is at most 72 characters, counted in characters and not in 
   // grows to match, and a test that measures a constant against itself passes
   // whatever the constant says. 72 is what a log of one-liners can show.
   assert.equal(SUBJECT_LIMIT, 72);
-  const at = `feat: ${'a'.repeat(66)}`;
+  const at = `feat(build): ${'a'.repeat(59)}`;
   assert.equal([...at].length, 72);
   accepted(subjectProblem(at), 'a subject of exactly 72 characters');
   refused(subjectProblem(`${at}a`), 'a subject of 73 characters');
 
   // THE HALF A BYTE COUNT WOULD GET WRONG. This subject is 72 characters and
-  // 138 bytes, and it is accepted.
-  const wide = `feat: ${'é'.repeat(66)}`;
+  // 131 bytes, and it is accepted.
+  const wide = `feat(build): ${'é'.repeat(59)}`;
   assert.equal([...wide].length, 72);
-  assert.equal(Buffer.byteLength(wide, 'utf8'), 138);
+  assert.equal(Buffer.byteLength(wide, 'utf8'), 131);
   accepted(subjectProblem(wide), 'a subject of 72 characters in a wider alphabet');
 });
 
@@ -133,10 +135,10 @@ test('a subject line reads "kind: what changed", so prose is refused', () => {
 });
 
 test('the kind is one of the kinds, in lower case', () => {
-  refused(subjectProblem('wip: put the artefact back'), 'an unknown kind');
-  refused(subjectProblem('Fix: put the artefact back'), 'a kind in the wrong case');
+  refused(subjectProblem('wip(build): put the artefact back'), 'an unknown kind');
+  refused(subjectProblem('Fix(build): put the artefact back'), 'a kind in the wrong case');
   for (const kind of SUBJECT_KINDS) {
-    accepted(subjectProblem(`${kind}: put the artefact back`), `the kind ${kind}`);
+    accepted(subjectProblem(`${kind}(build): put the artefact back`), `the kind ${kind}`);
   }
 });
 
@@ -148,16 +150,16 @@ test('a scope is lower case, digits, and . _ - / only', () => {
 });
 
 test('a subject line does not end with a full stop', () => {
-  refused(subjectProblem('fix: put the artefact back.'), 'a subject ending in a full stop');
+  refused(subjectProblem('fix(build): put the artefact back.'), 'a subject ending in a full stop');
 });
 
 test('a subject line is not capitalised after the colon', () => {
-  refused(subjectProblem('fix: Put the artefact back'), 'a capitalised description');
+  refused(subjectProblem('fix(build): Put the artefact back'), 'a capitalised description');
 });
 
 test('a blank line separates the subject from the body', () => {
-  refused(messageProblem('fix: put the artefact back\nthe suite reads it first'), 'a body with no blank line');
-  accepted(messageProblem('fix: put the artefact back\n\nthe suite reads it first'), 'a body after a blank line');
+  refused(messageProblem('fix(build): put the artefact back\nthe suite reads it first'), 'a body with no blank line');
+  accepted(messageProblem('fix(build): put the artefact back\n\nthe suite reads it first'), 'a body after a blank line');
 });
 
 test('an attribution trailer is refused however it is indented or quoted', () => {
@@ -171,7 +173,7 @@ test('an attribution trailer is refused however it is indented or quoted', () =>
     '  Generated with a thing that writes code',
     '> Authored by a thing that writes code',
   ]) {
-    refused(messageProblem(`fix: put the artefact back\n\n${line}`), JSON.stringify(line));
+    refused(messageProblem(`fix(build): put the artefact back\n\n${line}`), JSON.stringify(line));
   }
 });
 
@@ -184,7 +186,7 @@ test('a path inside a home directory is refused wherever it appears in the line'
     'it was at /home/somebody/work',
     'it was at C:\\Users\\somebody\\work',
   ]) {
-    refused(messageProblem(`fix: put the artefact back\n\n${line}`), JSON.stringify(line));
+    refused(messageProblem(`fix(build): put the artefact back\n\n${line}`), JSON.stringify(line));
   }
 });
 
@@ -193,17 +195,17 @@ test('the list of words that cannot be published is passed in, never carried her
   // supplies its own: the rule is that a caller which HAS a list can apply it
   // through the same reading, and that the reading without one still runs.
   const also = [{ name: 'a word from the list', pattern: /\bpineapple\b/i, says: 'that word is not published' }];
-  accepted(messageProblem('fix: put the pineapple back'), 'the word, with no list given');
-  refused(messageProblem('fix: put the pineapple back', also), 'the word, with a list given');
+  accepted(messageProblem('fix(build): put the pineapple back'), 'the word, with no list given');
+  refused(messageProblem('fix(build): put the pineapple back', also), 'the word, with a list given');
   refused(branchProblem('feat/pineapple-refusal', also), 'the word in a branch name');
   // And the rules that are here still run when a list is given.
-  refused(messageProblem('fix: put the artefact back.', also), 'a full stop, with a list given');
+  refused(messageProblem('fix(build): put the artefact back.', also), 'a full stop, with a list given');
 });
 
 test('a subject too long BECAUSE of the number appended at merge says so', () => {
   // Somebody who counted to exactly 72 is otherwise told they are at 77, by a
   // number they never typed.
-  const title = `feat: ${'a'.repeat(66)}`;
+  const title = `feat(build): ${'a'.repeat(59)}`;
   assert.equal([...title].length, 72);
   const problem = subjectProblem(squashedSubject(title, 12));
   refused(problem, 'a 72-character title as the subject it becomes');
@@ -215,64 +217,64 @@ test('a subject too long BECAUSE of the number appended at merge says so', () =>
 
 test('an attribution trailer is refused wherever in the message it appears', () => {
   refused(
-    messageProblem('fix: put the artefact back\n\nwhy it matters\n\nSigned-off-by: someone'),
+    messageProblem('fix(build): put the artefact back\n\nwhy it matters\n\nSigned-off-by: someone'),
     'a sign-off trailer',
   );
   refused(
-    messageProblem('fix: put the artefact back\n\nwhy it matters\n\nCo-authored-by: someone'),
+    messageProblem('fix(build): put the artefact back\n\nwhy it matters\n\nCo-authored-by: someone'),
     'a co-authorship trailer',
   );
   refused(
-    messageProblem('fix: put the artefact back\n\nwhy it matters\n\nReviewed-by: someone'),
+    messageProblem('fix(build): put the artefact back\n\nwhy it matters\n\nReviewed-by: someone'),
     'a trailer this check has never been shown',
   );
 });
 
 test('a line saying what produced the change is refused', () => {
   refused(
-    messageProblem('fix: put the artefact back\n\nGenerated with a thing that writes code'),
+    messageProblem('fix(build): put the artefact back\n\nGenerated with a thing that writes code'),
     'a line naming what wrote it',
   );
   refused(
-    messageProblem('fix: put the artefact back\n\nAuthored by a thing that writes code'),
+    messageProblem('fix(build): put the artefact back\n\nAuthored by a thing that writes code'),
     'a line naming what authored it',
   );
 });
 
 test('the mark a tool leaves is refused', () => {
-  refused(messageProblem('fix: put the artefact back\n\n\u{1F916} and a line'), 'a message carrying a tool mark');
+  refused(messageProblem('fix(build): put the artefact back\n\n\u{1F916} and a line'), 'a message carrying a tool mark');
 });
 
 test('an address is refused, in a subject and in a body', () => {
-  refused(subjectProblem('fix: ask someone@example.com about the artefact'), 'an address in a subject');
-  refused(messageProblem('fix: put the artefact back\n\nask someone@example.com'), 'an address in a body');
+  refused(subjectProblem('fix(build): ask someone@example.com about the artefact'), 'an address in a subject');
+  refused(messageProblem('fix(build): put the artefact back\n\nask someone@example.com'), 'an address in a body');
 });
 
 test('a path inside a home directory is refused', () => {
   refused(
-    messageProblem('fix: put the artefact back\n\nit was at /Users/somebody/work/thing'),
+    messageProblem('fix(build): put the artefact back\n\nit was at /Users/somebody/work/thing'),
     'a home path',
   );
   refused(
-    messageProblem('fix: put the artefact back\n\nit was at /home/somebody/work/thing'),
+    messageProblem('fix(build): put the artefact back\n\nit was at /home/somebody/work/thing'),
     'a home path on another system',
   );
   // AND AN ORDINARY REPOSITORY PATH IS NOT ONE, which is what makes the rule
   // usable at all.
   accepted(
-    messageProblem('fix: put the artefact back\n\nit is read from contracts/managed/contract/index.js'),
+    messageProblem('fix(build): put the artefact back\n\nit is read from contracts/managed/contract/index.js'),
     'a path inside the repository',
   );
 });
 
 test('a dash that is not a hyphen is refused, including the minus sign', () => {
-  refused(subjectProblem('fix: put the artefact back \u2014 the suite reads it'), 'an em dash in a subject');
-  refused(messageProblem('fix: put the artefact back\n\nthe suite \u2013 which reads it \u2013 starts first'), 'an en dash in a body');
+  refused(subjectProblem('fix(build): put the artefact back \u2014 the suite reads it'), 'an em dash in a subject');
+  refused(messageProblem('fix(build): put the artefact back\n\nthe suite \u2013 which reads it \u2013 starts first'), 'an en dash in a body');
   // NOT IN THE DASH BLOCK, and what a spreadsheet and several keyboards give
   // somebody who meant to type a hyphen.
-  refused(subjectProblem('fix: put the artefact back \u2212 the suite reads it'), 'a minus sign in a subject');
-  accepted(subjectProblem('fix: put the artefact back, the suite reads it'), 'a subject with no dash at all');
-  accepted(subjectProblem('fix: put the artefact back - the suite reads it'), 'a subject with a plain hyphen');
+  refused(subjectProblem('fix(build): put the artefact back \u2212 the suite reads it'), 'a minus sign in a subject');
+  accepted(subjectProblem('fix(build): put the artefact back, the suite reads it'), 'a subject with no dash at all');
+  accepted(subjectProblem('fix(build): put the artefact back - the suite reads it'), 'a subject with a plain hyphen');
 });
 
 test('a branch name says what changed, so an empty one is refused', () => {
@@ -333,7 +335,7 @@ test('the subject a squashed merge writes is the one that is read', () => {
   // The merge appends the number. A title read without it passes at a length
   // the commit will not have, which is the one case a check on the title alone
   // gets wrong every time.
-  const title = `feat: ${'a'.repeat(SUBJECT_LIMIT - 6)}`;
+  const title = `feat(build): ${'a'.repeat(SUBJECT_LIMIT - 13)}`;
   accepted(subjectProblem(title), 'the title on its own');
   assert.equal(squashedSubject(title, 12), `${title} (#12)`);
   refused(subjectProblem(squashedSubject(title, 12)), 'the same title as the commit it becomes');

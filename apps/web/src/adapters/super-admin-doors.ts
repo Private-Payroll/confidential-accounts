@@ -1,9 +1,10 @@
 import type { SuperAdminSignature } from 'vaults-web-shared/proposal-file.js';
 import type { SuperAdminDoors } from 'vaults-web-shared/super-admin-change.js';
-import { api, holdersFromTheWallet } from 'vaults-web-shared/keyring.js';
+import type { SuperAdminAsks } from 'vaults-web-shared/records-source.js';
+import { superAdminOnPage } from 'vaults-web-shared/asks-on-page.js';
+import { indexerNamedByTheWallet } from 'vaults-web-shared/chain-before-a-view.js';
 import { superAdminSigned, superAdminWallet, type SuperAdminCompany } from 'vaults-web-shared/super-admin-ask.js';
 import type { KeptChange, SuperAdminService } from 'vaults-web-shared/super-admins-on-the-service.js';
-import { companyRoute, SERVICE } from './handover-state.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { theVaultBuilder } from './vault-builder.js';
 
@@ -26,26 +27,31 @@ export interface SuperAdminReach {
 const headersFor = async (reach: SuperAdminReach, acting: boolean): Promise<Record<string, string>> =>
   (reach.asSuperAdmin || acting ? (await superAdminSigned(reach.company, ACCOUNT_ORIGIN)).headers : {});
 
-/** One call to a route of a change of the super admins, with the headers it needs. */
-async function superAdminCall(reach: SuperAdminReach, route: string, body?: unknown): Promise<unknown> {
-  const headers = await headersFor(reach, body !== undefined);
-  return api(companyRoute(reach.company.accountId, route), body === undefined
-    ? { headers }
-    : { method: SERVICE.post, body: JSON.stringify(body), headers });
-}
+/** The super admins' asks of the company, over the page's service transport: each carries the headers it is given. */
+const asksOf = (reach: SuperAdminReach): SuperAdminAsks => superAdminOnPage(reach.company.accountId);
+
+/** The signatures the service keeps for the company's change, read with the headers a read carries. */
+const keptFor = async (reach: SuperAdminReach): Promise<{ changes?: unknown; signatures?: unknown }> =>
+  await asksOf(reach).kept(await headersFor(reach, false)) as { changes?: unknown; signatures?: unknown };
+
+/** One contract's update sent, with the signed request. */
+const sendUpdate = async (reach: SuperAdminReach, update: unknown): Promise<unknown> => asksOf(reach).send(update, await headersFor(reach, true));
 
 /** The service as a super admin's device reaches it for a change it keeps. */
 export const superAdminService = (reach: SuperAdminReach): SuperAdminService => ({
-  raise: async (body) => superAdminCall(reach, SERVICE.raiseAt, body),
-  join: async (body) => superAdminCall(reach, SERVICE.joinAt, body),
+  raise: async (body) => asksOf(reach).raise(body, await headersFor(reach, true)),
+  join: async (body) => {
+    const { join } = asksOf(reach);
+    return join(body, await headersFor(reach, true));
+  },
   kept: async () => {
-    const got = await superAdminCall(reach, SERVICE.signatures) as { changes?: unknown };
+    const got = await keptFor(reach);
     return Array.isArray(got.changes) ? got.changes as KeptChange[] : [];
   },
-  keepSignatures: async (body) => superAdminCall(reach, SERVICE.signatures, {
+  keepSignatures: async (body) => asksOf(reach).keep({
     to: { committee: body.to.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: body.to.threshold },
     signatures: body.signatures.map((s) => ({ address: s.address, counter: s.counter, index: s.index, signature: { tag: s.signature.tag, value: s.signature.value } })),
-  }),
+  }, await headersFor(reach, true)),
 });
 
 /**
@@ -56,7 +62,7 @@ export const superAdminService = (reach: SuperAdminReach): SuperAdminService => 
  * page started offers no super admins' reads.
  */
 export async function superAdminDoorsFor(reach: SuperAdminReach): Promise<SuperAdminDoors | null> {
-  const { indexer } = await holdersFromTheWallet(ACCOUNT_ORIGIN, { company: reach.company.label, account: reach.company.account });
+  const indexer = await indexerNamedByTheWallet(ACCOUNT_ORIGIN, { company: reach.company.label, account: reach.company.account });
   if (indexer === null) return null;
   const worker = (await theVaultBuilder()).superAdmins;
   if (worker === undefined) return null;
@@ -67,9 +73,9 @@ export async function superAdminDoorsFor(reach: SuperAdminReach): Promise<SuperA
     seats: [],
     wallet: superAdminWallet(reach.company, ACCOUNT_ORIGIN),
     service: {
-      send: async (update) => superAdminCall(reach, SERVICE.send, update),
+      send: async (update) => sendUpdate(reach, update),
       collected: async () => {
-        const got = await superAdminCall(reach, SERVICE.signatures) as { signatures?: unknown };
+        const got = await keptFor(reach);
         return Array.isArray(got.signatures) ? got.signatures as SuperAdminSignature[] : [];
       },
     },

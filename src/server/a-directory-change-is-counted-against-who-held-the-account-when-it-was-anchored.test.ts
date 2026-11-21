@@ -16,20 +16,23 @@
  * the head and the holders it holds, each call kept with the committee as it
  * landed.
  */
+import { throughAView, type AnchorDoorsBare } from '../testing/anchor-doors-through-a-view.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { sign, type Hex } from '../core/crypto.js';
 import { directoryEntry, entryIdOf, signManifestEntry, type BatchHolders, type ManifestEntry } from '../midnight/record-manifest.js';
 import { treeBatchOf, type TreeHeader } from '../midnight/record-tree.js';
 import { newestAnchored, type RecordsAsked, type RecordsHeld } from '../midnight/records-held.js';
 import { directoryChangeMessage, type DirectoryChange, type DirectoryFiling } from '../midnight/seat-directory.js';
-import { manifestServiceFor, treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import { anchorServiceFor, anchorTheRecordsHere, recordsHeldHere, treeHeaderHere, type AnchorDoors } from 'vaults-web-shared/records-anchored-here.js';
+import { manifestServiceOf, serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { anchorTheRecordsHere, treeHeaderHere } from 'vaults-web-shared/records-anchored-here.js';
+import { recordsHeldHere } from 'vaults-web-shared/records-held-here.js';
 import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryWithItsFold, acmeDirectory, acmeDirectoryDeps, acmeHeldNow, ADA, ADDRESS, apiAs, aRecordFiledBy, BO, chains, CO, LABEL,
   seatOf, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
 import { anchoredOver, anchorFunctions, headAfter as headAfterAs, holdersOf, tagInATest, anchorSentInATest } from '../testing/record-tree-double.js';
 import { directoryHere } from 'vaults-web-shared/vault-page-doors.js';
+import { foundingRecordsOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats();
 
@@ -43,11 +46,11 @@ let meanwhile: (() => void) | null = null;
 /** Every anchor call the chain refused, with why. */
 const refused: string[] = [];
 
-const doorsOf = (s: Seat): AnchorDoors => ({
+const doorsOf = (s: Seat): AnchorDoorsBare => ({
   accountId: CO,
   material: { signingSecret: s.signingSecret as Hex, blinding: '22'.repeat(32) as Hex, scope: '33'.repeat(32) as Hex } as never,
-  manifest: manifestServiceFor(apiAs(s.person)),
-  tree: treeServiceFor(apiAs(s.person)),
+  manifest: manifestServiceOf(serviceSource(apiAs(s.person), CO)),
+  tree: treeServiceOf(serviceSource(apiAs(s.person), CO)),
   directory: () => acmeDirectoryWithItsFold(),
   directoryFilings: async () => store.directoryFilingsOf(CO),
   onChain: acmeChain.onChain,
@@ -66,7 +69,7 @@ const doorsOf = (s: Seat): AnchorDoors => ({
       }
     },
     sealedProposals: async (company) => store.listProposals(company),
-    foundingRecords: anchorServiceFor(apiAs(s.person)).foundingRecords,
+    foundingRecords: foundingRecordsOver(apiAs(s.person), CO),
   },
   builder: { ...anchorFunctions, anchor: anchorSentInATest },
 });
@@ -105,7 +108,7 @@ const asking = (kind: string, id: string): RecordsAsked => ({ records: [{ store:
 const newestOf = (f: RecordsHeld, key: string) => { const v = f.history.get(key)?.at(-1); return v === undefined ? undefined : { version: v.version, digest: v.digest }; };
 /** Every entry the service gives as not yet anchored at the root `s`'s device checked last. */
 const waitingFor = async (s: Seat): Promise<ManifestEntry[]> =>
-  (await treeServiceFor(apiAs(s.person)).pending(CO, (await heldNow(s)).reached.root))! as ManifestEntry[];
+  (await treeServiceOf(serviceSource(apiAs(s.person), CO)).pending(CO, (await heldNow(s)).reached.root))! as ManifestEntry[];
 /**
  * **A HEADER `s`'S DEVICE MAKES BY HAND** for `entries`, following the head it
  * checked last, naming `held` as who held the account, and kept in the service's
@@ -114,7 +117,7 @@ const waitingFor = async (s: Seat): Promise<ManifestEntry[]> =>
  */
 const handMade = async (s: Seat, entries: readonly ManifestEntry[], held: BatchHolders): Promise<TreeHeader> => {
   const { reached } = await heldNow(s);
-  const tree = treeServiceFor(apiAs(s.person));
+  const tree = treeServiceOf(serviceSource(apiAs(s.person), CO));
   const made = (await treeHeaderHere({ accountId: CO, tree, signingSecret: s.signingSecret as Hex, tag: tagInATest(s.signingSecret as Hex), held, at: new Date() }, reached, entries))!;
   expect(store.fileTreeHeader(CO, made.header)).toBeNull();
   return made.header;
@@ -126,7 +129,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
     await retiredBy(CY, ADA);
     /* The account stores a policy bar of two before the retirement is anchored: a change of who is seated then needs two. */
     chains.set(CO, { ...chains.get(CO)!, seatBar: 2 });
-    expect((await anchorTheRecordsHere(doorsOf(ADA))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(doorsOf(ADA)))).anchored).toBeGreaterThan(0);
     expect(acmeChain.landed.at(-1)?.seatBar).toBe(2);
     /* The bar falls back to the threshold afterwards. */
     chains.set(CO, { ...chains.get(CO)!, seatBar: 1 });
@@ -148,10 +151,10 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
   it('TWO ANCHORS IN ONE BLOCK: A CHANGE FIRST ANCHORED AT A HEAD THE HISTORY NEVER SHOWS IS COUNTED AGAINST THE HOLDERS ITS BATCH NAMED', async () => {
     heldBy([ADA, BO]);
     await retiredBy(FAY, ADA);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const first = acmeChain.landed.length - 1;
     await ADA.entered.enter([await aRecordFiledBy(ADA, 'pol_same_block_b1')]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* Both calls landed in one block: the history shows the state after it, so the head between them is never read. */
     acmeChain.landed.splice(first, 1);
     heldBy([BO]);
@@ -163,7 +166,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
   it('NO LATER HEADER NAMES AN ANCHORED VERSION AGAIN: THE CALL THAT FIRST ANCHORED IT IS WHAT IT IS COUNTED AGAINST', async () => {
     /* Bo, still on the account now that Ada has left it, makes a header naming every directory version again. */
     const named = store.directoryFilingsOf(CO).map((f) => signManifestEntry(CO, directoryEntry(f), BO.signingSecret as Hex));
-    const tree = treeServiceFor(apiAs('bo'));
+    const tree = treeServiceOf(serviceSource(apiAs('bo'), CO));
     /* RED WHEN: a header can name a directory version again - Ada's change could be counted against the last call naming it. */
     expect(await treeHeaderHere({ accountId: CO, tree, signingSecret: BO.signingSecret as Hex, tag: tagInATest(BO.signingSecret as Hex), held: holdersOf(acmeHeldNow()), at: new Date() },
       (await heldNow(BO)).reached, named)).toBeNull();
@@ -174,7 +177,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
 
   it("A CHANGE'S SIGNER REMOVED BETWEEN AN ANCHOR'S BUILD AND ITS LANDING: THE ANCHOR IS REFUSED, ANCHORED AGAIN, AND EVERY HEADER IS CHECKED", async () => {
     heldBy([ADA, BO]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* Ada retires Gus, and Bo files a record: both wait for the next anchor. */
     await retiredBy(GUS, ADA);
     const bos = await aRecordFiledBy(BO, 'prp_bo_race', 'proposal');
@@ -182,7 +185,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
     refused.length = 0;
     /* Bo's device judges its batch with Ada seated; before its anchor lands, Ada's removal lands. */
     meanwhile = () => { heldBy([BO]); };
-    expect((await anchorTheRecordsHere(doorsOf(BO))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(doorsOf(BO)))).anchored).toBeGreaterThan(0);
     /* RED WHEN: the anchor call does not bind who held the account as the batch was judged - it lands, and nothing is refused. */
     expect(refused).toEqual(['the account\'s signers changed after this device judged the batch']);
     const f = await heldNow(BO, asking('proposal', 'prp_bo_race'));
@@ -199,7 +202,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
     refused.length = 0;
     /* Before Ada's anchor lands, the account's threshold changes from 1 to 2: the same seats, other approvals. */
     meanwhile = () => { chains.set(CO, { ...chains.get(CO)!, approvals: 2, seatBar: 2 }); };
-    expect((await anchorTheRecordsHere(doorsOf(ADA))).anchored).toBeGreaterThan(0);
+    expect((await anchorTheRecordsHere(throughAView(doorsOf(ADA)))).anchored).toBeGreaterThan(0);
     /* RED WHEN: a refusal whose head did not move is not read again - the approvals moved, and the device must anchor again. */
     expect(refused).toEqual(['the approvals the account requires changed after this device judged the batch']);
     expect(newestAnchored(await heldNow(ADA, asking('policy', 'pol_approvals_race')), { store: 'company', kind: 'policy', id: 'pol_approvals_race' })).toBe(1);
@@ -208,12 +211,12 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
   it('A BATCH WHOSE HEADER NAMES SEATS THAT DO NOT MAKE THE ROOT THE CALL CHECKED: ITS DIRECTORY VERSIONS ARE NOT KNOWN, AND NOT BELIEVED', async () => {
     heldBy([ADA, BO]);
     await retiredBy(HAL, ADA);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     expect(await retiredOf(HAL)).toEqual({});
     await retiredBy(IVY, ADA);
     /* Ada's device witnesses the new directory version, as an anchoring device does. */
     const v = signManifestEntry(CO, directoryEntry(store.directoryFilingsOf(CO).at(-1)!), ADA.signingSecret as Hex);
-    await manifestServiceFor(apiAs('ada')).enter(CO, [v]);
+    await manifestServiceOf(serviceSource(apiAs('ada'), CO)).enter(CO, [v]);
     /* Ada names the root the account holds, but a seat list of her own: one the root does not have. */
     const named = holdersOf(acmeHeldNow());
     const forged: BatchHolders = { ...named, signers: [...named.signers, ADA.seat as Hex] };
@@ -225,10 +228,10 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
 
   it('A DIRECTORY VERSION WHOSE FIRST BATCH THE SERVICE WITHHOLDS AN ENTRY OF IS NOT KNOWN, NOT COUNTED AGAINST NOW, AND THE DIRECTORY REFUSES', async () => {
     heldBy([ADA, BO]);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     /* Ada retires Jo and her device anchors the retirement. */
     await retiredBy(JO, ADA);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     const version = store.directoryFilingsOf(CO).length;
     const header = store.keptTreeOf(CO).headers.at(-1)!;
     const retirement = header.changes.find((c) => c.leaf.store === 'directory' && c.leaf.version === version)?.leaf;
@@ -239,7 +242,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
       if (!path.includes('/manifest/tree/headers') || r === null || !Array.isArray(r.entries)) return r;
       return { ...r, entries: r.entries.filter((e: ManifestEntry) => entryIdOf(e) !== retirement!.entryId) };
     };
-    const read = await recordsHeldHere({ ...doorsOf(ADA), tree: treeServiceFor(withholding) }, {});
+    const read = await recordsHeldHere({ ...doorsOf(ADA), tree: treeServiceOf(serviceSource(withholding, CO)) }, {});
     expect(read.records.stopped).toMatchObject({ stop: 'not-given' });
     /* RED WHEN: a version a stopped batch may name is counted against the account now (undefined), where the retirement would be
      * believed or forgotten on the chain's word now, not as anchored. */
@@ -255,7 +258,7 @@ describe('A CHANGE IS COUNTED AGAINST WHO HELD THE ACCOUNT WHEN IT WAS ANCHORED,
     heldBy([ADA, BO]);
     /* Ada retires Bo, and her device anchors the change; the chain still holds Bo. */
     await retiredBy(BO, ADA);
-    await anchorTheRecordsHere(doorsOf(ADA));
+    await anchorTheRecordsHere(throughAView(doorsOf(ADA)));
     expect(await retiredOf(BO)).toEqual({});
     /* Ada is removed from the account; Bo is still on it. */
     heldBy([BO]);

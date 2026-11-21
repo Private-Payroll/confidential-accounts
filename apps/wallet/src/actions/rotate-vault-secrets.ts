@@ -68,7 +68,7 @@ export function rotateVaultSecretsAction(reach: RotateVaultSecretsReach): Action
           const v = vaultAsked(intent);
           if (v !== null && typeof v === 'object') throw new StepRefused(v);
           const r = await read.at(ctx);
-          const changed = await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r, r.api), 'raise', v === null ? {} : { vault: v });
+          const changed = await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r), 'raise', v === null ? {} : { vault: v });
           const told = toldOf(changed);
           ctx.tell({ state: stillOwed(changed) ? STATE.partial : STATE.done, ...told });
         },

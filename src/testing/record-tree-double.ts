@@ -28,8 +28,8 @@ import type { Filed, RecordsEntered, TreeService } from 'vaults-web-shared/recor
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import type { CheckedHeads, CheckedHeadsStore } from 'vaults-web-shared/tree-kept-here.js';
 import type { DirectoryBelieved, DirectoryHereDeps, RecordsHeldHere } from 'vaults-web-shared/vault-page-doors.js';
-import { treeServiceFor } from 'vaults-web-shared/record-entered-here.js';
-import { heldFor, recordsHeldHere } from 'vaults-web-shared/records-anchored-here.js';
+import { serviceSource, treeServiceOf } from 'vaults-web-shared/records-source.js';
+import { heldFor, recordsHeldHere } from 'vaults-web-shared/records-held-here.js';
 import type { AccountHeld, CommitteeKey, DirectoryFiling } from '../midnight/seat-directory.js';
 import { seatBarOf } from 'midnight-identity/profile/records-key';
 import {
@@ -451,7 +451,7 @@ export const anchoredOver = (
   founded?: FoundedWith & { readonly committee: readonly CommitteeKey[] },
   checked?: CheckedHeadsStore,
 ): DirectoryHereDeps['anchored'] => {
-  const service = treeServiceFor(api);
+  const service = treeServiceOf(serviceSource(api, company));
   const first = founded === undefined ? null : firstBatchOf(company, founded);
   const besideOf = (c: string) => besides().map((f) => signManifestEntry(c, f.entry, f.signingSecret));
   const tree: TreeService = first === null

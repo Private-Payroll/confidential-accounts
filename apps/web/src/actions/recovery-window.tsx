@@ -1,3 +1,4 @@
+import { useCompanyView } from '../records/company-records.js';
 import { useEffect, useState } from 'react';
 import { Alert, AlertDescription, Button, FieldLegend, FieldSet, Section, useText } from 'vaults-ui';
 import {
@@ -43,6 +44,7 @@ function WindowSays({ held }: { held: WindowHeld | null }) {
 export function RecoveryWindowSection({ personId, company, onRead }: {
   personId: string; company: string | null; onRead: (inForce: number | null) => void;
 }) {
+  const view = useCompanyView();
   const t = useText();
   const [held, setHeld] = useState<WindowHeld | null>(null);
   const [length, setLength] = useState<number>(RECOVERY_WITHIN[1].seconds);
@@ -51,10 +53,10 @@ export function RecoveryWindowSection({ personId, company, onRead }: {
   const [reads, setReads] = useState(0);
 
   useEffect(() => {
-    if (company === null) return undefined;
+    if (view === null) return undefined;
     let current = true;
     setHeld(null);
-    void readRecoveryWindow(personId, company).then((read) => {
+    void readRecoveryWindow(personId, view).then((read) => {
       if (!current) return;
       setHeld(read);
       if (read.of === WINDOW_READ.read) {
@@ -63,13 +65,13 @@ export function RecoveryWindowSection({ personId, company, onRead }: {
       }
     });
     return () => { current = false; };
-  }, [personId, company, reads]);
+  }, [personId, view, reads]);
 
   const press = async (): Promise<void> => {
-    if (company === null || busy) return;
+    if (view === null || busy) return;
     setBusy(true);
     setActed(null);
-    const ended = await setRecoveryWindow(personId, company, length);
+    const ended = await setRecoveryWindow(personId, view, length);
     setBusy(false);
     setActed(ended);
     setReads((n) => n + 1);

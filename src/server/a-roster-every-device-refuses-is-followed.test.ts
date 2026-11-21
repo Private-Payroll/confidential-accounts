@@ -45,14 +45,14 @@ import { signVaultKeys, vaultKeyIndexOf } from '../core/vault-keys.js';
 import type { Account, SealedAccount, Signer } from '../core/types.js';
 import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../midnight/record-manifest.js';
-import {
-  fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere, rosterBelievedHere, rosterHere, type RosterDoors,
-} from 'vaults-web-shared/roster-here.js';
+import { rosterBelievedHere, rosterHere, type RosterDoors } from 'vaults-web-shared/roster-here.js';
+import { fileTheRosterFollowedHere, foldOffersHere, offerVaultKeysHere } from 'vaults-web-shared/roster-filed-here.js';
 import { attestedIn } from 'vaults-web-shared/vault-page-doors.js';
 import { signerRoutes } from './signer-routes.js';
 import {
   aCompanyOfTwoSeats, acmeReads, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, seatOf, sendAs, store, type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { viewOver } from '../testing/writes-over-a-send.js';
 
 aCompanyOfTwoSeats((app, deps) => {
   app.get('/api/accounts/:id', deps.signedIn, deps.member, (req, res) => {
@@ -97,7 +97,7 @@ const readOn = async (s: Seat) => rosterBelievedHere(await served(), KEY, {
   own: { signerId: `sgn_${s.person}`, signingPublicKey: signingPublicKeyOf(s.signingSecret as Hex) },
 });
 const doorsOf = (s: Seat, api = apiAs(s.person)): RosterDoors => ({
-  api, accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
+  view: viewOver(api, CO), accountId: CO, viewingKey: KEY, signingSecret: s.signingSecret as Hex, label: LABEL, account: ADDRESS,
   reads: acmeReads, entered: s.entered,
 });
 /** `by`'s device files the roster's next version as `next` says, through the service's own roster route, and enters it. */
@@ -188,11 +188,11 @@ describe('THE VERSION FILED NEXT DROPS ONLY ENTRIES REFUSED FOR GOOD', () => {
     await files(ADA, { name: 'Acme', signers: [entryOf(ADA), entryOf(BO), entryOf(CY), entryOf(DEE, 'sgn_dee', false), junk] });
     expect((await readOn(BO)).refused.map((r) => r.why)).toEqual(['no-entry-of-their-own', 'not-their-person']);
     /* Bo gives his vault keys again, and Ada's device folds them in: the one filing a fold makes. */
-    await offerVaultKeysHere(apiAs('bo'), CO, {
+    await offerVaultKeysHere(CO, {
       signerId: 'sgn_bo', signingSecret: BO.signingSecret as Hex, committeeKey: BO.committeeKey as never, viewingKey: KEY as Hex,
       companyKey: toHex(new Uint8Array(32).fill(BO.n + 100)) as Hex, entry: BO.statement,
       recordsKey: signRecordsKey(identityFromSecret(new Uint8Array(32).fill(BO.n)), LABEL, ADDRESS, new Uint8Array(32).fill(BO.n + 100), BO.seat),
-    });
+    }, viewOver(apiAs('bo'), CO));
     const before = store.newestRoster(CO)!.version;
     /* RED WHEN: a seat whose role files no roster folds an offer into a version every device then refuses for who filed it. */
     await expect(foldOffersHere(doorsOf(BO))).rejects.toThrow(/may not file the company's roster.*Nothing was filed/su);

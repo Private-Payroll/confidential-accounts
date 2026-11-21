@@ -803,10 +803,11 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
 
   it('WATCHED FAILING: CREATING A COMPANY, WHEN THE COMPANY CANNOT BE MADE', async () => {
     const view = new ARecordingView();
-    const keyring = await signedIn(view);
+    await signedIn(view);
+    const creation = await import('./company-creation.js');
     view.answers = givesTheKeys;
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
-    await expect(keyring.startCompanyHeldFromTheStart(
+    await expect(creation.startCompanyHeldFromTheStart(
       { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
     )).rejects.toThrow('the server fell over');
     expect(view.stillOpen()).toEqual([]);
@@ -827,12 +828,14 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
 
   it('AND THE PAGE STOPS SAYING IT IS WAITING, in the same failure', async () => {
     const view = new ARecordingView();
-    const keyring = await signedIn(view);
+    await signedIn(view);
+    const creation = await import('./company-creation.js');
+    const walletAsks = await import('./wallet-asks.js');
     view.answers = givesTheKeys;
     const said: Array<unknown> = [];
-    const stop = keyring.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
+    const stop = walletAsks.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
-    await keyring.startCompanyHeldFromTheStart(
+    await creation.startCompanyHeldFromTheStart(
       { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
     ).catch(() => {});
     stop();

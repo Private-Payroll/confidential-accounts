@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { aViewOf } from './page-view.test-support.js';
 import { RECOVERY_WINDOW_RANGE } from '../../../../src/midnight/recovery-window-record.js';
 import { describe, expect, it, vi } from 'vitest';
 import { recoveryFileTextOf } from 'vaults-web-shared/recovery-in-the-wallet.js';
@@ -19,12 +20,15 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  api: async () => kr.named,
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     kr.acts.push(intent);
     if (kr.throws !== null) throw kr.throws;
     return kr.ended;
   },
+}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
+  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+  api: async () => kr.named,
 }));
 vi.mock('./vault-builder.js', async (real) => ({
   ...(await real<typeof import('./vault-builder.js')>()),
@@ -37,10 +41,10 @@ const rs = vi.hoisted(() => ({ here: null as unknown, throws: false, keys: { sig
 vi.mock('./keyring-person.js', async (real) => ({ ...(await real<typeof import('./keyring-person.js')>()), keysOnTheWayIn: async () => rs.keys }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
-  walletIndexerFor: async () => kr.indexer,
+  walletIndexerIn: async () => kr.indexer,
   openedHere: async () => rs.opened,
   companyKeysFor: async () => ({ current: 'key' }),
-  directoryWithItsRecordsFor: (...args: unknown[]) => async (asked: unknown) => { rs.asked.push([args[0], args[1], args[2], asked]); if (rs.throws) throw new Error('behind'); return rs.here; },
+  directoryWithItsRecordsFor: (...args: unknown[]) => async (asked: unknown) => { rs.asked.push([(args[0] as { company: string }).company, args[1], args[2], asked]); if (rs.throws) throw new Error('behind'); return rs.here; },
 }));
 
 async function load() {
@@ -61,7 +65,7 @@ const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({
 });
 const here = async (m: Awaited<ReturnType<typeof load>>) => {
   kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: told() };
-  const raised = await m.raiseRecovery('u1', 'c-1', 'day', undefined, () => NOW);
+  const raised = await m.raiseRecovery('u1', aViewOf('c-1'), 'day', undefined, () => NOW);
   if (raised.of !== 'done' || raised.held === null) throw new Error('the raise did not give a recovery');
   kr.acts = [];
   return raised.held;
@@ -75,13 +79,13 @@ describe('raising a recovery', () => {
   it('asks the wallet for the company, the raise step and a moment after now by the choice made', async () => {
     const m = await load();
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: told() };
-    await m.raiseRecovery('u1', 'c-1', 'three-days', undefined, () => NOW);
+    await m.raiseRecovery('u1', aViewOf('c-1'), 'three-days', undefined, () => NOW);
     expect(kr.acts).toEqual([{ name: 'recovery', record: 'c-1', company: 'label-1', account: ACCOUNT, step: 'raise', latest: String(NOW / 1000 + 3 * 86400) }]);
     for (const w of m.RECOVERY_WITHIN) {
       expect(w.seconds).toBeGreaterThan(0);
       expect(w.seconds).toBeLessThanOrEqual(RECOVERY_WINDOW_RANGE.longest);
     }
-    expect((await m.raiseRecovery('u1', 'c-1', 'nope' as never, undefined, () => NOW)).of).toBe('refused');
+    expect((await m.raiseRecovery('u1', aViewOf('c-1'), 'nope' as never, undefined, () => NOW)).of).toBe('refused');
     expect(kr.acts).toHaveLength(1);
   });
 
@@ -89,7 +93,7 @@ describe('raising a recovery', () => {
   it('gives back the recovery from the parts the wallet told', async () => {
     const m = await load();
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: told() };
-    const raised = await m.raiseRecovery('u1', 'c-1', 'day', undefined, () => NOW);
+    const raised = await m.raiseRecovery('u1', aViewOf('c-1'), 'day', undefined, () => NOW);
     expect(raised).toMatchObject({ of: 'done', act: 'raise', state: 'waiting-for-approvals', approvals: 1, needed: 2 });
     const held = (raised as { held: Awaited<ReturnType<typeof here>> }).held;
     expect(held).toEqual({
@@ -105,11 +109,11 @@ describe('raising a recovery', () => {
   it('gives the file back on a stop, where the wallet had raised before it stopped', async () => {
     const m = await load();
     kr.ended = stopped('act.recovery.why.no-dust', { outcome: told() });
-    const raised = await m.raiseRecovery('u1', 'c-1', 'day', undefined, () => NOW);
+    const raised = await m.raiseRecovery('u1', aViewOf('c-1'), 'day', undefined, () => NOW);
     expect(raised).toMatchObject({ of: 'stopped', act: 'raise', why: 'no-dust', partial: false });
     expect((raised as { held: unknown }).held).not.toBeNull();
     kr.ended = stopped('act.recovery.why.no-dust');
-    expect(await m.raiseRecovery('u1', 'c-1', 'day', undefined, () => NOW)).toMatchObject({ of: 'stopped', held: null });
+    expect(await m.raiseRecovery('u1', aViewOf('c-1'), 'day', undefined, () => NOW)).toMatchObject({ of: 'stopped', held: null });
   });
 
   /* RED WHEN: parts that are not a recovery's (a short hash, a negative batch, a time that is not whole seconds) are made into a file the other signers are sent. */
@@ -117,7 +121,7 @@ describe('raising a recovery', () => {
     const m = await load();
     for (const bad of [{ salt: 'zz' }, { seq: -1 }, { latest: '12.5' }, { proposal: 'aa' }] as Record<string, string | number>[]) {
       kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: told(bad) };
-      expect(await m.raiseRecovery('u1', 'c-1', 'day', undefined, () => NOW), JSON.stringify(bad)).toMatchObject({ of: 'done', held: null });
+      expect(await m.raiseRecovery('u1', aViewOf('c-1'), 'day', undefined, () => NOW), JSON.stringify(bad)).toMatchObject({ of: 'done', held: null });
     }
   });
 
@@ -125,10 +129,10 @@ describe('raising a recovery', () => {
   it('refuses before the wallet window when the person or the company is not there', async () => {
     const m = await load();
     kr.user = { id: 'someone-else' };
-    expect(await m.raiseRecovery('u1', 'c-1', 'day')).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
+    expect(await m.raiseRecovery('u1', aViewOf('c-1'), 'day')).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
     kr.user = { id: 'u1' };
     kr.named = null;
-    expect(await m.raiseRecovery('u1', 'c-1', 'day')).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.raiseRecovery('u1', aViewOf('c-1'), 'day')).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     kr.named = { companyLabel: 'label-1', contractAddress: ACCOUNT };
     expect(kr.acts).toEqual([]);
   });
@@ -140,7 +144,7 @@ describe('approving and carrying out', () => {
     const m = await load();
     const held = await here(m);
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'carried-out', approvals: 2, needed: 2 } };
-    expect(await m.approveRecovery('u1', 'c-1', held)).toMatchObject({ of: 'done', act: 'approve', state: 'carried-out', approvals: 2, needed: 2, held });
+    expect(await m.approveRecovery('u1', aViewOf('c-1'), held)).toMatchObject({ of: 'done', act: 'approve', state: 'carried-out', approvals: 2, needed: 2, held });
     expect(kr.acts).toEqual([{
       name: 'approve-proposal', record: 'c-1', company: 'label-1', account: ACCOUNT, proposal: 'aa'.repeat(32), kind: 'recovery', salt: 'bb'.repeat(32),
       latest: String(NOW / 1000 + 86400), lastRecovery: 'cc'.repeat(32), resumesFrom: 'dd'.repeat(32), root: 'ee'.repeat(32), seq: '4',
@@ -152,7 +156,7 @@ describe('approving and carrying out', () => {
     const m = await load();
     const held = await here(m);
     kr.ended = { of: 'done', steps: 2, relayed: 0, outcome: { state: 'waiting-for-approvals', approvals: 1, needed: 2 } };
-    expect(await m.carryOutRecovery('u1', 'c-1', held)).toMatchObject({ of: 'done', act: 'carry', state: 'waiting-for-approvals' });
+    expect(await m.carryOutRecovery('u1', aViewOf('c-1'), held)).toMatchObject({ of: 'done', act: 'carry', state: 'waiting-for-approvals' });
     expect(kr.acts).toEqual([{
       name: 'recovery', record: 'c-1', company: 'label-1', account: ACCOUNT, step: 'carry', proposal: 'aa'.repeat(32), salt: 'bb'.repeat(32),
       latest: String(NOW / 1000 + 86400), lastRecovery: 'cc'.repeat(32), resumesFrom: 'dd'.repeat(32), root: 'ee'.repeat(32), seq: '4',
@@ -164,8 +168,8 @@ describe('approving and carrying out', () => {
     const m = await load();
     const held = await here(m);
     kr.named = { companyLabel: 'label-1', contractAddress: 'd1'.repeat(32) };
-    expect(await m.approveRecovery('u1', 'c-1', held)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
-    expect(await m.carryOutRecovery('u1', 'c-1', held)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.approveRecovery('u1', aViewOf('c-1'), held)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.carryOutRecovery('u1', aViewOf('c-1'), held)).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
     expect(kr.acts).toEqual([]);
   });
 
@@ -175,7 +179,7 @@ describe('approving and carrying out', () => {
     const held = await here(m);
     const why = async (refused?: string, over: Record<string, unknown> = {}) => {
       kr.ended = stopped(refused, over);
-      return m.carryOutRecovery('u1', 'c-1', held);
+      return m.carryOutRecovery('u1', aViewOf('c-1'), held);
     };
     expect(await why('act.recovery.why.still-open')).toMatchObject({ why: 'still-open', partial: false });
     expect(await why('act.recovery.why.may-be-sent')).toMatchObject({ why: 'may-be-sent', partial: true });
@@ -192,7 +196,7 @@ describe('approving and carrying out', () => {
     const m = await load();
     const held = await here(m);
     kr.throws = new TypeError('Failed to fetch');
-    expect(await m.carryOutRecovery('u1', 'c-1', held)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
+    expect(await m.carryOutRecovery('u1', aViewOf('c-1'), held)).toEqual({ of: 'refused', why: ACT_REFUSAL.unreachable });
   });
 });
 
@@ -201,7 +205,7 @@ describe('opening a saved file', () => {
   it('opens the file it saved as the same recovery', async () => {
     const m = await load();
     const held = await here(m);
-    const opened = await m.openRecoveryFile('c-1', recoveryFileTextOf(held.parts, 'a summary'));
+    const opened = await m.openRecoveryFile(aViewOf('c-1'), recoveryFileTextOf(held.parts, 'a summary'));
     expect(opened).toEqual({ of: 'opened', held });
   });
 
@@ -209,16 +213,16 @@ describe('opening a saved file', () => {
   it('refuses a file that is not a recovery of this company, and says which way', async () => {
     const m = await load();
     const held = await here(m);
-    expect(await m.openRecoveryFile('c-1', 'not json')).toEqual({ of: 'refused', why: 'unreadable' });
-    expect(await m.openRecoveryFile('c-1', '{"format":"other"}')).toEqual({ of: 'refused', why: 'unreadable' });
+    expect(await m.openRecoveryFile(aViewOf('c-1'), 'not json')).toEqual({ of: 'refused', why: 'unreadable' });
+    expect(await m.openRecoveryFile(aViewOf('c-1'), '{"format":"other"}')).toEqual({ of: 'refused', why: 'unreadable' });
     const file = recoveryFileTextOf(held.parts, 'a summary');
     const addSigner = JSON.stringify({ ...JSON.parse(file), change: { kind: 'threshold', threshold: 2 } });
-    expect(await m.openRecoveryFile('c-1', addSigner)).toEqual({ of: 'refused', why: 'not-a-recovery' });
-    expect(await m.openRecoveryFile('c-2', file)).toEqual({ of: 'refused', why: 'not-this-company' });
+    expect(await m.openRecoveryFile(aViewOf('c-1'), addSigner)).toEqual({ of: 'refused', why: 'not-a-recovery' });
+    expect(await m.openRecoveryFile(aViewOf('c-2'), file)).toEqual({ of: 'refused', why: 'not-this-company' });
     kr.named = { companyLabel: 'label-1', contractAddress: 'd1'.repeat(32) };
-    expect(await m.openRecoveryFile('c-1', file)).toEqual({ of: 'refused', why: 'not-this-company' });
+    expect(await m.openRecoveryFile(aViewOf('c-1'), file)).toEqual({ of: 'refused', why: 'not-this-company' });
     kr.named = null;
-    expect(await m.openRecoveryFile('c-1', file)).toEqual({ of: 'refused', why: 'company-unread' });
+    expect(await m.openRecoveryFile(aViewOf('c-1'), file)).toEqual({ of: 'refused', why: 'company-unread' });
   });
 });
 
@@ -228,12 +232,12 @@ describe('where the chain holds a recovery', () => {
     const m = await load();
     const held = await here(m);
     kr.rounds = { ['aa'.repeat(32)]: { held: 'open', approvals: 1, needed: 2 } };
-    expect(await m.recoveryStanding('c-1', held, () => NOW)).toEqual({ of: 'read', held: 'open', approvals: 1, needed: 2, outrun: false, passed: false });
+    expect(await m.recoveryStanding(aViewOf('c-1'), held, () => NOW)).toEqual({ of: 'read', held: 'open', approvals: 1, needed: 2, outrun: false, passed: false });
     expect(kr.asked).toEqual([{ account: ACCOUNT, indexer: { indexerUri: 'http://i', indexerWsUri: 'ws://i' }, chainIds: ['aa'.repeat(32)] }]);
     kr.rounds = { ['aa'.repeat(32)]: { held: 'open', approvals: 1, outrun: true } };
-    expect(await m.recoveryStanding('c-1', held, () => NOW + 2 * 86400_000)).toEqual({ of: 'read', held: 'open', approvals: 1, needed: null, outrun: true, passed: true });
+    expect(await m.recoveryStanding(aViewOf('c-1'), held, () => NOW + 2 * 86400_000)).toEqual({ of: 'read', held: 'open', approvals: 1, needed: null, outrun: true, passed: true });
     kr.rounds = { ['aa'.repeat(32)]: { held: 'never', approvals: 0 } };
-    expect(await m.recoveryStanding('c-1', held, () => NOW)).toMatchObject({ held: 'never' });
+    expect(await m.recoveryStanding(aViewOf('c-1'), held, () => NOW)).toMatchObject({ held: 'never' });
   });
 
   /* RED WHEN: an unreadable chain throws out of the page, or is told as a recovery the chain does not hold. */
@@ -241,13 +245,13 @@ describe('where the chain holds a recovery', () => {
     const m = await load();
     const held = await here(m);
     kr.readThrows = true;
-    expect(await m.recoveryStanding('c-1', held)).toEqual({ of: 'unread' });
+    expect(await m.recoveryStanding(aViewOf('c-1'), held)).toEqual({ of: 'unread' });
     kr.readThrows = false;
     kr.indexer = null;
-    expect(await m.recoveryStanding('c-1', held)).toEqual({ of: 'unread' });
+    expect(await m.recoveryStanding(aViewOf('c-1'), held)).toEqual({ of: 'unread' });
     kr.indexer = { indexerUri: 'http://i', indexerWsUri: 'ws://i' };
     kr.rounds = {};
-    expect(await m.recoveryStanding('c-1', held)).toEqual({ of: 'unread' });
+    expect(await m.recoveryStanding(aViewOf('c-1'), held)).toEqual({ of: 'unread' });
   });
 });
 
@@ -264,7 +268,7 @@ describe('what the company\'s records stand at', () => {
       { passedOver: [{ version: 3 }, { version: 5 }], refiledRefused: [{ version: 6, signedAt: 4, why: 'x' }] },
       { stopped: stop, checkedFrom: { by: 'vouched', seq: 2, head: 'h', run: 'r', at: 9 }, recovered: { resumedFrom: { seq: 4 }, gaveUpTo: 6 }, notYetAnchored: [{}, {}, {}] },
     );
-    expect(await m.readRecordsStates('u1', 'c-1')).toEqual({
+    expect(await m.readRecordsStates('u1', aViewOf('c-1'))).toEqual({
       of: 'read', value: {
         reached: 7, stopped: stop, checkedFrom: { by: 'vouched', seq: 2, head: 'h', run: 'r', at: 9 }, recovered: { resumedFrom: 4, gaveUpTo: 6 },
         notYetAnchored: 3, passedOver: [3, 5], notApplied: [6],
@@ -277,18 +281,18 @@ describe('what the company\'s records stand at', () => {
   it('tells a quiet read as no states, and a read that fails as unreadable', async () => {
     const m = await load();
     rs.here = directory();
-    expect(await m.readRecordsStates('u1', 'c-1')).toEqual({
+    expect(await m.readRecordsStates('u1', aViewOf('c-1'))).toEqual({
       of: 'read', value: { reached: 7, stopped: null, checkedFrom: null, recovered: null, notYetAnchored: 0, passedOver: [], notApplied: [] },
     });
     rs.throws = true;
-    expect(await m.readRecordsStates('u1', 'c-1')).toEqual({ of: 'unreadable' });
+    expect(await m.readRecordsStates('u1', aViewOf('c-1'))).toEqual({ of: 'unreadable' });
     rs.throws = false;
     rs.keys = null;
-    expect(await m.readRecordsStates('u1', 'c-1')).toEqual({ of: 'unreadable' });
+    expect(await m.readRecordsStates('u1', aViewOf('c-1'))).toEqual({ of: 'unreadable' });
     rs.keys = { signingPublicKey: 'k' };
     rs.opened = null;
-    expect(await m.readRecordsStates('u1', 'c-1')).toEqual({ of: 'unreadable' });
+    expect(await m.readRecordsStates('u1', aViewOf('c-1'))).toEqual({ of: 'unreadable' });
     kr.user = { id: 'someone-else' };
-    expect(await m.readRecordsStates('u1', 'c-1')).toEqual({ of: 'unreadable' });
+    expect(await m.readRecordsStates('u1', aViewOf('c-1'))).toEqual({ of: 'unreadable' });
   });
 });

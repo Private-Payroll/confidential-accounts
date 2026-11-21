@@ -8,6 +8,11 @@ import { keysAtTheEnd, readKeysAtTheEnd } from './keys-at-the-end.js';
 import { checkedChannel, SecretWouldCross } from '../keyring/nothing-secret-crosses.js';
 import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type Words } from './definition.js';
 import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
+import { CompanyChangedMeanwhile } from '../../../../packages/web-shared/src/company-view-probe.js';
+import { creationSource, invitationSource, type AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
+import {
+  answeredNothingSent, gateRefusal, serviceCallOver, StepViews, type StraightDoor,
+} from './step-views.js';
 
 /** A signal aborted at Stop, and abortable on its own when the action ends or runs out of time. */
 const cutAtStop = (stop: AbortSignal): AbortController => {
@@ -277,13 +282,63 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     watch();
     throw new ActionStopped(latched);
   };
-  const relay = (at: StepAt, transaction: string, label?: RelayLabel): Promise<void> => {
-    const mine = queue.then(() => relayOne(at, transaction, label));
+  const inTurn = <T>(next: () => Promise<T>): Promise<T> => {
+    const mine = queue.then(next);
     queue = mine.catch(() => undefined);
     return mine;
   };
+  /* A send in its turn: the gate first, its reads made in the same turn, then the send; a send handed over is marked. */
+  const gated = async <T>(send: () => Promise<T>, path?: string): Promise<T> => {
+    await gate();
+    const before = handedOver;
+    let handed = true;
+    try {
+      const out = await send();
+      handed = !answeredNothingSent(out);
+      return out;
+    } finally {
+      if (handed && handedOver > before) views?.sent(path === undefined ? undefined : { path });
+      else views?.notSent(path === undefined ? undefined : { path });
+    }
+  };
+  const relay = (at: StepAt, transaction: string, label?: RelayLabel): Promise<void> =>
+    inTurn(() => gated(() => relayOne(at, transaction, label)));
 
   const shape = intentShapeOf(request.intent.name);
+  /* The views the step running now opened, the one gate every send of it passes (step-views.ts), and whether it spoke. */
+  let views: StepViews | null = null, saidByTheGate = false;
+  /* Before anything was handed over the gate's words stand; after, the step's own words for what it sent do. */
+  const latchedAtTheGate = (words: Words): ActStop => {
+    says = words;
+    saidByTheGate = handedOver === 0;
+    latched = 'check-failed';
+    closed = true;
+    watch();
+    return latched;
+  };
+  const gate = async (into?: { readonly vault: string }): Promise<void> => {
+    if (latched !== null) throw new ActionStopped(latched);
+    if (closed || run.stop.aborted) throw new ActionStopped('stopped');
+    try {
+      if (views?.changed() === true) throw new CompanyChangedMeanwhile([]);
+      await views?.check(into);
+    } catch (e) {
+      const { words, marks } = gateRefusal(e, handedOver);
+      throw Object.assign(words === null ? (e instanceof Error ? e : new Error(String(e))) : new ActionStopped(latchedAtTheGate(words)), marks);
+    }
+  };
+  /* A transaction this wallet sends itself: the gate in its turn first, again when the send asks, and marked once handed over. */
+  const sendStraight = async <T>(
+    send: (door: StraightDoor) => Promise<T>, into?: { readonly vault: string }, call?: { readonly circuit: string; readonly contract: string },
+  ): Promise<T> => {
+    await inTurn(() => gate(into));
+    let handed = false;
+    try {
+      return await send({ ready: () => inTurn(() => gate(into)), handedOver: () => { handed = true; handedOver += 1; sentStraight += 1; } });
+    } finally {
+      if (handed) views?.sent(call); else views?.notSent(call);
+    }
+  };
   const callOne = async (at: StepAt, method: 'GET' | 'PUT' | 'POST', path: string, body?: string): Promise<{ status: number; body: unknown }> => {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
@@ -329,14 +384,18 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     watch();
     throw new ActionStopped(latched);
   };
-  const callInTurn = (at: StepAt, method: 'GET' | 'PUT' | 'POST', path: string, body?: string) => {
-    const mine = queue.then(() => callOne(at, method, path, body));
-    queue = mine.catch(() => undefined);
-    return mine;
+  const callInTurn = (at: StepAt, method: 'GET' | 'PUT' | 'POST', path: string, body?: string, viaAView = false) => {
+    const route = shape === undefined ? null : routeOf(shape, method, path);
+    const sends = !viaAView && route !== null && sendsIn(route, body);
+    return inTurn(() => (sends ? gated(() => callOne(at, method, path, body), path) : callOne(at, method, path, body)));
   };
+  const callsAt = (at: StepAt) => ({
+    inTurn: serviceCallOver((method, path, body) => callInTurn(at, method, path, body, true)),
+    direct: serviceCallOver((method, path, body) => callOne(at, method, path, body)),
+  });
   const tell = (outcome: Readonly<Record<string, string | number>>): void => { Object.assign(told, outcome); };
   const releaseReadKeys = (keys: ReadKeysReleased): void => { readKeys = keys; };
-  const sentByTheWallet = (): void => { handedOver += 1; sentStraight += 1; };
+  const sentByTheWallet = (): void => { handedOver += 1; sentStraight += 1; views?.sent(); };
   /* The chain shows the call the page did not answer in time for: it is on the chain, no longer unconfirmed. */
   const seenOnTheChain = (): void => {
     if (lateUnconfirmed === 0) return;
@@ -449,11 +508,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     watch();
     throw new ActionStopped(latched);
   };
-  const keepInTurn = (at: StepAt, change: (current: Keyring) => Keyring): Promise<void> => {
-    const mine = queue.then(() => keepOne(at, change));
-    queue = mine.catch(() => undefined);
-    return mine;
-  };
+  const keepInTurn = (at: StepAt, change: (current: Keyring) => Keyring): Promise<void> => inTurn(() => keepOne(at, change));
   const savedKeysAt = (at: StepAt): ActKeyring | null => (request.keyring === undefined ? null : Object.freeze({
     open: openSavedKeys,
     keep: (change: (current: Keyring) => Keyring) => keepInTurn(at, change),
@@ -480,9 +535,12 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   /* After a step settles, a latched stop or a failed step ends the action; null lets the next step run. */
   const afterTheStep = async (raced: Exclude<Raced, { readonly of: 'cut' }>): Promise<RunEnded | null> => {
     await queue;
+    const stopped = latched === null ? views?.stoppedWith(handedOver) ?? null : null;
+    if (stopped !== null) latchedAtTheGate(stopped);
     if (latched !== null) {
       /* A step that says why its refused transaction was refused keeps its words; the end still says it was refused. */
-      if (raced.of === 'failed' && raced.error instanceof StepRefused) says = raced.error.words;
+      /* What the gate found is what the action ends saying, whatever a step that caught the stop threw after it. */
+      if (raced.of === 'failed' && raced.error instanceof StepRefused && !saidByTheGate) says = raced.error.words;
       return finish(latched, current);
     }
     if (raced.of === 'failed') {
@@ -540,16 +598,20 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const step = steps[i]!;
       log(`step ${current} of ${total} started: ${step.title.key}`);
       stepSettled = false;
+      const stepViews = (views = new StepViews(callsAt(at)));
+      const answeredAt: AnsweredCall = (method, path, body) => callInTurn(at, method, path, body);
       const ran: Promise<Raced> = Promise.resolve()
         .then(() => step.run({
           intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-          call: (method, path, body) => callInTurn(at, method, path, body), tell, show, confirm, confirmFee, sentByTheWallet, seenOnTheChain, releaseReadKeys,
+          tell, show, confirm, confirmFee, sentByTheWallet, seenOnTheChain, releaseReadKeys,
+          viewFor: stepViews.viewFor, sendStraight, movesWhoHolds: stepViews.movesWhoHolds,
+          invitations: invitationSource(answeredAt), creation: creationSource(answeredAt),
         }))
         .then(() => ({ of: 'ran' as const }), (error: unknown) => {
           log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);
           return { of: 'failed' as const, error };
         })
-        .finally(() => { stepSettled = true; });
+        .finally(() => { stepSettled = true; stepViews.end(); });
       const raced = await Promise.race([ran, outside.then((why) => ({ of: 'cut' as const, why }))]);
       if (raced.of === 'cut') return await afterTheCut(raced, ran);
       const over = await afterTheStep(raced);

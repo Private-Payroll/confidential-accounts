@@ -8,7 +8,9 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../../src/core/crypto.js';
-import { ApprovalNotOwed, governedCallServiceFor, nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
+import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { browserDepositsInFlight, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import {
@@ -16,7 +18,9 @@ import {
 } from '../../../../packages/web-shared/src/vault-retire-round.js';
 import { VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { companyReachFor, handOverMarked, keptReach, type CompanyReach, type Handed } from './company-reach.js';
+import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
+import { retired } from './holders-moved-here.js';
+import { handOverMarked, type Handed } from './hand-over-in-the-wallet.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { approving, carryStep, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
@@ -66,7 +70,7 @@ export function retireDoorsFor(ctx: StepContext, r: CompanyReach, reach: RetireV
     throw new StepRefused(why('not-raised', { says: 'This wallet does not know the indexer it reads a vault at. Nothing was sent.' }));
   }
   const d = vaultDoorsFor(ctx, r, { secrets: reach.secrets, pause: reach.pause, indexerHttp: reach.indexerHttp });
-  const service = governedCallServiceFor(r.api);
+  const service = governedCallServiceThrough(r.stepView);
   return {
     ...d,
     handOver: handOverMarked(d.handOver, handed, (call) => call.kind === 'vault-forget'),
@@ -130,6 +134,7 @@ export function retireVaultKind(reach: RetireVaultReach): ProposalKind {
     },
     stateAt: (atItsBar) => (atItsBar ? RETIRE_STATE.atItsBar : RETIRE_STATE.waiting),
     carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.retire-vault.step.carry' }, carryOut)],
+    carries: (intent) => ({ kind: 'retire-vault', move: retired(vaultOf(intent)!), vault: vaultOf(intent)! }),
     why: kindWhy,
   };
   return kind;

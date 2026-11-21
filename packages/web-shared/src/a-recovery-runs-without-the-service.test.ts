@@ -34,7 +34,7 @@ import {
   approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, recoveryFileOf, RecoveryNotCarriedOut, recoveryPartsOf, recoveryRefusal,
   type OwnStanding, type RecoveryDoors,
 } from './records-recovered-here.js';
-import { ApprovalNotOwed } from './governed-call-on-device.js';
+import { ApprovalNotOwed } from './proposal-approved-on-device.js';
 
 const COMPANY = 'acct_recovered';
 const ACCOUNT = ACCOUNT_IN_A_TEST;
