@@ -146,7 +146,7 @@ describe('BY THE CODE ONCE THE COMPILE RECORDED WHAT IT COMPILED', () => {
     setMtime(sourcePath(), 1_000_000);
     const refusals = findRefusals(root, [PAIR]);
     expect(refusals).toHaveLength(1);
-    expect(refusals[0].kind).toBe('stale');
+    expect(refusals[0]!.kind).toBe('stale');
   });
 });
 
@@ -167,7 +167,7 @@ describe('A FILE THE CONTRACT BRINGS IN IS CHECKED WITH IT', () => {
     setMtime(modulePath(), 1_000_061);
     const refusals = findRefusals(root, [PAIR]);
     expect(refusals.map((r) => r.kind)).toEqual(['stale']);
-    expect(refusals[0].sourceMs).toBe(1_000_061_000);
+    expect(refusals[0]!.sourceMs).toBe(1_000_061_000);
   });
 
   it('refuses when only the module\'s code changed, by the record, whatever the save times say', () => {
@@ -191,11 +191,11 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
 
     const refusals = findRefusals(root, [PAIR]);
     expect(refusals).toHaveLength(1);
-    expect(refusals[0].kind).toBe('stale');
-    expect(refusals[0].pair).toBe(PAIR);
+    expect(refusals[0]!.kind).toBe('stale');
+    expect(refusals[0]!.pair).toBe(PAIR);
     // The times are read off the filesystem, not computed.
-    expect(refusals[0].sourceMs).toBe(1_000_061_000);
-    expect(refusals[0].artifactMs).toBe(1_000_060_000);
+    expect(refusals[0]!.sourceMs).toBe(1_000_061_000);
+    expect(refusals[0]!.artifactMs).toBe(1_000_060_000);
   });
 
   it('THROWS rather than warns, so a caller cannot carry on past it', () => {
@@ -250,7 +250,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     rmSync(artifactPath());
     const refusals = findRefusals(root, [PAIR]);
     expect(refusals).toHaveLength(1);
-    expect(refusals[0].kind).toBe('artifact-missing');
+    expect(refusals[0]!.kind).toBe('artifact-missing');
     const text = refusalText(refusals);
     expect(text).toContain('NOT BUILT');
     expect(text).toContain(PAIR.door);
@@ -261,7 +261,7 @@ describe('THE REFUSAL FIRES — the whole reason this file exists', () => {
     rmSync(sourcePath());
     const refusals = findRefusals(root, [PAIR]);
     expect(refusals).toHaveLength(1);
-    expect(refusals[0].kind).toBe('source-missing');
+    expect(refusals[0]!.kind).toBe('source-missing');
     const text = refusalText(refusals);
     expect(text).toContain('NO DOOR RESOLVES THIS');
     expect(text).not.toContain(`Run ${PAIR.door}`);
@@ -341,7 +341,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       // that was never right.
       expect(() => mod.default(undefined, tree)).not.toThrow();
 
-      const account = CONTRACT_ARTIFACTS[0];
+      const account = CONTRACT_ARTIFACTS[0]!;
       setMtime(join(tree, account.source), 1_000_061);
       // First argument is the one vitest supplies and this module ignores; the
       // second is the fixture root. The message must name THIS source and THIS
@@ -592,11 +592,11 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     const builds = (s: WorkflowStep) => s.run !== null && /(^|&&\s*)npm run compact(\s|$)/.test(s.run);
     const carrying = jobs.filter((j) => j.steps.some(builds));
     if (carrying.length !== 1) return `${carrying.length} jobs build the proving keys; there must be exactly one`;
-    const job = carrying[0];
+    const job = carrying[0]!;
     if (job.conditional) return `the ${job.id} job is conditional, so it need never run`;
 
     const at = job.steps.findIndex(builds);
-    const build = job.steps[at];
+    const build = job.steps[at]!;
     if (build.conditional) return `the step that builds the keys in ${job.id} is conditional, so it need never run`;
     if (build.tolerated) return `the step that builds the keys in ${job.id} tolerates its own failure`;
 
@@ -615,8 +615,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       const buildsVault = (s: WorkflowStep) => s.run !== null && /(^|&&\s*)npm run compact:vault -- --full(\s|$)/.test(s.run);
       const v = job.steps.findIndex(buildsVault);
       if (v === -1) return `nothing in ${job.id} builds the vault's keys, and ${vaultGated[0]} reads them`;
-      if (job.steps[v].conditional) return `the step that builds the vault's keys in ${job.id} is conditional, so it need never run`;
-      if (job.steps[v].tolerated) return `the step that builds the vault's keys in ${job.id} tolerates its own failure`;
+      if (job.steps[v]!.conditional) return `the step that builds the vault's keys in ${job.id} is conditional, so it need never run`;
+      if (job.steps[v]!.tolerated) return `the step that builds the vault's keys in ${job.id} tolerates its own failure`;
       const afterVault = job.steps.slice(v + 1).filter((s) => reads.includes(s));
       for (const missing of vaultGated.filter((f) => !afterVault.some((s) => (s.run as string).includes(f)))) {
         return `${missing} reads the vault's keys and is run by no step after they are built`;
@@ -629,8 +629,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       const copies = (s: WorkflowStep) => s.run !== null && new RegExp(`(^|&&\\s*)${WALLET_ACCOUNT_KEYS}(\\s|$)`).test(s.run);
       const c = job.steps.findIndex(copies);
       if (c === -1 || c < at) return `nothing in ${job.id} copies the account's keys into the wallet after they are built, and ${walletAccountGated[0]} proves with them`;
-      if (job.steps[c].conditional) return `the step that copies the account's keys into the wallet in ${job.id} is conditional, so it need never run`;
-      if (job.steps[c].tolerated) return `the step that copies the account's keys into the wallet in ${job.id} tolerates its own failure`;
+      if (job.steps[c]!.conditional) return `the step that copies the account's keys into the wallet in ${job.id} is conditional, so it need never run`;
+      if (job.steps[c]!.tolerated) return `the step that copies the account's keys into the wallet in ${job.id} tolerates its own failure`;
       const afterCopy = after.slice(c - at).filter((s) => reads.includes(s));
       for (const missing of walletAccountGated.filter((f) => !afterCopy.some((s) => (s.run as string).includes(f)))) {
         return `${missing} proves with the account's keys in the wallet and is run by no step after they are copied there`;
@@ -706,6 +706,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       'contracts/test/a-vault-rebuilt-with-us-gone.test.ts',
       'contracts/test/a-vaults-secret-is-replaced-by-a-signer-who-did-not-raise-it.test.ts',
       'contracts/test/the-new-vault.test.ts',
+      'contracts/test/a-company-before-its-second-step-lands.test.ts',
       'contracts/test/transcript.test.ts',
       'contracts/test/vault-batch-and-merge.test.ts',
       'contracts/test/vault-client.test.ts',

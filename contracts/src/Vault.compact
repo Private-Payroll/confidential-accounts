@@ -1,5 +1,23 @@
 pragma language_version 0.28.0;
 import CompactStandardLibrary;
+import "modules/RunInterface";
+import "modules/Notes";
+import "modules/SecretCopies";
+
+export {
+  paymentReceiptTag, changeReceiptTag, retireReceiptTag
+};
+export {
+  payoutDetails, unshieldedPayoutDetails, heldCommitmentOf, noteBlindingOf, noteNullifierOf,
+  coinCommitmentOf, freshNonceOf, payeeNonceTag, changeNonceTag, splitNonceTag, restNonceTag,
+  splitDetails, splitMaskOf, maskedAmountOf, unmaskedAmountOf, batchPayeeNonceTag, mergeNonceTag
+};
+export {
+  secretCommitmentOf, secretRunDetails, copyLeafOf, copyNodeOf, copiesRootOf, copyIndexOf,
+  mostCopies, copyKeyOf, copiesWrittenKey, copiesRootKeyOf, copiesLeftKeyOf, copiesCountKeyOf,
+  emptyFrom, isNonceSecretShape, earlierSecretKeyOf, earlierMaskOf, sealedEarlierOf,
+  earlierSecretOf, paymentReceiptKey, changeReceiptKey
+};
 
 /*
  * THE VAULT. It holds a company's money and decides nothing.
@@ -25,12 +43,15 @@ import CompactStandardLibrary;
  * It refuses a note it does not hold, a note of the wrong token, notes that
  * together hold too little, a payment of nothing, a merge of fewer than two
  * notes, a public payment it cannot cover, a deposit of nothing, any deposit
- * before its first secret, a secret that is zero, repeated or does
+ * before its first secret or after it was retired, a secret that is zero, repeated or does
  * not follow the one it replaces, a secret set by a caller who does not hold it
  * or, once the vault has taken money, the last secret it took money under, a
  * secret whose last byte is not zero, a tree of copies holding a copy past its
- * count, a sealed copy the secret run did not approve, and, in its own
- * `retire`, retirement while it still holds either kind of money.
+ * count, and a sealed copy the secret run did not approve.
+ *
+ * Retiring it never needs it empty: whatever it still holds stays payable
+ * through the account, and from its retirement on it takes no deposit, even
+ * if the account adopts it again.
  *
  * Each new secret carries the last secret the vault took money under, sealed
  * under itself, so a signer given only the newest secret can open every earlier
@@ -39,22 +60,6 @@ import CompactStandardLibrary;
  *
  * Why each piece is shaped this way: docs/design/the-vault-contract.md
  */
-
-// One level of a payee's path in a run's sum tree, as the account defines it.
-struct SumStep {
-  sibling: Field;
-  siblingSum: Uint<128>;
-  goesLeft: Boolean;
-}
-
-// One place in a batch, declared exactly as the account declares it: whether it pays anyone, the
-// payee's blinded details and nonce, and the amount. An unused place carries nothing.
-struct BatchSlot {
-  live: Boolean;
-  details: Bytes<32>;
-  nonce: Bytes<32>;
-  amount: Uint<128>;
-}
 
 // The account this vault answers to, and the only calls a vault may make to it.
 contract Acct {
@@ -110,12 +115,13 @@ contract Acct {
     path: Vector<16, SumStep>,
   ): ContractAddress;
 
-  // Takes this vault off the account's register, under an approved retire proposal.
+  // Takes this vault off the account's register, under an approved retire proposal, against this
+  // vault's receipt for its retirement. Returns the account's address.
   circuit retireVault(
     proposal: Bytes<32>,
     vault: Bytes<32>,
     salt: Bytes<32>,
-  ): [];
+  ): ContractAddress;
 }
 
 // One run's arguments, as the account checks them, apart from the payee's own.
@@ -131,14 +137,6 @@ struct Run {
   nonce: Bytes<32>;
   asset: Bytes<32>;
   path: Vector<16, SumStep>;
-}
-
-// What a coin's commitment and nullifier are taken over, as the ledger takes them.
-struct CoinPreimage {
-  domain_sep: Bytes<21>;
-  info: ShieldedCoinInfo;
-  dataType: Boolean;
-  data: Bytes<32>;
 }
 
 // Written once, by the constructor. No circuit writes it.
@@ -177,6 +175,9 @@ export ledger reserved4: Map<Bytes<32>, Bytes<32>>;
 export ledger reserved5: Map<Bytes<32>, Bytes<32>>;
 export ledger reserved6: Map<Bytes<32>, Bytes<32>>;
 
+// Set by `retire`, and never cleared: a vault once retired takes no deposit.
+export ledger retired: Boolean;
+
 // The note to spend, chosen on the owner's device. Untrusted: every reader checks it.
 witness noteToSpend(token: Bytes<32>, amount: Uint<128>): QualifiedShieldedCoinInfo;
 
@@ -188,236 +189,6 @@ constructor(a: Acct) {
   account = disclose(a);
 }
 
-// A private payment's recipient, token and amount, committed under a blinding.
-export circuit payoutDetails(
-  recipient: Bytes<32>,
-  token: Bytes<32>,
-  amount: Uint<128>,
-  blinding: Bytes<32>,
-): Bytes<32> {
-  return persistentCommit<Vector<3, Bytes<32>>>(
-    [recipient, token, amount as Field as Bytes<32>], blinding);
-}
-
-// The same for public money, tagged so an approval for one kind cannot settle the other.
-export circuit unshieldedPayoutDetails(
-  recipient: Bytes<32>,
-  token: Bytes<32>,
-  amount: Uint<128>,
-  blinding: Bytes<32>,
-): Bytes<32> {
-  return persistentCommit<Vector<4, Bytes<32>>>(
-    [pad(32, "midnight-vault:unshielded:"),
-     recipient, token, amount as Field as Bytes<32>], blinding);
-}
-
-// What the pool records for a note: its nonce, token and amount, not its tree position.
-export circuit heldCommitmentOf(coin: ShieldedCoinInfo, blinding: Bytes<32>): Bytes<32> {
-  return persistentCommit<ShieldedCoinInfo>(coin, blinding);
-}
-
-// Every note's blinding: this vault's address, so nobody chooses it. The coin's own nonce is
-// what keeps the commitment from being opened by anyone who does not know the coin.
-export circuit noteBlindingOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<32> {
-  return vault;
-}
-
-// A note's nullifier as the ledger computes it for a coin this vault owns.
-export circuit noteNullifierOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<32> {
-  return persistentHash<CoinPreimage>(CoinPreimage {
-    domain_sep: "midnight:zswap-cn[v1]", info: coin, dataType: false, data: vault,
-  });
-}
-
-// A coin's commitment as the ledger computes it, to a person's key or to this vault.
-export circuit coinCommitmentOf(coin: ShieldedCoinInfo, owner: Bytes<32>, toPerson: Boolean): Bytes<32> {
-  return persistentHash<CoinPreimage>(CoinPreimage {
-    domain_sep: "midnight:zswap-cc[v1]", info: coin, dataType: toPerson, data: owner,
-  });
-}
-
-// A new coin's nonce: a tag, the vault's secret and the spent note's nullifier, so it is fixed
-// by the note spent and nobody without the secret can work it out. The nullifier is public, so
-// without the secret anyone could rebuild the nonce and find the coin's value by trying amounts.
-export circuit freshNonceOf(tag: Bytes<32>, secret: Bytes<32>, spent: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([tag, secret, spent]);
-}
-
-// The tags a new coin's nonce is made under, one per kind of coin.
-export circuit payeeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:payee"); }
-export circuit changeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:change"); }
-export circuit splitNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:split"); }
-export circuit restNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:rest"); }
-
-// The token this vault mints to the account with a payment, and the one it mints with a change.
-export circuit paymentReceiptTag(): Bytes<32> { return pad(32, "midnight-accounts:receipt:pay"); }
-export circuit changeReceiptTag(): Bytes<32> { return pad(32, "midnight-accounts:receipt:change"); }
-
-// The commitment to a nonce secret, bound to this vault, so two vaults' commitments never match.
-export circuit secretCommitmentOf(vault: Bytes<32>, secret: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "midnight-vault:nonce-secret:"), vault, secret]);
-}
-
-// What signers approve to set the secret: a tag and a hash, never the shape of a payment's details.
-export circuit secretRunDetails(
-  vault: Bytes<32>,
-  previous: Bytes<32>,
-  commitment: Bytes<32>,
-  copies: Bytes<32>,
-  count: Uint<64>,
-): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:secret-run:"),
-    persistentHash<Vector<5, Bytes<32>>>([vault, previous, commitment, copies, count as Field as Bytes<32>])]);
-}
-
-// What signers approve to split one note: the note, by its nullifier, and the piece cut from it.
-export circuit splitDetails(
-  vault: Bytes<32>,
-  spent: Bytes<32>,
-  token: Bytes<32>,
-  amount: Uint<128>,
-): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:split:"),
-    persistentHash<Vector<4, Bytes<32>>>([vault, spent, token, amount as Field as Bytes<32>])]);
-}
-
-// One level of a sealed copy's path in the approved tree of copies: the node beside it, and
-// whether the copy's side is the left one at that level.
-struct CopyStep {
-  sibling: Field;
-  goesLeft: Boolean;
-}
-
-// The leaf one signer's sealed copy of a secret makes in the approved tree of copies.
-export circuit copyLeafOf(
-  commitment: Bytes<32>,
-  reader: Bytes<32>,
-  parts: Vector<4, Bytes<32>>,
-): Field {
-  return degradeToTransient(persistentHash<Vector<7, Bytes<32>>>([pad(32, "midnight-vault:secret-copy-leaf:"),
-    commitment, reader, parts[0], parts[1], parts[2], parts[3]]));
-}
-
-// One node of the tree of copies, from the two below it.
-export circuit copyNodeOf(left: Field, right: Field): Field {
-  return transientHash<Vector<2, Field>>([left, right]);
-}
-
-// The root a copy's leaf and its path lead to. Ten levels, as deep as the account's own signer tree.
-export circuit copiesRootOf(leaf: Field, path: Vector<10, CopyStep>): Bytes<32> {
-  return upgradeFromTransient(fold((node: Field, step: CopyStep): Field =>
-    step.goesLeft ? copyNodeOf(node, step.sibling) : copyNodeOf(step.sibling, node), leaf, path));
-}
-
-// The place in the tree a copy's path leads to, read from its left-right flags.
-export circuit copyIndexOf(path: Vector<10, CopyStep>): Uint<64> {
-  return (
-    (path[0].goesLeft ? 0 : 1) +
-    (path[1].goesLeft ? 0 : 2) +
-    (path[2].goesLeft ? 0 : 4) +
-    (path[3].goesLeft ? 0 : 8) +
-    (path[4].goesLeft ? 0 : 16) +
-    (path[5].goesLeft ? 0 : 32) +
-    (path[6].goesLeft ? 0 : 64) +
-    (path[7].goesLeft ? 0 : 128) +
-    (path[8].goesLeft ? 0 : 256) +
-    (path[9].goesLeft ? 0 : 512)
-  ) as Uint<64>;
-}
-
-// The most copies one secret's tree holds.
-export circuit mostCopies(): Uint<64> { return 1024; }
-
-// Where one part of a sealed copy sits: the secret's commitment, the reader's key, the copy's
-// place in the tree and the part. The place keeps two entries for one reader apart.
-export circuit copyKeyOf(commitment: Bytes<32>, reader: Bytes<32>, place: Uint<64>, part: Uint<8>): Bytes<32> {
-  return persistentHash<Vector<5, Bytes<32>>>([pad(32, "midnight-vault:secret-copy:"),
-    commitment, reader, place as Field as Bytes<32>, part as Field as Bytes<32>]);
-}
-
-// Where the vault marks the last secret whose copies were all written while it was current:
-// the last secret it opened to money under.
-export circuit copiesWrittenKey(): Bytes<32> { return pad(32, "midnight-vault:copies-written"); }
-
-// Where the approved root of a secret's copies sits.
-export circuit copiesRootKeyOf(commitment: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:copies-root:"), commitment]);
-}
-
-// Where the number of a secret's copies still to be written sits.
-export circuit copiesLeftKeyOf(commitment: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:copies-left:"), commitment]);
-}
-
-// Where the number of copies a secret run approved sits. Written once and never changed, so the
-// chain shows how many copies a secret has after every one of them is written.
-export circuit copiesCountKeyOf(commitment: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:copies-count:"), commitment]);
-}
-
-// The walk up the tree of copies from the first place past the count: the node so far, the
-// empty subtree at this level, and whether every subtree to the right so far is empty.
-struct EdgeWalk {
-  node: Field;
-  empty: Field;
-  clear: Boolean;
-}
-
-// Whether every place from `count` on is empty in the tree whose root is `copies`: `edge` leads
-// from an empty place at `count` to that root, and every subtree to its right is empty. Then no
-// copy sits past the count, so a count smaller than the copies the tree holds cannot open the
-// vault with a copy missing. A tree of every place full needs no edge.
-export circuit emptyFrom(copies: Bytes<32>, count: Uint<64>, edge: Vector<10, CopyStep>): Boolean {
-  const walk = fold((w: EdgeWalk, step: CopyStep): EdgeWalk => EdgeWalk {
-      node: step.goesLeft ? copyNodeOf(w.node, step.sibling) : copyNodeOf(step.sibling, w.node),
-      empty: copyNodeOf(w.empty, w.empty),
-      clear: w.clear && (!step.goesLeft || step.sibling == w.empty),
-    }, EdgeWalk { node: 0 as Field, empty: 0 as Field, clear: true }, edge);
-  return count == mostCopies() ||
-    (walk.clear && copyIndexOf(edge) == count && upgradeFromTransient(walk.node) == copies);
-}
-
-// Whether a secret has the shape every nonce secret takes: its last byte zero, so it is one
-// field element exactly and a later secret can carry it.
-export circuit isNonceSecretShape(secret: Bytes<32>): Boolean {
-  return upgradeFromTransient(degradeToTransient(secret)) == secret;
-}
-
-// Where the secret a later one carries is kept, sealed under the later one.
-export circuit earlierSecretKeyOf(commitment: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:earlier-secret:"), commitment]);
-}
-
-// The mask a secret puts over the one it replaces. Only a holder of the later secret can lift it.
-export circuit earlierMaskOf(secret: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:earlier-mask:"), secret]);
-}
-
-// The earlier secret as the vault keeps it: added to the later secret's mask, as field elements,
-// and kept as all thirty-two bytes of the sum, which can need more than thirty-one.
-export circuit sealedEarlierOf(earlier: Bytes<32>, secret: Bytes<32>): Bytes<32> {
-  return (degradeToTransient(earlier) + degradeToTransient(earlierMaskOf(secret))) as Bytes<32>;
-}
-
-// The earlier secret from what the vault keeps and the later secret.
-export circuit earlierSecretOf(kept: Bytes<32>, secret: Bytes<32>): Bytes<32> {
-  return upgradeFromTransient((kept as Field) - degradeToTransient(earlierMaskOf(secret)));
-}
-
-// The mask on a split's amount: it needs the secret and the note, so only the company can lift it.
-export circuit splitMaskOf(secret: Bytes<32>, spent: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "midnight-vault:split-mask:"), secret, spent]);
-}
-
-// A split's amount as the journal holds it: added to the mask, as field elements.
-export circuit maskedAmountOf(amount: Uint<128>, mask: Bytes<32>): Bytes<32> {
-  return upgradeFromTransient((amount as Field) + degradeToTransient(mask));
-}
-
-// Where this vault's receipt tokens are kept once worked out. No commitment, copy or list key can equal them.
-export circuit paymentReceiptKey(): Bytes<32> { return pad(32, "midnight-vault:receipt:pay"); }
-export circuit changeReceiptKey(): Bytes<32> { return pad(32, "midnight-vault:receipt:change"); }
-
 // Mints one unit of a receipt token kept by the first secret run to the account.
 circuit mintReceipt(tag: Bytes<32>, key: Bytes<32>, acct: ContractAddress): [] {
   kernel.mintUnshielded(tag, 1);
@@ -425,11 +196,6 @@ circuit mintReceipt(tag: Bytes<32>, key: Bytes<32>, acct: ContractAddress): [] {
   // the mint would leave the token unbalanced and the whole transaction refused.
   kernel.claimUnshieldedCoinSpend(left<Bytes<32>, Bytes<32>>(secretCopies.lookup(key)),
     left<ContractAddress, UserAddress>(acct), 1);
-}
-
-// A split's amount from its journal entry and its mask: what a device holding the secret recovers.
-export circuit unmaskedAmountOf(masked: Bytes<32>, mask: Bytes<32>): Field {
-  return degradeToTransient(masked) - degradeToTransient(mask);
 }
 
 // Refuses money and every change until the account has approved this vault's first secret,
@@ -506,16 +272,45 @@ circuit askForChange(run: Run, details: Bytes<32>): ContractAddress {
     disclose(run.path));
 }
 
-// Accepts a private note of any token from anyone, once the vault has its first secret.
+// Asks the account to record one payee of a run as paid by this vault, at `amount` in `token`,
+// and mints it the payment receipt that call needs.
+circuit recordWithAccount(run: Run, details: Bytes<32>, amount: Uint<128>, token: Bytes<32>): [] {
+  const acct = account.recordPaymentFromVault(
+    disclose(run.proposal),
+    disclose(run.runVault),
+    disclose(kernel.self().bytes),
+    disclose(run.root),
+    disclose(run.payees),
+    disclose(run.opensAt),
+    disclose(run.closesAt),
+    disclose(run.required),
+    disclose(run.salt),
+    disclose(details),
+    disclose(run.nonce),
+    disclose(amount),
+    disclose(token),
+    disclose(run.path));
+  mintReceipt(paymentReceiptTag(), paymentReceiptKey(), acct);
+}
+
+// Refuses money into a vault that has been retired, whatever the account says of it now.
+circuit requireNotRetired(): [] {
+  assert(!retired, "this vault has been retired, so it takes no more money");
+}
+
+// Accepts a private note of any token from anyone, once the vault has its first secret and
+// until it is retired.
 export circuit deposit(coin: ShieldedCoinInfo): [] {
+  requireNotRetired();
   requireStarted();
   assert(!(disclose(coin.value) == 0), "a deposit of nothing is not a deposit");
   receiveShielded(disclose(coin));
   notes.insert(disclose(heldCommitmentOf(coin, noteBlindingOf(kernel.self().bytes, coin))));
 }
 
-// Accepts public money from anyone, once the vault has its first secret. Refuses nothing.
+// Accepts public money from anyone, once the vault has its first secret and until it is retired.
 export circuit depositUnshielded(token: Bytes<32>, amount: Uint<128>): [] {
+  requireNotRetired();
   requireStarted();
   assert(!(amount == 0), "a deposit of nothing is not a deposit");
   receiveUnshielded(disclose(token), disclose(amount));
@@ -545,16 +340,6 @@ struct Pay {
   blinding: Bytes<32>;
   nonce: Bytes<32>;
 }
-
-// The tag each place of a batch makes its payee's coin under, and the one a merge keeps its coin
-// under. Each differs from every other kind of coin's tag.
-export circuit batchPayeeNonceTag(place: Uint<8>): Bytes<32> {
-  return place == 0 ? pad(32, "midnight-vault:nonce:batch-0")
-    : place == 1 ? pad(32, "midnight-vault:nonce:batch-1")
-    : place == 2 ? pad(32, "midnight-vault:nonce:batch-2")
-    : pad(32, "midnight-vault:nonce:batch-3");
-}
-export circuit mergeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:merge"); }
 
 // Spends one further note offered for a step and adds what it holds. A place holding nothing is
 // unused and spends nothing: no note the vault holds is worth nothing.
@@ -588,22 +373,7 @@ export circuit payout(
 
   // The account refuses unless the run is approved for this vault, this payee is unpaid, and
   // the token and amount are the ones this call actually sends.
-  const acct = account.recordPaymentFromVault(
-    disclose(run.proposal),
-    disclose(run.runVault),
-    disclose(kernel.self().bytes),
-    disclose(run.root),
-    disclose(run.payees),
-    disclose(run.opensAt),
-    disclose(run.closesAt),
-    disclose(run.required),
-    disclose(run.salt),
-    disclose(payoutDetails(recipient, token, amount, blinding)),
-    disclose(run.nonce),
-    disclose(amount),
-    disclose(token),
-    disclose(run.path));
-  mintReceipt(paymentReceiptTag(), paymentReceiptKey(), acct);
+  recordWithAccount(run, payoutDetails(recipient, token, amount, blinding), amount, token);
 
   // Every coin this payment makes is keyed by the first note's nullifier, which the ledger
   // accepts once, so no two coins the vault makes ever share a nonce.
@@ -726,22 +496,7 @@ export circuit payoutUnshielded(
   requireStarted();
   assert(!(amount == 0), "a payment of nothing records a person as paid with nobody paid");
   // Its own details, so a leaf approved for private money cannot be settled here.
-  const acct = account.recordPaymentFromVault(
-    disclose(run.proposal),
-    disclose(run.runVault),
-    disclose(kernel.self().bytes),
-    disclose(run.root),
-    disclose(run.payees),
-    disclose(run.opensAt),
-    disclose(run.closesAt),
-    disclose(run.required),
-    disclose(run.salt),
-    disclose(unshieldedPayoutDetails(recipient, token, amount, blinding)),
-    disclose(run.nonce),
-    disclose(amount),
-    disclose(token),
-    disclose(run.path));
-  mintReceipt(paymentReceiptTag(), paymentReceiptKey(), acct);
+  recordWithAccount(run, unshieldedPayoutDetails(recipient, token, amount, blinding), amount, token);
 
   // A refusal in words. The ledger refuses an overspend whether or not this is here.
   assert(unshieldedBalanceGte(disclose(token), disclose(amount)),
@@ -862,12 +617,13 @@ export circuit writeSecretCopy(
   const leftKey = disclose(copiesLeftKeyOf(commitment));
   const remaining = degradeToTransient(secretCopies.lookup(leftKey));
   const place = disclose(copyIndexOf(path));
-  const first = disclose(copyKeyOf(commitment, reader, place, 0));
+  const base = copyBaseOf(commitment, reader, place);
+  const first = disclose(copyKeyFrom(base, 0));
   assert(!secretCopies.member(first), "that sealed copy is already written");
   secretCopies.insert(first, disclose(parts[0]));
-  secretCopies.insert(disclose(copyKeyOf(commitment, reader, place, 1)), disclose(parts[1]));
-  secretCopies.insert(disclose(copyKeyOf(commitment, reader, place, 2)), disclose(parts[2]));
-  secretCopies.insert(disclose(copyKeyOf(commitment, reader, place, 3)), disclose(parts[3]));
+  secretCopies.insert(disclose(copyKeyFrom(base, 1)), disclose(parts[1]));
+  secretCopies.insert(disclose(copyKeyFrom(base, 2)), disclose(parts[2]));
+  secretCopies.insert(disclose(copyKeyFrom(base, 3)), disclose(parts[3]));
   secretCopies.insert(leftKey, upgradeFromTransient(remaining - 1));
   // The last copy of the current secret opens the vault to money again.
   if (remaining == (1 as Field) && disclose(commitment) == nonceCommitment) {
@@ -882,16 +638,19 @@ export circuit forgetUnshielded(token: Bytes<32>): [] {
   unshieldedTokens.remove(disclose(token));
 }
 
-// Refuses while this vault holds notes or public money, then asks the account to retire it.
+// Retires this vault under an approved retire proposal, whatever it still holds: marks it retired
+// first, so it takes no deposit from here on, then asks the account to retire it and mints it the
+// receipt that call needs. The receipt's colour is worked out here, since a vault that never had a
+// secret has none kept. What it holds stays payable through the account.
 export circuit retire(proposal: Bytes<32>, salt: Bytes<32>): [] {
-  assert(notes.isEmpty(),
-    "this vault still holds notes, and retiring it would strand them");
-
-  assert(unshieldedTokens.isEmpty(),
-    "this vault still holds public money, and retiring it would strand that too");
-
-  account.retireVault(
+  retired = true;
+  const self = kernel.self();
+  const acct = account.retireVault(
     disclose(proposal),
-    disclose(kernel.self().bytes),
+    disclose(self.bytes),
     disclose(salt));
+  // Minted here rather than by `mintReceipt`, whose colour is the one the first secret run kept.
+  kernel.mintUnshielded(retireReceiptTag(), 1);
+  kernel.claimUnshieldedCoinSpend(left<Bytes<32>, Bytes<32>>(tokenType(retireReceiptTag(), self)),
+    left<ContractAddress, UserAddress>(acct), 1);
 }

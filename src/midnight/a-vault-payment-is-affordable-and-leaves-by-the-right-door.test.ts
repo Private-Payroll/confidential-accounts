@@ -179,6 +179,17 @@ describe('public money needs no pool', () => {
     expect(creates).toHaveLength(0);
   });
 
+  it('REFUSES A PUBLIC DEPOSIT INTO A VAULT CARRYING ITS OWN RETIRED MARK, BEFORE ANY CALL, AND STILL PAYS OUT OF IT', async () => {
+    const { ledger, calls } = harness({ poolThrows: true, retired: true });
+    /* RED WHEN: a public deposit into a retired vault is built and sent, so its fee is spent on a call the vault refuses. */
+    await expect(ledger.depositUnshielded(VAULT, publicMoney, BY)).rejects.toThrow(/this vault has been retired, so it takes no more money/);
+    expect(calls).toHaveLength(0);
+    /* RED WHEN: the mark stops a payment too, so what a retired vault holds can never leave it. */
+    const paid = await ledger.payout(VAULT, { ...payment(250n), payee: PUBLIC_PAYEE, token: NIGHT }, BY);
+    expect(calls.map(c => c.circuit)).toEqual(['payoutUnshielded']);
+    expect(paid.kind).toBe('unshielded');
+  });
+
   it('PAYS A PUBLIC PAYEE WITH THE POOL STILL UNREACHABLE', async () => {
     const { ledger, calls, saves } = harness({ poolThrows: true });
 
@@ -191,7 +202,7 @@ describe('public money needs no pool', () => {
     expect(saves).toHaveLength(0);
   });
 
-  it('refuses a deposit of nothing, which would jam the vault\'s retirement for free', async () => {
+  it('refuses a deposit of nothing, which moves no money', async () => {
     const { ledger, calls } = harness({ poolThrows: true });
     await expect(ledger.depositUnshielded(VAULT, { token: NIGHT, amount: 0n }, BY))
       .rejects.toThrow(/deposit of nothing/i);

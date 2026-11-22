@@ -20,6 +20,14 @@ describe('a private deposit journals its coin before the call', () => {
   const MONEY = { token: GBP, value: 500n };
   const COIN = { nonce: '77'.repeat(32), ...MONEY };
 
+  it('REFUSES A VAULT CARRYING ITS OWN RETIRED MARK BEFORE ANY COIN IS JOURNALLED OR ANY CALL MADE', async () => {
+    const { ledger, depositsJournalled, calls } = harness({ notes: [], retired: true });
+    /* RED WHEN: a private deposit into a retired vault journals a coin and calls the vault, which refuses it. */
+    await expect(ledger.deposit(VAULT, MONEY, BY)).rejects.toThrow(/this vault has been retired, so it takes no more money/);
+    expect(depositsJournalled).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
   it('records the coin it is about to create, whole, BEFORE the deposit call and before the pool write', async () => {
     const { ledger, depositsJournalled, calls, current } = harness({ notes: [] });
     await ledger.deposit(VAULT, MONEY, BY);

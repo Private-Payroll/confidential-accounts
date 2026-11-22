@@ -261,7 +261,7 @@ beforeEach(async () => {
       get ledgerIsThisBuilds() { return ledgerIsThisBuilds; },
       startingLedgerOf: () => {
         if (startingLedgerUnreadable) throw new Error('this state has no vault ledger in it');
-        return { account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, nonceCommitment: secretNow, splitJournal: 0n, secretCopies: 0n, reserved: 0n, started: startedNow };
+        return { account: pinnedNow, notes: 0n, unshieldedTokens: 0n, payments: 0n, nonceCommitment: secretNow, splitJournal: 0n, secretCopies: 0n, reserved: 0n, retired: false, started: startedNow };
       },
       everCreated: async () => new Set(),
       get payoutState() { return payoutState; },

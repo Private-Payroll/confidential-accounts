@@ -1,0 +1,125 @@
+// A seat: a signer's key and leaf, the rights they are seated with, the vaults those rights cover,
+// and a place in the signer tree. Nothing here reads the ledger, a witness or the kernel.
+module Seats {
+import CompactStandardLibrary;
+
+// What a signer seated with rights may do: raise runs, approve runs and hold runs, on every
+// vault or on up to four named ones. An unused place in `vaults` is 32 zero bytes. There is no
+// right to stop a run before its window, because any signer may.
+export struct Rights {
+  mayRaise: Boolean;
+  mayApprove: Boolean;
+  mayHold: Boolean;
+  everyVault: Boolean;
+  vaults: Vector<4, Bytes<32>>;
+}
+
+struct RightsPreimage {
+  tag: Bytes<32>;
+  rights: Rights;
+}
+
+// A signer's public identity: a domain-tagged hash of their secret key.
+export circuit signerPublicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:signer:pk:"), sk
+  ]);
+}
+
+// A signer's leaf: their key and scope, domain-tagged and committed under their blinding.
+export circuit signerLeaf(pk: Bytes<32>, blinding: Bytes<32>, scope: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<3, Bytes<32>>>(
+    [pad(32, "midnight-accounts:signer-leaf:"), pk, scope], blinding);
+}
+
+// The coin secret key's preimage for its public key, laid out as the ledger hashes it: the
+// 21-byte tag, then the 32-byte key, with no padding between them.
+struct InviteeCoinSecretKey {
+  bytes: Bytes<32>;
+}
+
+struct InviteeCoinKeyPreimage {
+  sep: Bytes<21>;
+  secretKey: InviteeCoinSecretKey;
+}
+
+// A wallet's coin public key from its coin secret key: the same hash the ledger uses to make
+// the coin public key inside a shielded address, so a call can prove it holds that address.
+export circuit coinPublicKeyOf(coinSecretKey: Bytes<32>): Bytes<32> {
+  return persistentHash<InviteeCoinKeyPreimage>(InviteeCoinKeyPreimage {
+    sep: pad(21, "midnight:zswap-pk[v1]"),
+    secretKey: InviteeCoinSecretKey { bytes: coinSecretKey }
+  });
+}
+
+// A hiding commitment to the coin public key of the address a signer is invited at. Without
+// the salt, nobody can tell which address it names.
+export circuit inviteAddressOf(coinPublicKey: Bytes<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<2, Bytes<32>>>(
+    [pad(32, "midnight-accounts:invite-addr:"), coinPublicKey], salt);
+}
+
+// The scope of a signer seated with every right on every vault.
+export circuit allVaults(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:scope:all" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0x78, 0xdc, 0x32, 0x8c, 0xec, 0xab, 0x05, 0xf9, 0x6e, 0xda, 0x4c, 0x96, 0xf3, 0x46, 0x35, 0xe9,
+               0x67, 0x15, 0x4d, 0x5f, 0x82, 0x04, 0x6f, 0x6e, 0xcf, 0x04, 0x30, 0x90, 0x2e, 0xe5, 0x41, 0xb5];
+}
+
+// A rights record as a leaf's scope. Hashed under its own tag, so it equals `allVaults()` only
+// by a hash collision.
+export circuit rightsScopeOf(rights: Rights): Bytes<32> {
+  return persistentHash<RightsPreimage>(
+    RightsPreimage { tag: pad(32, "midnight-accounts:rights:"), rights: rights });
+}
+
+// Whether a rights record covers one vault: every vault, or one of the four it names. Zero
+// bytes name no vault, so an unused place covers nothing. A company-wide run may be paid by
+// nearly every vault, so only a record for every vault covers it, and a place naming it
+// covers nothing.
+export circuit coversVault(rights: Rights, vault: Bytes<32>): Boolean {
+  return vault != default<Bytes<32>> && (rights.everyVault || (vault != companyWide() && (
+    rights.vaults[0] == vault || rights.vaults[1] == vault ||
+    rights.vaults[2] == vault || rights.vaults[3] == vault)));
+}
+
+// The vault a governance proposal names: a hash no vault address can equal.
+export circuit noVault(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:vault:none" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0x48, 0xf3, 0x7c, 0x0f, 0xaa, 0xbf, 0x55, 0xb9, 0xce, 0x22, 0x32, 0xcb, 0x91, 0xb0, 0xac, 0x15,
+               0xc5, 0xff, 0x77, 0x84, 0x47, 0x5d, 0xee, 0xe4, 0x21, 0xac, 0x63, 0x24, 0xc9, 0x95, 0x6f, 0x0b];
+}
+
+// What a removal writes into a slot, so the slot can be proved empty and reused.
+export circuit vacantSlot(): Bytes<32> {
+  return pad(32, "midnight-accounts:vacant-slot:");
+}
+
+// The vault a company-wide decision names: a hash no vault address can equal.
+export circuit companyWide(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:vault:company" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0x01, 0x3d, 0x1f, 0x45, 0xa0, 0x6c, 0xef, 0x7b, 0x20, 0x05, 0x25, 0x73, 0x37, 0x67, 0x03, 0x8c,
+               0x78, 0xc5, 0x51, 0x46, 0x32, 0x5e, 0xff, 0x12, 0xc3, 0xb4, 0x3f, 0xab, 0xd2, 0x67, 0xd3, 0x3b];
+}
+
+// The slot a path leads to, read from its left-right flags.
+export circuit slotOf(path: MerkleTreePath<10, Bytes<32>>): Uint<64> {
+  return (
+    (path.path[0].goes_left ? 0 : 1) +
+    (path.path[1].goes_left ? 0 : 2) +
+    (path.path[2].goes_left ? 0 : 4) +
+    (path.path[3].goes_left ? 0 : 8) +
+    (path.path[4].goes_left ? 0 : 16) +
+    (path.path[5].goes_left ? 0 : 32) +
+    (path.path[6].goes_left ? 0 : 64) +
+    (path.path[7].goes_left ? 0 : 128) +
+    (path.path[8].goes_left ? 0 : 256) +
+    (path.path[9].goes_left ? 0 : 512)
+  ) as Uint<64>;
+}
+
+// The one right a rights record grants: `right` is 0 to raise, 1 to approve, 2 to hold.
+export circuit rightIn(rights: Rights, right: Uint<8>): Boolean {
+  return right == 0 ? rights.mayRaise : (right == 1 ? rights.mayApprove : rights.mayHold);
+}
+}

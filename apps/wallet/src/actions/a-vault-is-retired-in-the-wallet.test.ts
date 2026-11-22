@@ -16,6 +16,8 @@ const t = vi.hoisted(() => ({
   chain: {} as Record<string, any>,
   raised: null as null | Error,
   carried: { state: 'carried-out', said: null } as { state: string; said: string | null },
+  givesUp: { money: { notes: 'holds', public: 'unread' }, openRuns: 2 } as { money: { notes: string; public: string }; openRuns: number | null },
+  confirmed: [] as Array<readonly { key: string; values?: Record<string, unknown> }[]>,
   called: [] as string[],
   handOver: undefined as unknown,
   raisedHanded: false,
@@ -40,6 +42,7 @@ vi.mock('../../../../packages/web-shared/src/vault-retire-round.js', async (real
       return 'approved';
     },
     carryRetireHere: async (doors: unknown, named: unknown) => { t.shared.push({ act: 'carry', doors, named }); return t.carried; },
+    retireGivesUpHere: async (_doors: unknown, vault: string) => { t.confirmed.push([{ key: `read ${vault}` }]); return t.givesUp; },
   };
 });
 vi.mock('./vault-doors-here.js', async (real) => ({
@@ -112,6 +115,7 @@ const ctxOf = (i: ActIntent) => {
     relay: async () => { throw new Error('a round of a vault\'s start is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 200, body: {} }; },
     tell: (x: Record<string, unknown>) => { told.push(x); },
+    confirm: async (lines: readonly { key: string; values?: Record<string, unknown> }[]) => { t.confirmed.push(lines); },
     keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
   }) as unknown as StepContext;
   return { ctx, told, moves };
@@ -135,6 +139,7 @@ beforeEach(() => {
   t.called.length = 0;
   t.raised = null;
   t.carried = { state: 'carried-out', said: null };
+  t.confirmed.length = 0;
   t.chain = { [CHAIN_ID]: { held: 'open', approvals: 1, needed: 2, raisedAt: 1 } };
   company = { approvals: 2, vaultThresholds: [] };
   t.handOver = undefined;
@@ -158,6 +163,12 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
     /* RED WHEN: the retire approved or carried out is not the one the window showed. */
     for (const c of t.shared) expect(c.named).toEqual({ vault: PAYROLL, proposal: 'prp_1' });
     expect(told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });
+    /* RED WHEN: the approver approves without being shown what the retire gives up, read by their own wallet for this vault. */
+    expect(t.confirmed).toEqual([[{ key: `read ${PAYROLL}` }], [
+      { key: 'act.retire-vault.confirm.private.holds' }, { key: 'act.retire-vault.confirm.public.unread' },
+      { key: 'act.retire-vault.confirm.runs', values: { runs: 2 } },
+    ]]);
+    for (const lines of t.confirmed.slice(1)) for (const l of lines) expect(WORDS[l.key], l.key).toBeTypeOf('string');
   });
 
   it('raised from the wallet, its raiser\'s approval counted, it waits for the rest and sends nothing more', async () => {
@@ -168,6 +179,13 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
     expect(acts()).toEqual(['raise']);
     expect(t.shared[0]!.named).toBe(PAYROLL);
     expect(told).toContainEqual({ state: 'waiting-for-approvals', approvals: 1, needed: 2 });
+    /* RED WHEN: the raiser's approval is counted without the raiser being shown what the retire gives up; runs not read are said so. */
+    t.givesUp = { money: { notes: 'none', public: 'none' }, openRuns: null };
+    t.confirmed.length = 0;
+    await runAct(i, ctxOf(i).ctx);
+    expect(t.confirmed[1]).toEqual([
+      { key: 'act.retire-vault.confirm.private.none' }, { key: 'act.retire-vault.confirm.public.none' }, { key: 'act.retire-vault.confirm.runs-unread' },
+    ]);
   });
 
   it('raised where the raiser\'s approval meets the threshold, it is carried out in the same act under the record the raise found', async () => {
@@ -181,13 +199,13 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
   });
 
   it('a raise the retire round refuses is told in its own words, and as nothing sent', async () => {
-    t.raised = new RetireRefused('this vault still holds 1 note(s) of private money. Nothing was sent. Pay them out of the vault, then retire it.');
+    t.raised = new RetireRefused('your wallet holds a deposit into this vault that it has not yet seen land or fail. Nothing was sent. Press Deposit on this vault again, which settles the one on its way first, then retire it.');
     const i = intent({});
     const { ctx } = ctxOf(i);
     const e = await runAct(i, ctx).then(() => null, (x: unknown) => x);
     /* RED WHEN: a refusal before anything was sent is told as one that may have been sent, or loses what clears it. */
     expect(e).toBeInstanceOf(StepRefused);
-    expect((e as StepRefused).words).toMatchObject({ key: 'act.retire-vault.why.not-raised', values: { says: expect.stringMatching(/Pay them out of the vault/u) } });
+    expect((e as StepRefused).words).toMatchObject({ key: 'act.retire-vault.why.not-raised', values: { says: expect.stringMatching(/Press Deposit on this vault again/u) } });
   });
 
   it('a refusal starts its sentence in capitals, and one that stopped after the retire was handed over says Press again once', async () => {
@@ -209,34 +227,32 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
 });
 
 describe('THE DOORS A RETIRE ACTS THROUGH IN THE WALLET', () => {
-  it('a call taking a token off the vault\'s list goes the retire\'s one way and is counted apart, never marking the retire handed over, and only the circuits this wallet proves are said proved', async () => {
+  it('a retire handed over marks itself handed over, and only the circuits this wallet proves are said proved', async () => {
     const sentBy: string[] = [];
     t.handOver = { path: 'chain', toChain: async (_tx: string, call: { kind: string }) => { sentBy.push(call.kind); } };
-    const handed: { over: boolean; before?: number } = { over: false };
+    const handed: { over: boolean } = { over: false };
     const doors = retireDoorsFor(ctxOf(intent({})).ctx, reachOf() as never, reach() as never, handed);
-    await doors.handOver!.toChain!('FORGET', { kind: 'vault-forget', contract: PAYROLL, circuit: 'forgetUnshielded' });
-    /* RED WHEN: sending a call that takes a token off the list marks the retire handed over, so a later stop is told as the retire maybe sent. */
-    expect([sentBy, handed]).toEqual([['vault-forget'], { over: false, before: 1 }]);
     await doors.handOver!.toChain!('RETIRE', { kind: 'vault-retire', contract: PAYROLL, circuit: 'retire' });
-    expect(handed).toEqual({ over: true, before: 1 });
+    /* RED WHEN: sending the retire is not marked as handed over, so a later stop is told as nothing sent. */
+    expect([sentBy, handed]).toEqual([['vault-retire'], { over: true }]);
     /*
      * RED WHEN: the retire is told this wallet can send a call it holds no proving key for, so it starts what it then
-     * cannot finish; or is told it cannot send one it can. The wallet carries the keys for the vault's retire and for
-     * taking a token off its list, and none for splitting a note.
+     * cannot finish; or is told it cannot send one it can. The wallet carries the key for the vault's retire, and none
+     * for splitting a note.
      */
-    expect(['retire', 'forgetUnshielded', 'deposit', 'splitNote'].map((c) => doors.proves!(c))).toEqual([true, true, true, false]);
+    expect(['retire', 'deposit', 'splitNote'].map((c) => doors.proves!(c))).toEqual([true, true, false]);
   });
 
-  it('the real retire, given the wallet\'s own doors, is not refused for want of a key, and sends nothing before it has read the vault', async () => {
+  it('the real retire, given the wallet\'s own doors, is not refused for want of a key, and sends nothing before it has read the chain', async () => {
     const real = await vi.importActual<typeof import('../../../../packages/web-shared/src/vault-retire-round.js')>('../../../../packages/web-shared/src/vault-retire-round.js');
     const sentBy: string[] = [];
     t.handOver = { path: 'chain', toChain: async (_tx: string, call: { kind: string }) => { sentBy.push(call.kind); } };
     const handed = { over: false };
     const doors = retireDoorsFor(ctxOf(intent({})).ctx, reachOf() as never, reach() as never, handed);
     /*
-     * The stood-in reach has no network to read the vault from, so the real retire stops at that read. RED WHEN: the
+     * The stood-in reach has no network to read the chain from, so the real retire stops at that read. RED WHEN: the
      * wallet's doors stop saying it proves the retire, so a wallet that carries its keys refuses one as needing an
-     * update; or anything is raised or sent before the vault is read.
+     * update; or anything is raised or sent before the chain is read.
      */
     const stopped = await real.retireRaisedHere(doors, PAYROLL as never).then(() => null, (e: unknown) => e);
     expect(String((stopped as Error | null)?.message)).not.toMatch(/needs an update first/u);

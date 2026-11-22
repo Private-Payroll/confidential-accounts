@@ -1,0 +1,111 @@
+// A vault's coins: their commitments, nullifiers and nonces, the details signers approve to pay or
+// split them, and the masked amounts a split records. Nothing here reads the ledger, a witness or
+// the kernel.
+module Notes {
+import CompactStandardLibrary;
+
+// What a coin's commitment and nullifier are taken over, as the ledger takes them.
+struct CoinPreimage {
+  domain_sep: Bytes<21>;
+  info: ShieldedCoinInfo;
+  dataType: Boolean;
+  data: Bytes<32>;
+}
+
+// A private payment's recipient, token and amount, committed under a blinding.
+export circuit payoutDetails(
+  recipient: Bytes<32>,
+  token: Bytes<32>,
+  amount: Uint<128>,
+  blinding: Bytes<32>,
+): Bytes<32> {
+  return persistentCommit<Vector<3, Bytes<32>>>(
+    [recipient, token, amount as Field as Bytes<32>], blinding);
+}
+
+// The same for public money, tagged so an approval for one kind cannot settle the other.
+export circuit unshieldedPayoutDetails(
+  recipient: Bytes<32>,
+  token: Bytes<32>,
+  amount: Uint<128>,
+  blinding: Bytes<32>,
+): Bytes<32> {
+  return persistentCommit<Vector<4, Bytes<32>>>(
+    [pad(32, "midnight-vault:unshielded:"),
+     recipient, token, amount as Field as Bytes<32>], blinding);
+}
+
+// What the pool records for a note: its nonce, token and amount, not its tree position.
+export circuit heldCommitmentOf(coin: ShieldedCoinInfo, blinding: Bytes<32>): Bytes<32> {
+  return persistentCommit<ShieldedCoinInfo>(coin, blinding);
+}
+
+// Every note's blinding: this vault's address, so nobody chooses it. The coin's own nonce is
+// what keeps the commitment from being opened by anyone who does not know the coin.
+export circuit noteBlindingOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<32> {
+  return vault;
+}
+
+// A note's nullifier as the ledger computes it for a coin this vault owns.
+export circuit noteNullifierOf(vault: Bytes<32>, coin: ShieldedCoinInfo): Bytes<32> {
+  return persistentHash<CoinPreimage>(CoinPreimage {
+    domain_sep: "midnight:zswap-cn[v1]", info: coin, dataType: false, data: vault,
+  });
+}
+
+// A coin's commitment as the ledger computes it, to a person's key or to this vault.
+export circuit coinCommitmentOf(coin: ShieldedCoinInfo, owner: Bytes<32>, toPerson: Boolean): Bytes<32> {
+  return persistentHash<CoinPreimage>(CoinPreimage {
+    domain_sep: "midnight:zswap-cc[v1]", info: coin, dataType: toPerson, data: owner,
+  });
+}
+
+// A new coin's nonce: a tag, the vault's secret and the spent note's nullifier, so it is fixed
+// by the note spent and nobody without the secret can work it out. The nullifier is public, so
+// without the secret anyone could rebuild the nonce and find the coin's value by trying amounts.
+export circuit freshNonceOf(tag: Bytes<32>, secret: Bytes<32>, spent: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([tag, secret, spent]);
+}
+
+// The tags a new coin's nonce is made under, one per kind of coin.
+export circuit payeeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:payee"); }
+export circuit changeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:change"); }
+export circuit splitNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:split"); }
+export circuit restNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:rest"); }
+
+// What signers approve to split one note: the note, by its nullifier, and the piece cut from it.
+export circuit splitDetails(
+  vault: Bytes<32>,
+  spent: Bytes<32>,
+  token: Bytes<32>,
+  amount: Uint<128>,
+): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-vault:split:"),
+    persistentHash<Vector<4, Bytes<32>>>([vault, spent, token, amount as Field as Bytes<32>])]);
+}
+
+// The mask on a split's amount: it needs the secret and the note, so only the company can lift it.
+export circuit splitMaskOf(secret: Bytes<32>, spent: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "midnight-vault:split-mask:"), secret, spent]);
+}
+
+// A split's amount as the journal holds it: added to the mask, as field elements.
+export circuit maskedAmountOf(amount: Uint<128>, mask: Bytes<32>): Bytes<32> {
+  return upgradeFromTransient((amount as Field) + degradeToTransient(mask));
+}
+
+// A split's amount from its journal entry and its mask: what a device holding the secret recovers.
+export circuit unmaskedAmountOf(masked: Bytes<32>, mask: Bytes<32>): Field {
+  return degradeToTransient(masked) - degradeToTransient(mask);
+}
+
+// The tag each place of a batch makes its payee's coin under, and the one a merge keeps its coin
+// under. Each differs from every other kind of coin's tag.
+export circuit batchPayeeNonceTag(place: Uint<8>): Bytes<32> {
+  return place == 0 ? pad(32, "midnight-vault:nonce:batch-0")
+    : place == 1 ? pad(32, "midnight-vault:nonce:batch-1")
+    : place == 2 ? pad(32, "midnight-vault:nonce:batch-2")
+    : pad(32, "midnight-vault:nonce:batch-3");
+}
+export circuit mergeNonceTag(): Bytes<32> { return pad(32, "midnight-vault:nonce:merge"); }
+}

@@ -32,7 +32,8 @@ import { TEST_TOKEN, registryWithTestPrivateForms } from '../../../src/testing/a
 /** A coin as the worker answers it: every number as decimal digits. */
 export const wireOfCoin = (c: { nonce: string; token: string; value: bigint }) => ({ nonce: c.nonce, token: c.token, value: c.value.toString() });
 /** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
-export type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
+/** A vault as a test's chain holds it; its own retired mark reads as not retired unless `retired` says it is. */
+export type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean; readonly retired?: boolean };
 
 /** Wallet key `n`: the x-only public key of a secret made of one repeated byte, a key the chain builds a committee with. */
 export const walletKey = (n: number): string => Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(n))).toString('hex');
@@ -142,6 +143,7 @@ export const wireOf = (v: TestView): VaultOnChainOnTheWire => (!v.onChain ? { on
   everCreated: v.everCreated ?? [],
   account: ACCOUNT,
   started: v.started === true,
+  retired: v.retired === true,
   circuits: null, accountCircuits: null,
 });
 export const readOnTheDevice = async (i: { vault: string; indexer: { indexerUri: string } }): Promise<VaultOnChainOnTheWire> => {

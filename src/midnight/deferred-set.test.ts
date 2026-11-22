@@ -158,15 +158,15 @@ describe('the deferral list: nothing is deferred, stated where a diff will show 
     }
   });
 
-  it('the two lists name twenty-two circuits between them, none twice', () => {
+  it('the two lists name twenty-three circuits between them, none twice', () => {
     // The count is what the source decides today: the set has grown and shrunk as circuits were merged, removed
     // and added, and this number moves with `deferral.ts` and the compiled contract together.
     // "No overlap" is not claimed: while DEFERRED_CIRCUITS is empty it cannot fail. What is checked is that the
     // concatenation has no duplicate, which can fail, and that assertKnownCircuitSet accepts the set it was
     // built from.
     const all = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS];
-    expect(all).toHaveLength(22);
-    expect(new Set(all).size).toBe(22);
+    expect(all).toHaveLength(23);
+    expect(new Set(all).size).toBe(23);
     expect(() => assertKnownCircuitSet(all)).not.toThrow();
   });
 
@@ -192,7 +192,7 @@ describe('the deferral list: nothing is deferred, stated where a diff will show 
         .map((f) => f.replace(/\.verifier$/, '')),
     )].sort();
 
-    expect(keyed).toHaveLength(22);
+    expect(keyed).toHaveLength(23);
     expect([...DEPLOYED_CIRCUITS]).toEqual(keyed);
     expect(() => assertKnownCircuitSet(keyed)).not.toThrow();
   });

@@ -48,6 +48,7 @@ const M = [
   ['subject counted in bytes instead of characters', 'commit.mjs', 'const length = [...subject].length;', 'const length = Buffer.byteLength(subject, "utf8");'],
   ['an empty subject accepted', 'commit.mjs', "return 'a subject line has to say what the change does, and this one is empty';", 'return null;'],
   ['the kinds no longer close the shape', 'commit.mjs', '`^(${SUBJECT_KINDS.join(\'|\')})', '`^([a-z]+)'],
+  ['the punctuation rule removed', 'commit.mjs', "if (hasPunctuation(description.replace(/ \\(#\\d+\\)$/, ''))) {", 'if (false) {'],
   ['the scope charset widened to anything', 'commit.mjs', '(\\\\(([a-z0-9][a-z0-9._/-]*)\\\\))?', '(\\\\(([^()]*)\\\\))?'],
   ['a trailing full stop allowed', 'commit.mjs', "return 'a subject line does not end with a full stop';", 'return null;'],
   ['a capital after the colon allowed', 'commit.mjs', "return 'a subject line is not capitalised after the colon';", 'return null;'],

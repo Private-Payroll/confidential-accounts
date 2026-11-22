@@ -11,7 +11,9 @@ import { StartRoundRefused, approveStartRoundHere, carryStartRoundHere, finished
 import { createCompanyVault } from './vault-created-and-started.js';
 import { depositIntoCompanyVault } from './vault-private-deposit.js';
 import { openCompanyVaultPool } from './vault-pool-opened.js';
-import { raiseASecretRunHere } from './vault-secret-run.js';
+import { raiseASecretRunHere, secretRunApprovedHere } from './vault-secret-run.js';
+import { heldForItsSecret } from './vault-secret-rotated-here.js';
+import { theVaultAsItsSignersHoldIt, theVaultReadForItsStart } from './vault-read-here.js';
 import type { SealedProposal } from '../../../src/core/types.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -1246,6 +1248,35 @@ describe('THE VAULT\'S COMMITTEE AND ITS SECRET, FROM THE CHAIN', () => {
         /* RED WHEN: the raise goes out before the copies tree is kept in this wallet. */
         expect(order).toEqual(['kept']);
         expect(t.log).toContain('built propose');
+      });
+
+      it('A FUNDED RETIRED VAULT\'S SECRET IS REPLACED THROUGH THE SAME READ, RAISE AND APPROVAL, READ AS HELD FOR THE CHANGE ALONE', async () => {
+        const t = await start({ held: HELD, set: false, noRun: true, records: [adoptionRecord()] });
+        /* The account retired the vault: the wallet's read of who holds the company lists it among no adopted vaults. */
+        const retiredRead = async (_vault: string) => ({ holders: { ...(await walletReadsTheVault.onChain(VAULT)).holders, adoptedVaults: [] } });
+        const kept = { keep: async () => undefined, held: async () => null, drop: async () => undefined, keepRun: async () => undefined };
+        const asRetired = { ...t.doors, onChain: retiredRead, secretKeptHere: kept };
+        t.log.length = 0;
+        /* The read the change of a secret starts from refuses a vault the account does not hold, before anything is built or sent. */
+        await expect(theVaultReadForItsStart(asRetired, VAULT as Hex)).rejects.toThrow(/not one your company's account has adopted/u);
+        /*
+         * RED WHEN: a retired vault's secret cannot be changed from the device, so its private money stays on a secret a
+         * signer who left can open: read as held for the change, the read, the raise and the approval go through.
+         */
+        const doors = heldForItsSecret(asRetired, [VAULT as Hex]);
+        expect((await theVaultReadForItsStart(doors, VAULT as Hex)).refusal).toBeNull();
+        expect(t.log.filter((l) => l.startsWith('built') || l.startsWith('sent '))).toEqual([]);
+        const raised = await raiseASecretRunHere(doors, VAULT as Hex, NEXT as Hex);
+        expect(t.log).toContain('built propose');
+        expect(raised.at.standing.secret?.run?.approvals).toBe(1);
+        const at = await secretRunApprovedHere(doors, VAULT as Hex, raised.at, raised.run, raised.at.standing.secret!.run!, 'Change the vault\'s secret');
+        /* The approval is this seat's, counted on the chain: the run then stands at the bar it needs. */
+        expect(t.sent()).toContain('sent secret-run approve');
+        expect(at.standing.secret?.run?.approvedHere).toBe(true);
+        /* RED WHEN: a vault the account never retired is admitted too. */
+        await expect(theVaultAsItsSignersHoldIt(doors, 'dd'.repeat(32) as Hex)).rejects.toThrow(/not one your company's account has adopted/u);
+        /* RED WHEN: the gate is got past by rewriting the wallet's read, so every reader of it takes the retired vault as adopted. */
+        expect((await doors.onChain(VAULT as Hex)).holders.adoptedVaults).not.toContain(VAULT);
       });
 
       it('is refused for a vault that holds no secret yet, and for one that already holds this secret, sending nothing', async () => {

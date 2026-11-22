@@ -83,6 +83,7 @@ const reach = () => ({
   chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, secrets: () => ({}) as never,
   commitments: async () => MidnightCommitments as never, reachFor: async () => reachOf() as never,
   afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); },
+  beforeCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); },
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];

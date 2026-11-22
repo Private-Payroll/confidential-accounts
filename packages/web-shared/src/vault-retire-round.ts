@@ -1,13 +1,14 @@
 /**
  * **A VAULT RETIRED FROM THE COMPANY'S ACCOUNT: RAISED, APPROVED AND CARRIED OUT FROM THIS DEVICE.** A retire is a
- * change to the company, approved at the company's threshold, and carried out by the vault itself, which refuses while
- * it holds any note or any public money and only then asks the account to retire it. This device refuses before
- * raising or carrying while the chain shows the vault holding money, or while this device keeps a deposit into it or a
- * payment out of it on its way; a public token the vault lists and holds none of it first takes off the vault's list,
- * which the vault's retire refuses on. Its facts come from the chain as the person's own wallet reads it, and from the
- * company's sealed records this device opens and believes; the service only carries records and calls.
+ * change to the company, approved at the company's threshold, and carried out by the vault itself, which marks itself
+ * retired, so it takes no deposit from then on, and asks the account to retire it, whatever it still holds. What it
+ * holds stays payable. This device refuses before raising or carrying only while it keeps a deposit into the vault or a
+ * payment out of it on its way; it shows each approver what the vault holds and the runs open on it, as that approver's
+ * own device reads them. Its facts come from the chain as the
+ * person's own wallet reads it, and from the company's sealed records this device opens and believes; the service only
+ * carries records and calls.
  */
-import { RETIRE_VAULT, retireProposalIn, sealGovernanceProposal } from '../../../src/core/proposal-filing.js';
+import { RETIRE_VAULT, retireProposalIn, runVaultIn, sealGovernanceProposal } from '../../../src/core/proposal-filing.js';
 import { NO_ASSET } from '../../../src/core/assets.js';
 import { adoptionSaltOf } from '../../../src/midnight/vault-start.js';
 import { ADOPTED_AGAIN_SINCE, adoptionAlreadyClosed } from './vault-adopt-again.js';
@@ -16,11 +17,11 @@ import type { SealedProposal } from '../../../src/core/types.js';
 import type { CreateVaultDoors } from './vault-doors.js';
 import type { RoundOnChain } from './governed-call-builder.js';
 import { handedOver, type HandOver } from './hand-over.js';
-import { ON_CHAIN, moneyOnChainOf } from './vault-on-chain-here.js';
+import type { MoneyOnChain } from './money-on-chain.js';
 import { lowerHex, saidWithoutStop } from './vault-info-here.js';
 import { kindAsked, listedHere } from './vault-page-doors.js';
-import { NO_VAULT_YET, chainAtOneBlockHere, readHere, theWalletsIndexer } from './vault-read-here.js';
-import { VaultNotReadHere } from './vault-start-stops.js';
+import { chainAtOneBlockHere, moneyHeldHere, theWalletsIndexer } from './vault-read-here.js';
+import { ViewEnded } from './company-view.js';
 import { RAN_OUT, ZERO_HEX, nothingMoves, proposedAndWrittenDown, randomHex, untilReadHere, type StartRound } from './vault-start-steps.js';
 
 /** What the company's records and the chain call a vault's retire. */
@@ -49,30 +50,14 @@ export interface RetireDoors extends CreateVaultDoors {
   readonly proves?: (circuit: string) => boolean;
 }
 
-/** Which step of the retire a refusal about the vault's list stops, and what then stands of the retire. */
-type RetireStep = 'raise' | 'carry';
-const RETIRE_LEFT: Readonly<Record<RetireStep, string>> = {
-  raise: 'The retire was not raised.',
-  carry: 'The retire stays raised and approved on the network, and was not sent.',
-};
-/** What a person reads when this wallet cannot yet send the vault's `circuit`, and what clears it. */
-const CANNOT_YET: Readonly<Record<'retire' | 'forgetUnshielded', string>> = {
-  retire: 'This wallet cannot retire this vault yet. It needs an update first. Nothing was sent.',
-  forgetUnshielded: 'The vault still lists a public token it was once paid, and it will not retire until that is cleared. This wallet '
-    + 'cannot clear it yet: it needs an update first. Nothing was sent.',
-};
+/** What a person reads when this wallet cannot yet send the vault's retire, and what clears it. */
+const CANNOT_YET = 'This wallet cannot retire this vault yet. It needs an update first. Nothing was sent.';
 
-/** Refuses, before anything is built or sent, when this device holds no key to prove the vault's `circuit`. */
-const refuseUnprovable = (doors: RetireDoors, circuit: 'retire' | 'forgetUnshielded'): void => {
-  if (doors.proves === undefined || doors.proves(circuit)) return;
-  throw new RetireRefused(CANNOT_YET[circuit]);
+/** Refuses, before anything is built or sent, when this device holds no key to prove the vault's retire. */
+const refuseUnprovable = (doors: RetireDoors): void => {
+  if (doors.proves === undefined || doors.proves('retire')) return;
+  throw new RetireRefused(CANNOT_YET);
 };
-
-/** What a stop says of the calls taking tokens off the list this press already sent, or that nothing was sent. */
-const sentSoFar = (count: number, step: RetireStep): string => (count === 0 ? 'Nothing was sent.'
-  : `${count} call${count === 1 ? '' : 's'} taking a public token off this vault's list already went out, each paying only its `
-    + `network fee and moving no money; nothing more was sent. ${RETIRE_LEFT[step]} Press again: a token the network no longer lists `
-    + 'is not sent again.');
 
 /** The vault and the company's record of its retire, by the record's name. */
 export interface RetireNamed { readonly vault: Hex; readonly proposal: string }
@@ -125,116 +110,58 @@ async function roundHere(doors: CreateVaultDoors, vault: Hex, chainId: Hex): Pro
   throw new RetireRefused('the network read did not say where the vault\'s retire stands. Nothing was sent. Press again in a minute.');
 }
 
-/** Why the vault may not be retired now, or the public tokens it lists and holds none of, which come off its list first. */
-type Emptiness = { readonly refused: string } | { readonly forget: readonly Hex[] };
-
 /**
- * Why the vault may not be retired now: the chain shows it holding a note or public money, which the vault's own retire
- * refuses and which paying it out clears; its list of public tokens could not be read; or this device keeps a deposit
- * into it or a payment out of it on its way, which pressing Deposit or Pay on this vault again settles first
- * (`settleDepositInFlight`, `settlePaymentInFlight`). Otherwise the tokens the vault lists, every one of them held at
- * nothing: the vault's retire refuses while any is listed, and its `forgetUnshielded` takes each off. Money that lands
- * after a retire waits in the retired vault until it is adopted again.
+ * Refuses while this device keeps a deposit into the vault or a payment out of it on its way, which pressing Deposit or
+ * Pay on this vault again settles first (`settleDepositInFlight`, `settlePaymentInFlight`). What the vault holds is never
+ * a reason: a retire gives up whatever its signers approved it giving up, and it all stays payable.
  */
-async function moneyLeftIn(doors: RetireDoors, vault: Hex): Promise<Emptiness> {
-  let read: Awaited<ReturnType<typeof readHere>>;
-  try {
-    read = await readHere(doors, vault, doors.account);
-  } catch (e) {
-    if (e instanceof VaultNotReadHere) return { refused: `${e.message} Nothing was sent. Press again in a minute.` };
-    throw e;
-  }
-  if (!read.onChain) return { refused: `${NO_VAULT_YET} Nothing was sent.` };
-  const money = moneyOnChainOf(read);
-  if (money.notes === ON_CHAIN.unread) {
-    return { refused: `what this vault holds could not be read (${read.notesWhy ?? 'the read gave no reason'}), and a vault is retired only `
-      + 'once the network shows it holds nothing. Nothing was sent. Press again in a minute.' };
-  }
-  if (money.notes === ON_CHAIN.holds) {
-    return { refused: `this vault still holds ${read.notes?.length ?? 0} note(s) of private money, and the vault refuses to retire while it holds `
-      + 'any. Nothing was sent. Pay them out of the vault, then retire it.' };
-  }
-  if (money.public === ON_CHAIN.unread) {
-    return { refused: `the public money this vault holds could not be read (${read.publicBalancesWhy ?? 'the read gave no reason'}). Nothing `
-      + 'was sent. Press again in a minute.' };
-  }
-  if (money.public === ON_CHAIN.holds) {
-    return { refused: 'this vault still holds public money, and the vault refuses to retire while it holds any. Nothing was sent. Pay it '
-      + 'out of the vault, then retire it.' };
-  }
-  if (read.unshieldedTokens === undefined) {
-    return { refused: `which public tokens this vault lists could not be read (${read.unshieldedTokensWhy ?? 'the read gave no reason'}), and `
-      + 'the vault refuses to retire while it lists any. Nothing was sent. Press again in a minute.' };
-  }
+async function nothingOnItsWay(doors: RetireDoors, vault: Hex): Promise<void> {
   if (await keptOnItsWay(doors.inFlight?.deposits, vault)) {
-    return { refused: 'your wallet holds a deposit into this vault that it has not yet seen land or fail. Nothing was sent. Press Deposit '
-      + 'on this vault again, which settles the one on its way first, then retire it.' };
+    throw new RetireRefused('your wallet holds a deposit into this vault that it has not yet seen land or fail. Nothing was sent. Press '
+      + 'Deposit on this vault again, which settles the one on its way first, then retire it.');
   }
   if (await keptOnItsWay(doors.inFlight?.payments, vault)) {
-    return { refused: 'your wallet holds a payment out of this vault that it has not yet seen land or fail. Nothing was sent. Press Pay on '
-      + 'this vault again, which settles the one on its way first, then retire it.' };
-  }
-  return { forget: read.unshieldedTokens.map(lowerHex) };
-}
-
-/**
- * Refuses while the vault may not be retired, and otherwise takes each public token it lists, all held at nothing, off
- * its list, one `forgetUnshielded` each, waiting until the chain no longer lists them. The vault refuses that call for a
- * token it holds any of, so a deposit landing first stops it and loses nothing. Refuses before sending any where this
- * device holds no key to prove that call. A stop says how many of these calls this press sent, and what stands of the
- * retire at `step`.
- */
-async function emptiedHere(doors: RetireDoors, vault: Hex, step: RetireStep): Promise<void> {
-  const left = await moneyLeftIn(doors, vault);
-  if ('refused' in left) throw new RetireRefused(left.refused);
-  if (left.forget.length === 0) return;
-  refuseUnprovable(doors, 'forgetUnshielded');
-  for (const [count, token] of left.forget.entries()) await forgetSent(doors, vault, token, { count, step });
-  const got = await untilReadHere(doors, async () => {
-    let read: Awaited<ReturnType<typeof readHere>>;
-    try {
-      read = await readHere(doors, vault, doors.account);
-    } catch (e) {
-      if (e instanceof VaultNotReadHere) return null;
-      throw e;
-    }
-    const listed = read.onChain ? read.unshieldedTokens : undefined;
-    return listed !== undefined && !listed.some((t) => left.forget.includes(lowerHex(t))) ? true : null;
-  });
-  if (got === null || got === RAN_OUT) {
-    throw new RetireRefused('taking the public tokens this vault holds none of off its list was sent, and the network still lists them. '
-      + `${RETIRE_LEFT[step]} Press again in a minute: a token the network no longer lists is not sent again.`);
+    throw new RetireRefused('your wallet holds a payment out of this vault that it has not yet seen land or fail. Nothing was sent. Press '
+      + 'Pay on this vault again, which settles the one on its way first, then retire it.');
   }
 }
 
 /**
- * Builds the vault's `forgetUnshielded` for one token and sends it from the person's own wallet straight to the chain, its
- * fee paid. `before.count` calls of this press already went out.
+ * How many runs open on the chain now are runs of this vault, by the company's records this device opens and believes;
+ * null when the chain or the records could not be read, or when a run open on the chain has no record here this device
+ * can open, since it may be a run of this vault.
  */
-async function forgetSent(doors: RetireDoors, vault: Hex, token: Hex, before: { readonly count: number; readonly step: RetireStep }): Promise<void> {
-  const build = doors.builder.forgetUnshielded;
-  if (build === undefined) {
-    throw new RetireRefused(CANNOT_YET.forgetUnshielded);
-  }
-  const toChain = walletToChain(doors.handOver);
-  let tx: string;
+async function openRunsHere(doors: CreateVaultDoors, vault: Hex): Promise<number | null> {
+  const p = doors.proposals;
   try {
-    const chain = await chainAtOneBlockHere(doors, vault);
-    ({ tx } = await build({ vault, account: chain.account, token, chain }));
-  } catch (e) {
-    throw new RetireRefused(`taking a public token this vault holds none of off its list could not be built in your wallet (${saidWithoutStop(e)}). `
-      + sentSoFar(before.count, before.step));
-  }
-  try {
-    await toChain(tx, { kind: 'vault-forget', contract: vault, circuit: 'forgetUnshielded' });
-  } catch (e) {
-    if ((e as { nothingWasSent?: unknown } | null)?.nothingWasSent === true) {
-      throw new RetireRefused(`taking a public token this vault holds none of off its list was not sent (${saidWithoutStop(e)}). ${sentSoFar(before.count, before.step)}`);
+    const indexer = await theWalletsIndexer(doors, vault);
+    const [open, served, here] = await Promise.all([
+      doors.builder.runsOutrun({ account: lowerHex(String(doors.account)), indexer }),
+      p.service.sealedProposals(p.accountId), p.directory(kindAsked('proposal')),
+    ]);
+    const records = listedHere(here, 'proposal', served, 'proposal').filter((r) => r.accountId === p.accountId);
+    let count = 0;
+    for (const chainId of Object.keys(open).map(lowerHex)) {
+      const named = records.filter((r) => lowerHex(String(r.chainId ?? '')) === chainId).map((r) => runVaultIn(r, p.accountId, p.companyKeys));
+      if (named.includes(vault)) count += 1;
+      else if (!named.some((v) => v !== 'unopened' && v !== null)) return null;
     }
-    throw new RetireRefused(`a call taking a public token off this vault's list was handed over to be sent and stopped (${saidWithoutStop(e)}); it `
-      + `moves no money and costs at most its network fee. ${RETIRE_LEFT[before.step]} Press again in a minute: a token the network no `
-      + 'longer lists is not sent again.');
+    return count;
+  } catch (e) {
+    if (e instanceof ViewEnded) throw e;
+    /* Not passed over: a count that could not be read is shown to the approver as not read, never as none. */
+    return null;
   }
+}
+
+/** What a retire gives up, as this device reads it now: what the vault holds on each side, and the runs open on it (null: not read). */
+export interface RetireGivesUp { readonly money: MoneyOnChain; readonly openRuns: number | null }
+
+/** What the retire `named` gives up, read by this device itself: the vault's holdings and the runs open on it. */
+export async function retireGivesUpHere(doors: CreateVaultDoors, vault: Hex): Promise<RetireGivesUp> {
+  const at = lowerHex(vault);
+  const [money, openRuns] = await Promise.all([moneyHeldHere(doors, at), openRunsHere(doors, at)]);
+  return { money, openRuns };
 }
 
 /** The person's own wallet's way straight to the chain, which a vault's retire and the calls before it go by; refused when there is none. */
@@ -312,15 +239,15 @@ async function untilTheRetireShows(doors: CreateVaultDoors, found: RetireFound, 
 /**
  * **THE RETIRE RAISED FROM THIS DEVICE**, or the one the company's records already hold for this vault carried on.
  * The raiser's approval counts at the raise. It refuses first where this device holds no key to prove the vault's
- * retire, so no approval is spent on a retire it could never carry out. It then refuses while the vault holds money
- * or this device keeps money on its way into or out of it. It takes each token the vault lists at nothing off its list
- * (`emptiedHere`) before raising, and refuses as the raise of any proposal refuses (`proposedAndWrittenDown`).
+ * retire, so no approval is spent on a retire it could never carry out. It then refuses while this device keeps money
+ * on its way into or out of the vault (`nothingOnItsWay`), and refuses as the raise of any proposal refuses
+ * (`proposedAndWrittenDown`). What the vault holds never stops it.
  * Returns the record's name, where the chain holds it, and a sentence when the record could not be written down.
  */
 export async function retireRaisedHere(doors: RetireDoors, asked: Hex): Promise<{ readonly found: RetireFound; readonly said: string | null }> {
   const vault = lowerHex(asked);
-  refuseUnprovable(doors, 'retire');
-  await emptiedHere(doors, vault, 'raise');
+  refuseUnprovable(doors);
+  await nothingOnItsWay(doors, vault);
   const standing = (await retireRecordsHere(doors, vault)).find((r) => r.rec.status === 'open' || r.rec.status === 'approved');
   const salt = standing?.salt ?? lowerHex(randomHex());
   const round = await retireRoundOf(doors, vault, salt);
@@ -382,12 +309,12 @@ export async function approveRetireHere(doors: RetireDoors, named: RetireNamed):
  * **THE RETIRE CARRIED OUT BY THE VAULT ITSELF**, once the chain holds it at its bar: built here against one block of
  * both contracts, and sent from the person's own wallet to the chain with its fee paid, since the service relays no
  * retire. Waits, sending nothing, while it is short of approvals. Refuses where this device holds no key to prove the
- * vault's retire. Refuses while the vault holds money or this device
- * keeps money on its way into or out of it, and takes each token the vault lists at nothing off its list first. Writes the record down as carried out once the chain closed it.
+ * vault's retire, and while this device keeps money on its way into or out of the vault; never for what the vault
+ * holds. Writes the record down as carried out once the chain closed it.
  */
 export async function carryRetireHere(
   doors: RetireDoors, named: RetireNamed,
-): Promise<{ readonly state: 'carried-out' | 'waiting'; readonly said: string | null }> {
+): Promise<{ readonly state: 'carried-out'; readonly said: string | null } | { readonly state: 'waiting'; readonly said: null }> {
   const found = await retireFoundHere(doors, named);
   const r = found.onChain;
   if (r.held === 'never') throw new RetireRefused('the network holds no retire of this vault raised. Nothing was sent. Reload the page.');
@@ -397,18 +324,19 @@ export async function carryRetireHere(
       throw new RetireRefused('a signer was removed or replaced after this retire was raised, so the account never carries it out. Nothing '
         + 'was sent. Withdraw it and raise the retire again.');
     }
-    refuseUnprovable(doors, 'retire');
-    await emptiedHere(doors, found.vault, 'carry');
+    refuseUnprovable(doors);
+    await nothingOnItsWay(doors, found.vault);
     await retireSent(doors, found);
     await untilTheRetireShows(doors, found, 'the retire', (n) => n.held === 'closed');
   }
-  return { state: 'carried-out', said: await retireWrittenDown(doors, found) };
+  const said = await retireWrittenDown(doors, found);
+  return { state: 'carried-out', said };
 }
 
 /** Builds the vault's retire and sends it from the person's own wallet straight to the chain, its fee paid. */
 async function retireSent(doors: RetireDoors, found: RetireFound): Promise<void> {
   const build = doors.builder.retire;
-  if (build === undefined) throw new RetireRefused(CANNOT_YET.retire);
+  if (build === undefined) throw new RetireRefused(CANNOT_YET);
   const toChain = walletToChain(doors.handOver);
   let tx: string;
   let account: Hex;

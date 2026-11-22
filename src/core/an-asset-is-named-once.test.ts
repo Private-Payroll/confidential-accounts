@@ -390,7 +390,6 @@ const NOT_AN_ASSET_BECOMING_A_TOKEN: Record<string, { count: number; why: string
   'packages/web-shared/src/vault-builder.ts p.token as Hex': { count: 1, why: 'a payment\'s token as it arrived over the wire, checked as 64 hex characters and carried into the notes walk' },
   'packages/web-shared/src/invitation-on-device.ts token': { count: 4, why: 'an invitation link\'s secret, handed back to whoever made the invitation, or kept by the device that raised a seat offered by address' },
   'packages/web-shared/src/invitation-taken-on-device.ts token': { count: 1, why: 'an invitation link\'s secret, handed back to whoever opened the invitation' },
-  'packages/web-shared/src/vault-retire-round.ts token': { count: 1, why: 'a public token the chain still lists on a vault that holds none of it, carried into the call that takes it off the list' },
   'src/midnight/a-vault-ledger-on-a-fake-chain.test-support.ts GBP': { count: 8, why: 'the notes and coins a fake vault chain answers a test with, in the one test token the test chose' },
   'src/midnight/a-vault-ledger-on-a-fake-chain.test-support.ts toHex(made.color)': { count: 1, why: 'a fake chain carrying the token of the coin it was asked to make' },
   'src/server/a-company-of-two-seats.test-support.ts _t': { count: 1, why: 'an invitation\'s token dropped from the listing a test server answers with, which gives nothing a token' },

@@ -65,9 +65,12 @@ describe('the list is read off the source, by the three statements the compiler 
     expect(refusal(() => contractSources(root, MAIN))).toMatch(/break the cycle/);
   });
 
-  it('the two contracts today: each list is its main file', () => {
-    expect(contractSources(ROOT, 'contracts/src/ConfidentialAccount.compact')).toEqual(['contracts/src/ConfidentialAccount.compact']);
-    expect(contractSources(ROOT, 'contracts/src/Vault.compact')).toEqual(['contracts/src/Vault.compact']);
+  it('the two contracts today: each main file, then its modules in import order', () => {
+    const m = (n: string) => `contracts/src/modules/${n}.compact`;
+    expect(contractSources(ROOT, 'contracts/src/ConfidentialAccount.compact'))
+      .toEqual(['contracts/src/ConfidentialAccount.compact', m('Seats'), m('Commitments'), m('Policy'), m('RunInterface')]);
+    expect(contractSources(ROOT, 'contracts/src/Vault.compact'))
+      .toEqual(['contracts/src/Vault.compact', m('RunInterface'), m('Notes'), m('SecretCopies')]);
   });
 });
 
@@ -132,5 +135,12 @@ describe('a contract that brings nothing in keeps the version it always had', ()
   it('a one-file list fingerprints as that one file, so no recorded version changes', () => {
     put('contracts/src/Solo.compact', 'import CompactStandardLibrary;\nexport circuit s(): [] {}\n');
     expect(partHash(root, 'contracts/src/Solo.compact')).toBe(codeHash(join(root, 'contracts/src/Solo.compact')));
+  });
+
+  it('a contract that brings modules in fingerprints them all, not its main file alone', () => {
+    for (const main of ['contracts/src/ConfidentialAccount.compact', 'contracts/src/Vault.compact']) {
+      expect(contractSources(ROOT, main).length).toBeGreaterThan(1);
+      expect(partHash(ROOT, main)).not.toBe(codeHash(join(ROOT, main)));
+    }
   });
 });

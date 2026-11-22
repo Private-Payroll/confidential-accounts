@@ -48,7 +48,7 @@ export type GovernedOutcome =
  * records (`governOnDevice`). A recovery of the record anchor never is: it runs
  * while those records are stopped, from the chain and a file its raiser hands
  * over (`records-recovered-here.ts`). Nor is a vault's retire, which the vault
- * itself carries out once it holds no money (`carryRetireHere`).
+ * itself carries out (`carryRetireHere`).
  */
 export type GovernedThroughTheRecords = Exclude<GovernanceOnTheWire, { readonly kind: 'recover-anchor' } | { readonly kind: 'retire-vault' }>;
 

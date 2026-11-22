@@ -16,15 +16,15 @@ import {
  * because the contract changed is a control that has noticed the contract
  * changed, which is its job.
  *
- *   the contract this build compiled  14 slots   cell,map,map,cell,map,cell,map x8
+ *   the contract this build compiled  15 slots   cell,map,map,cell,map,cell,map x8,cell
  *   a vault deployed 28 Aug            3 slots   cell,map,cell
  *   a vault deployed 29 Aug            4 slots   cell,map,map,cell
  *   a vault deployed  9 Sep            5 slots   cell,map,map,cell,map
  */
 const THIS_BUILD = [
-  'cell', 'map', 'map', 'cell', 'map', 'cell', 'map', 'map', 'map', 'map', 'map', 'map', 'map', 'map',
+  'cell', 'map', 'map', 'cell', 'map', 'cell', 'map', 'map', 'map', 'map', 'map', 'map', 'map', 'map', 'cell',
 ] as const;
-const THIS_BUILDS_FIELDS = ['account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment', 'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4', 'reserved5', 'reserved6'];
+const THIS_BUILDS_FIELDS = ['account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment', 'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4', 'reserved5', 'reserved6', 'retired'];
 
 const MEASURED_ON_CHAIN = {
   deployedAug28: ['cell', 'map', 'cell'],
@@ -158,7 +158,7 @@ const stateOfSlots = (canonical: readonly unknown[] | undefined, take: readonly 
 };
 
 describe('§2 the shape of a state, read off the state', () => {
-  it('this build\x27s contract states its own shape, fourteen fields, which no vault on the chain has', async () => {
+  it('this build\x27s contract states its own shape, fifteen fields, which no vault on the chain has', async () => {
     const { shape: compiled, fields } = await compiledVaultLedgerShape();
     /* RED WHEN the canonical shape is transcribed from a table instead of produced by the contract. */
     expect(compiled.slots).toEqual([...THIS_BUILD]);
@@ -185,7 +185,7 @@ describe('§2 the shape of a state, read off the state', () => {
     const canonical = (await realCanonicalState()).state.asArray();
     const threeFields = stateOfSlots(canonical, SLOTS_OF.deployedAug28);
     /*
-     * RED WHEN the reader stops answering with all fourteen names on a
+     * RED WHEN the reader stops answering with all fifteen names on a
      * three-field vault. That would mean a name-based check had become
      * possible, and the argument for this whole module would have changed.
      */
@@ -235,7 +235,7 @@ describe('§3 the gate every deposit and every payout passes through', () => {
     const canonical = (await realCanonicalState()).state.asArray();
     /* RED WHEN a vault deployed from the old build, five fields and no secret, is let through. */
     await expect(assertVaultLedgerIsThisBuilds(stateOfSlots(canonical, SLOTS_OF.deployedSep9)))
-      .rejects.toThrow('holds 5 ledger fields and the vault contract this build compiled has 14');
+      .rejects.toThrow('holds 5 ledger fields and the vault contract this build compiled has 15');
   });
 
   it('refuses the 28 Aug vault\x27s shape', async () => {

@@ -189,7 +189,7 @@ describe('who a change can be approved for, and at what bar', () => {
       .rejects.toThrow(/not a vault this company holds/);
   });
 
-  it('A RETIRED VAULT is refused: it holds no money and needs no change', async () => {
+  it('A RETIRED VAULT is admitted: it may still hold private money, and its secret changes with the others', async () => {
     const sim = await live();
     await sim.adoptVault(PAYROLL, [A, B]);
     const leaves = oneChange(9);
@@ -201,9 +201,10 @@ describe('who a change can be approved for, and at what bar', () => {
     const rid = sim.proposalId(retire, rc.salt);
     await sim.as(B).approve(rid);
     await sim.retireVault(rid, PAYROLL, rc.salt);
-    /* RED WHEN "holds now" becomes "ever adopted", as a payment's is. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0)))
-      .rejects.toThrow(/not a vault this company holds/);
+    expect(sim.adopted(PAYROLL)).toBe(false);
+    /* RED WHEN the step goes back to "holds now": a funded retired vault's secret could then never change after a removal. */
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).resolves.toBeDefined();
+    expect(sim.ledger.openProposals.member(run.id)).toBe(false);
   });
 
   it('A RUN BELOW THE VAULT\'S OWN THRESHOLD is refused', async () => {

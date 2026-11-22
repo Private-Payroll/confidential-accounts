@@ -108,7 +108,7 @@ describe('A SEAT THE ROSTER NAMES NO ONE FOR IS REMOVED PAST THE REAL UPKEEP', (
     const { ctx, told, confirmed } = ctxOf(i);
     const steps = removeSignerAction({
       chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, reachFor: async () => reachOf() as never,
-      afterCarried: async () => ({}) as never,
+      afterCarried: async () => ({}) as never, beforeCarried: async () => undefined,
     }).steps(i);
     /* The seat check, the upkeep's first step and the raise; the carrying out and the upkeep's last step are not this test's. */
     for (const step of steps.slice(0, 3)) await step.run(ctx);

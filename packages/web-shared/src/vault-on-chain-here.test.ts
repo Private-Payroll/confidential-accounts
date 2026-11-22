@@ -37,6 +37,7 @@ const R = runtime as unknown as {
   ContractState: { deserialize(b: Uint8Array): any };
   ContractMaintenanceAuthority: new (committee: unknown[], threshold: number, counter: bigint) => unknown;
   StateValue: any; ChargedState: new (v: unknown) => unknown; CompactTypeBytes: new (n: number) => any;
+  CompactTypeBoolean: { toValue(b: boolean): unknown; alignment(): unknown };
 };
 const V = vaultModule as unknown as {
   Contract: new (w: unknown) => { initialState(a: unknown, b: unknown): Promise<{ currentContractState: { serialize(): Uint8Array } }> };
@@ -49,10 +50,10 @@ const made = await new V.Contract(noCircuit).initialState(
 
 /**
  * This build's vault as the chain would hold it: held by `KEY` alone, holding `notes`, and - when `started` - its first
- * secret's commitment set and the mark the last sealed copy leaves written; listing `tokens` as the public tokens it
- * was ever paid in.
+ * secret's commitment set and the mark the last sealed copy leaves written; when `retired`, carrying the mark its own
+ * retire writes.
  */
-const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?: [string, string]; tokens?: string[] }): { serialize(): Uint8Array } => {
+const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?: [string, string]; retired?: boolean }): { serialize(): Uint8Array } => {
   const state = R.ContractState.deserialize(made.currentContractState.serialize());
   state.maintenanceAuthority = new R.ContractMaintenanceAuthority([KEY], 1, 0n);
   const fields: any[] = state.data.state.asArray();
@@ -60,12 +61,11 @@ const aVault = (o: { notes: string[]; started: boolean; fewer?: boolean; split?:
   const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
   let notes = fields[1].asMap();
   for (const n of o.notes) notes = notes.insert(aligned(bytes(n)), R.StateValue.newNull());
-  let tokens = fields[2].asMap();
-  for (const t of o.tokens ?? []) tokens = tokens.insert(aligned(bytes(t)), R.StateValue.newNull());
+  const bool = R.CompactTypeBoolean;
   const held = V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes('51'.repeat(32)));
   const next = fields.map((f, i) => {
     if (i === 1) return R.StateValue.newMap(notes);
-    if (i === 2) return R.StateValue.newMap(tokens);
+    if (o.retired === true && i === fields.length - 1) return R.StateValue.newCell({ value: bool.toValue(true), alignment: bool.alignment() });
     if (o.started && i === 5) return R.StateValue.newCell({ value: [held], alignment: f.asCell().alignment });
     if (o.split !== undefined && i === 6) return R.StateValue.newMap(f.asMap().insert(aligned(bytes(o.split[0])), R.StateValue.newCell(aligned(bytes(o.split[1])))));
     if (o.started && i === 7) return R.StateValue.newMap(f.asMap().insert(aligned(V.pureCircuits.copiesWrittenKey()), R.StateValue.newCell(aligned(held))));
@@ -331,16 +331,14 @@ describe('THE VAULT, READ ON THIS DEVICE', () => {
     expect((read as { publicBalancesWhy?: string }).publicBalancesWhy).toMatch(/Skipping it would understate/);
   });
 
-  it('READS THE PUBLIC TOKENS THE VAULT LISTS, WHICH ITS RETIRE REFUSES ON, BESIDE WHAT IT HOLDS OF THEM, AND NONE FROM A LEDGER OF ANOTHER SHAPE', async () => {
-    const token = '0a'.repeat(32);
-    /* RED WHEN: the list the vault's retire asserts empty is not read, so a vault paid in and back to nothing is read as ready to retire. */
-    expect(await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true, tokens: [token] })), VAULT))
-      .toMatchObject({ onChain: true, unshieldedTokens: [token], publicBalances: [] });
-    expect(await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true })), VAULT)).toMatchObject({ unshieldedTokens: [] });
-    /* RED WHEN: a list read off a ledger of another shape is handed on as the vault's, or handed on as empty. */
-    const other = await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true, tokens: [token], fewer: true })), VAULT);
-    expect(other).not.toHaveProperty('unshieldedTokens');
-    expect((other as { unshieldedTokensWhy?: string }).unshieldedTokensWhy).toEqual((other as { notesWhy?: string }).notesWhy);
+  it('READS THE VAULT\'S OWN RETIRED MARK, WHICH ITS DEPOSITS REFUSE ON, AND NONE FROM A LEDGER OF ANOTHER SHAPE', async () => {
+    /* RED WHEN: the mark the vault's retire writes is not read, so a retired vault is read as taking deposits. */
+    expect(await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true, retired: true })), VAULT))
+      .toMatchObject({ onChain: true, retired: true });
+    expect(await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true })), VAULT)).toMatchObject({ retired: false });
+    /* RED WHEN: a mark read off a ledger of another shape is handed on as the vault's. */
+    const other = await readVaultOnChain(d, anIndexer(aVault({ notes: [], started: true, fewer: true })), VAULT);
+    expect(other).not.toHaveProperty('retired');
   });
 
   it('A VAULT\'S DEPLOY IS READ FROM THE CHAIN AT ITS OWN ADDRESS, AND ONE THE CHAIN HOLDS NONE FOR IS NO VAULT THIS COMPANY CAN USE', async () => {

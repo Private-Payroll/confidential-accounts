@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, TEST_AMOUNT, TEST_TOKEN_BYTES } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
+import { partKeyOf, wrapBaseOf } from './part-keys.js';
 import { payoutLeafOf, sumTreeOfLeaves, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { payRecordNonceOf, sealPayKeyTo, type PayRecord } from '../../src/midnight/run-keys.js';
 import { openSealedPayKey, payKeyCommitmentOf, payKeyPayloadOf } from '../../src/midnight/pay-key-commitment.js';
@@ -103,9 +104,9 @@ describe('the chain records who was paid for which month', () => {
     const run = await approvedRun(sim, PAYROLL, payments, 11);
     const before = sim.ledger.movements.size();
     await pay(sim, PAYROLL, run, payments, 0);
-    /* RED WHEN recordPayment stops writing the leaf's value (B' alone): the payslip page and the retry check read it. */
+    /* RED WHEN recordPaymentFromVault stops writing the leaf's value (B' alone): the payslip page and the retry check read it. */
     expect(sim.ledger.movements.member(pureCircuits.paidMovementOf(fromHex(run.leaves[0]!)))).toBe(true);
-    /* RED WHEN recordPayment stops writing the nonce's value. */
+    /* RED WHEN recordPaymentFromVault stops writing the nonce's value. */
     expect(paidOnce(sim, SEPTEMBER)).toBe(true);
     /* RED WHEN either value stops being written, or a third is added: the raise guard counts two per payment. */
     expect(sim.ledger.movements.size() - before).toBe(2n);
@@ -120,7 +121,7 @@ describe('the chain records who was paid for which month', () => {
     const run2 = await approvedRun(sim, PAYROLL, raise, 12);
     expect(run2.leaves[0]).not.toBe(run1.leaves[0]);
     const before = sim.ledger.movements.size();
-    /* RED WHEN recordPayment stops refusing a recorded nonce: the leaf is new, so nothing else refuses it. */
+    /* RED WHEN recordPaymentFromVault stops refusing a recorded nonce: the leaf is new, so nothing else refuses it. */
     await expect(pay(sim, PAYROLL, run2, raise, 0))
       .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
     expect(sim.ledger.movements.size()).toBe(before);
@@ -204,7 +205,7 @@ describe('the pay-record key, sealed to each signer on chain', () => {
   const aKeys = newWrappingKeypair();
   const bKeys = newWrappingKeypair();
 
-  /** Raises and approves the round that commits the account to `to`. */
+  /** Raises and approves the proposal that commits the account to `to`. */
   const approvedCommitment = async (to: Uint8Array, seed = 51, approvers = [A, B]) => {
     const c = change(0n, seed);
     const payload = fromHex(payKeyPayloadOf(toHex(to)));
@@ -227,7 +228,7 @@ describe('the pay-record key, sealed to each signer on chain', () => {
 
   it('refuses an approved round for ANOTHER commitment', async () => {
     const other = await approvedCommitment(fromHex(payKeyCommitmentOf('77'.repeat(32))));
-    /* RED WHEN the circuit stops checking the round names this commitment. */
+    /* RED WHEN the circuit stops checking the proposal names this commitment. */
     await expect(sim.as(carrying(sim, A, other.c)).sealPayKey(wrapFor(aKeys.publicKey), commitment, other.id))
       .rejects.toThrow(/not for this pay-record key/);
     expect(sim.payKeyCommitment()).toBeUndefined();
@@ -269,6 +270,26 @@ describe('the pay-record key, sealed to each signer on chain', () => {
     expect(openSealedPayKey(sim.sealedPayKeyOf(B)!.map(toHex), bKeys.secret, toHex(commitment))).toBe(KEY);
   });
 
+  it('EVERY PART SITS WHERE THE EXPORTED KEY SAYS, FOR EACH SIGNER', async () => {
+    const self = () => fromHex(String(sim.address));
+    const round = await approvedCommitment(commitment);
+    const wraps = new Map([[A, wrapFor(aKeys.publicKey)], [B, wrapFor(bKeys.publicKey)]]);
+    const size = sim.signerRolesSize();
+    await sim.as(carrying(sim, A, round.c)).sealPayKey(wraps.get(A)!, commitment, round.id);
+    await sim.as(B).sealPayKey(wraps.get(B)!, commitment);
+    for (const d of [A, B]) {
+      for (const part of [0n, 1n, 2n, 3n]) {
+        const key = pureCircuits.payKeyWrapKeyOf(self(), d.secretKey, part);
+        /* RED WHEN the exported key is not the one hash the four parts share plus the part. */
+        expect(toHex(key)).toBe(toHex(partKeyOf(wrapBaseOf(self(), d.secretKey), part)));
+        /* RED WHEN the circuit writes a part anywhere but where the exported key says: the device would find nothing. */
+        expect(toHex(sim.ledger.signerRoles.lookup(key))).toBe(toHex(wraps.get(d)![Number(part)]!));
+      }
+    }
+    /* RED WHEN two parts share a key: the commitment and four parts each, nine entries, and nothing else. */
+    expect(sim.signerRolesSize() - size).toBe(9n);
+  });
+
   it('refuses a second copy from the same signer, a copy against another commitment, and anybody not seated', async () => {
     const round = await approvedCommitment(commitment);
     await sim.as(carrying(sim, A, round.c)).sealPayKey(wrapFor(aKeys.publicKey), commitment, round.id);
@@ -284,8 +305,10 @@ describe('the pay-record key, sealed to each signer on chain', () => {
       .rejects.toThrow(/not the pay-record key this company confirmed/);
     expect(sim.sealedPayKeyOf(B)).toBeUndefined();
 
-    await expect(sim.as(C).sealPayKey(wrapFor(bKeys.publicKey), commitment))
-      .rejects.toThrow(/not a signer on this account/);
+    /* RED WHEN somebody not seated can seal a copy: their device offers a path for its own leaf beside a
+     * signer's siblings, so the witness answers and the circuit refuses. */
+    await expect(sim.as(sim.dishonest(C, { ...sim.pathFor(A), leaf: sim.leafOf(C) })).sealPayKey(wrapFor(bKeys.publicKey), commitment))
+      .rejects.toThrow(/(?<!you are )not a signer on this account/);
     expect(sim.sealedPayKeyOf(C)).toBeUndefined();
   });
 

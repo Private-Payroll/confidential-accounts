@@ -115,7 +115,7 @@ const setUp = (over: {
       log.push('read here');
       const v = view();
       return {
-        onChain: v.onChain, state: v.state ?? '', notes: v.notes, notesFromThisBuild: true, everCreated: v.everCreated ?? [],
+        onChain: v.onChain, state: v.state ?? '', notes: v.notes, notesFromThisBuild: true, retired: false, everCreated: v.everCreated ?? [],
         authority: over.authority !== undefined ? over.authority
           : v.heldByCommittee === true ? { committee: COMMITTEE_KEYS.map((k) => ({ ...k })), threshold: COMMITTEE_THRESHOLD }
             : { committee: [{ tag: 'schnorr', value: '99'.repeat(32) }], threshold: 1 },

@@ -22,16 +22,12 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codeOf, contractSources } from './contract-sources.mjs';
+import { CONTRACTS, codeOf, contractSources } from './contract-sources.mjs';
 
 export { codeOf };
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PARTS = {
-  account: 'contracts/src/ConfidentialAccount.compact',
-  vault: 'contracts/src/Vault.compact',
-  witnesses: 'contracts/src/witnesses.ts',
-};
+const PARTS = { ...CONTRACTS, witnesses: 'contracts/src/witnesses.ts' };
 /** Which parts each compiled folder is built from. */
 const FOR_DIR = {
   'contracts/managed': ['account', 'witnesses'],

@@ -23,6 +23,12 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
+/** Each contract by its main file, the one table every reader of the contracts takes them from. */
+export const CONTRACTS = {
+  account: 'contracts/src/ConfidentialAccount.compact',
+  vault: 'contracts/src/Vault.compact',
+};
+
 /** The code with comments and spacing taken out. Strings are kept whole, so a // inside one stays. */
 export function codeOf(text) {
   let out = '';

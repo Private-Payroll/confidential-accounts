@@ -197,9 +197,9 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as pr
       context: { callContext: { currentQueryContext: { effects: { unshieldedInputs: Map<{ tag: string; raw: string }, bigint> } } } }
     }).context.callContext.currentQueryContext.effects.unshieldedInputs];
     expect(inputs).toHaveLength(1);
-    expect(inputs[0][0].tag).toBe('unshielded');
-    expect(inputs[0][0].raw).toBe(hex(NIGHT));
-    expect(inputs[0][1]).toBe(500n);
+    expect(inputs[0]![0].tag).toBe('unshielded');
+    expect(inputs[0]![0].raw).toBe(hex(NIGHT));
+    expect(inputs[0]![1]).toBe(500n);
 
     /* And no note was invented for it. The pool is the private side only. */
     const after = vaultLedger(vaultState as never);
@@ -228,8 +228,8 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as pr
       context: { callContext: { currentQueryContext: { effects: { unshieldedOutputs: Map<{ tag: string; raw: string }, bigint> } } } }
     }).context.callContext.currentQueryContext.effects.unshieldedOutputs];
     expect(outs).toHaveLength(1);
-    expect(outs[0][0].raw).toBe(hex(NIGHT));
-    expect(outs[0][1]).toBe(250n);
+    expect(outs[0]![0].raw).toBe(hex(NIGHT));
+    expect(outs[0]![1]).toBe(250n);
 
     /*
      * AND IT WENT TO THE PERSON, WHICH IS A SEPARATE CLAIM FROM THE AMOUNT.
@@ -264,9 +264,9 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as pr
     /* The vault counted it… */
     expect(vaultLedger(r.context.callContext.currentQueryContext.state as never).payments).toBe(1n);
     /* …and the ACCOUNT recorded the leaf, paid-once working unchanged. */
-    const acct = accountLedger(r.context.queryContexts[sim.address as never].state as never);
+    const acct = accountLedger(r.context.queryContexts[sim.address as never]!.state as never);
     expect(acct.movements.member(
-      pureCircuits.paidMovementOf(fromHex(run.tree.leaves[0])))).toBe(true);
+      pureCircuits.paidMovementOf(fromHex(run.tree.leaves[0]!)))).toBe(true);
   });
 
   it('THE ONE THAT LOSES THE MONEY: an approval for a SHIELDED payment cannot be paid in public money', async () => {
@@ -369,14 +369,26 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as pr
 
   /* ------------------------------------------------------- retire and forget */
 
-  it('REFUSES TO RETIRE A VAULT HOLDING PUBLIC MONEY, which an empty note pool does not say', async () => {
+  it('A VAULT HOLDING PUBLIC MONEY IS RETIRED, keeps the token on its list, and takes no more public money', async () => {
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
-    expect(vaultLedger(vaultState as never).notes.isEmpty()).toBe(true);
+    const self = Uint8Array.from(Buffer.from(String(vaultAddr), 'hex'));
+    const c = govChange(120);
+    const payload = pureCircuits.retireVaultPayload(self);
+    await sim.as(carrying(sim, A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    await sim.as(carrying(sim, B, c)).approve(id);
 
-    await expect(vault.impureCircuits.retire(
-      ctxFor('retire', chainSays([[NIGHT, 500n]])), bytes(0x51), bytes(0x52)))
-      .rejects.toThrow(/still holds public money/i);
+    /* RED WHEN retiring refuses a vault that holds public money. */
+    const r = await vault.impureCircuits.retire(ctxFor('retire', chainSays([[NIGHT, 500n]])), id, c.salt);
+    adopt(r as never);
+    sim.adoptFromCall(r.context);
+    expect(sim.adopted(self)).toBe(false);
+    /* RED WHEN retiring drops the token from the list a later payment and forget read. */
+    expect(vaultLedger(vaultState as never).unshieldedTokens.member(NIGHT)).toBe(true);
+    /* RED WHEN `depositUnshielded` stops refusing a retired vault. */
+    await expect(vault.impureCircuits.depositUnshielded(ctxFor('depositUnshielded', chainSays([[NIGHT, 500n]])), NIGHT, 5n))
+      .rejects.toThrow(/has been retired, so it takes no more money/);
   });
 
   it('will not forget a colour the chain says it still holds', async () => {
@@ -388,19 +400,12 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault holds public money as well as pr
       .rejects.toThrow(/still holds some of that token/i);
   });
 
-  it('forgets a colour once the chain says the balance is gone, and the vault can then retire', async () => {
+  it('forgets a colour once the chain says the balance is gone', async () => {
     adopt(await vault.impureCircuits.depositUnshielded(
       ctxFor('depositUnshielded', chainSays()), NIGHT, 500n) as never);
 
     adopt(await vault.impureCircuits.forgetUnshielded(
       ctxFor('forgetUnshielded', chainSays([])), NIGHT) as never);
     expect(vaultLedger(vaultState as never).unshieldedTokens.isEmpty()).toBe(true);
-
-    /* Retirement now gets as far as the account, which is as far as this vault's
-     * own refusals go. The account has no such retire round open, so it refuses
-     * there — and that is a DIFFERENT refusal from the two this circuit makes. */
-    await expect(vault.impureCircuits.retire(
-      ctxFor('retire', chainSays([])), bytes(0x51), bytes(0x52)))
-      .rejects.toThrow(/^(?!.*still holds).*$/is);
   });
 });

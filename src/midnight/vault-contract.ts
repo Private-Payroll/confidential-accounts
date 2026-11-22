@@ -650,8 +650,7 @@ export async function findDeployedVaultContract(
  *      directions BEFORE the loop, building from that decided list, and
  *      asserting the built map again after.** A vault missing `payout` is money
  *      that can be deposited and never leave (`VerifierKeyNotPresent`,
- *      `ledger/src/verify.rs:109-124` at `ledger-9.1.0.0-rc.3`; `retire` refuses a non-empty vault,
- *      `Vault.compact:1071` and `:1088`), so it is refused by name before a fee is
+ *      `ledger/src/verify.rs:109-124` at `ledger-9.1.0.0-rc.3`), so it is refused by name before a fee is
  *      spent rather than discovered on chain.
  *   2. `assertKnownCircuitSet` IS ACCOUNT-ONLY BY CONSTRUCTION
  *      (`src/midnight/deferral.ts:126-140`). **Answered by
@@ -659,7 +658,7 @@ export async function findDeployedVaultContract(
  *      two-directional. Its `where` parameter was documented for two moments and
  *      had only ever been called at one; this path supplies the other.
  *   3. `pruned.data = full.data` CARRIES THE VAULT'S `account` PIN
- *      (`Vault.compact:262-264`). The loud failure is `IncorrectChargedState`
+ *      (written by `Vault.compact`'s constructor). The loud failure is `IncorrectChargedState`
  *      (`verify.rs:1773-1777`); **the quiet one is a `data` that round-trips
  *      carrying a different account, and neither find checks it.** Answered by
  *      reading the vault's own ledger off the state this deploy is about to
@@ -685,7 +684,7 @@ export async function findDeployedVaultContract(
  *      **A mechanical break, not a hazard. Answered by returning it.**
  *   7. NO ZSWAP OFFER IS CARRIED. The account's guard exists and its message is
  *      about the ACCOUNT's constructor. **Answered by a guard whose message is
- *      about the vault's**, which mints nothing today (`Vault.compact:262-264`).
+ *      about the vault's**, whose constructor mints nothing.
  *      A guard describing the wrong contract is a guard nobody acts on.
  *   8. `requireVaultMaintenanceAuthority`'s NARROWING MUST NOT APPLY HERE.
  *      **Answered by `requireHandBuiltVaultAuthority` below rather than by
@@ -947,7 +946,7 @@ export function buildVaultDeployState(
   /*
    * DEPENDENCY 7. This path carries no zswap offer, so it refuses a constructor
    * that made one. The VAULT's constructor writes one field, the account it is
-   * married to (Vault.compact:262-264), and mints nothing. The account's guard
+   * married to, and mints nothing. The account's guard
    * says the same thing about the account's constructor; a guard describing the
    * wrong contract is a guard nobody acts on, which is why this is its own
    * sentence rather than a shared one.
@@ -956,7 +955,7 @@ export function buildVaultDeployState(
     throw new Error(
       'the VAULT\'s constructor produced a zswap offer, and the hand-built vault deploy path ' +
         'does not carry offers. This is new behaviour: Vault.compact\'s constructor writes ' +
-        'the account it is married to and mints nothing (Vault.compact:262-264). Coins a ' +
+        'the account it is married to and mints nothing. Coins a ' +
         'constructor produced and a deploy silently dropped are money nobody can reach, so ' +
         'this needs a deliberate change here rather than a retry.',
     );

@@ -206,8 +206,8 @@ describe('a threshold per vault', () => {
 
   it('refuses a vault threshold change from someone who is not a signer', async () => {
     /*
-     * `recordPayment` deliberately has no `requireSigner` — a vault is not a
-     * signer. This circuit is the opposite case and must keep one: it is
+     * `recordPaymentFromVault` deliberately has no `requireSigner` — a vault
+     * is not a signer. This circuit is the opposite case and must keep one: it is
      * governance, and the salt alone must not be enough to change a rule.
      *
      * `mallory` is nobody, and carries the correct salt precisely so that the
@@ -220,8 +220,10 @@ describe('a threshold per vault', () => {
     await sim.as(carrying(sim, B, g)).approve(gid);
 
     const mallory = privateStateFor(99);
-    await expect(sim.as(sim.applying(mallory, g))
-      .setVaultThreshold(PAYROLL, 3n, gid)).rejects.toThrow(/not a signer on this account/i);
+    /* RED WHEN somebody not seated can change it: her device offers a path for her own leaf beside a signer's
+     * siblings, so the witness answers and the circuit refuses. */
+    const offering = sim.dishonest(sim.applying(mallory, g), { ...sim.pathFor(A), leaf: sim.leafOf(mallory) });
+    await expect(sim.as(offering).setVaultThreshold(PAYROLL, 3n, gid)).rejects.toThrow(/(?<!you are )not a signer on this account/);
     expect(sim.isOpen(gid)).toBe(true);
   });
 
@@ -290,7 +292,7 @@ describe('the reserved signer scope', () => {
     /* RED WHEN another reader of the witness appears: the declaration, the seat's one read, and the
        invitee's, which binds the scope it reads into both the invitation it takes and the leaf it seats. */
     expect(code.match(/signerScope/g) ?? []).toHaveLength(3);
-    expect(code).toContain('signerInvitePayload(address, scope, newThreshold), noVault(), proposalSalt())');
+    expect(code).toContain('governanceIdOf(signerInvitePayload(address, scope, newThreshold), proposalSalt()) == proposal');
     expect(code).toContain('const newSignerLeaf = signerLeaf(signerPublicKey(localSecretKey()), signerBlinding(), scope);');
     expect(code).toMatch(/witness signerScope\(\)\s*:\s*Bytes<32>;/);
     expect(code).toContain('const scope = signerScope();');

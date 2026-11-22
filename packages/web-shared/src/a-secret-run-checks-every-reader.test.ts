@@ -132,7 +132,7 @@ const press = async (o: {
      * account, empty, and with the circuits of both this app's.
      */
     vaultOnChain: async () => ({
-      onChain: true, state: 'QUJD', notes: [], notesFromThisBuild: true, everCreated: [],
+      onChain: true, state: 'QUJD', notes: [], notesFromThisBuild: true, retired: false, everCreated: [],
       authority: { committee, threshold: 2 }, account: ACCOUNT, started: false, circuits: null, accountCircuits: null,
     }),
     /* One block's view of the vault and the account, read here at the wallet's indexer. */

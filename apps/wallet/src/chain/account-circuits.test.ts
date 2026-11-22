@@ -9,6 +9,7 @@ import { noFurtherNote, notePlaces } from '../../../../src/midnight/vault-step-n
 import { startTheVault, TEST_VAULT_SECRET } from '../../../../contracts/test/start-a-vault.js';
 import { ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS, type VaultCircuit } from '../../../../src/midnight/vault-contract.js';
 import { fromHex, toHex } from '../../../../src/core/crypto.js';
+import { contractInState } from './company-label-on-chain.js';
 import {
   ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
   ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL, VAULT_CIRCUITS_THE_WALLET_PROVES,
@@ -102,12 +103,11 @@ const accountCircuitsMoneyCallsReach = async (): Promise<Record<string, string[]
 };
 
 /**
- * Starts a vault that holds nothing, drops a public token it no longer holds from its set, and retires it under a
- * retirement the account's signers approved, as the wallet does, and says which account circuits each call reached.
+ * Starts a vault and retires it under a retirement the account's signers approved, as the wallet does, and says which
+ * account circuits each call reached.
  */
 const accountCircuitsRetireCallsReach = async (): Promise<Record<string, string[]>> => {
   const { sim, vaultBytes, reached, call } = await aVaultOnAnAccount();
-  await call('forgetUnshielded', new Uint8Array(32).fill(0xab));
   const c = change(0n, 0xc3);
   const payload = accountPure.retireVaultPayload(vaultBytes);
   await sim.as(sim.applying(A, c)).propose(payload);
@@ -168,4 +168,26 @@ describe('the account circuits the wallet holds keys for', () => {
     expect([...ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR].sort()).toEqual([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES, 'approveVaultChange', 'recordPaymentFromVault', 'retireVault'].sort());
     expect(new Set(ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR).size).toBe(ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR.length);
   });
+});
+
+describe('a vault retired through its own retire, as this wallet reads the account', () => {
+  it.skipIf(!ACCOUNT_KEYS_ON_DISK)('the account lists the vault retired, not adopted, and the wallet\'s read of it names it [needs contracts/managed/keys; `npm run compact` builds them]', async () => {
+    const { sim, vaultBytes, call } = await aVaultOnAnAccount();
+    const vault = toHex(vaultBytes).toLowerCase();
+    const c = change(0n, 0xc4);
+    const payload = accountPure.retireVaultPayload(vaultBytes);
+    await sim.as(sim.applying(A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    await sim.as(sim.applying(B, c)).approve(id);
+    /* The vault's own retire, which mints the receipt the account's retireVault takes: the one way a vault is retired. */
+    await call('retire', id, c.salt);
+    const hexes = (vs: Iterable<Uint8Array>) => [...vs].map((v) => toHex(v).toLowerCase());
+    /* RED WHEN: the vault's own retire does not reach the account, so the vault is still adopted and never retired. */
+    expect(hexes([...sim.ledger.retiredAt].map(([v]: [Uint8Array, bigint]) => v))).toEqual([vault]);
+    expect(hexes(sim.ledger.vaults)).toEqual([]);
+    /* RED WHEN: a retired vault is not read, so a change leaving it out is signed as if it named every contract. */
+    const address = String(sim.address).toLowerCase();
+    const read = contractInState(address, address as never, (sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
+    expect(read.of === 'read' && read.vaults).toEqual([vault]);
+  }, 120_000);
 });

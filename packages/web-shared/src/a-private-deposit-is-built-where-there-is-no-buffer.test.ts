@@ -19,7 +19,7 @@
  *
  * That vault is of the old shape, five fields and no secret, and this build's
  * vault takes no money until its account has approved a secret. So its state
- * is carried into this build's fourteen fields as an approved secret run and
+ * is carried into this build's fifteen fields as an approved secret run and
  * its written sealed copies would leave it: its own account, notes, public
  * tokens and count, a secret's commitment, the mark the last copy leaves, and
  * this build's empty fields otherwise.

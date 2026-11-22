@@ -23,6 +23,10 @@ const chain = vi.hoisted(() => ({
   commitment: '', written: '', secret: '', copiesTo: [] as string[], removals: 0, stayers: [] as string[],
   approvals: 1, needed: 1, pending: null as null | { secret: string; readers: string[]; previous: string },
   raised: [] as string[], set: 0, copies: 0, doors: null as unknown, admitted: null as null | Set<string>,
+  /** The vaults the account retired, each with what its private side reads as: notes held, none, or a read that fails. */
+  retired: [] as Array<{ vault: string; notes: string[] | Error }>,
+  /** Whether the rotation's read of each vault found it among the vaults the company holds for the change. */
+  held: new Map<string, boolean>(),
   /** The account's removal count when the run that set each commitment was raised. */
   setAt: new Map<string, number>(),
 }));
@@ -37,7 +41,12 @@ const seal = (vault: string, secret: string, reader: string) => sealSecretCopy({
 
 vi.mock('../../../../packages/web-shared/src/vault-read-here.js', async (orig) => ({
   ...(await orig<object>()),
-  theVaultReadForItsStart: async () => ({ view: { onChain: true, state: 'S', nonceCommitment: chain.commitment }, refusal: null }),
+  theVaultReadForItsStart: async (doors: { onChain?: (v: string) => Promise<{ holders: { adoptedVaults: string[] } }>; retiredAdmitted?: readonly string[] }, vault: string) => {
+    if (doors.onChain !== undefined) {
+      chain.held.set(vault, (await doors.onChain(vault)).holders.adoptedVaults.includes(vault) || (doors.retiredAdmitted ?? []).includes(vault));
+    }
+    return { view: { onChain: true, state: 'S', nonceCommitment: chain.commitment }, refusal: null };
+  },
 }));
 vi.mock('../../../../packages/web-shared/src/removals-on-the-chain.js', () => ({ removalsOnTheChainHere: async () => chain.removals }));
 vi.mock('../../../../packages/web-shared/src/vault-secret-run-record.js', async (orig) => ({ ...(await orig<object>()), heldSecretsOf: async () => [] }));
@@ -108,8 +117,14 @@ const aDevice = (key: Uint8Array) => {
     me: { signerId: 'me', wrappingSecret: '01'.repeat(32), companyKey: key }, records, secretKeptHere: wallet,
     material: { signingSecret: SIGNING },
     account: 'ac'.repeat(32),
+    onChain: async () => ({ holders: { adoptedVaults: [VAULT] } }),
     indexer: async () => ({ indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' }),
     builder: {
+      vaultOnChain: async (i: { vault: string }) => {
+        const notes = chain.retired.find((x) => x.vault === i.vault)?.notes ?? [];
+        if (notes instanceof Error) throw notes;
+        return { onChain: true, state: 'S', notes, publicBalances: [], notesFromThisBuild: true, everCreated: [], account: 'ac'.repeat(32), started: true };
+      },
       secretSetAt: async (i: { commitment: string }) => chain.setAt.get(i.commitment) ?? 0,
       secretIsTheVaults: async (i: { secret: string }) => commitmentOf(i.secret) === chain.commitment,
       ownChainCopy: async (i: { reader: string; of: string }) => ({
@@ -135,6 +150,10 @@ const newest = async (records: ReturnType<typeof storesFor>, who: Uint8Array) =>
 const companyParts = (mine: { seat: string; retired?: number }, held: readonly string[], entered: readonly string[] = held.filter((s) => s !== mine.seat)) => ({
   accountId: 'acc_1', label: 'L', account: 'c0'.repeat(32), companyKeys: {}, roster: async () => null,
   holders: async () => ({ seats: held, adoptedVaults: [VAULT], approvals: 1, seatBar: 1 }),
+  chain: { indexer: { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' } },
+  builder: {
+    superAdmins: { reads: () => ({ accountAt: async () => ({ authority: {}, vaults: { adopted: [VAULT], retired: [VAULT, ...chain.retired.map((x) => x.vault)] } }) }) },
+  },
   judges: {
     directoryHereFor: () => async () => ({
       dir: {
@@ -152,7 +171,7 @@ const removed = (leaf: string) => ({ leaf, round: { id: 'prp_1', chainId: 'dd'.r
 const hook = afterARemoval({ secrets: () => ({}) as never, pause: async () => {}, indexerHttp: 'https://indexer.example' }).afterCarried!;
 
 beforeEach(() => {
-  Object.assign(chain, { removals: 1, stayers: [pk(ADA), pk(BO)], approvals: 1, needed: 1, pending: null, raised: [], set: 0, copies: 0, admitted: null, setAt: new Map() });
+  Object.assign(chain, { removals: 1, stayers: [pk(ADA), pk(BO)], approvals: 1, needed: 1, pending: null, raised: [], set: 0, copies: 0, admitted: null, setAt: new Map(), retired: [], held: new Map() });
 });
 
 describe('THE REMOVAL\'S HOOK, RUN FOR REAL, CHANGES THE VAULT SECRET ONLY ON A WALLET WHOSE SEAT STAYS', () => {
@@ -196,6 +215,50 @@ describe('THE REMOVAL\'S HOOK, RUN FOR REAL, CHANGES THE VAULT SECRET ONLY ON A 
     expect(chain.raised).toEqual([]);
     /* RED WHEN: the vault's secret is not changed once the admitted seat is entered and the company's key changed after the removal. */
     expect(await press(read(true, true))).toMatchObject({ state: 'rotated' });
+  });
+});
+
+describe('A RETIRED VAULT THAT MAY HOLD PRIVATE MONEY HAS ITS SECRET CHANGED WITH THE OTHERS', () => {
+  it('a retired vault holding notes, or whose notes could not be read, is changed beside the adopted ones; an empty one is not', async () => {
+    aDevice(ADA);
+    const [FUNDED, EMPTY, UNREAD] = ['f1', 'e1', 'u1'].map((x) => x.repeat(32)) as [string, string, string];
+    chain.retired = [{ vault: FUNDED, notes: ['n1'] }, { vault: EMPTY, notes: [] }, { vault: UNREAD, notes: new Error('the indexer did not answer') }];
+    const changed = await vaultSecretsChangedHere(ctx, companyRead({ seat: SEAT.ada }, [SEAT.ada, SEAT.bo]), {} as never, { leaving: async () => new Set<string>() }, 'finish');
+    /*
+     * RED WHEN: a retired vault's private money is left on a secret the signer who left can open, because only adopted
+     * vaults are changed; or a retired vault whose notes could not be read is passed over as empty; or a vault both
+     * adopted again and listed as retired is changed twice.
+     */
+    expect(changed.map((v) => v.vault)).toEqual([VAULT, FUNDED, UNREAD]);
+    /* RED WHEN: the change reads a retired vault as one the company does not hold, so the device refuses to change its secret. */
+    expect([...chain.held]).toEqual([[VAULT, true], [FUNDED, true], [UNREAD, true]]);
+  });
+});
+
+describe('THE RETIRED VAULTS HANDED IN ARE NOT READ AGAIN', () => {
+  it('a change handed the retired vaults changes the adopted ones even when the account\'s list of retired vaults cannot be read', async () => {
+    aDevice(ADA);
+    const unread = { ...companyRead({ seat: SEAT.ada }, [SEAT.ada, SEAT.bo]) as any };
+    unread.builder = { ...unread.builder, superAdmins: { reads: () => ({ accountAt: async () => { throw new Error('the indexer did not answer'); } }) } };
+    const changed = await vaultSecretsChangedHere(ctx, unread as never, {} as never, { leaving: async () => new Set<string>() }, 'finish', { retired: [] });
+    /* RED WHEN: the change reads the retired vaults again though it was handed them, so a list it cannot read stops every adopted vault's change. */
+    expect(changed.map((v) => v.vault)).toEqual([VAULT]);
+  });
+});
+
+describe('A PRESS NAMING ONE RETIRED VAULT CHANGES ITS SECRET AS THE EVERY-VAULT CHANGE DOES', () => {
+  it('a named retired vault that holds notes, or whose notes could not be read, is read as held for the change; an empty one is not', async () => {
+    aDevice(ADA);
+    const [FUNDED, EMPTY, UNREAD] = ['f1', 'e1', 'u1'].map((x) => x.repeat(32)) as [string, string, string];
+    chain.retired = [{ vault: FUNDED, notes: ['n1'] }, { vault: EMPTY, notes: [] }, { vault: UNREAD, notes: new Error('the indexer did not answer') }];
+    const press = async (vault: string) => (await vaultSecretsChangedHere(ctx, companyRead({ seat: SEAT.ada }, [SEAT.ada, SEAT.bo]), {} as never,
+      { leaving: async () => new Set<string>() }, 'raise', { vault: vault as Hex }));
+    for (const v of [FUNDED, EMPTY, UNREAD]) expect((await press(v)).map((x) => x.vault)).toEqual([v]);
+    /*
+     * RED WHEN: a press naming a retired vault holding private money, or whose notes could not be read, reads it as a
+     * vault the company does not hold, so its secret is never changed; or an empty retired vault is read as held.
+     */
+    expect([...chain.held]).toEqual([[FUNDED, true], [EMPTY, false], [UNREAD, true]]);
   });
 });
 

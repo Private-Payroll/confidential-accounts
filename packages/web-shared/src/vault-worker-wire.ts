@@ -15,7 +15,7 @@ import type { VaultCallOnChain } from '../../../src/midnight/note-index.js';
 import type { StartStandingOnTheWire } from './vault-worker-start.js';
 import type { StepOnTheWire, VaultRebuildAsked, VaultRebuilt } from './vault-rebuild-wire.js';
 import type { SuperAdminAnswer, SuperAdminAsk } from './super-admin-asks.js';
-import type { ForgetUnshieldedAsk, RetireAsk } from './vault-retire-built.js';
+import type { RetireAsk } from './vault-retire-built.js';
 
 export type { SecretRunOnTheWire } from './vault-secret-built.js';
 export type { StartStandingOnTheWire };
@@ -148,7 +148,7 @@ export type VaultAsk =
     id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
     secret: string; earlier?: string; proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
   }
-  | RetireAsk | ForgetUnshieldedAsk
+  | RetireAsk
   | {
     id: number; network: string; ask: 'write-secret-copy'; vault: string; run: SecretRunOnTheWire; place: number;
     state: string; parameters: string;
@@ -315,7 +315,6 @@ export type VaultAnswer =
   | Answered<'set-nonce-secret', { tx: string }>
   | Answered<'write-secret-copy', { tx: string }>
   | Answered<'retire', { tx: string }>
-  | Answered<'forget-unshielded', { tx: string }>
   | SuperAdminAnswer
   | { id: number; ok: false; error: string; name?: string; kind?: string };
 
@@ -352,9 +351,8 @@ export type VaultOnChainOnTheWire =
     /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
     readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
     readonly publicBalancesWhy?: string;
-    /** The public tokens the vault lists, which its retire refuses on while any is listed; absent, with why, off a ledger of another shape. */
-    readonly unshieldedTokens?: readonly string[];
-    readonly unshieldedTokensWhy?: string;
+    /** Whether the vault marked itself retired, so it takes no deposit; absent off a ledger of another shape. */
+    readonly retired?: boolean;
     readonly circuits?: { readonly why: string; readonly circuit: string | null } | null;
     readonly accountCircuits?: { readonly why: string; readonly circuit: string | null } | null;
   };

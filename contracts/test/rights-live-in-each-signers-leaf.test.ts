@@ -410,7 +410,10 @@ describe("changing a signer's rights is a re-seat, and a re-seat counts as a rem
     expect(sim.removals()).toBe(before + 1n);
     expect(sim.slotOf(cReseated)).toBe(slot);
     expect(sim.ledger.signerLeaves.size()).toBe(size);
-    await expect(sim.as(C).approve(pending)).rejects.toThrow(/not a signer on this account/);
+    await expect(sim.as(C).approve(pending)).rejects.toThrow(/you are not a signer on this account/);
+    /* RED WHEN the old leaf's path still opens a seat: the circuit, given the path it had before, refuses it. */
+    await expect(sim.as(sim.dishonest(C, { ...sim.pathFor(cReseated), leaf: sim.leafOf(C) })).approve(pending))
+      .rejects.toThrow(/(?<!you are )not a signer on this account/);
     /* A governance proposal raised before the re-seat is void, as after any removal. */
     for (const d of [B, cReseated]) await sim.as(d).approve(pending);
     await expect(sim.as(sim.applying(A, change(0n, 505))).setThreshold(3n, pending))
@@ -441,6 +444,26 @@ describe("changing a signer's rights is a re-seat, and a re-seat counts as a rem
     /* RED WHEN `reseatSigner` stops binding the proposal to both leaves. */
     await expect(sim.as(sim.applying(A, c)).reseatSigner(sim.leafOf(C), sim.leafOf(privateStateFor(10)), id))
       .rejects.toThrow(/that proposal is not for this change of seat/);
+  });
+
+  it('refuses a path for the old leaf from another tree', async () => {
+    const sim = await live([A, B, C], 2n);
+    const slot = sim.slotOf(C);
+    const to = privateStateFor(13);
+    const c = change(0n, 522);
+    const id = await raiseGov(sim, A, c, pureCircuits.reseatPayload(sim.leafOf(C), sim.leafOf(to)));
+    await sim.as(B).approve(id);
+    const real = sim.pathFor(C);
+    const forged = {
+      leaf: real.leaf,
+      path: real.path.map((step, i) => (i === 0 ? { ...step, sibling: { field: step.sibling.field + 1n } } : step)),
+    };
+    /* Pinned for C's leaf only, so A's own membership path is still the real one. */
+    const withForgedPath = { ...sim.applying(A, c), pinnedPath: forged, pinAnyLeaf: false };
+    /* RED WHEN `reseatSigner` stops checking the old leaf's path against the signers' tree. */
+    await expect(sim.as(withForgedPath).reseatSigner(sim.leafOf(C), sim.leafOf(to), id))
+      .rejects.toThrow(/that signer is not on this account/);
+    expect(sim.slotOf(C)).toBe(slot);
   });
 });
 
@@ -746,6 +769,11 @@ describe('a seat without a leaf is not a signer', () => {
     const run = await raiseRun(sim, A, PAYROLL, 47);
     await expect(sim.as(knowing(outsider, run)).approve(run.id)).rejects.toThrow(/you are not a signer on this account/);
     await expect(raiseRun(sim, outsider, PAYROLL, 48)).rejects.toThrow(/you are not a signer on this account/);
+    /* RED WHEN a leaf the signers' tree does not hold opens a seat: the device offers a path for its own leaf
+     * beside a signer's siblings, so the witness answers and the circuit refuses. */
+    const offering = sim.dishonest(outsider, { ...sim.pathFor(A), leaf: sim.leafOf(outsider) });
+    await expect(sim.as(knowing(offering, run)).approve(run.id)).rejects.toThrow(/(?<!you are )not a signer on this account/);
+    await expect(raiseRun(sim, offering, PAYROLL, 48)).rejects.toThrow(/(?<!you are )not a signer on this account/);
   });
 });
 

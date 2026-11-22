@@ -13,30 +13,23 @@
  * column names the `.compact` source it was read from, so a reader checking a
  * figure opens the file it came from rather than a copy of it. Source-derived
  * and stale-derived are different things, and only the second one is dangerous.
- * (It used to say the gate hashed these sources into a digest. It did, and
- * the digest was deleted: a list of inputs was a proxy that was wrong three
- * times over.)
  *
  * FOUR THINGS THAT LOOK LIKE DETAIL AND ARE NOT. Each was measured against the
  * two files rather than assumed:
  *
- *   1. `grep -c disclose` IS WRONG IN BOTH DIRECTIONS. It counts 76 lines in
- *      `ConfidentialAccount.compact` where there are 68 sites: 19 of the matches
- *      are comment prose, and two lines carry FOUR sites each (`:1782`, `:2071`).
- *      A column that counts lines is a measurement of the wrong thing.
- *   2. THE WORST FALSE MATCH IS A FABRICATED CODE EXAMPLE INSIDE A COMMENT —
- *      `ConfidentialAccount.compact:1290` writes
- *      `stateCommitment = disclose(stateCommitmentOf(...))`, and
- *      `stateCommitmentOf` does not exist anywhere in the file. A regex over raw
- *      text emits a disclosure of a value that is not in the contract. So
+ *   1. `grep -c disclose` IS WRONG IN BOTH DIRECTIONS: it counts comment prose
+ *      as sites, and one line can carry several sites. A column that counts
+ *      lines is a measurement of the wrong thing.
+ *   2. THE WORST FALSE MATCH IS A CODE EXAMPLE INSIDE A COMMENT: a comment
+ *      that writes `x = disclose(f(...))` for an `f` that does not exist makes a
+ *      regex over raw text emit a disclosure of a value that is not in the
+ *      contract. So
  *      comments are stripped BEFORE anything else, and stripped for the brace
  *      counting too, not only for the matching.
- *   3. `constructor` IS NOT THE KEYWORD `circuit`, and two real sites live in
- *      one — `:1590` in the account and `:263` in the vault. It was four until
- *      the account's constructor lost both of its threshold argument's
- *      disclosures with the argument. A scan for `circuit NAME(` alone silently
- *      drops the rest.
- *   4. `Vault.compact:88-126` IS A `contract Acct { … }` INTERFACE BLOCK whose
+ *   3. `constructor` IS NOT THE KEYWORD `circuit`, and real sites live in
+ *      both contracts' constructors. A scan for `circuit NAME(` alone silently
+ *      drops them.
+ *   4. `Vault.compact` HOLDS A `contract Acct { … }` INTERFACE BLOCK whose
  *      `circuit recordPayment(...)` and `circuit retireVault(...)` are
  *      declarations terminated by `;` WITH NO BODY. A scan that treats them as
  *      bodies invents two circuits, mis-anchors every range after them, and —
@@ -44,8 +37,7 @@
  *      file — merges them into those circuits' rows in any name-keyed index.
  *
  * AND THE CLOSURE, WHICH IS DEPTH ONE AND MUST STILL BE DONE. `requireSigner`
- * (`ConfidentialAccount.compact:1251-1272`) discloses the signer merkle root at
- * `:1270`, and seven exported circuits call it. A DISCLOSES column for `approve`
+ * discloses the signer merkle root, and exported circuits call it. A DISCLOSES column for `approve`
  * that omits it is not shorter, it is wrong: it says the circuit reveals nothing
  * when it reveals the root of the signer tree.
  */

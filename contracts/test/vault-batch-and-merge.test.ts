@@ -481,6 +481,48 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a merge, which needs no approval [needs 
   });
 });
 
+/** Retires `w` through the vault, under a retire round raised by A and approved by B. */
+const retire = async (w: World, seed: number) => {
+  const c: Change = change(0n, seed);
+  const payload = P.retireVaultPayload(w.self);
+  await w.sim.as(w.sim.applying(A, c)).propose(payload);
+  await w.sim.as(w.sim.applying(B, c)).approve(w.sim.proposalId(payload, c.salt));
+  await w.call('retire', w.sim.proposalId(payload, c.salt), c.salt);
+};
+
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a retired vault still pays its batches and merges its notes [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+  it('PAYS AN APPROVED BATCH FROM A VAULT RETIRED WHILE IT HELD NOTES, AND KEEPS THE CHANGE', async () => {
+    const w = await World.started();
+    const notes = [coin(0x71, 100n), coin(0x72, 100n)];
+    await w.deposit(...notes);
+    await retire(w, 521);
+    expect(w.ledger.retired).toBe(true);
+    const ps = [pay(0x0a, 50n, 0xd6), pay(0x0b, 70n, 0xd7)];
+    const r = await w.run([batchLeaf(w, ps)], 522);
+    /* RED WHEN `batchPayout` refuses a retired vault, or the account's batch step stops admitting a vault it retired:
+       a retired vault's money could then leave it only one payee at a time. */
+    await w.call('batchPayout', batchRun(r, 0), TOKEN, fill4(ps), notePlaces(notes, 3));
+    const spent = w.nullifierOf(notes[0]!);
+    const kept = { nonce: V.freshNonceOf(V.changeNonceTag(), SECRET, spent), color: TOKEN, value: 80n };
+    expect(w.notes()).toEqual([w.held(kept)]);
+    for (const p of ps) expect(paidMarks(w, payeeLeaf(w, p), p.nonce)).toEqual([true, true]);
+    expect(w.ledger.payments).toBe(1n);
+  });
+
+  it('MERGES THE NOTES OF A VAULT RETIRED WHILE IT HELD THEM, AND THE MERGED NOTE STAYS IN IT', async () => {
+    const w = await World.started();
+    const notes = [coin(0x71, 10n), coin(0x72, 20n), coin(0x73, 30n)];
+    await w.deposit(...notes);
+    await retire(w, 523);
+    expect(w.ledger.retired).toBe(true);
+    /* RED WHEN `mergeNotes` refuses a retired vault: its notes could then be paid out only as many steps as it holds. */
+    await w.call('mergeNotes', TOKEN, notePlaces(notes, 4));
+    const kept = { nonce: V.freshNonceOf(V.mergeNonceTag(), SECRET, w.nullifierOf(notes[0]!)), color: TOKEN, value: 60n };
+    expect(w.notes()).toEqual([w.held(kept)]);
+    expect(receiptsMinted(w)).toBe(0);
+  });
+});
+
 describe('the places a step is handed', () => {
   it('THE PLANNER\'S STEP SIZES ARE THE COMPILED VAULT\'S', () => {
     const info = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'managed-vault', 'compiler', 'contract-info.json'), 'utf8'));

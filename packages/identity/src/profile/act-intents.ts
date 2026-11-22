@@ -348,17 +348,18 @@ export const ACT_INTENTS = Object.freeze({
     }),
   }),
   /*
-   * Retire, with the seat this wallet holds, `vault` from the company's account: the wallet reads the vault holding no
-   * money on the chain and refuses otherwise, raises the retire with this seat's approval counted, or carries on the one
-   * the company's records already hold, and has the vault carry it out once the chain counts the company's threshold.
-   * It tells the page where the retire got to, the approvals the chain shows and needs, whether the upkeep was all done
-   * and how many records it anchored.
+   * Retire, with the seat this wallet holds, `vault` from the company's account, whatever it holds: the wallet raises
+   * the retire with this seat's approval counted, or carries on the one the company's records already hold, and has the
+   * vault carry it out once the chain counts the company's threshold. It tells the page where the retire got to, the
+   * approvals the chain shows and needs, whether the upkeep was all done and how many records it anchored.
    */
   'retire-vault': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const }),
     optional: Object.freeze([]),
     calls: RETIRE_VAULT_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, said: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, said: 'code' as const, ...UPKEEP_OUTCOME,
+    }),
   }),
   /*
    * Change, with the seat this wallet holds, the approvals the company's account needs to `threshold`, or with `vault`

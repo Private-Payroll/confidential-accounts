@@ -11,30 +11,21 @@
  *
  * EVERYTHING THAT TOUCHES STATE IS ASYNC ON compact-runtime 0.18.
  *
- * `initialState` and every impure circuit returned their result directly on
- * 0.16 and return a Promise on 0.18. Called the old way they hand back a
- * Promise that destructures into `undefined`, and the failure surfaces as
- * "Cannot read properties of undefined (reading 'data')" from deep inside the
- * constructor — a null-pointer message for what is actually a signature change.
+ * `initialState` and every impure circuit return a Promise, so each is awaited;
+ * called without `await` they hand back a Promise that destructures into
+ * `undefined`. `pureCircuits` is synchronous, so this uses the module-level
+ * export for leaves and commitments rather than `contract.circuits`, whose
+ * members are async. Fewer awaits, and it is the same code the scripts use.
  *
- * `pureCircuits` stayed synchronous, so this uses the module-level export for
- * leaves and commitments rather than `contract.circuits`, whose members did
- * become async. Fewer awaits, and it is the same code the scripts use.
- *
- * AND THE CONTEXT ITSELF CHANGED SHAPE. On 0.16 a `CircuitContext` was flat —
- * `{ currentPrivateState, currentZswapLocalState, costModel, currentQueryContext }`
- * — and this simulator built one by hand. On 0.18 it nests that under
- * `callContext`, alongside a `circuitId` and a contract address, and the
- * generated code reads `context.callContext.currentQueryContext`. Handed the
- * old flat object it throws "Cannot read properties of undefined", which reads
- * like a null bug and is really a changed interface.
- *
- * The runtime ships `createCircuitContext`, documented as "always use this
- * function to set up the initial circuit context", so this no longer builds the
- * shape by hand at all. Because the circuit id is now part of the context, a
- * fresh one is made per call and the three things that carry between calls —
- * ledger state, private state, Zswap local state — are threaded explicitly.
- * That is closer to what actually happens on chain than reusing one blob.
+ * A `CircuitContext` nests the query context under `callContext`, alongside a
+ * `circuitId` and a contract address, and the generated code reads
+ * `context.callContext.currentQueryContext`. The runtime ships
+ * `createCircuitContext`, documented as "always use this function to set up
+ * the initial circuit context", so this does not build the shape by hand.
+ * Because the circuit id is part of the context, a fresh one is made per call
+ * and the three things that carry between calls (ledger state, private state,
+ * Zswap local state) are threaded explicitly. That is closer to what actually
+ * happens on chain than reusing one blob.
  */
 import {
   type CircuitContext,
@@ -63,6 +54,7 @@ import {
 import { toHex } from '../../src/core/crypto.js';
 import { crossContractInputsFor } from '../../src/midnight/contract-modules.js';
 import { accountVerifierKeysIn } from '../../src/server/vault-chain.js';
+import { creationStepOf } from '../../src/midnight/deferral.js';
 import { retryArgsOf, type RetryOfALeg } from '../../src/midnight/spending-policy-record.js';
 import { assetIdBytes } from '../../src/core/assets.js';
 import { OTHER_TEST_TOKEN, TEST_TOKEN } from '../../src/testing/assets.js';
@@ -91,11 +83,11 @@ const bytes = (seed: number): Uint8Array => {
  * A DEVICE'S LEAF, WITHOUT AN ACCOUNT TO ASK.
  *
  * `AccountSimulator.leafOf` is a method, and a method needs an instance. The
- * FOUNDING leaf has to exist BEFORE the constructor runs — that is the whole of
- * The leaf is computed on the founder's own device and handed to the
- * deploy as a public value, so the deploying process never holds the material
- * it was made from. Same three inputs and the same circuit as `leafOf`, which
- * now calls this rather than spelling it a second time.
+ * FOUNDING leaf has to exist BEFORE the constructor runs. The leaf is computed
+ * on the founding signer's own device and handed to the deploy as a public
+ * value, so the deploying process never holds the material it was made from.
+ * Same three inputs and the same circuit as `leafOf`, which calls this rather
+ * than spelling it a second time.
  */
 export const leafOfDevice = (state: AccountPrivateState): Uint8Array =>
   pureCircuits.signerLeaf(
@@ -209,15 +201,6 @@ export const vaultRunOf = (a: {
 export const NOT_IN_THE_APPROVED_RUN =
   'that payee is not in the approved run, at that amount and in that currency, from that vault';
 
-/*
- * `view(balance, seed)` STOOD HERE.
- *
- * It built one asset's `{ balance, balanceSalt }` for a device's `current` and
- * `next`. The account keeps no balance, `ShieldedView` is gone from
- * `contracts/src/witnesses.ts`, and the four witnesses that read it are gone
- * from the contract.
- */
-
 /**
  * One signer's device.
  *
@@ -226,9 +209,8 @@ export const NOT_IN_THE_APPROVED_RUN =
  * signer must derive the same asset key or the change commitment one of them
  * approves is not the one another recomputes.
  *
- * `balance` AND THE `current`/`next` PAIR STOOD HERE. The account
- * keeps no balance, so a device holds no view of one. What is left is what a
- * device genuinely holds — its secret, its blinding, which asset a call
+ * The account keeps no balance, so a device holds no view of one. A device
+ * holds what is genuinely its own: its secret, its blinding, which asset a call
  * concerns, and the change a proposal makes.
  *
  * Pass `viewSeed` to give a device a DIFFERENT asset blinding, which is how a
@@ -271,7 +253,7 @@ export const privateStateFor = (
  *
  * `salt` is the proposal's blinding factor and must be identical on the
  * proposing and executing devices — the circuit recomputes the commitment from
- * it. A fresh one is a different change and the round can never settle.
+ * it. A fresh one is a different change and the proposal can never settle.
  */
 export interface Change {
   /** Which asset moves. Part of what the signers approve. */
@@ -301,6 +283,8 @@ export class AccountSimulator {
   private readonly initialContractState: any;
   private privateState: AccountPrivateState;
   private zswap: any;
+  /** The steps of the company's creation that have landed: 2 once the update inserting the second step's circuits has. */
+  private stepsLanded: 1 | 2 = 2;
 
   private constructor(
     contract: Contract<AccountPrivateState>,
@@ -325,14 +309,13 @@ export class AccountSimulator {
    * **THE FOUNDING LEAF IS A SEPARATE THING FROM THE DEVICE THAT DEPLOYS, AND
    * THE DEFAULT IS WHAT MAKES THAT INVISIBLE TO EVERY OTHER TEST.**
    *
-   * The constructor used to derive its one seat from the DEPLOYING device's
-   * witnesses. It now takes the founder's leaf as a public argument and calls
-   * none of them:
+   * The constructor takes the founding signer's leaf as a public argument and
+   * calls none of the deploying device's witnesses:
    *
    *   `founder`      the device whose private state the simulator carries on
-   *                  with, exactly as before — every `create(x)` call site
-   *                  still gets an account `x` can act on
-   *   `foundingLeaf` what is actually SEATED. Defaults to the founder's own
+   *                  with, so every `create(x)` call site gets an account `x`
+   *                  can act on
+   *   `foundingLeaf` what is actually SEATED. Defaults to the founding signer's own
    *                  leaf, which is what a real founder deploying for
    *                  themselves would hand over
    *
@@ -341,10 +324,8 @@ export class AccountSimulator {
    * the same value by construction. `what-a-signer-is.test.ts` does exactly
    * that.
    *
-   * **THE THRESHOLD ARGUMENT IS GONE, AND IT WAS THE SECOND OF THREE.** The
-   * constructor takes no threshold and sets `threshold = 1`, so **every
-   * account this factory makes is one seat at one approval** and there is no
-   * `create(x, 2n)` state to ask for any more.
+   * The constructor takes no threshold and sets `threshold = 1`, so every
+   * account this factory makes is one seat at one approval.
    *
    * Every later seat is an approved invitation the invitee carries out
    * (`seatInvited`); `liveAccount` below does on the simulator exactly what a
@@ -373,7 +354,7 @@ export class AccountSimulator {
 
   /**
    * **AN ACCOUNT WITH `devices` SEATED AND THE THRESHOLD AT `threshold`, BUILT
-   * THE WAY A FOUNDER NOW HAS TO BUILD ONE.**
+   * THE WAY A FOUNDER HAS TO BUILD ONE.**
    *
    * **IT IS NOT A SHORTCUT — IT IS THE REAL PATH.** Every
    * seat after the first is `propose` of an invitation (which counts its
@@ -416,8 +397,8 @@ export class AccountSimulator {
    * Seats `who` through the approved path, with `approvers` (who must already
    * be seated) voting: the first raises the invitation, which counts as their
    * approval, the rest approve, and `who` takes the seat with `seatInvited`
-   * from the address it was invited at. `seed` picks the round's salt. The
-   * simulator is left acting as the raiser, as it was before the seat.
+   * from the address it was invited at. `seed` picks the proposal's salt. The
+   * simulator is left acting as the raiser it was before the seat.
    *
    * The raising device and the invitee must carry the same proposal salt:
    * `propose` commits to it and `seatInvited` recomputes the proposal's id
@@ -589,19 +570,42 @@ export class AccountSimulator {
   }
 
   /**
-   * The state a cross-contract call is bound against, with this build's verifier key on every deployed circuit. A
-   * vault's call into its account binds only to an operation that carries a verifier key, which the chain's copy
-   * gets at deploy and a constructor's state does not; the keys are read from the build on disk, so a build
-   * without keys fails here, naming the missing file, rather than inside the call.
+   * The state a cross-contract call is bound against, with this build's verifier key on every circuit a creation step
+   * that has landed installed, and none on the rest. A vault's call into its account binds only to an operation that
+   * carries a verifier key, which the chain's copy gets when the step installing it lands and a constructor's state
+   * does not; the keys are read from the build on disk, so a build without keys fails here, naming the missing file,
+   * rather than inside the call.
    */
   private keyedForCall(keys: ReadonlyMap<string, Uint8Array>): ContractState {
     const cs = this.contractStateForCall as ContractState;
     for (const [circuit, key] of keys) {
       const op = new ContractOperation();
-      op.verifierKey = key;
+      if (this.installed(circuit)) op.verifierKey = key;
       cs.setOperation(circuit, op);
     }
     return cs;
+  }
+
+  /**
+   * The account as it stands between its deploy and its second creation step: only the first step's circuits are
+   * installed, so a call to any other is refused, here and in a vault's call into it, as the chain refuses a call to
+   * an operation with no verifier key. `secondStepLands` installs the rest.
+   */
+  beforeSecondStep(): this {
+    this.stepsLanded = 1;
+    return this;
+  }
+
+  /** The update inserting the second creation step's circuits lands. */
+  secondStepLands(): this {
+    this.stepsLanded = 2;
+    return this;
+  }
+
+  /** Whether a creation step that has landed installed this circuit. */
+  private installed(circuit: string): boolean {
+    const step = creationStepOf(circuit);
+    return step !== null && step <= this.stepsLanded;
   }
 
   /**
@@ -635,10 +639,8 @@ export class AccountSimulator {
 
   /** What actually goes in the tree: the blinded commitment. */
   leafOf(state: AccountPrivateState): Uint8Array {
-    // A signer's leaf no longer moves. It used to be stamped with the
-    // account's generation, so a removal changed everybody's; the slot design
-    // clears one slot instead, so a leaf is the same value for the life of the
-    // signer.
+    // A signer's leaf never moves: a removal clears one slot, so a leaf is the
+    // same value for the life of the signer.
     return leafOfDevice(state);
   }
 
@@ -648,12 +650,6 @@ export class AccountSimulator {
     if (!path) throw new Error('not a signer');
     return pureCircuits.slotOf(path as never);
   }
-
-  /*
-   * `commitmentOf` AND `balanceEntry` STOOD HERE. One wrapped
-   * `balanceCommitmentOf`, the other looked an asset up in `assetBalances`;
-   * both are gone from the contract.
-   */
 
   /** Which asset a change commitment names, for this account. */
   assetKeyOf(state: AccountPrivateState, asset: Uint8Array = state.assetId): Uint8Array {
@@ -710,6 +706,9 @@ export class AccountSimulator {
     circuitId: string,
     fn: (ctx: CircuitContext<AccountPrivateState>) => Promise<{ context: any; result: T }>,
   ): Promise<T> {
+    if (!this.installed(circuitId)) {
+      throw new Error(`${circuitId} is not installed on this account: the creation step that adds it has not landed`);
+    }
     const out = await fn(this.contextFor(circuitId));
     const call = out.context.callContext;
     this.lastEffects = call.currentQueryContext.effects;
@@ -886,13 +885,21 @@ export class AccountSimulator {
   }
 
   /**
-   * `deadline` is the last block time, in seconds, the raise may land at; omitted, it is a day after the
+   * `deadline` is the block time, in seconds, from which the raise is refused; omitted, it is a day after the
    * simulator's clock when the raise is made, the window a device gives a raise it writes down.
    */
   propose(payloadHash: Uint8Array, vault: Uint8Array = NO_VAULT, deadline: bigint = this.aDayFromNow()) {
     /* The opaque path of the merged `propose`: `isRun` false, run parts zero. */
     return this.run('propose', (c) => this.contract.impureCircuits.propose(
       c, payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, vault, deadline));
+  }
+
+  /**
+   * Raises a change to the company through its own circuit: no vault, no run window, the raiser's approval counted.
+   * `deadline` is as `propose`'s.
+   */
+  proposeCompanyChange(payloadHash: Uint8Array, deadline: bigint = this.aDayFromNow()) {
+    return this.run('proposeCompanyChange', (c) => this.contract.impureCircuits.proposeCompanyChange(c, payloadHash, deadline));
   }
 
   /** A day after the simulated clock, in seconds: the default deadline of a raise. */
@@ -1048,7 +1055,7 @@ export class AccountSimulator {
     until: bigint;
     vault?: Uint8Array;
     required?: bigint;
-    /** The last block time the raise may land at; omitted, a day after the simulated clock. */
+    /** The block time from which the raise is refused; omitted, a day after the simulated clock. */
     deadline?: bigint;
   }) {
     /* The run path of the merged `propose`: `isRun` true, opaque hash zero. */
@@ -1067,10 +1074,9 @@ export class AccountSimulator {
   /**
    * A run's approved window, or undefined if that id is not a run.
    *
-   * This replaced `unpaid()`, which read a counter of outstanding payees.
-   * There is no such counter any more — it serialised every payment of a run —
-   * so "how far along is this run" is answered from `movements` by
-   * `runStatus`, not from the account. See `run-status.ts`.
+   * The account holds no counter of outstanding payees, so "how far along is
+   * this run" is answered from `movements` by `runStatus`, not from the
+   * account. See `run-status.ts`.
    */
   runWindow(proposal: Uint8Array): { from: bigint; until: bigint } | undefined {
     /*
@@ -1095,10 +1101,7 @@ export class AccountSimulator {
   /**
    * Declares a vault to be this company's, through an approved round.
    *
-   * Retiring is `retireVault` above. The vault refuses its own `retire` while
-   * it holds money; the account's half has no caller check, so a direct call
-   * with the approved proposal and its salt is a route that exists, and it is
-   * the one a test of "a retired vault still pays" takes.
+   * Retiring is `retireVault` below.
    */
   adopt(vault: Uint8Array, proposal: Uint8Array) {
     return this.run('adopt',
@@ -1107,8 +1110,11 @@ export class AccountSimulator {
 
   /**
    * The account's half of retiring a vault, called directly with an approved
-   * retire proposal and its salt. The circuit has no caller check, so this is a
-   * route every holder of the salt has, and the one a vault's `retire` takes.
+   * retire proposal and its salt. On the chain it needs the vault's retirement
+   * receipt in the same transaction, which only the vault's `retire` mints, after
+   * marking itself retired; this simulator runs no balancing check, so here the
+   * call stands for the account's half alone
+   * (`a-payment-needs-a-vaults-receipt.test.ts` builds the real transaction).
    */
   retireVault(proposal: Uint8Array, vault: Uint8Array, salt: Uint8Array) {
     return this.run('retireVault',

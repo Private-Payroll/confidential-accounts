@@ -79,7 +79,7 @@ vi.mock('./upkeep.js', async (real) => {
  * loaded first it is not loaded in the middle of them, so every reader it brings in takes the stand-ins.
  */
 await import('../../../../packages/web-shared/src/company-change-on-device.js');
-const { removalKind, removeSignerAction } = await import('./remove-signer.js');
+const { RemovalRefused, removalKind, removeSignerAction } = await import('./remove-signer.js');
 const { approveProposalAction } = await import('./approve-proposal.js');
 const { ActionStopped } = await import('./run.js');
 const { RosterNotBelieved } = await import('../../../../packages/web-shared/src/roster-here.js');
@@ -163,6 +163,8 @@ const reach = () => ({
   chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, secrets: () => ({}) as never,
   commitments: async () => ({}) as never, reachFor: async () => reachOf() as never,
   afterCarried: async (_c: unknown, _r: unknown, removed: { leaf: string; round: unknown }): Promise<VaultsChangedTold> => { after.push(removed); return NONE_CHANGED; },
+  /* The judgement before a removal is carried out is tried on its own (vaults-a-removal-reaches.test.ts): here it passes. */
+  beforeCarried: async (): Promise<void> => undefined,
 });
 const run = async (def: { steps(i: ActIntent): readonly { run(c: StepContext): Promise<void> }[] }, i: ActIntent, ctx: StepContext): Promise<void> => {
   for (const step of def.steps(i)) await step.run(ctx);
@@ -435,6 +437,29 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER });
     await run(approveProposalAction(reach() as never), approve, ctxOf(approve).ctx);
     expect(after).toHaveLength(1);
+  });
+
+  it('a removal is judged before it is carried out, from the removal and the one approval alike, and a refusal then sends nothing of it', async () => {
+    const judged: string[] = [];
+    const strands = { now: false };
+    const before = async (_c: unknown, _r: unknown, leaving: { leaf: string }) => {
+      judged.push(leaving.leaf);
+      if (strands.now) throw new RemovalRefused('removing this signer would leave the private money in the vault ab openable by no signer who stays.');
+    };
+    const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
+    await run(removeSignerAction({ ...reach(), beforeCarried: before }), i, ctxOf(i).ctx);
+    /* RED WHEN: a removal is carried out without being judged first for a vault its leaving would strand. */
+    expect(judged).toEqual([LEAVER]);
+    t.onDevice.length = 0;
+    after.length = 0;
+    strands.now = true;
+    t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: 1, raisedAt: 1 };
+    t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: LEAVER } };
+    const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER });
+    const refused = await refusalOf(run(approveProposalAction({ ...reach(), beforeCarried: before } as never), approve, ctxOf(approve).ctx));
+    /* RED WHEN: a removal that would strand a vault's private money is carried out, or refused without naming the vault. */
+    expect(refused).toMatchObject({ key: 'act.remove-signer.why.refused', says: expect.stringMatching(/the vault ab openable by no signer who stays/u) });
+    expect([t.onDevice.filter((c) => c.input.carryOnly === true), after]).toEqual([[], []]);
   });
 
   it('a removal raised as a change of role is filed under a name that says so, and a plain removal under its own', async () => {

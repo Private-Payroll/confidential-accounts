@@ -642,6 +642,12 @@ const SCHEMES: Entry[] = [
       'receives tokenType of it and the changed vault inside the proof; no client derives the token.',
   },
   {
+    circuit: 'retireReceiptTag',
+    contractOnly:
+      'the tag a vault mints its receipt for its own retirement under. The account receives ' +
+      'tokenType of it and the retiring vault inside retireVault\'s proof; no client derives the token.',
+  },
+  {
     circuit: 'changesUsedKeyOf',
     contractOnly:
       'the key the account counts a run\'s used changes under in signerRoles, read and written only ' +
@@ -763,7 +769,7 @@ const SCHEMES: Entry[] = [
   },
   {
     circuit: 'approvalNullifierOf',
-    contractOnly: 'one seat\'s approval marker for one proposal in one account; approve and propose write it through approvalNullifier, and a device reads its own seat\'s from the ledger\'s approvals with this circuit off pureCircuits (roundsOnChainIn, startStandingOf), never a copy.',
+    contractOnly: 'one seat\'s approval marker for one proposal in one account; approve and both raises write it through approvalNullifier, and a device reads its own seat\'s from the ledger\'s approvals with this circuit off pureCircuits (roundsOnChainIn, startStandingOf), never a copy.',
   },
   {
     circuit: 'releasedMark',
@@ -772,6 +778,10 @@ const SCHEMES: Entry[] = [
   {
     circuit: 'paidFromMark',
     contractOnly: 'what a run\'s hold is marked with once a payment from it lands; the receipt step writes it and holdRun refuses on it.',
+  },
+  {
+    circuit: 'companyChangeMark',
+    contractOnly: 'what an open company change is stored with where a run stores its change; proposeCompanyChange writes it and no circuit reads it back for a company change.',
   },
 ];
 
@@ -1020,11 +1030,11 @@ describe('one definition: the contract and the client agree', () => {
       + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
     ).toEqual([
       'adoptVaultPayload', 'anchorHeadOf', 'anchorHeldOf', 'anchorKey', 'anchorRecoveredOf', 'anchorSeatKey', 'anchorTagOf', 'approvalNullifierOf', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
-      'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'lastRecoveryKey', 'legTakenOf', 'legTakenTag',
+      'companyChangeMark', 'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'lastRecoveryKey', 'legTakenOf', 'legTakenTag',
       'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
       'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf', 'periodTotalTag',
       'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
-      'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'reseatPayload', 'retireVaultPayload', 'retrySaltOf',
+      'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'reseatPayload', 'retireReceiptTag', 'retireVaultPayload', 'retrySaltOf',
       'rightsScopeOf', 'runApprovalsNeeded', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
       'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'vaultBarOf', 'withdrawKeyOf', 'withdrawSecretOf',
     ]);

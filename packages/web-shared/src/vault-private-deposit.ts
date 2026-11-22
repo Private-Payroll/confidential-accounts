@@ -27,7 +27,7 @@ import { theChainWins } from './vault-pool-opened.js';
 import { removalsOnTheChainHere } from './removals-on-the-chain.js';
 import { whenTheSecretWasSetHere } from './who-holds-the-vaults-secret.js';
 import { creatingTransactionOfOutput, notesAsThisDeviceReadsThem, timeShown } from './vault-step-reads.js';
-import { fundableOrThrow } from './vault-fundable-here.js';
+import { takesDepositsOrThrow } from './vault-fundable-here.js';
 
 /**
  * **HOW THE LEDGER THIS PAGE BUILDS WITH BEGINS THE BYTES OF ITS PARAMETERS,
@@ -541,7 +541,7 @@ export async function depositIntoCompanyVault(
 } & DepositRecorded> {
   /* Read on this device: the vault must be one the company's account adopted, as this signer's own wallet reads the chain. */
   doors.progress?.('checking the vault');
-  const answer = await fundableOrThrow(doors, vault);
+  const answer = await takesDepositsOrThrow(doors, vault);
   /* Asked before a coin is chosen or the wallet is asked, so a deposit into a vault not yet started books nothing. */
   if (answer.of !== 'fundable') throw new Error(answer.why);
   const view = answer.view;

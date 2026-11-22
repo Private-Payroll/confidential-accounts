@@ -5,7 +5,7 @@
  * `PayrollService.proposeRun` raised every payroll round through
  * `AccountService.propose({kind: 'payroll'})`, whose payload hash is an
  * APPLICATION digest — `commit(canonical({accountId, kind, sealedPayload,
- * proposedBy}), '')` — while `recordPayment` recomputes
+ * proposedBy}), '')` — while `recordPaymentFromVault` recomputes
  * `proposalIdOf(runPayload(root, payees, opensAt, closesAt, 0n), forVault, salt)`
  * and matches only a `runPayload`. **The two can never be equal.** So a run was
  * raised, approved by real signers, paid for, and unpayable by any vault for
@@ -23,7 +23,7 @@
  * whether it agrees.
  *
  * **THE SIMULATED LEDGER CANNOT ANSWER THIS QUESTION AND A GREEN RUN THROUGH IT
- * IS NOT EVIDENCE.** It has no `recordPayment`, no block time and its own
+ * IS NOT EVIDENCE.** It has no `recordPaymentFromVault`, no block time and its own
  * deliberately-different commitment scheme. That is why this file is in
  * `contracts/test/` and drives `AccountSimulator` — the compiled circuits, every
  * assert live.
@@ -55,7 +55,7 @@ import { payFor } from '../../src/testing/payees.js';
 const PAYROLL_VAULT = new Uint8Array(32).fill(0xa1);
 
 /*
- * A FIXED CLOCK. `recordPayment` asserts the payment falls inside the approved
+ * A FIXED CLOCK. `recordPaymentFromVault` asserts the payment falls inside the approved
  * window, so this test controls time rather than inheriting it. Seconds since
  * the Unix epoch — milliseconds would put every window tens of thousands of
  * years out and every assert would fail for the wrong reason.
@@ -180,7 +180,7 @@ const deviceCarrying = (
 });
 
 describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
-  it('THE HEADLINE: the service\'s own id opens a RUN on chain, and recordPayment accepts it',
+  it('THE HEADLINE: the service\'s own id opens a RUN on chain, and recordPaymentFromVault accepts it',
     async () => {
       const r = await aRunTheProductRaised();
 
@@ -228,7 +228,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
       expect(sim.approvalsFor(id)).toBe(1n);
 
       /*
-       * **HALF TWO: THE CIRCUIT THAT CONSUMES THE PAYLOAD.** `recordPayment`
+       * **HALF TWO: THE CIRCUIT THAT CONSUMES THE PAYLOAD.** `recordPaymentFromVault`
        * recomputes the id from the run's four parts and the vault and compares
        * it — so a refusal here is about WHAT WAS APPROVED and nothing else.
        * This is the call a vault makes on payday, and it is the one that
@@ -276,7 +276,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
    * The old door is still on `AccountService` and is still correct for the four
    * governance rounds, so it cannot be deleted — which means the thing that
    * stops payroll going back through it has to be a test rather than the type.
-   * This drives the round the product used to raise and shows the two failures
+   * This drives the proposal the product used to raise and shows the two failures
    * that would have surfaced at a vault: the id is not one the run branch
    * derives, and there is no window row anywhere.
    */
@@ -315,10 +315,10 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
     await sim.as(device).propose(fromHex(proposal.digest), fromHex(proposal.vault));
 
     /*
-     * It opens — which is exactly why this survived four audits. The round is
+     * It opens — which is exactly why this survived four audits. The proposal is
      * live, approvable and billable. What it has NOT got is a window, so it is
      * not a run to `cancel`, not a run to `closeExpiredRun`, and its id is one
-     * `recordPayment` can never recompute.
+     * `recordPaymentFromVault` can never recompute.
      */
     expect(sim.isOpen(fromHex(proposal.chainId))).toBe(true);
     expect(sim.runWindow(fromHex(proposal.chainId))).toBeUndefined();
@@ -376,7 +376,7 @@ describe('a payroll run the PRODUCT raised is one a VAULT can pay', () => {
 
   /**
    * **A RUN AT THE NO-VAULT SENTINEL IS ONE NO VAULT CAN PRESENT.** The vault is
-   * folded into the id and `recordPayment` recomputes the id from the vault it
+   * folded into the id and `recordPaymentFromVault` recomputes the id from the vault it
    * is handed, so `noVault()` builds an id nothing can match — the same
    * failure shape one argument along, and refused before a fee.
    */

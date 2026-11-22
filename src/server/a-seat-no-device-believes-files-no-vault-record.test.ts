@@ -42,7 +42,7 @@ const doorsOf = (s: Seat): RebuildDoors => ({
   indexer: async () => ({ indexerUri: 'https://indexer.example/api', indexerWsUri: 'wss://indexer.example/ws' }),
   builder: {
     vaultOnChain: async () => ({
-      onChain: true, state: '', notes: [], notesFromThisBuild: true, everCreated: [], account: ADDRESS, started: true,
+      onChain: true, state: '', notes: [], notesFromThisBuild: true, retired: false, everCreated: [], account: ADDRESS, started: true,
       nonceCommitment: '5c'.repeat(32), splitJournal: [],
     }),
     commitments: async (i) => ({ output: '', held: `h${i.coin.nonce}` }),

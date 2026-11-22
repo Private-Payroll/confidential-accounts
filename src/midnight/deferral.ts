@@ -1,54 +1,34 @@
 /**
- * WHICH CIRCUITS THE DEPLOYMENT CARRIES, BY NAME, IN ONE PLACE. S8c, re-decided
- * S9, and CLOSED BY S25: nothing is deferred any more.
+ * WHICH CIRCUITS A COMPANY ACCOUNT CARRIES, BY NAME, IN ONE PLACE, AND IN WHICH
+ * STEP OF ITS CREATION EACH ONE ARRIVES.
  *
- * The history matters, because the shape of this file is the record of it. The
- * account contract used to compile fifteen circuits, then thirteen after the
- * `S11` merges, and the chain would not accept a deploy carrying them: the
- * per-extrinsic ceiling is 31,997 bytesWritten (~64% of 50,000, derived in
- * scripts/dispatch-ceiling.ts — NOT the 37,500 this file used to cite), and the
- * node refuses a deploy over it with
- * `1010: Invalid Transaction: Transaction would exhaust the block limits`.
- * `S8b` chose Option B — deploy fewer, DEFER the rest — and `S9` chose which
- * two deferred.
+ * A deploy writes every verifier key it carries, and the chain refuses a
+ * transaction that writes more than the per-transaction ceiling
+ * (`PER_TRANSACTION_CEILING`, derived in `scripts/dispatch-ceiling.ts`) with
+ * `1010: Invalid Transaction: Transaction would exhaust the block limits`. The
+ * whole account is over it, so a company is created in two steps: a deploy
+ * carrying `FIRST_STEP_CIRCUITS`, then one maintenance update that inserts
+ * `SECOND_STEP_CIRCUITS`. Every step is measured against the ceiling before
+ * anything is paid for.
  *
- * `S23` SHED `credit` AND `attestSolvency` FROM THE CONTRACT ITSELF, which is
- * the reason this file no longer needs a deferred list. The contract has since
- * grown again, to the twenty-two circuits `DEPLOYED_CIRCUITS` names, and the
- * deployment carries all twenty-two: eight in its deploy and fourteen in the
- * one update that finishes it (below). **THE FIGURES IN THE NEXT PARAGRAPH ARE AN
- * ELEVEN-CIRCUIT MEASUREMENT AND ARE STALE**; what decides a deploy now is
- * `PER_TRANSACTION_CEILING`, read below from the derivation, and the two-step
- * test that measures both steps against it with the ledger's own cost
- * function. The eleven-circuit reading: `REPORT-DEPLOY-SHAPE.txt`, 30 Aug -
- * 22,541 bytes of key, 31,499 bytesWritten, 998 bytes under the ceiling, read
- * ±~260 once proven and balanced.
+ * The ceiling is derived, not calibrated: `scripts/dispatch-ceiling.ts` holds
+ * the only two real submissions, `ACCEPTED_BYTES_WRITTEN` and
+ * `REFUSED_BYTES_WRITTEN`, and a step between them is in a band no chain has
+ * been seen to accept or refuse.
  *
- * **THAT HEADROOM IS AGAINST A DERIVED CEILING, NOT A CALIBRATED ONE, AND THE
- * DIFFERENCE MATTERS BEFORE A DEPLOY.** `scripts/dispatch-ceiling.ts:130,135`
- * holds the only two real submissions: 31,201 ACCEPTED, 35,748 REFUSED. At
- * 31,499 ± ~260 this deployment is between about 40 and 560 bytes ABOVE the
- * largest deploy any chain has actually accepted, inside a band nothing has
- * measured. `C219` is the row. **It fits the arithmetic; it has not been shown
- * to fit the chain**, and the deploy is the measurement.
- *
- * `docs/the-deploy-problem.md` carries the arithmetic;
- * `MEASURE-DEPLOY-SHAPE.command` re-derives it from disk.
- *
- * THIS FILE IS STILL THE DEFERRAL, and it stays even though it defers nothing.
- * `C224` is the record of how quietly-smaller nearly lied about the one number
- * the architecture was chosen on: a deploy omits a circuit because this list
- * says so, or it does not omit one at all. Anything that reads or reports the
- * deployment reads the same list. One definition, the same rule as decision
- * 0004. If a future contract grows past the ceiling again, the deferral goes
- * back in HERE and every reader inherits it.
+ * The list of DEFERRED circuits stays, empty. A deploy leaves a circuit out
+ * because that list says so, or it leaves none out: anything that reads or
+ * reports the deployment reads the same lists, so a smaller deployment than the
+ * one these lists describe cannot be reached by accident. If the account ever
+ * grows past what its two steps can carry, a deferral goes back in here and
+ * every reader inherits it.
  *
  * WHAT DEFERRED MEANS, kept so nothing downstream mistakes it if the list
  * fills again:
  *
  *   - The deployed contract HAS NO OPERATION under a deferred name. A call to
  *     one is refused by the chain itself as
- *     `MalformedTransaction::VerifierKeyNotPresent` — the ledger looks the
+ *     `MalformedTransaction::VerifierKeyNotPresent`: the ledger looks the
  *     entry point up in the deployed operations map and it is not there
  *     (`midnight-ledger` at `ledger-9.1.0.0-rc.3`, `ledger/src/verify.rs:109-124`).
  *   - They do not arrive later in the same contract. That is what separates
@@ -64,21 +44,14 @@
 import { BYTES_WRITTEN_LIMIT, extrinsicCeiling } from '../../scripts/dispatch-ceiling.js';
 
 /**
- * The twenty-two circuits a finished company account carries — every circuit the
- * contract has. **They do not fit one deploy**: the whole account in one deploy
- * is over the per-transaction ceiling (`PER_TRANSACTION_CEILING`, measured by
- * `a-company-is-created-in-two-steps.test.ts`). So a company is created in two steps, a
- * deploy carrying `FIRST_STEP_CIRCUITS` and then one maintenance update that
- * only inserts `SECOND_STEP_CIRCUITS`. This list is what the account carries
- * once both have landed, and every reader that asks "which circuits does a
- * company have" reads it.
- *
- * `retireVault` IS IN THIS LIST, and `S25` put it there. It was deferred by
- * `S9` on the reasoning that "a vault cannot be retired on this deployment,
- * which version one accepts". Version one no longer accepts it: `C288` is the
- * row for a live account that cannot retire a vault, and shedding two circuits
- * is what bought the room to close it. `Vault.compact:1018` calls
- * `account.retireVault(...)`, and retirement is a vault's only ending.
+ * The twenty-three circuits a finished company account carries: every circuit
+ * the contract has. **They do not fit one deploy**: the whole account in one
+ * deploy is over the per-transaction ceiling. So a company is created in two
+ * steps, a deploy carrying `FIRST_STEP_CIRCUITS` and then one maintenance update
+ * that only inserts `SECOND_STEP_CIRCUITS`. This list is what the account
+ * carries once both have landed, and every reader that asks "which circuits
+ * does a company have" reads it. `retireVault` is in it because the vault calls
+ * `account.retireVault(...)` and retirement is a vault's only ending.
  *
  * Sorted, and kept sorted, so a diff of this list is a diff of the deployment.
  */
@@ -92,6 +65,7 @@ export const DEPLOYED_CIRCUITS = [
   'closeExpiredRun',
   'holdRun',
   'propose',
+  'proposeCompanyChange',
   'recordBatchFromVault',
   'recordPaymentFromVault',
   'recoverAnchor',
@@ -108,20 +82,13 @@ export const DEPLOYED_CIRCUITS = [
 ] as const;
 
 /**
- * NOTHING IS DEFERRED.
+ * NOTHING IS DEFERRED: every circuit arrives in one of the two creation steps.
  *
- * `S9` deferred `attestSolvency` and `retireVault`. `S23` shed `attestSolvency`
- * and `credit` from the contract, which took the contract to eleven circuits, and
- * `C292`/`S26` then deleted `execute`, which takes it to ten —
- * a shape that fits under the ceiling whole — so `retireVault` came back into
- * the deployment and this list emptied.
- *
- * IT IS KEPT AS A LIST RATHER THAN DELETED. The deferral machinery below is
- * what makes a smaller-than-decided deployment impossible to reach by accident
- *, and an empty list is the honest statement that the current contract
- * needs none of it — not that the mechanism was removed. Everything that reads
- * it derives its behaviour from the list, so refilling it is the whole of
- * re-deferring.
+ * Kept as a list rather than deleted. The checks below are what make a
+ * smaller-than-decided deployment impossible to reach by accident, and an empty
+ * list says the current contract needs none of them, not that they were
+ * removed. Everything that reads it derives its behaviour from the list, so
+ * refilling it is the whole of deferring a circuit again.
  */
 export const DEFERRED_CIRCUITS: readonly string[] = [];
 
@@ -130,20 +97,24 @@ export type DeployedCircuit = (typeof DEPLOYED_CIRCUITS)[number];
 /**
  * THE FIRST STEP: THE CIRCUITS THE DEPLOY ITSELF CARRIES. Everything a company
  * needs to exist and to govern itself: seat a signer an invitation names and
- * remove signers, raise, approve and withdraw proposals, set its threshold,
- * adopt a vault. Measured with the ledger's own cost function over the deploy
- * itself, unproven and unbalanced: the eight write 22,786 bytes, 71.2% of the
- * 31,997 ceiling, 9,211 bytes of headroom. Read it as about ±260 once proven and
- * balanced, which stays below the largest deploy a chain has accepted. The
- * invited seat cannot go in the second step instead: with it that update
- * writes 32,188 bytes, over the ceiling.
+ * remove signers, raise (a run, or a change to the company through its own
+ * circuit), approve and withdraw proposals, set its threshold, adopt a vault.
+ * Measured with the ledger's own cost function over the deploy itself, unproven
+ * and unbalanced, with this build's own keys: the nine write 25,087 bytes,
+ * 78.4% of the 31,997 ceiling, 6,910 bytes of headroom, and the second step
+ * 30,078. Read each as about ±260 once proven and balanced, which stays below
+ * the largest deploy a chain has accepted. Neither the invited seat nor `proposeCompanyChange` can go in
+ * the second step instead: with either, that update writes over the ceiling
+ * (32,227 bytes with `proposeCompanyChange`).
  *
- * **WHY THESE EIGHT AND NOT MORE THAT WOULD FIT.** The second step
+ * **WHY THESE NINE AND NOT MORE THAT WOULD FIT.** The second step
  * carries every circuit that moves money or depends on a vault's receipt: a
  * company whose second step never lands can seat its signers and approve
  * proposals, and can pay nothing, because the chain refuses a call to an
- * operation the contract does not hold. It fails closed. The room left in the
- * deploy is kept for the circuits the next contract changes add.
+ * operation the contract does not hold. It fails closed. `proposeCompanyChange`
+ * moves no money and opens nothing a payment can be recorded against, so it
+ * keeps that. The room left in the deploy is kept for the circuits the next
+ * contract changes add.
  */
 export const FIRST_STEP_CIRCUITS = [
   'adopt',
@@ -151,6 +122,7 @@ export const FIRST_STEP_CIRCUITS = [
   'cancel',
   'closeExpiredRun',
   'propose',
+  'proposeCompanyChange',
   'removeSignerAndSetThreshold',
   'seatInvited',
   'setThreshold',
@@ -160,7 +132,8 @@ export const FIRST_STEP_CIRCUITS = [
  * THE SECOND STEP: THE CIRCUITS ONE MAINTENANCE UPDATE INSERTS, straight after
  * the deploy, signed by the maintenance authority the deploy installed. It only
  * inserts: it never removes a key and never replaces the authority. Measured the
- * same way: 30,050 bytes written for the fourteen keys, 93.9% of the ceiling. The
+ * same way: 30,078 bytes written for the fourteen keys, 94.0% of the ceiling,
+ * which leaves no room for a fifteenth key of the size the others are. The
  * step that approves a change to a vault, `approveVaultChange`, the
  * spending policy's circuits, `setPolicy`, `setPolicyBar` and `clearRun`, the
  * hold and its release, and the re-seat that changes a signer's rights are here
@@ -244,17 +217,14 @@ export const isDeferredCircuit = (name: string): boolean => DEFERRED.has(name);
 export const isDeployedCircuit = (name: string): boolean => DEPLOYED.has(name);
 
 /**
- * Refuses a contract whose circuit list is not exactly these fourteen.
+ * Refuses a contract whose circuit list is not exactly the deployed and the
+ * deferred circuits above.
  *
  * Called by the deploy path with the names the COMPILED contract actually
- * exports, before anything is pruned. If the contract ever gains a fifteenth
- * circuit, or renames one, the deploy stops here with both lists printed —
- * rather than quietly deploying a shape this file no longer describes. The
- * alternative failure is `C224`'s: a deployment smaller than anyone decided.
- *
- * This is the check that caught `S23`: the shed left the contract at eleven
- * while this file still named thirteen, and `MEASURE-DEPLOY-SHAPE.command`
- * refused to score the set rather than scoring the wrong one.
+ * exports, before anything is pruned. If the contract gains a circuit, or
+ * renames one, the deploy stops here with both lists printed, rather than
+ * quietly deploying a shape this file no longer describes and so a deployment
+ * smaller than anyone decided.
  */
 export function assertKnownCircuitSet(names: string[]): void {
   const expected = [...DEPLOYED_CIRCUITS, ...DEFERRED_CIRCUITS].sort();
@@ -265,9 +235,8 @@ export function assertKnownCircuitSet(names: string[]): void {
         `  compiled: ${actual.join(', ')}\n` +
         `  expected: ${expected.join(', ')}\n` +
         'src/midnight/deferral.ts is the single definition of which circuits deploy and which ' +
-        'defer (S8b Option B; the split re-decided by S9, emptied by S25). If the contract ' +
-        'changed shape, that list must be re-decided against the derived per-extrinsic ceiling ' +
-        '(scripts/dispatch-ceiling.ts) — not patched to make this error go away. docs/the-deploy-problem.md has the arithmetic.',
+        'defer. If the contract changed shape, that list must be decided again against the derived ' +
+        'per-transaction ceiling (scripts/dispatch-ceiling.ts), not patched to make this error go away.',
     );
   }
 }
@@ -275,15 +244,15 @@ export function assertKnownCircuitSet(names: string[]): void {
 /**
  * The error a call to a deferred circuit gets, and it names the cause.
  *
- * UNREACHABLE WHILE `DEFERRED_CIRCUITS` IS EMPTY — its only caller gates on
- * `isDeferredCircuit`, which is false for every name — and kept for that
- * reason: it is the client-side half of the deferral, and deleting it would
- * mean a future re-deferral gets the SDK's failure instead of this one.
+ * UNREACHABLE WHILE `DEFERRED_CIRCUITS` IS EMPTY: its only caller gates on
+ * `isDeferredCircuit`, which is false for every name. It is kept because it is
+ * the client-side half of the deferral, and without it a circuit deferred again
+ * would get the SDK's failure instead of this one.
  *
  * Without it the failure is the SDK's: `findDeployedContract` compares every
  * compiled verifier key against the deployed state and throws
  * `ContractTypeError` naming the deferred circuits as "undefined or have
- * mismatched verifier keys…" — which reads as key corruption, fires on every
+ * mismatched verifier keys", which reads as key corruption, fires on every
  * call including the ones that ARE deployed, and says nothing about deferral
  * being deliberate.
  */
@@ -292,8 +261,7 @@ export function deferredCircuitError(circuit: string): Error {
     `"${circuit}" is deferred: it is one of the ${DEFERRED_CIRCUITS.length} circuits ` +
       `(${DEFERRED_CIRCUITS.join(', ')}) deliberately left out of the ` +
       `${DEPLOYED_CIRCUITS.length}-circuit deployment, because the full contract exceeds the ` +
-      "chain's per-transaction write ceiling (S8b Option B; which circuits defer was " +
-      'decided by S9). The deployed contract has no such operation — the chain itself ' +
+      "chain's per-transaction write ceiling. The deployed contract has no such operation: the chain itself " +
       'would refuse the call with VerifierKeyNotPresent. These circuits arrive only in a ' +
       'future deployment; they cannot be added to this one, and no retry will change the ' +
       'answer.',

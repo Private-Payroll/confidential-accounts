@@ -1,0 +1,149 @@
+// A spending policy: its bands and terms, its commitment, and the keys and blinded totals its
+// periods are charged under. Nothing here reads the ledger, a witness or the kernel.
+module Policy {
+import CompactStandardLibrary;
+
+// One band of a spending policy: a run whose total is at most `ceiling` needs `approvals`.
+struct Band {
+  ceiling: Uint<128>;
+  approvals: Uint<64>;
+}
+
+// A vault's spending policy for one token: four bands, a limit per period, and the periods.
+// Period `n` runs from `periodStart + n * periodLength` for `periodLength` seconds.
+struct PolicyTerms {
+  bands: Vector<4, Band>;
+  periodLimit: Uint<128>;
+  periodStart: Uint<64>;
+  periodLength: Uint<64>;
+}
+
+// A policy as the signers hold it: its terms and the blinding its commitment is made under.
+export struct Policy {
+  terms: PolicyTerms;
+  blinding: Bytes<32>;
+}
+
+// Where a vault's policy for one token sits in `signerRoles`: the vault and the token's
+// blinded key, so the key does not name the token.
+export circuit policyKeyOf(vault: Bytes<32>, assetKey: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:policy:"), vault, assetKey
+  ]);
+}
+
+// Where the marker that a vault is under a spending policy sits in `signerRoles`.
+export circuit policyOnKeyOf(vault: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:pol-on:"), vault
+  ]);
+}
+
+// The marker's value.
+export circuit policyOnMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:policy-on");
+}
+
+// A policy's commitment, made under its own blinding. Persistent, so it opens after an upgrade.
+export circuit policyCommitmentOf(policy: Policy): Bytes<32> {
+  return persistentCommit<PolicyTerms>(policy.terms, policy.blinding);
+}
+
+// Where one period's running total sits: the policy's key, its commitment and the period, so
+// a new policy starts every period afresh.
+export circuit periodKeyOf(policyKey: Bytes<32>, commitment: Bytes<32>, period: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:period:"), policyKey, commitment, period as Field as Bytes<32>
+  ]);
+}
+
+// The blinding of one period's running total, from the policy's blinding and the period, so
+// any signer holding the policy can open it.
+export circuit periodBlindingOf(blinding: Bytes<32>, period: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:period-blind:"), blinding, period as Field as Bytes<32>
+  ]);
+}
+
+// A running total, committed under its blinding behind its own tag: what a period has been
+// charged, or what a charged leg's retries have taken. A leg's retries are kept under its
+// period's blinding, so the tag is what keeps equal amounts from showing as equal.
+export circuit runningTotalOf(tag: Bytes<32>, total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<2, Bytes<32>>>([tag, total as Field as Bytes<32>], blinding);
+}
+
+// The tag a period's running total is committed under.
+export circuit periodTotalTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:period-total:");
+}
+
+// The tag what a charged leg's retries have taken is committed under.
+export circuit legTakenTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:leg-taken:");
+}
+
+// One period's running total, committed under that period's blinding.
+export circuit periodTotalOf(total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
+  return runningTotalOf(periodTotalTag(), total, blinding);
+}
+
+// What a charged leg's retries have taken, committed under the leg's period's blinding.
+export circuit legTakenOf(total: Uint<128>, blinding: Bytes<32>): Bytes<32> {
+  return runningTotalOf(legTakenTag(), total, blinding);
+}
+
+// Where the record that a run's root was charged in a period sits. A run raised again over
+// the same tree in the same period is not charged a second time.
+export circuit chargedKeyOf(periodKey: Bytes<32>, root: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:roles:charged:"), periodKey, root
+  ]);
+}
+
+// A retry's salt: its leg's root and a fresh salt, so the proposal id every signer approves
+// commits to the leg the retry pays again.
+export circuit retrySaltOf(legRoot: Bytes<32>, fresh: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:retry-salt:"), legRoot, fresh
+  ]);
+}
+
+// The value written under a charged key.
+export circuit chargedMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:charged");
+}
+
+// What a cleared run's change commitment is overwritten with. No commitment can equal it.
+export circuit clearedMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:cleared");
+}
+
+// The key in `thresholds` for the approvals a policy change needs. No vault address can equal it.
+export circuit policyBarKey(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:vault:policy" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0xe3, 0x2d, 0xa4, 0xf5, 0xeb, 0x05, 0x46, 0x63, 0x09, 0x85, 0x34, 0x15, 0x89, 0x08, 0xcf, 0xa8,
+               0xcd, 0x36, 0xb6, 0xc7, 0x02, 0xac, 0x1c, 0x2d, 0xae, 0x8d, 0xf0, 0xe6, 0xa1, 0x17, 0x84, 0x07];
+}
+
+// What signers approve to set one vault's policy for one token.
+export circuit setPolicyPayload(vault: Bytes<32>, assetKey: Bytes<32>, commitment: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:set-policy:"), vault, assetKey, commitment
+  ]);
+}
+
+// The approvals a run's total needs under a policy: the first band whose ceiling it fits.
+// Refuses a total above every band.
+export circuit bandApprovals(bands: Vector<4, Band>, total: Uint<128>): Uint<64> {
+  const fits0 = !(bands[0].ceiling < total);
+  const fits1 = !(bands[1].ceiling < total);
+  const fits2 = !(bands[2].ceiling < total);
+  const fits3 = !(bands[3].ceiling < total);
+  assert(fits0 || fits1 || fits2 || fits3,
+    "that run's total is above every band of this vault's policy, so no number of approvals can pay it");
+  return fits0 ? bands[0].approvals
+       : fits1 ? bands[1].approvals
+       : fits2 ? bands[2].approvals
+       : bands[3].approvals;
+}
+}

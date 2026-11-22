@@ -1,13 +1,17 @@
 /**
  * **WHETHER MONEY MAY GO IN OR OUT OF A VAULT, AS THIS DEVICE READS IT**: the
  * answer a screen calls (`vaultFundableHere`), and the same answer for a step
- * that goes on to refuse in its own words (`fundableOrThrow`).
+ * that goes on to refuse in its own words (`fundableOrThrow`). A deposit asks
+ * `takesDepositsOrThrow`, which also refuses a vault carrying its own retired
+ * mark: a vault adopted again still pays out, and takes no deposit.
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { VaultNotReadHere, VaultNotTheCompanys } from './vault-start-stops.js';
 import { type ChainHereDoors, type VaultChainView } from './vault-doors.js';
 import { CIRCUITS_UNSAID, NOT_PINNED_WHY, NO_VAULT_YET, type VaultStandingHere, vaultStandingHere } from './vault-read-here.js';
 const NOT_STARTED_WHY = 'this vault has not been started: its first secret is not set, or not every signer\'s sealed copy is written.';
+const RETIRED_WHY = 'this vault has been retired, so it takes no more money: the vault itself refuses a deposit once it is retired, even '
+  + 'after it is adopted again. Nothing was sent and no money moved. Put the money into another of your company\'s vaults.';
 
 /**
  * **WHETHER MONEY MAY GO IN OR OUT OF A VAULT, AS THIS DEVICE READS IT.** One
@@ -52,6 +56,9 @@ function fundableFrom(standing: VaultStandingHere, forADoor = false): VaultFunda
   return { of: 'fundable', view: standing.view };
 }
 
+/** A vault that carries its own retired mark: it still pays out what it holds, and takes no deposit. */
+type ClosedToDeposits = { readonly of: 'retired'; readonly why: string; readonly view: VaultChainView };
+
 /**
  * The answer, for a step that goes on to refuse in its own words: a vault in
  * any state but the readable ones is an answer, and a read that fails, or a
@@ -59,6 +66,17 @@ function fundableFrom(standing: VaultStandingHere, forADoor = false): VaultFunda
  */
 export async function fundableOrThrow(doors: ChainHereDoors, vault: Hex, forADoor = true): Promise<VaultFundableHere> {
   return fundableFrom(await vaultStandingHere(doors, vault, true), forADoor);
+}
+
+/**
+ * **WHETHER A DEPOSIT MAY GO INTO A VAULT**, for a step that goes on to refuse in its own words: `fundableOrThrow`'s
+ * answer from the same one read, except that a vault whose own ledger carries its retired mark is `retired`, whatever
+ * the company's account says of it now. Throws as `fundableOrThrow` does.
+ */
+export async function takesDepositsOrThrow(doors: ChainHereDoors, vault: Hex): Promise<VaultFundableHere | ClosedToDeposits> {
+  const standing = await vaultStandingHere(doors, vault, true);
+  if (standing.onChain && standing.unread === null && standing.retired) return { of: 'retired', why: RETIRED_WHY, view: standing.view };
+  return fundableFrom(standing, true);
 }
 
 /**

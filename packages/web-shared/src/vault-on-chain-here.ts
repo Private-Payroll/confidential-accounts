@@ -161,11 +161,9 @@ const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString
  * whose circuits are not this app's could let money out on approvals nobody
  * gave.
  *
- * `unshieldedTokens` is the vault's own list of public tokens it was ever paid
- * in, which only its `forgetUnshielded` shortens and which its `retire` refuses
- * on; `publicBalances` is what it holds of each. A token can stay on the list
- * while the vault holds none of it, which is the case the retire takes it off
- * for.
+ * `retired` is the vault's own mark that it was retired, which its deposits
+ * refuse on whatever the account says of it now; `publicBalances` is what it
+ * holds in public money.
  */
 export async function readVaultOnChain(
   d: VaultReadDeps,
@@ -205,7 +203,7 @@ async function vaultReadFrom(
   const state = d.runtimeState.deserialize(bytes) as { data: unknown };
   const circuits = circuitsNotThisBuilds(state, d.vault.expectedVk, sha256, NO_MONEY, 'the vault\'s');
   const ledger = d.vault.ledger(state.data) as Parameters<typeof startingLedgerFrom>[0] & {
-    notes: Iterable<Uint8Array>; unshieldedTokens: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
+    notes: Iterable<Uint8Array>; nonceCommitment: Uint8Array; splitJournal: Iterable<[Uint8Array, Uint8Array]>;
   };
   let notesFromThisBuild = true;
   let notesWhy: string | undefined;
@@ -216,10 +214,12 @@ async function vaultReadFrom(
     notesWhy = (e as Error)?.message ?? String(e);
   }
   let started = false;
+  let retired = false;
   let account: string | null = null;
   try {
     const start = startingLedgerFrom(ledger, d.vault.pureCircuits.copiesWrittenKey());
     started = start.started;
+    retired = start.retired;
     account = String(start.account).toLowerCase();
   } catch { /* a state that is not a vault's cannot be read for its account or start: `account` stays null, which the reader of this answer takes as unreadable, never as pinned elsewhere */ }
   const everCreated = [...await vaultOutputHistoryFrom({ transactions: source.transactions, events: source.events })
@@ -243,8 +243,8 @@ async function vaultReadFrom(
     } : {}),
     notesFromThisBuild,
     ...(notesWhy === undefined ? {} : { notesWhy }),
-    /* The public tokens the vault lists, which its retire refuses on while any is listed: read, like the notes, only off this build's ledger. */
-    ...(notesFromThisBuild ? { unshieldedTokens: [...ledger.unshieldedTokens].map(hexOf) } : { unshieldedTokensWhy: notesWhy! }),
+    /* The vault's own retired mark: read, like the notes, only off this build's ledger. */
+    ...(notesFromThisBuild ? { retired } : {}),
     everCreated,
     account,
     started,

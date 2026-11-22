@@ -61,7 +61,13 @@ export type AfterRemovalCarried = (
   ctx: StepContext, r: CompanyReach, removed: { readonly leaf: Hex; readonly round: { readonly id: string; readonly chainId: string } },
 ) => Promise<VaultsChangedTold>;
 
-/** What the removal reads: the company's chain and builder, the wallet's pause, and the hook that changes the vault secrets. */
+/**
+ * Run when a removal is about to be carried out, before anything of it is sent: refuses (`RemovalRefused`) a removal
+ * that would leave a vault's private money openable by no signer who stays.
+ */
+export type BeforeRemovalCarried = (ctx: StepContext, r: CompanyReach, leaving: { readonly leaf: Hex }) => Promise<void>;
+
+/** What the removal reads: the company's chain and builder, the wallet's pause, and the hooks around carrying it out. */
 export interface RemoveSignerReach {
   readonly chain: () => CompanyChain;
   readonly builder: () => VaultBuilderClient;
@@ -72,6 +78,8 @@ export interface RemoveSignerReach {
   readonly reachFor?: (ctx: StepContext) => Promise<CompanyReach>;
   /** Run once the chain has carried a removal out (`AfterRemovalCarried`): changes the vault secrets the signer who left holds. */
   readonly afterCarried: AfterRemovalCarried;
+  /** Run before a removal is carried out (`BeforeRemovalCarried`): refuses one that would strand a vault's secret. */
+  readonly beforeCarried: BeforeRemovalCarried;
 }
 
 /** Where the page is told the removal got to. */
@@ -246,9 +254,14 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: strin
  * again, and tells the page the company key's change and how many vaults ended in each state. A change that could not
  * start is told as `not-started`: the removal stands, and the next upkeep or a press of the change finishes it.
  */
-const carryOutFor = (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried'>): CarryOut => async (ctx, r, intent, round, handed, renewed) => {
+const carryOutFor = (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried' | 'beforeCarried'>): CarryOut => async (ctx, r, intent, round, handed, renewed) => {
   const a = askedOf(intent);
   if ('key' in a) throw new StepRefused(a);
+  try {
+    await reach.beforeCarried(ctx, r, { leaf: a.leaf });
+  } catch (e) {
+    return stoppedAs(e, handed, 'not-carried', why);
+  }
   const out = await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, why), { approveOnly: round.chainId, carryOnly: true });
   if (out.state === 'waiting-for-the-retirement') {
     ctx.tell({ retirementSigned: out.signed, retirementNeeded: out.needed });
@@ -301,7 +314,7 @@ const removalShown = (intent: ActIntent): ShownLine[] => {
  * retirement it carries; it is carried out by the one carry step, which then changes the vault secrets
  * (`afterCarried`).
  */
-export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried'>): ProposalKind {
+export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried' | 'beforeCarried'>): ProposalKind {
   const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
   const kind: ProposalKind = {
     fields: ['leaf'],
