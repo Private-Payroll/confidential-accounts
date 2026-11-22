@@ -41,15 +41,15 @@ import { StateValue, ChargedState } from '@midnight-ntwrk/compact-runtime';
 
 /**
  * **THE SLOTS THIS BUILD'S OWN CONTRACT MAKES**, loaded once, from the contract
- * itself rather than from a list somebody typed. The find now compares a
- * deployed vault's ledger shape against this build's, so a fake whose state has
- * no ledger is a fake no vault resembles.
+ * itself rather than from a list somebody typed. The find compares a deployed
+ * vault's ledger shape against this build's, so a fake whose state has no
+ * ledger is a fake no vault resembles.
  *
  * Nothing here proves, submits or reaches a network: a constructor runs no
  * circuit, and the witnesses it is handed throw if anything calls one.
  */
 let CANONICAL: unknown[] = [];
-const ALL_SLOTS: readonly number[] = Array.from({ length: 14 }, (_, i) => i);
+const ALL_SLOTS: readonly number[] = Array.from({ length: 15 }, (_, i) => i);
 
 beforeAll(async () => {
   const { Contract } = await import('../../contracts/managed-vault/contract/index.js');
@@ -181,8 +181,7 @@ vi.doMock('@midnight-ntwrk/midnight-js-contracts', () => ({
     h.unprovenCalls.push(options);
     if (h.constructorThrows) throw new Error(h.constructorThrows);
     /*
-     * BOTH SENTINELS BELOW WERE MISSING FROM THE FIRST DRAFT, AND BOTH OF THIS
-     * REVIEW FOUND NEUTERINGS THAT WERE GREEN ONLY BECAUSE OF IT.
+     * BOTH SENTINELS BELOW ARE WHAT LET A WEAKENING TURN A TEST RED.
      * A fake without the real one's semantics cannot fail the way the product
      * would.
      *
@@ -673,12 +672,12 @@ describe('the vault\'s find', () => {
   /*
    * **THE VAULT ON THIS PROJECT'S REGISTRY THAT PASSES EVERY OTHER CHECK.**
    *
-   * A vault deployed on 29 Aug carries four ledger fields; the contract this
-   * build compiled declares fourteen. Its circuits are the right seven and its
-   * verifier keys compare equal - measured against the live chain - so the two
-   * checks above pass it, and a client reading the fifth field off it reads
-   * past the end of its ledger. Here it is with the same circuits and the same
-   * keys as a good vault, refused on the one thing that differs.
+   * A vault deployed from an older build carries four ledger fields; the
+   * contract this build compiled declares fifteen. Its circuits are the right
+   * seven and its verifier keys compare equal, so the two checks above pass
+   * it, and a client reading the fifth field off it reads past the end of its
+   * ledger. Here it is with the same circuits and the same keys as a good
+   * vault, refused on the one thing that differs.
    */
   it('refuses a vault whose LEDGER is a field short, with the same circuits and the same keys', async () => {
     const { providers } = world({ ledgerSlots: [0, 1, 2, 3] });
@@ -688,7 +687,7 @@ describe('the vault\'s find', () => {
     /* RED WHEN the find resolves a vault this build cannot read, which is the defect this file is about. */
     expect(failure).not.toBeNull();
     expect(failure!.message).toMatch(/holds 4 ledger fields/);
-    expect(failure!.message).toMatch(/compiled has 14/);
+    expect(failure!.message).toMatch(/compiled has 15/);
     /* RED WHEN a refusal on the money path does not say whether money moved. */
     expect(failure!.message).toMatch(/Nothing was proved, submitted or spent\./);
     /* RED WHEN the address is printed. */
@@ -871,11 +870,9 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     serialize(): Uint8Array {
       /* The counter is a bigint: `@midnightntwrk/ledger-v9/ledger-v9.d.ts:792`,
        * inside `ContractMaintenanceAuthority` at `:769`. (`:848` is the FIELD on
-       * `ContractState` and was this comment's first, wrong, citation, corrected
-       * caught in review.) `JSON.stringify`
-       * throws on a bigint. The real `serialize` renders it; a fake that could not
-       * would refuse every deploy for a reason the product does not have,
-       * Found by the first run of this file, which failed nine tests on it. */
+       * `ContractState`.) `JSON.stringify` throws on a bigint. The real
+       * `serialize` renders it; a fake that could not would refuse every deploy
+       * for a reason the product does not have. */
       return new TextEncoder().encode(JSON.stringify(
         { data: this.data, authority: this.maintenanceAuthority, ops: [...this.ops.keys()].sort() },
         (_k, v) => (typeof v === 'bigint' ? `${v}n` : v),
@@ -956,7 +953,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
    *
    * `ops` defaults to the vault's own list read off `VAULT_CIRCUITS` rather
    * than typed in: a hard-coded fixture here would keep describing the
-   * four-circuit vault of 27 Aug long after the unshielded circuits moved it.
+   * vault with fewer circuits than the contract has once the contract gains some.
    */
   const handBuiltWorld = (opts: {
     ops?: string[];
@@ -1292,7 +1289,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     ).then(() => null, (e: Error) => e);
 
     expect(failure!.message).toContain('VAULT');
-    expect(failure!.message).toContain('Vault.compact:262-264');
+    expect(failure!.message).toContain('Vault.compact\'s constructor writes');
     /* The account's guard says the same thing about the account's constructor.
      * A guard describing the wrong contract is a guard nobody acts on. */
     expect(failure!.message).not.toContain('account constructor has never minted');
@@ -1395,17 +1392,13 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
      * moved `setSigningKey` into a function this path DOES call is caught here
      * and nowhere else in this repository.
      *
-     * **IT PINS THE CALL SITES THEMSELVES, NOT THE FUNCTIONS AROUND THEM, AND
-     * THIS IS THE SECOND DRAFT OF IT.** The first walked the file tracking
-     * the most recent column-0 `function` / `async function` / `const x = (` and
-     * pinned the set of enclosing names. A review found four writers it did
-     * not see, put into `createUnprovenDeployTx` and `submitTx`:
-     * a `class` method, a `var` arrow, a call written `setSigningKey (a, b)`
-     * with a space, and a destructured `const { setSigningKey } = provider`.
-     * **Each was green, because an unmatched enclosing form silently inherits
-     * the previous name, and the previous name was already in the expected
-     * set.** Scope inference from line-start text cannot be made safe, so this
-     * does not attempt it.
+     * **IT PINS THE CALL SITES THEMSELVES, NOT THE FUNCTIONS AROUND THEM.**
+     * Pinning the set of enclosing names would need scope inference from
+     * line-start text, which cannot be made safe: an unmatched enclosing form
+     * (a `class` method, a `var` arrow, a call written `setSigningKey (a, b)`
+     * with a space, a destructured `const { setSigningKey } = provider`)
+     * silently inherits the previous name, and the previous name would already
+     * be in the expected set.
      *
      * What it pins instead is every line in the file mentioning the identifier
      * at all, trimmed. That is blind to enclosing form, to spacing inside the
@@ -1416,7 +1409,7 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
      * TURNS RED WHEN: the dependency is bumped and any mention moves, changes,
      * disappears or gains a sibling, in any syntactic form.
      * WATCHED: yes, against a copy of `index.mjs` outside this repository, for
-     * all four shapes review found and for the two the first draft caught.
+     * for the four shapes named in the test below.
      */
     const version =
       JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
@@ -1453,14 +1446,14 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     ]);
   });
 
-  it('the mention-pin sees all four shapes that beat the first draft, so it is not vacuous', () => {
+  it('the mention-pin sees all four shapes it must catch, so it is not vacuous', () => {
     /*
      * For the assertion that is hardest to watch fail: the one over
-     * somebody else's file. Each shape below is one review put into a copy of
-     * the real `index.mjs` and watched the FIRST draft pass. Built here
-     * as strings rather than by editing anything on disk: a
-     * test that mutates the repository owns every assertion about it, and this
-     * one mutates nothing.
+     * somebody else's file. Each shape below is a writer that scope inference
+     * from line-start text would miss, put into a copy of the real `index.mjs`.
+     * Built here as strings rather than by editing anything on disk: a test
+     * that mutates the repository owns every assertion about it, and this one
+     * mutates nothing.
      */
     const mentions = (source: string): string[] =>
       source.split('\n').filter((l) => /\bsetSigningKey\b/.test(l)).map((l) => l.trim());
@@ -1526,15 +1519,14 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
 
   it('buildVaultDeployState refuses a state whose operations map came out WRONG, not only one that went in wrong', () => {
     /*
-     * THE POST-BUILD CHECK, AND IT IS HERE BECAUSE IT SURVIVED A PLANTED BREAK.
+     * THE POST-BUILD CHECK, AND AN ASSERTION THAT CAN FAIL BEHIND IT.
      *
-     * The first draft of this block was probed with twenty-two breaks and
-     * twenty-one went red. The one that did not was deleting
-     * `assertVaultCircuitSet(circuits, 'the vault state this deploy would
-     * submit')`, because the pre-build assertion already guarantees the input
-     * and every fake `setOperation` in this file honours what it is given.
-     * **So the check was real and the assertion behind it could not fail, which
-     * is exactly the class this block is written to avoid.**
+     * Deleting `assertVaultCircuitSet(circuits, 'the vault state this deploy
+     * would submit')` is invisible to a test that only feeds the input,
+     * because the pre-build assertion already guarantees the input and every
+     * fake `setOperation` in this file honours what it is given. A check
+     * whose assertion cannot fail is exactly the class this block is written
+     * to avoid.
      *
      * The hazard it guards is not hypothetical and is not the input: dependency
      * 1's failure is a map that is WRONG ON CHAIN, and `setOperation` is a
@@ -1604,23 +1596,20 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
     expect(seen.authorities).toEqual([]);
   });
   /* ---------------------------------------------------------------- *
-   * WHAT REVIEW FOUND UNWATCHED, AND THE ASSERTIONS THAT NOW WATCH IT
+   * THE ASSERTIONS THAT WATCH WHAT A WEAKENING COULD LEAVE GREEN
    *
-   * This block's first draft was probed with 22 deliberate breaks and 21 went
-   * red. REVIEW THEN TRIED 58 MORE AND FOUND EIGHTEEN THAT STAYED GREEN, one of
-   * them able to deploy an unmaintainable vault while reporting success. Every
-   * test below exists because a specific weakening survived, and every one was
-   * tried again afterwards and watched to go red. **Probing your own work
-   * against your own model of what can break is not sufficient.**
+   * Every test below exists because a specific weakening of the deploy path
+   * would otherwise leave the suite green, and each is watched to go red
+   * against that weakening.
    * ---------------------------------------------------------------- */
 
   it('THE TRANSACTION SUBMITTED IS THE ONE THIS PATH BUILT, not the constructor\'s', async () => {
     /*
-     * THE WORST ONE REVIEW FOUND, AND THE ONLY ONE GRADED THAT HIGH.
+     * THE MOST SERIOUS WEAKENING OF THE DEPLOY PATH.
      *
-     * The first draft asserted that submitTx was called ONCE and never looked at
-     * WHAT was submitted. Swapping `{ unprovenTx }` for `{ unprovenTx: tx }` at
-     * the submit call left all 54 tests green, and `tx` is
+     * Asserting only that submitTx was called ONCE never looks at WHAT was
+     * submitted. Swapping `{ unprovenTx }` for `{ unprovenTx: tx }` at the
+     * submit call would leave every other test green, and `tx` is
      * `unproven.private.unprovenTx`: the transaction the SDK built from the
      * CONSTRUCTOR's state, whose authority is the single key the runtime
      * sampled and that this path never stores.
@@ -1657,8 +1646,8 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
   });
 
   it('the transaction carries this path\'s network id and its one-hour TTL', async () => {
-    /* Unasserted in the first draft: replacing both with wrong constants was
-     * green. A deploy on the wrong network is a vault the product cannot see. */
+    /* Replacing both with wrong constants must go red: a deploy on the wrong
+     * network is a vault the product cannot see. */
     const { providers } = handBuiltWorld();
     const { prims, seen } = primitives();
     await submitHandBuiltVaultDeployTx(
@@ -1740,8 +1729,8 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
 
   it('the report states the authority that was actually installed, for both kinds', async () => {
     /*
-     * Unasserted in the first draft: hard-coding a single-key description was
-     * green, so a COMMITTEE deploy could report `single-key`, and
+     * Hard-coding a single-key description must go red, because a COMMITTEE
+     * deploy could then report `single-key`, and
      * `requireVaultMaintenanceAuthority`'s own message calls a deploy recording
      * an authority the chain does not have "the failure that would matter".
      */
@@ -1770,12 +1759,11 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
 
   it('the KEY THE RUNTIME SAMPLED reaches nothing this deploy returns, stores or reports', async () => {
     /*
-     * The sentinel the fake constructor now hands back on
-     * `private.signingKey`. In committee mode the runtime DOES sample a key
-     * (`ContractExecutable.js:277-280`), this path discards it, and the first
-     * draft could not have noticed if it had stopped doing so: the fake had no
-     * key to leak. Review found a weakening that spread `unproven.private`
-     * into the returned object and stayed green.
+     * The sentinel the fake constructor hands back on `private.signingKey`.
+     * In committee mode the runtime DOES sample a key
+     * (`ContractExecutable.js:277-280`) and this path discards it; the fake
+     * returns a key so that spreading `unproven.private` into the returned
+     * object, or any other leak of it, turns this test red.
      *
      * A report is a plaintext home for anything put in it, and that has cost
      * this repository once already.
@@ -1797,11 +1785,10 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
 
   it('the address returned is the one derived from the state this path built, not the constructor\'s', async () => {
     /*
-     * The fake constructor now returns `public.contractAddress`, as the real one
+     * The fake constructor returns `public.contractAddress`, as the real one
      * does (`index.mjs:1073`). It is derived from the INTERIM authority, so
      * against the real SDK reaching for it would return the address of a vault
-     * carrying a sampled single key rather than the committee. The first draft
-     * could not have caught that, because the fake did not return the field.
+     * carrying a sampled single key rather than the committee.
      */
     const { providers } = handBuiltWorld();
     const out = await submitHandBuiltVaultDeployTx(
@@ -1847,11 +1834,10 @@ describe('the hand-built vault deploy, and the second custody surface', () => {
 
   it('the account pin is compared WHOLE and case-insensitively, not by prefix', async () => {
     /*
-     * The only negative case in the first draft differed in every byte, so
-     * weakening the comparison to a two-character prefix check stayed green.
-     * These are the near misses: one byte different at each end, and the same
-     * address in the other case, which must be ACCEPTED rather than refused on
-     * a correct vault.
+     * A negative case that differs in every byte would stay green if the
+     * comparison were weakened to a two-character prefix check. These are the
+     * near misses: one byte different at each end, and the same address in the
+     * other case, which must be ACCEPTED rather than refused on a correct vault.
      */
     const lastByteDiffers = ACCOUNT_PIN.slice(0, 62) + 'ff';
     const firstByteDiffers = 'ff' + ACCOUNT_PIN.slice(2);

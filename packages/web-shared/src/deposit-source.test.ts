@@ -72,7 +72,7 @@ const setUp = async () => {
     vaultOnChain: async () => {
       const v = view();
       return {
-        onChain: true, state: v.state!, notes: v.notes, notesFromThisBuild: true, everCreated: v.everCreated ?? [],
+        onChain: true, state: v.state!, notes: v.notes, notesFromThisBuild: true, retired: false, everCreated: v.everCreated ?? [],
         authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true, circuits: null, accountCircuits: null,
       };
     },

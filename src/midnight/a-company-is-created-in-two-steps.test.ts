@@ -1,7 +1,7 @@
 /**
  * A COMPANY IS CREATED IN TWO STEPS: A DEPLOY, THEN ONE UPDATE THAT ONLY INSERTS.
  *
- * The account's fourteen circuits no longer fit one transaction under the
+ * The account's circuits no longer fit one transaction under the
  * per-transaction ceiling (`scripts/dispatch-ceiling.ts`, 31,997 bytes written).
  * So the deploy carries `FIRST_STEP_CIRCUITS`, and one maintenance update, signed
  * by the key the deploy installed, inserts `SECOND_STEP_CIRCUITS`.
@@ -55,10 +55,10 @@ const recording = (): CreationInsertPrimitives & { built: any[] } => {
 };
 
 describe('the two steps, as lists', () => {
-  it('the first step is the eight a company governs itself with, the seat an invited person takes among them, and pays with none of them', () => {
+  it('the first step is the nine a company governs itself with, the seat an invited person takes among them, and pays with none of them', () => {
     /* A product decision, written out: a change to it should have to change this line. */
     expect([...FIRST_STEP_CIRCUITS]).toEqual([
-      'adopt', 'approve', 'cancel', 'closeExpiredRun', 'propose',
+      'adopt', 'approve', 'cancel', 'closeExpiredRun', 'propose', 'proposeCompanyChange',
       'removeSignerAndSetThreshold', 'seatInvited', 'setThreshold',
     ]);
     /* RED WHEN the payment step is moved into the deploy, so an unfinished company could pay. */

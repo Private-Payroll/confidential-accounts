@@ -69,7 +69,7 @@ describe('the scanner survives the strings the generated code actually contains'
     // a crossContractCall argument list.
     const text = 'q(a, q(b, c), d)';
     const flat = callSpansFlat(text, 'q');
-    expect(flat[0].replace(/\s+/g, ' ').trim()).toBe('a, , d');
+    expect(flat[0]!.replace(/\s+/g, ' ').trim()).toBe('a, , d');
     expect(flat[1]).toBe('b, c');
   });
 });
@@ -181,8 +181,8 @@ describe('the real artifacts, read end to end', () => {
     // readContract throws if `compiler/contract-info.json` and the `ledger()`
     // accessors disagree about any field index. Reaching this line is that
     // cross-check passing.
-    const account = await readContract(ROOT, ARTIFACTS[0]);
-    const vault = await readContract(ROOT, ARTIFACTS[1]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
+    const vault = await readContract(ROOT, ARTIFACTS[1]!);
     expect(account.fields.map((f) => f.name)).toEqual([
       // Slots 0-13, in declaration order; slot 14 is deliberately empty and is
       // the guard's margin, not inventory. The compiled contract reads each
@@ -198,12 +198,12 @@ describe('the real artifacts, read end to end', () => {
     expect(vault.fields.map((f) => f.name)).toEqual([
       'account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment',
       'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4',
-      'reserved5', 'reserved6',
+      'reserved5', 'reserved6', 'retired',
     ]);
   });
 
   it('`Vault.payout` does NOT write the vault fields its stdlib touches in the kernel', async () => {
-    const vault = await readContract(ROOT, ARTIFACTS[1]);
+    const vault = await readContract(ROOT, ARTIFACTS[1]!);
     const payout = vault.circuits.find((c) => c.name === 'payout');
     expect(payout).toBeDefined();
     expect(payout?.writes.map((w) => w.field).sort()).toEqual(['notes', 'payments']);
@@ -220,7 +220,7 @@ describe('the real artifacts, read end to end', () => {
     // checks its caller reaches, and the rights witnesses inside `_grants_0`.
     // A direct-only scan reports that nothing on this contract checks who is
     // calling it.
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     const approve = account.circuits.find((c) => c.name === 'approve');
     expect(approve?.witnesses.map((w) => w.witness).sort()).toEqual([
       'localSecretKey', 'runOpening', 'signerBlinding', 'signerPath', 'signerRights', 'signerScope',
@@ -233,13 +233,13 @@ describe('the real artifacts, read end to end', () => {
   });
 
   it('the CROSS-CONTRACT calls are the six the vault really makes', async () => {
-    const vault = await readContract(ROOT, ARTIFACTS[1]);
+    const vault = await readContract(ROOT, ARTIFACTS[1]!);
     const calls = vault.circuits.flatMap((c) => c.calls.map((x) => `${c.name} → ${x.circuit}`)).sort();
     expect(calls).toEqual([
       'batchPayout → recordBatchFromVault', 'payout → recordPaymentFromVault', 'payoutUnshielded → recordPaymentFromVault', 'retire → retireVault',
       'setNonceSecret → approveVaultChange', 'splitNote → approveVaultChange',
     ]);
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     expect(account.circuits.flatMap((c) => c.calls)).toEqual([]);
   });
 
@@ -248,26 +248,27 @@ describe('the real artifacts, read end to end', () => {
     // `initialState`, which does not match `_<name>_<n>`. A scan over circuits
     // alone would report that `Vault.account` has NO WRITER, a false sentence
     // printed as fact.
-    const vault = await readContract(ROOT, ARTIFACTS[1]);
+    const vault = await readContract(ROOT, ARTIFACTS[1]!);
     expect(vault.ctor).not.toBeNull();
     expect(vault.ctor?.writes.map((w) => w.field).sort()).toEqual([
       'account', 'nonceCommitment', 'notes', 'payments', 'reserved0', 'reserved1', 'reserved2',
-      'reserved3', 'reserved4', 'reserved5', 'reserved6', 'secretCopies', 'splitJournal', 'unshieldedTokens',
+      'reserved3', 'reserved4', 'reserved5', 'reserved6', 'retired', 'secretCopies', 'splitJournal',
+      'unshieldedTokens',
     ]);
     // And no CIRCUIT writes `account`: only the constructor sets the vault's account.
     expect(vault.circuits.filter((c) => c.writes.some((w) => w.field === 'account'))).toEqual([]);
     // Its signature is read off its own type checks, not invented.
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     // TWO ARGUMENTS: the founding leaf, and the company's label, which the
     // constructor writes into `signerRoles`. The threshold stays a literal one.
     // This reads the COMPILED artifact, so it goes red until
-    // `COMPILE-CONTRACT.command` has run.
+    // `npm run compact:fast` has run.
     expect(account.ctor?.signature).toBe('constructor(foundingLeaf: Bytes<32>, companyLabel: Bytes<32>)');
     expect(account.ctor?.writes).toHaveLength(account.fields.length);
   });
 
   it('the helper chain printed is the contract\'s own route to the read, because it is a claim about the route', async () => {
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     const approve = account.circuits.find((c) => c.name === 'approve');
     const signers = approve?.reads.find((r) => r.field === 'signers');
     /*
@@ -279,7 +280,7 @@ describe('the real artifacts, read end to end', () => {
   });
 
   it('an assert carries its MESSAGE, not the first string in its expression', async () => {
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     const setThreshold = account.circuits.find((c) => c.name === 'setThreshold');
     expect(setThreshold?.asserts.map((a) => a.message)).toContain('the threshold must be at least one');
     expect(setThreshold?.asserts.map((a) => a.message)).toContain('that proposal is not for this threshold');
@@ -293,14 +294,15 @@ describe('the real artifacts, read end to end', () => {
     // different text depending on who loaded the module — vitest's module
     // runner rewrites a namespace import — so the generator found every assert
     // and the suite found none, silently, on the same artifact.
-    const account = await readContract(ROOT, ARTIFACTS[0]);
-    const vault = await readContract(ROOT, ARTIFACTS[1]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
+    const vault = await readContract(ROOT, ARTIFACTS[1]!);
     expect(account.circuits.reduce((n, c) => n + c.asserts.length, 0)).toBeGreaterThan(20);
     expect(vault.circuits.reduce((n, c) => n + c.asserts.length, 0)).toBeGreaterThan(5);
-    // And the column earning its place: the vault's `deposit` has three
-    // asserts, two of them reached through a helper.
+    // And the column earning its place: the vault's `deposit` has four
+    // asserts, three of them reached through a helper.
     expect(vault.circuits.find((c) => c.name === 'deposit')?.asserts.map((a) => a.message)).toEqual([
       'a deposit of nothing is not a deposit',
+      'this vault has been retired, so it takes no more money',
       'this vault takes no money yet: the company\'s account has not adopted it and approved its first nonce secret',
       'this vault takes no money yet: not every signer\'s sealed copy of its secret is on the chain',
     ]);
@@ -311,7 +313,7 @@ describe('the real artifacts, read end to end', () => {
     // Parsed as a JavaScript number, 18446744073709551615 comes back as
     // 18446744073709552000, and a signature rendered from that is a number no
     // instrument read off anything.
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     const sig = account.circuits.find((c) => c.name === 'setThreshold')?.signature ?? '';
     expect(sig).toContain('Uint<0..18446744073709551615>');
     expect(sig).not.toContain('18446744073709552000');
@@ -322,7 +324,7 @@ describe('the real artifacts, read end to end', () => {
     // is the state on almost every machine. A fact that came back blank would
     // read as "this circuit has no verifier key", which is a different claim
     // from "nobody has measured one here".
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     const provable = account.circuits.filter((x) => !x.pure);
     expect(provable.length).toBeGreaterThan(5);
     for (const c of provable) {
@@ -347,7 +349,7 @@ describe('the real artifacts, read end to end', () => {
     // READ OFF A LIVE SCAN. The first version of this built a literal three
     // lines above and asserted its own keys, so restoring the field tomorrow
     // would have left it green: a test with no subject.
-    const account = await readContract(ROOT, ARTIFACTS[0]);
+    const account = await readContract(ROOT, ARTIFACTS[0]!);
     const facts = [...account.keys.values()];
     expect(facts.length).toBeGreaterThan(5);
     for (const fact of facts) {

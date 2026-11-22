@@ -159,6 +159,8 @@ export function harness(opts: {
    */
   chain?: 'unreadable' | 'read-throws' | 'no-notes-field'
     | Array<{ nonce: string; value: bigint }>;
+  /** The vault's own retired mark as the chain holds it; unset, the vault was never retired. */
+  retired?: boolean;
   /**
    * **WHAT THE PAYOUT CALL'S OWN RESULT SAYS THE VAULT KEPT.**
    *
@@ -723,6 +725,7 @@ export function harness(opts: {
           size: () => BigInt(held.length),
         },
         payments: 0n,
+        retired: opts.retired ?? false,
       },
     };
   };

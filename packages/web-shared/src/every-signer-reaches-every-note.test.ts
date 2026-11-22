@@ -89,7 +89,7 @@ const aCompany = async (o: { signers?: PoolSigner[]; secretFiled?: boolean } = {
     if (chain.reads > 1 && chain.nextRead === 'throws') throw new Error('the indexer did not answer');
     const notes = chain.reads > 1 && chain.nextRead !== null ? chain.nextRead as string[] : chain.notes;
     return {
-      onChain: true, state: chain.state ?? 'AA==', notes, notesFromThisBuild: true, everCreated: chain.everCreated,
+      onChain: true, state: chain.state ?? 'AA==', notes, notesFromThisBuild: true, retired: false, everCreated: chain.everCreated,
       account: ACCOUNT, started: true, nonceCommitment: chain.commitment, splitJournal: chain.splitJournal,
     };
   };

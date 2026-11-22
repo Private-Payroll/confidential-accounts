@@ -17,7 +17,7 @@ import type { VaultCallOnChain } from '../../../src/midnight/note-index.js';
 import type { StartStandingOnTheWire } from './vault-worker-start.js';
 import type { StepOnTheWire, VaultRebuildAsked, VaultRebuilt } from './vault-rebuild-wire.js';
 import { superAdminWorkerOver, type SuperAdminWorker } from './super-admin-asks.js';
-import type { ForgetUnshieldedAsk, RetireAsk } from './vault-retire-built.js';
+import type { RetireAsk } from './vault-retire-built.js';
 import { PROOF_CEILING_MS } from './proof-ceiling.js';
 import { FAILED_BECAUSE, VaultAskFailed, type VaultAskFailure } from './vault-ask-failed.js';
 import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
@@ -406,8 +406,6 @@ export interface VaultBuilderClient {
   writeSecretCopy(input: { vault: string; run: SecretRunOnTheWire; place: number; state: string; parameters: string }): Promise<{ tx: string }>;
   /** The vault retired under the proposal its signers approved and that proposal's salt, built against one block's view of both contracts. */
   retire?(input: Omit<RetireAsk, 'id' | 'network' | 'ask'>): Promise<{ tx: string }>;
-  /** One public token the vault lists and holds none of taken off its list, which its retire refuses while any token is on it. */
-  forgetUnshielded?(input: Omit<ForgetUnshieldedAsk, 'id' | 'network' | 'ask'>): Promise<{ tx: string }>;
   /**
    * Has the worker fetch and check, ahead of any proof, the public parameters the
    * circuits this app proves need, through the same checked source a proof reads.
@@ -798,7 +796,6 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     setNonceSecret: async (input) => ({ tx: (await ask({ ask: 'set-nonce-secret', ...input })).tx }),
     writeSecretCopy: async (input) => ({ tx: (await ask({ ask: 'write-secret-copy', ...input })).tx }),
     retire: async (input) => ({ tx: (await ask({ ask: 'retire', ...input })).tx }),
-    forgetUnshielded: async (input) => ({ tx: (await ask({ ask: 'forget-unshielded', ...input })).tx }),
     provingWarmed: async () => { await ask({ ask: 'warm-proving' }); },
   };
 }

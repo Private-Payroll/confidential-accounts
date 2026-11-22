@@ -354,7 +354,7 @@ describe('a vault\'s private money, read on this device', () => {
     const other = { nonce: 'f1'.repeat(32), token: TOKEN, value: '500000' };
     kr.adopted = true;
     kr.rebuilt = [...NOTES, other].map((n) => ({ nonce: n.nonce, token: n.token, value: String(n.value), held: commitmentOf(n.nonce), output: '' }));
-    kr.view = { ...chainHolding(NOTES), notes: [...chainHolding(NOTES).notes, commitmentOf(other.nonce), 'hffff'], account: 'c0'.repeat(32), started: true, everCreated: [], nonceCommitment: '5c'.repeat(32), splitJournal: [] };
+    kr.view = { ...chainHolding(NOTES), notes: [...chainHolding(NOTES).notes, commitmentOf(other.nonce), 'hffff'], account: 'c0'.repeat(32), started: true, retired: false, everCreated: [], nonceCommitment: '5c'.repeat(32), splitJournal: [] };
     const { formatTokenAmount } = await import('vaults-ui/format/token-amount');
     /* The read counts what the rebuild found, and files nothing: the filing is owed to a seat action in the wallet. */
     const answer = await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY });

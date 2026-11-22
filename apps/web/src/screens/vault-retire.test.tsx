@@ -184,6 +184,18 @@ describe('a vault retired and adopted again from its page', () => {
     expect(q(c, '[data-screen=vault] [data-action=pay-someone]')).not.toBeNull();
   });
 
+  it('a vault adopted again after a retire offers paying out of it and no deposit, which the vault itself refuses once retired', async () => {
+    state.company = company({ adopted: true });
+    let c = await draw();
+    await untilShown(() => q(c, '[data-screen=vault] [data-action=deposit]'), 'Deposit on a vault never retired');
+    cleanup();
+    state.company = company({ adopted: true }, [RETIRE]);
+    c = await draw();
+    await untilShown(() => q(c, '[data-screen=vault] [data-action=pay-someone]'), 'Pay on a vault adopted again');
+    /* RED WHEN: a vault adopted again after its retire offers Deposit, whose deposit the vault's own retired mark refuses. */
+    expect(q(c, '[data-screen=vault] [data-action=deposit]')).toBeNull();
+  });
+
   it('a retired vault whose chain cannot be read, or is still being read, stays listed with Adopt again and says it may hold money', async () => {
     state.company = company({ retired: true }, [RETIRE]);
     for (const chain of [{ notes: 'unread', public: 'none' }, { notes: 'none', public: 'unread' }, null]) {

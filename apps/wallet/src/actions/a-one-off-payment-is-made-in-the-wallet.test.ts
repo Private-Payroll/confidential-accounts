@@ -79,7 +79,10 @@ const { LegNotRaisedHere } = await import('../../../../packages/web-shared/src/r
 const { ApprovalNotOwed } = await import('../../../../packages/web-shared/src/proposal-approved-on-device.js');
 const { approveProposalAction } = await import('./approve-proposal.js');
 /* No removal is carried out in these tests: the hook that changes the vault secrets after one is never reached. */
-const AFTER_A_REMOVAL = { afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); } };
+const AFTER_A_REMOVAL = {
+  afterCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); },
+  beforeCarried: async (): Promise<never> => { throw new Error('no removal is carried out here'); },
+};
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);

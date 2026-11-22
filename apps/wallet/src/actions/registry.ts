@@ -30,6 +30,7 @@ import type { RemoveSignerReach } from './remove-signer.js';
 import { rotationDoorsIn } from './upkeep.js';
 import type { VaultDoorsReach } from './vault-doors-here.js';
 import { toldOf, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
+import { refuseAStrandedSecretHere } from './vaults-a-removal-reaches.js';
 import { rotateVaultSecretsAction } from './rotate-vault-secrets.js';
 import { admitSignerAction } from './admit-signer.js';
 import { admitPersonAction } from './admit-person.js';
@@ -62,15 +63,19 @@ export const pause = (ms: number, signal: AbortSignal): Promise<void> => new Pro
 });
 
 /**
- * **WHAT RUNS ONCE THE CHAIN HAS CARRIED A REMOVAL OUT**, for the removal action and the one approval alike
- * (`AfterRemovalCarried`, remove-signer.ts): every vault's secret is changed from this wallet so the signer who left
- * cannot open what comes next (`vaultSecretsChangedHere`, as a person's press: it raises a new secret's run and carries
- * it when the approvals are met). The wallet of the seat that left makes nothing. It is handed the company as read again
- * after the company key's change, and answers how many vaults ended in each state.
+ * **WHAT RUNS AROUND CARRYING A REMOVAL OUT**, for the removal action and the one approval alike. Before it
+ * (`BeforeRemovalCarried`, remove-signer.ts), a removal that would leave a vault's private money openable by no signer
+ * who stays is refused, naming the vault (`refuseAStrandedSecretHere`). Once the chain has carried it out
+ * (`AfterRemovalCarried`), every vault's secret, a retired vault's that is still kept among them, is changed
+ * from this wallet so the signer who left cannot open what comes next (`vaultSecretsChangedHere`, as a person's press:
+ * it raises a new secret's run and carries it when the approvals are met). The wallet of the seat that left makes
+ * nothing. It is handed the company as read again after the company key's change, and answers how many vaults ended in
+ * each state.
  */
-export const afterARemoval = (reach: VaultDoorsReach): Pick<RemoveSignerReach, 'afterCarried'> => Object.freeze({
+export const afterARemoval = (reach: VaultDoorsReach): Pick<RemoveSignerReach, 'afterCarried' | 'beforeCarried'> => Object.freeze({
   afterCarried: async (ctx, r, removed) =>
     toldOf(await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r), 'raise', { leaf: removed.leaf })),
+  beforeCarried: async (ctx, r, leaving) => refuseAStrandedSecretHere(ctx, r, reach, leaving.leaf),
 });
 
 /**

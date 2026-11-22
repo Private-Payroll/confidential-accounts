@@ -6,30 +6,46 @@
 import { describe, it, expect } from 'vitest';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import type { Hex } from '../../../src/core/crypto.js';
+import { sealTransferProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
+import type { SealedProposal } from '../../../src/core/types.js';
 import { identityOfAChange, type RoundOnChain } from './governed-call-builder.js';
 import { proposalsKeptInATest } from './a-vaults-start-proposals.test-support.js';
 import { adoptionRoundOf } from '../../../src/midnight/vault-start.js';
-import { approveRetireHere, carryRetireHere, retiredBy, retireFoundHere, retireRaisedHere, type RetireDoors } from './vault-retire-round.js';
+import {
+  approveRetireHere, carryRetireHere, retiredBy, retireFoundHere, retireGivesUpHere, retireRaisedHere, type RetireDoors,
+} from './vault-retire-round.js';
 
 const VAULT = 'ab'.repeat(32) as Hex;
+const OTHER_VAULT = 'cd'.repeat(32) as Hex;
 const ACCOUNT = 'ac'.repeat(32);
 const SEAT = '0b'.repeat(32) as Hex;
 
 const TOKEN = '01'.repeat(32);
 
+/** A one-off's record as the raising seat files it, naming the vault it pays from, under its identity on the chain. */
+const aRunRecord = (vault: Hex, chainId: string, n: number, viewingKey = '44'.repeat(32) as Hex): SealedProposal => {
+  const sealed = sealTransferProposal({
+    accountId: 'acc_1', viewingKey, vault, summary: 'Pay once', oneOff: { id: `one_${n}`, version: 1 },
+    change: { asset: '00'.repeat(32), amount: 1n, batchDigest: '00'.repeat(32) as Hex, salt: '11'.repeat(32) as Hex }, proposedBy: 'ada',
+  });
+  const filed = signProposalFiling('acc_1', {
+    id: `prp_run${String(n).padStart(9, '0')}`, digest: 'dd'.repeat(32) as Hex, chainId: chainId as Hex, keyEpoch: 0,
+    createdAt: '2026-11-01T00:00:00.000Z', sealed,
+  }, SEAT);
+  return { ...filed, accountId: 'acc_1', status: 'open', approvalCount: 0 } as SealedProposal;
+};
+
 const aCompany = (over: {
   readonly needed?: number; readonly notes?: string[]; readonly publicMoney?: boolean; readonly depositOnItsWay?: boolean; readonly paymentOnItsWay?: boolean;
-  readonly listed?: string[]; readonly heldOfListed?: string; readonly listUnread?: boolean; readonly forgetNotShown?: boolean;
-  readonly forgetUnbuilt?: string; readonly proves?: (circuit: string) => boolean;
+  readonly readFails?: boolean; readonly proves?: (circuit: string) => boolean;
 } = {}) => {
   const rounds = new Map<string, RoundOnChain>();
   const sent: string[] = [];
-  const listed = over.listed ?? (over.publicMoney === true ? [TOKEN] : []);
   const chain = {
     notes: over.notes ?? [],
-    publicBalances: over.publicMoney === true ? [{ token: TOKEN, amount: '5' }] : listed.map((token) => ({ token, amount: over.heldOfListed ?? '0' })),
-    tokens: over.listUnread === true ? undefined : listed as string[] | undefined,
-    forgetLands: over.forgetNotShown !== true,
+    publicBalances: over.publicMoney === true ? [{ token: TOKEN, amount: '5' }] : [{ token: TOKEN, amount: '0' }],
+    readFails: over.readFails === true,
+    openRuns: [] as string[],
   };
   const kept = proposalsKeptInATest({
     signingSecret: SEAT,
@@ -39,29 +55,27 @@ const aCompany = (over: {
   const builder = {
     proposalIdentity: async (change: never, salt: string) => identityOfAChange({ accountPure: pureCircuits as never }, change, made.salt(salt)),
     roundsOnChain: async (i: { chainIds: readonly string[] }) => Object.fromEntries(i.chainIds.map((id) => [id, rounds.get(id) ?? { held: 'never', approvals: 0 }])),
-    vaultOnChain: async () => ({
-      onChain: true, state: 's', notes: chain.notes, publicBalances: chain.publicBalances, notesFromThisBuild: true, everCreated: [], account: ACCOUNT, started: true,
-      ...(chain.tokens === undefined ? { unshieldedTokensWhy: 'the ledger is of another shape' } : { unshieldedTokens: [...chain.tokens] }),
-    }),
+    runsOutrun: async () => {
+      if (chain.readFails) throw new Error('the indexer did not answer');
+      return Object.fromEntries(chain.openRuns.map((id) => [id, 0]));
+    },
+    vaultOnChain: async () => {
+      if (chain.readFails) throw new Error('the indexer did not answer');
+      return {
+        onChain: true, state: 's', notes: chain.notes, publicBalances: chain.publicBalances, notesFromThisBuild: true, everCreated: [], account: ACCOUNT,
+        started: true, retired: false,
+      };
+    },
     governedCall: async (i: { order: { circuit: string } }) => { sent.push(`build ${i.order.circuit}`); return { tx: i.order.circuit.toUpperCase() }; },
     chainAtOneBlock: async () => ({ blockHash: 'bh', vaultState: 'vs', zswapState: 'zs', parameters: 'pp', accountState: 'as' }),
     retire: async (i: { vault: string; account: string; proposal: string; salt: string }) => {
       sent.push(`build retire ${i.vault === VAULT && i.account === ACCOUNT}`);
       return { tx: `RETIRE ${i.proposal} ${i.salt}` };
     },
-    forgetUnshielded: async (i: { vault: string; account: string; token: string }) => {
-      if (i.token === over.forgetUnbuilt) throw new Error('the chain could not be read at one block');
-      sent.push(`build forget ${i.vault === VAULT && i.account === ACCOUNT} ${i.token === TOKEN}`);
-      return { tx: `FORGET ${i.token}` };
-    },
   };
   const toChain = async (tx: string, call: { kind: string; contract: string; circuit: string }) => {
     sent.push(`to the chain ${call.kind} ${call.contract === VAULT} ${call.circuit}`);
-    const [what, id] = tx.split(' ');
-    if (what === 'FORGET') {
-      if (chain.forgetLands) chain.tokens = chain.tokens?.filter((t) => t !== id);
-      return;
-    }
+    const [, id] = tx.split(' ');
     rounds.set(id!, { ...rounds.get(id!)!, held: 'closed', closedBy: ['retireVault'] });
     (doors as { sentTx?: string }).sentTx = tx;
   };
@@ -92,14 +106,42 @@ const aCompany = (over: {
   return { doors, rounds, sent, kept, chain, made };
 };
 
+const NOTHING = { notes: 'none', public: 'none' };
+
 describe('A VAULT RETIRED FROM THE DEVICE', () => {
-  it('a vault holding money is not retired: nothing is raised, built or sent, and the refusal says to pay it out', async () => {
-    for (const over of [{ notes: ['n1'] }, { publicMoney: true }]) {
-      const c = aCompany(over);
-      /* RED WHEN: a retire is raised for a vault the chain shows holding money, which the vault would refuse only after a fee was paid. */
-      await expect(retireRaisedHere(c.doors, VAULT)).rejects.toThrow(/still holds .*Nothing was sent\. Pay (them|it) out of the vault, then retire it\./u);
-      expect([c.sent, c.kept.log]).toEqual([[], []]);
+  it('a vault holding money is raised and carried all the same', async () => {
+    const cases: Array<{ notes?: string[]; publicMoney?: boolean }> = [{ notes: ['n1'] }, { publicMoney: true }, { notes: ['n1'], publicMoney: true }];
+    for (const over of cases) {
+      const c = aCompany({ ...over, needed: 1 });
+      /* RED WHEN: a retire is refused for money the vault holds, so anyone who pays a vault one token can block its retirement. */
+      const { found } = await retireRaisedHere(c.doors, VAULT);
+      /* RED WHEN: the carrying out refuses on holdings. */
+      expect(await carryRetireHere(c.doors, { vault: VAULT, proposal: found.rec.id })).toEqual({ state: 'carried-out', said: null });
+      expect(c.sent.filter((x) => x.startsWith('to the chain'))).toEqual(['to the chain vault-retire true retire']);
     }
+  });
+
+  it('an approver is shown what the retire gives up, read on their own device: the vault\'s holdings and the runs open on it', async () => {
+    const c = aCompany({ notes: ['n1'] });
+    c.kept.kept.push(aRunRecord(VAULT, '0a'.repeat(32), 1), aRunRecord(VAULT, '0b'.repeat(32), 2), aRunRecord(OTHER_VAULT, '0c'.repeat(32), 3));
+    c.chain.openRuns = ['0a'.repeat(32), '0c'.repeat(32)];
+    /* RED WHEN: a run closed on the chain, or a run of another vault, is counted among this vault's, or an open one of this vault is not. */
+    expect(await retireGivesUpHere(c.doors, VAULT)).toEqual({ money: { notes: 'holds', public: 'none' }, openRuns: 1 });
+    c.chain.notes = [];
+    c.chain.openRuns = [];
+    expect(await retireGivesUpHere(c.doors, VAULT)).toEqual({ money: NOTHING, openRuns: 0 });
+    /* A run open on the chain whose record this device cannot open may be a run of this vault: not read, never counted as none. */
+    const sealedElsewhere = aRunRecord(VAULT, '0d'.repeat(32), 4, '55'.repeat(32) as Hex);
+    c.kept.kept.push(sealedElsewhere);
+    c.chain.openRuns = ['0d'.repeat(32)];
+    /* RED WHEN: a run whose record this device cannot open is passed over, so an approver is told no run is open on the vault. */
+    expect((await retireGivesUpHere(c.doors, VAULT)).openRuns).toBeNull();
+    c.chain.openRuns = ['0e'.repeat(32)];
+    /* RED WHEN: a run open on the chain that no record here names is counted as another vault's. */
+    expect((await retireGivesUpHere(c.doors, VAULT)).openRuns).toBeNull();
+    c.chain.readFails = true;
+    /* RED WHEN: holdings or runs that could not be read are shown as none, so an approver gives up money they were told was not there. */
+    expect(await retireGivesUpHere(c.doors, VAULT)).toEqual({ money: { notes: 'unread', public: 'unread' }, openRuns: null });
   });
 
   it('money this device keeps on its way into or out of the vault holds the retire back, and the refusal says which press settles it', async () => {
@@ -126,16 +168,6 @@ describe('A VAULT RETIRED FROM THE DEVICE', () => {
     /* RED WHEN: the retire is sent another way than the vault's own call, through another contract, or under another proposal or salt. */
     expect(c.sent).toEqual(['build retire true', 'to the chain vault-retire true retire', `written down ${found.rec.id}`]);
     expect(c.doors.sentTx).toBe(`RETIRE ${found.round.chainId} ${found.salt}`);
-  });
-
-  it('a retire held at its bar is still not carried while the vault holds money', async () => {
-    const c = aCompany({ needed: 1 });
-    const { found } = await retireRaisedHere(c.doors, VAULT);
-    c.chain.notes = ['paid in after the raise'];
-    c.sent.length = 0;
-    /* RED WHEN: money paid in after the raise is stranded by a retire carried without reading the vault again. */
-    await expect(carryRetireHere(c.doors, { vault: VAULT, proposal: found.rec.id })).rejects.toThrow(/still holds 1 note/u);
-    expect(c.sent).toEqual([]);
   });
 
   it('a seat\'s approval is sent once, and not again once the chain counts it', async () => {
@@ -185,85 +217,7 @@ describe('A VAULT RETIRED FROM THE DEVICE', () => {
     expect(await retiredBy(c.doors, named)).toBe(found.round.chainId);
   });
 
-  it('a vault once paid publicly and paid back to nothing has each token it lists taken off its list first, then is raised and carried', async () => {
-    const c = aCompany({ needed: 1, listed: [TOKEN] });
-    /* RED WHEN: a vault the chain's retire refuses, because it still lists a token, is read as empty and its retire raised and approved for nothing. */
-    const { found } = await retireRaisedHere(c.doors, VAULT);
-    expect(c.sent.slice(0, 2)).toEqual(['build forget true true', 'to the chain vault-forget true forgetUnshielded']);
-    expect(c.chain.tokens).toEqual([]);
-    /* RED WHEN: a token paid in and back out again after the raise is still listed when the vault's retire is sent, which the vault refuses. */
-    c.chain.tokens = [TOKEN];
-    c.sent.length = 0;
-    expect(await carryRetireHere(c.doors, { vault: VAULT, proposal: found.rec.id })).toEqual({ state: 'carried-out', said: null });
-    expect(c.sent).toEqual([
-      'build forget true true', 'to the chain vault-forget true forgetUnshielded',
-      'build retire true', 'to the chain vault-retire true retire', `written down ${found.rec.id}`,
-    ]);
-  });
-
-  it('a token the vault still holds some of is never taken off its list: nothing is sent, and the refusal says to pay it out', async () => {
-    const c = aCompany({ listed: [TOKEN], heldOfListed: '7' });
-    /* RED WHEN: a token the vault holds money of is sent to be forgotten, or the retire is raised over money the vault holds. */
-    await expect(retireRaisedHere(c.doors, VAULT)).rejects.toThrow(/still holds public money.*Nothing was sent\. Pay it out of the vault, then retire it\./u);
-    expect([c.sent, c.kept.log]).toEqual([[], []]);
-  });
-
-  it('a balance the chain keeps at nothing for a token the vault no longer lists does not hold the retire back', async () => {
-    const c = aCompany({ needed: 1 });
-    c.chain.publicBalances = [{ token: TOKEN, amount: '0' }];
-    /* RED WHEN: an entry at nothing refuses with "pay it out", which nobody can do at nothing, so the vault can never retire. */
-    await expect(retireRaisedHere(c.doors, VAULT)).resolves.toMatchObject({ found: { onChain: { held: 'open' } } });
-  });
-
-  it('a public amount is read by the one reading the page keeps a retired vault listed by', async () => {
-    const c = aCompany({ needed: 1, listed: [TOKEN], heldOfListed: '00' });
-    /* RED WHEN: the retire reads an amount at nothing as money held, where the page reads it as nothing, so the two disagree on one vault. */
-    await expect(retireRaisedHere(c.doors, VAULT)).resolves.toMatchObject({ found: { onChain: { held: 'open' } } });
-    expect(await retireRaisedHere(aCompany({ listed: [TOKEN], heldOfListed: '0x0' }).doors, VAULT).then(() => null, (e: Error) => e.message)).toMatch(/still holds public money/u);
-  });
-
-  it('a list of public tokens that could not be read refuses, naming what clears it, and is never read as empty', async () => {
-    const c = aCompany({ listed: [TOKEN], listUnread: true });
-    /* RED WHEN: an unread list is taken as an empty one, so the retire is raised and approved and the chain then refuses it. */
-    await expect(retireRaisedHere(c.doors, VAULT)).rejects.toThrow(/^Which public tokens this vault lists could not be read \(the ledger is of another shape\).*Nothing was sent\. Press again in a minute\./u);
-    expect([c.sent, c.kept.log]).toEqual([[], []]);
-  });
-
-  it('a token sent to be taken off the list that the network still lists stops the retire, saying the call was sent', async () => {
-    const c = aCompany({ listed: [TOKEN], forgetNotShown: true });
-    /* RED WHEN: the retire is raised while the chain still lists the token, or the refusal says nothing was sent when the call was. */
-    await expect(retireRaisedHere(c.doors, VAULT)).rejects.toThrow(/was sent, and the network still lists .*The retire was not raised\. Press again in a minute/u);
-    expect(c.sent).toEqual(['build forget true true', 'to the chain vault-forget true forgetUnshielded']);
-    expect(c.kept.log).toEqual([]);
-  });
-
-  it('a later token whose call cannot be built after an earlier one went out says how many went out, never that nothing was sent', async () => {
-    const OTHER = '02'.repeat(32);
-    const c = aCompany({ listed: [TOKEN, OTHER], forgetUnbuilt: OTHER });
-    /* RED WHEN: a press that sent one call taking a token off the list, and paid its fee, says nothing was sent. */
-    const e = await retireRaisedHere(c.doors, VAULT).then(() => null, (x: Error) => x.message);
-    expect(e).toMatch(/1 call taking a public token off this vault's list already went out, each paying only its network fee and moving no money; nothing more was sent\. The retire was not raised\. Press again/u);
-    expect(e).not.toMatch(/Nothing was sent/u);
-    expect(c.kept.log).toEqual([]);
-  });
-
-  it('on the carry, a token the network still lists says the retire stays raised and approved, never that it was not raised', async () => {
-    const c = aCompany({ needed: 1 });
-    const { found } = await retireRaisedHere(c.doors, VAULT);
-    c.chain.tokens = [TOKEN];
-    c.chain.publicBalances = [{ token: TOKEN, amount: '0' }];
-    c.chain.forgetLands = false;
-    /* RED WHEN: the carry's refusal says the retire was not raised, which the chain shows raised and approved. */
-    const e = await carryRetireHere(c.doors, { vault: VAULT, proposal: found.rec.id }).then(() => null, (x: Error) => x.message);
-    expect(e).toMatch(/The retire stays raised and approved on the network, and was not sent\. Press again in a minute/u);
-    expect(e).not.toMatch(/not raised/u);
-  });
-
-  it('a wallet that cannot yet send a call the retire needs stops before anything is raised or sent, and says what clears it', async () => {
-    const forget = aCompany({ listed: [TOKEN], proves: (circuit) => circuit !== 'forgetUnshielded' });
-    /* RED WHEN: a wallet that cannot prove the call taking a token off the list starts it, or refuses without naming what clears it. */
-    await expect(retireRaisedHere(forget.doors, VAULT)).rejects.toThrow(/^The vault still lists a public token it was once paid, and it will not retire until that is cleared\. This wallet cannot clear it yet: it needs an update first\. Nothing was sent\.$/u);
-    expect([forget.sent, forget.kept.log]).toEqual([[], []]);
+  it('a wallet that cannot yet send the vault\'s retire stops before anything is raised or sent, and says what clears it', async () => {
     const retire = aCompany({ proves: (circuit) => circuit !== 'retire' });
     /* RED WHEN: a retire is raised, and its approvals spent, from a wallet that can never prove the vault's retire that carries it out. */
     await expect(retireRaisedHere(retire.doors, VAULT)).rejects.toThrow(/^This wallet cannot retire this vault yet\. It needs an update first\. Nothing was sent\.$/u);

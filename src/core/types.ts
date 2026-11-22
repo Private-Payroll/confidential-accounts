@@ -49,8 +49,8 @@ export interface User {
   id: string;
   /**
    * NULL FOR A PERSON WHO SIGNED IN WITH THEIR WALLET, and null is the honest
-   * spelling of it. `docs/scope-payroll-identity.md` §10 step 1: sign-in first,
-   * *nothing about profiles*. Nothing asked this person for an email, so there
+   * spelling of it. Sign-in comes first and asks nothing about a profile.
+   * Nothing asked this person for an email, so there
    * is no email — not an empty one, which is a value that compares equal to
    * another absence and finds the wrong person.
    *
@@ -276,7 +276,7 @@ export type PerAsset<T> = Partial<Record<AssetId, T>>;
  * because whoever set the number set the real threshold for every payment small
  * enough. Nothing replaces it: the use case (small payments move faster) is
  * built and enforced on chain as a PER-VAULT threshold
- * (`contracts/src/ConfidentialAccount.compact:211`, `thresholdFor` at `:1029`),
+ * (the `thresholds` map, `contracts/src/ConfidentialAccount.compact:124`, read by `thresholdFor` at `:381`),
  * set by a governed proposal every signer approves.
  * `LedgerStatus.vaultThresholds` is where the number now lives, which is to say
  * on chain and nowhere here.
@@ -423,7 +423,7 @@ export interface SealedAccount {
   sealedPolicy: Sealed;
   /**
    * **THE COMPANY'S ACCOUNT CONTRACT ADDRESS. PUBLIC, DURABLE, AND NOT OURS TO
-   * CHOOSE.** `docs/scope-payroll-identity.md` §9.
+   * CHOOSE.**
    *
    * Sixty-four lower-case hex characters, or null while this company has no
    * contract, and every chain action reaches the company's account through it.
@@ -588,7 +588,7 @@ export type ProposalKind =
   | 'adopt-vault' | 'vault-secret'
   /** The company's account committed to its pay-record key, raised by the founding seat's device. */
   | 'pay-key'
-  /** A vault taken out of the company's account once it holds no money, so nothing is paid from it again until it is adopted again. */
+  /** A vault taken out of the company's account, whatever it holds: it takes no deposit again, and nothing is paid from it until it is adopted again. */
   | 'retire-vault';
 /**
  * `cancelled` is distinct from `rejected`: rejected is a judgement about the
@@ -665,8 +665,9 @@ export interface Proposal {
    * concerns none, which is every proposal this product raises today.
    *
    * It decides how many approvals the proposal needs — `thresholdFor(vault)`,
-   * `contracts/src/ConfidentialAccount.compact:1358` — so it is not a label. It
-   * is also committed INSIDE `chainId` (`proposalIdOf`, `compact:874`), which
+   * `contracts/src/ConfidentialAccount.compact:381` — so it is not a label. It
+   * is also committed INSIDE `chainId` (`proposalIdOf`,
+   * `contracts/src/modules/Commitments.compact:26`), which
    * is what makes the on-chain APPROVAL NULLIFIER collected for one vault
    * worthless at another: a different id, not a rejected one. **IT WAS NEVER
    * TRUE OF THE SIGNATURE — `approvalMessage` (`account.ts`) is where that
@@ -674,10 +675,10 @@ export interface Proposal {
    *
    * **SEALED, NOT READABLE, AND THE CONTRACT MAKES THE SAME CHOICE.** The chain
    * learns the vault only when a payment is recorded against the proposal
-   * (`recordPaymentFromVault` discloses it, `compact:2639`); at propose time it holds a
+   * (`recordPaymentFromVault` discloses it, `ConfidentialAccount.compact:946`); at propose time it holds a
    * commitment and nothing more. Which pot of money an OPEN proposal is reaching
    * into is a live signal about a pending payment — the same reason `propose`
-   * refuses to disclose the asset key (`compact:2105`). Every path that needs it
+   * refuses to disclose the asset key (it goes only into the change commitment, `ConfidentialAccount.compact:684-685`). Every path that needs it
    * already opens the sealed blob to read the amount.
    */
   vault: Hex;
@@ -882,7 +883,7 @@ export interface RosterEmployee {
    * WHO HANDED THE ADDRESS OVER, AND WHO ACCEPTED IT ONTO THE ROSTER.
    *
    * Sealed with the rest, and recorded because **`admit` is the moment the
-   * address of record is set** and it used to leave no trace of itself at all.
+   * address of record is set**, and this is the trace it leaves of itself.
    * The skip register already carries an author, a time and a reason for a
    * decision not to pay somebody; deciding WHERE to pay them deserves the same.
    */
@@ -901,12 +902,11 @@ export interface RosterEmployee {
   /**
    * The person who raised this invite is the person who redeemed it.
    *
-   * **A FACT, NOT A REFUSAL.** `admit` used to throw on this. Refusing asked
-   * about the wrong person — the raiser — when the question that matters is
-   * whether the redeemer is the PAYEE, which the email check answers directly.
-   * The price of that refusal was a second flow so founders could get on their
-   * own payroll, and that flow became a hole of its own. Recorded instead, so
-   * an admin reviewing a roster can see it.
+   * **A FACT, NOT A REFUSAL.** `admit` does not throw on this: refusing would
+   * ask about the wrong person — the raiser — when the question that matters is
+   * whether the redeemer is the PAYEE, which the email check answers directly,
+   * and it would need a second flow so founders could get on their own
+   * payroll. Recorded instead, so an admin reviewing a roster can see it.
    */
   selfRaised: boolean;
   /**
@@ -1033,10 +1033,9 @@ export interface Invite {
    * Signer invites still carry a name and email, because there is no sealed
    * record to point at until the person exists.
    *
-   * EMPLOYEE invites carry neither, and must not. They used to duplicate the
-   * name, email, title and salary already held on the roster entry — so sealing
-   * the roster while leaving this alone would have moved the leak into the
-   * invites table rather than closing it, and left two copies of a salary that
+   * EMPLOYEE invites carry neither, and must not. The name, email, title and
+   * salary are held on the sealed roster entry; a copy here would put them in
+   * the invites table in the clear, and leave two copies of a salary that
    * could disagree.
    */
   name?: string;
@@ -1066,7 +1065,6 @@ export interface Invite {
   createdByKey?: string | null;
   /**
    * **WHEN THIS OFFER STOPS BEING ONE.**
-   * `docs/scope-invitations.md` §8 and §9.
    *
    * *"An offer that never expires is a salary waiting for whoever eventually
    * finds that link."* Every invitation has one, and §9 refuses an invitation
@@ -1088,7 +1086,7 @@ export interface Invite {
   keyEpoch?: number;
   expiresAt?: string;
   /**
-   * **WHEN IT WAS TAKEN BACK.** `docs/scope-invitations.md` §8.
+   * **WHEN IT WAS TAKEN BACK.**
    *
    * A hire falls through after the link has been sent, and until this there was
    * no way to take it back: the link kept working, and whoever held it could
@@ -1537,13 +1535,12 @@ export interface RefusedApproval {
  * **DECLARATION-MERGED ONTO `Proposal` RATHER THAN WRITTEN INSIDE IT, AND THE
  * CITATIONS ARE THE WHOLE REASON.**
  *
- * `Proposal` begins at `:599` and this file is cited by `file:line` from six
- * places below that point, three of them in files a change like this may not
- * touch. A field added at `:654` moves every one of them. Appending below the
- * last line moves nothing, and TypeScript merges two `interface Proposal`
- * declarations in one module into one type. **The cost is that a reader of the
- * interface at `:599` does not see this field, which is why this block says so
- * out loud instead of relying on the reader finding it.**
+ * This file is cited by `file:line` from other files, and a field added inside
+ * the first `Proposal` declaration (`:646`) moves every citation below it.
+ * Appending below the last line moves nothing, and TypeScript merges two
+ * `interface Proposal` declarations in one module into one type. **The cost is
+ * that a reader of the interface at `:646` does not see this field, which is
+ * why this block says so out loud instead of relying on the reader finding it.**
  */
 export interface Proposal {
   /**
@@ -1576,23 +1573,19 @@ export interface Proposal {
    * **THE ROLE THIS PROPOSAL'S CEILING IS EVALUATED AGAINST, WRITTEN DOWN WHERE
    * REMOVING THE PROPOSER CANNOT TAKE IT AWAY.**
    *
-   * `evaluatePolicy` is given the PROPOSER's role, and the only place that role
-   * used to exist was the live `signers` row — which
-   * a removal (once the service's, now the devices') DELETES rather than marks, with nothing
-   * closing that proposer's still-open rounds. **So an ordinary governed
-   * removal, followed by an ordinary approval, made the reconcile read
-   * `undefined.role`**; the approval was already durable by then, and the retry
-   * repeated the same throw for ever.
+   * `evaluatePolicy` is given the PROPOSER's role, and the live `signers` row
+   * cannot be relied on for it: a removal DELETES that row rather than marks
+   * it, with nothing closing that proposer's still-open rounds, **so an
+   * ordinary governed removal followed by an ordinary approval would leave the
+   * reconcile with no role to read**, after the approval was already durable.
    *
    * **IT IS THE ROLE AT PROPOSE TIME AND THAT IS THE CORRECT ONE, NOT A
    * CONVENIENT ONE.** The ceiling asks what authority this proposal was raised
    * under. A role read later is a different question, and one that has no
    * answer at all once the seat is gone.
    *
-   * **WRITTEN AT ALL SIX PROPOSE DOORS**, and that took a second pass to make
-   * true: the first draft wrote it at `propose` and `proposeRun` only, leaving
-   * the four GOVERNANCE doors — where a proposer being removed is the ordinary
-   * case — falling through to the very lookup this field replaces.
+   * **WRITTEN AT EVERY PROPOSE DOOR**, the GOVERNANCE doors among them, where
+   * a proposer being removed is the ordinary case.
    *
    * **UNDEFINED ON EVERY PROPOSAL WRITTEN BEFORE THIS FIELD**, which is why
    * `recordStanding` still falls back to the live lookup and refuses BY NAME

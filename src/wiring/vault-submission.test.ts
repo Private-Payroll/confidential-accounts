@@ -127,8 +127,11 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       /* What the device's builder writes, read through the vault's own ledger: nothing besides the account. */
       expect(startingLedgerOf(d.initialState)).toEqual({
         account: ACCOUNT, notes: 0n, unshieldedTokens: 0n, payments: 0n,
-        nonceCommitment: '00'.repeat(32), splitJournal: 0n, secretCopies: 0n, reserved: 0n, started: false,
+        nonceCommitment: '00'.repeat(32), splitJournal: 0n, secretCopies: 0n, reserved: 0n, retired: false, started: false,
       });
+      /* RED WHEN a deploy that starts marked retired is read as a new vault: it would never take the money it is made for. */
+      expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), startingLedgerOf: (s) => ({ ...startingLedgerOf(s), retired: true }) })))
+        .toMatch(/starts marked retired/);
       for (const written of [{ notes: 1n }, { unshieldedTokens: 1n }, { payments: 1n }]) {
         const withIt = (s: unknown) => ({ ...startingLedgerOf(s), ...written });
         expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), startingLedgerOf: withIt })), JSON.stringify(written, (_k, v) => String(v)))
@@ -407,7 +410,7 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
         account: { bytes: new Uint8Array(32).fill(1) }, notes: zero(0), unshieldedTokens: zero(0), payments: 0n,
         nonceCommitment: commitment, splitJournal: zero(0),
         secretCopies: { size: () => 1n, member: (k: Uint8Array) => written !== undefined && Buffer.compare(Buffer.from(k), Buffer.from(key)) === 0, lookup: () => written! },
-        reserved0: zero(0), reserved1: zero(0), reserved2: zero(0), reserved3: zero(0), reserved4: zero(0), reserved5: zero(0), reserved6: zero(0),
+        reserved0: zero(0), reserved1: zero(0), reserved2: zero(0), reserved3: zero(0), reserved4: zero(0), reserved5: zero(0), reserved6: zero(0), retired: false,
       });
       const c = new Uint8Array(32).fill(0x51);
       /* RED WHEN a vault with a secret but copies still to write is read as started. */

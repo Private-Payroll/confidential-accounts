@@ -1,0 +1,291 @@
+// The account's hashing: proposal ids and payloads, approval nullifiers, the keys and marks it
+// stores under, and the anchor's derivations. Nothing here reads the ledger, a witness or the
+// kernel.
+module Commitments {
+import CompactStandardLibrary;
+
+// An asset's key for this account: the asset committed under the account's blinding.
+export circuit assetKeyOf(asset: Bytes<32>, blinding: Bytes<32>): Bytes<32> {
+  return persistentCommit<Bytes<32>>(asset, blinding);
+}
+
+// A proposal's change (asset, amount, batch), committed under its salt. Stored, never opened.
+export circuit changeCommitmentOf(
+  assetKey: Bytes<32>,
+  amount: Uint<128>,
+  batch: Bytes<32>,
+  salt: Bytes<32>,
+): Bytes<32> {
+  return persistentCommit<Vector<4, Bytes<32>>>(
+    [pad(32, "midnight-accounts:change:"),
+     assetKey, amount as Field as Bytes<32>, batch], salt
+  );
+}
+
+// A proposal's id: its payload and its vault, committed under a fresh salt.
+export circuit proposalIdOf(
+  payloadHash: Bytes<32>,
+  vault: Bytes<32>,
+  salt: Bytes<32>,
+): Bytes<32> {
+  return persistentCommit<Vector<3, Bytes<32>>>(
+    [pad(32, "midnight-accounts:proposal-id:"), payloadHash, vault], salt);
+}
+
+// One signer's approval of one proposal in one account. Unlinkable across proposals and accounts,
+// and only the holder of `sk` can compute it. Exported so a device can read whether its own seat's
+// approval is already in `approvals`.
+export circuit approvalNullifierOf(sk: Bytes<32>, account: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:approval:"), account, proposal, sk
+  ]);
+}
+
+// What signers approve to seat whoever holds the invited address, with exactly `scope` as
+// their rights, and to set the threshold to `newThreshold` once the seat is taken (0 keeps the
+// threshold in force), so the invitee can change neither.
+export circuit signerInvitePayload(address: Bytes<32>, scope: Bytes<32>, newThreshold: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:invite-signer:"), address, scope, newThreshold as Field as Bytes<32>
+  ]);
+}
+
+// What signers approve to change the account threshold.
+export circuit setThresholdPayload(newThreshold: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:set-threshold:"), newThreshold as Field as Bytes<32>
+  ]);
+}
+
+// What signers approve to replace one seated leaf with another, which is how rights change.
+export circuit reseatPayload(oldLeaf: Bytes<32>, newLeaf: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:reseat:"), oldLeaf, newLeaf
+  ]);
+}
+
+// What signers approve to set the approvals a policy change needs.
+export circuit setPolicyBarPayload(newBar: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:policy-bar:"), newBar as Field as Bytes<32>
+  ]);
+}
+
+// Marks the signer who held a run: from their secret key, the account and the run, so only
+// they can release it alone and nobody else can tell who they are.
+export circuit holderKeyOf(sk: Bytes<32>, account: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:holder:"), sk, account, proposal
+  ]);
+}
+
+// What a released hold is marked with. No holder's key can equal it.
+export circuit releasedMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:hold-released");
+}
+
+// What a run's hold is marked with once a payment from it has landed, after which it can never
+// be held. No holder's key can equal it.
+export circuit paidFromMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:run-paid-from");
+}
+
+// What an open company change is stored with, where a run stores its change. Nothing reads it
+// back for a company change. No commitment can equal it.
+export circuit companyChangeMark(): Bytes<32> {
+  return pad(32, "midnight-accounts:company-change");
+}
+
+// The record that a payee was paid. Keyed on the leaf alone, so once in any run.
+export circuit paidMovementOf(leaf: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:paid:"), leaf]);
+}
+
+// What signers approve to set one vault's threshold.
+export circuit setVaultThresholdPayload(vault: Bytes<32>, newThreshold: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    // Shortened to fit 32 bytes.
+    pad(32, "midnight-accounts:vault-thresh:"),
+    vault,
+    newThreshold as Field as Bytes<32>,
+  ]);
+}
+
+// What signers approve to adopt a vault.
+export circuit adoptVaultPayload(vault: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:adopt-vault:"), vault
+  ]);
+}
+
+// What signers approve to retire a vault.
+export circuit retireVaultPayload(vault: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:retire-vault:"), vault
+  ]);
+}
+
+// What signers approve to remove a signer and set the threshold, in one proposal.
+export circuit removeAndSetThresholdPayload(removedLeaf: Bytes<32>, newThreshold: Uint<64>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:remove-thresh:"),
+    removedLeaf,
+    newThreshold as Field as Bytes<32>,
+  ]);
+}
+
+// A proposer's withdraw secret: their secret key, the account and the proposal, domain-tagged.
+export circuit withdrawSecretOf(sk: Bytes<32>, account: Bytes<32>, proposal: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:withdraw-sec:"), sk, account, proposal
+  ]);
+}
+
+// The key stored for a proposal: its withdraw secret, hashed again under its own tag.
+export circuit withdrawKeyOf(secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:withdraw:"), secret
+  ]);
+}
+
+// The record that a person was paid for one month, kind and occurrence, which the nonce
+// was derived from. Keyed on the nonce alone, so it holds whatever the amount, address or form.
+export circuit paidOnceOf(nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:paid-once:"), nonce]);
+}
+
+// Where the account's commitment to its pay-record key sits in `signerRoles`.
+export circuit payKeyCommitmentKey(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:roles:pay-key" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0xcc, 0x31, 0x36, 0xc7, 0x8f, 0x2e, 0x28, 0xcd, 0xca, 0x86, 0x0e, 0x11, 0x91, 0x87, 0xd8, 0xcc,
+               0xaf, 0xda, 0xe6, 0xf3, 0xd2, 0x3e, 0x86, 0x58, 0x6c, 0xc5, 0xc2, 0x1b, 0xfd, 0x55, 0x8c, 0x4e];
+}
+
+// Where one of the four parts of a signer's sealed copy of the pay-record key sits in
+// `signerRoles`: derived from their secret key and the account, so only they can write it. The
+// four parts share one hash and differ by the part added to it as a field element.
+export circuit payKeyWrapKeyOf(account: Bytes<32>, sk: Bytes<32>, part: Uint<8>): Bytes<32> {
+  return payKeyWrapKeyFrom(payKeyWrapBaseOf(account, sk), part);
+}
+
+// One part's key from the hash the four share, so a circuit writing all four hashes once. The
+// hash read as a field element keeps its first 31 bytes; the part is added and the key kept to
+// those 31 bytes, so a hash at the very top wraps its later parts to 0, 1 and 2 and the four stay apart.
+export circuit payKeyWrapKeyFrom(base: Bytes<32>, part: Uint<8>): Bytes<32> {
+  return upgradeFromTransient(degradeToTransient(base) + (part as Field));
+}
+
+// The hash a signer's four part keys are made from.
+export circuit payKeyWrapBaseOf(account: Bytes<32>, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "midnight-accounts:roles:wrap:"), account, sk]);
+}
+
+// What every device checks the pay-record key it unsealed against.
+export circuit payKeyCommitmentOf(key: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:paykey-commit:"), key
+  ]);
+}
+
+// What signers approve to commit the account to its pay-record key.
+export circuit payKeyPayload(commitment: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "midnight-accounts:pay-key:"), commitment
+  ]);
+}
+
+// Where the company's label sits in `signerRoles`.
+export circuit companyLabelKey(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:roles:label" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0xe5, 0xc1, 0xcb, 0x25, 0x19, 0xbc, 0x5f, 0x6b, 0xc4, 0xa0, 0xf7, 0x79, 0xd4, 0xf8, 0x51, 0xbe,
+               0xc4, 0x5b, 0xdc, 0x71, 0x27, 0xd2, 0xa5, 0xe6, 0x29, 0x2b, 0x50, 0x86, 0x74, 0x35, 0x89, 0x03];
+}
+
+// Where the company's record anchor sits in `signerRoles`: one head, written by `anchor` and by
+// `recoverAnchor`, and by nothing else.
+export circuit anchorKey(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:roles:anchor" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0x63, 0x5c, 0xdc, 0xcb, 0xcb, 0xf7, 0x6b, 0x7f, 0x6a, 0x96, 0x88, 0xc1, 0x3b, 0x36, 0x70, 0x0f,
+               0x71, 0xbd, 0xda, 0x8b, 0x55, 0x1d, 0xd0, 0x0d, 0x9b, 0x96, 0x78, 0x7d, 0x8c, 0xd8, 0xb5, 0x0f];
+}
+
+// The key the account keeps the tag of the seat that moved the record anchor last under, beside the
+// head, so the account's history shows which seat moved it each time.
+export circuit anchorSeatKey(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:roles:anchorer" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0x26, 0xc1, 0x8d, 0x23, 0xbf, 0xdb, 0x55, 0xc4, 0x31, 0x3c, 0x5e, 0x47, 0x8e, 0x20, 0x69, 0xdd,
+               0x10, 0x28, 0xb5, 0x56, 0xfb, 0x1d, 0xab, 0xc6, 0x9f, 0x11, 0x6a, 0xb1, 0xf4, 0x14, 0xc9, 0x25];
+}
+
+// The tag one seat anchors under in one account: its key and its leaf's blinding, in that account.
+// Only someone who holds the seat's blinding can work it out - the company's own members, from each
+// seat's leaf opening - and the account's address makes one person's tags in two companies unlinked.
+export circuit anchorTagOf(account: Bytes<32>, pk: Bytes<32>, blinding: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:anchor:seat:"), account, pk, blinding
+  ]);
+}
+
+// Where the account keeps the head the latest recovery carried out wrote, in `signerRoles`. Absent
+// until the first recovery is carried out; written only by `recoverAnchor`.
+export circuit lastRecoveryKey(): Bytes<32> {
+  // SHA-256 of "midnight-accounts:roles:recovery" zero-padded to 32 bytes, so no proof hashes it.
+  return Bytes[0x80, 0x0f, 0x6f, 0x4d, 0xe6, 0xd6, 0x43, 0xb3, 0x63, 0x17, 0xa5, 0x90, 0x31, 0x4a, 0x8f, 0x4b,
+               0x06, 0xa9, 0x47, 0x95, 0x21, 0xd0, 0xb1, 0x28, 0xe4, 0x22, 0x59, 0x6d, 0x38, 0x49, 0x13, 0xf4];
+}
+
+// What signers approve to move the record anchor past a batch nobody can check: on from a header
+// their own devices checked, whose head is `resumesFrom`, before the time `latest`, after the
+// recovery whose head is `lastRecovery` (32 zero bytes before any) and no other. Past `latest` the
+// approval is spent, so it cannot be carried out long after the records have moved on; once another
+// recovery is carried out it is spent too, so a second approval can never give up batches anchored
+// since the first.
+export circuit recoverAnchorPayload(resumesFrom: Bytes<32>, latest: Uint<64>, lastRecovery: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "midnight-accounts:recover:"), resumesFrom, latest as Field as Bytes<32>, lastRecovery
+  ]);
+}
+
+// The head after one batch: the head before it and the digest of the records the batch covers,
+// in the order they were filed. Every device folds what it reads through this, from the empty
+// head, and believes a record only when the fold reaches the head on chain.
+export circuit anchorHeadOf(previous: Bytes<32>, batch: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:anchor:"), previous, batch
+  ]);
+}
+
+// Where `signerRoles` keeps how many of one run's changes its vaults have used.
+export circuit changesUsedKeyOf(proposal: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "midnight-accounts:roles:used:"), proposal]);
+}
+
+// Where the account's removal count sits in `proposalHolds`. No proposal id can equal it.
+export circuit removalCountKey(): Bytes<32> {
+  return pad(32, "midnight-accounts:removal-count");
+}
+
+// What one anchor call folds into the head: the batch's digest, who held the account as the
+// anchoring device judged the batch - the approvals the account requires and the root of its signer
+// tree - and the tag of the seat that anchored it. A device folding the records works this out from
+// what the batch's header names, so a header naming any other holders or seat than the call checked
+// never folds to the head on chain.
+export circuit anchorHeldOf(batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, tag: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<5, Bytes<32>>>([
+    pad(32, "midnight-accounts:anchor:held:"), batch, approvals as Field as Bytes<32>, signerRoot.field as Bytes<32>, tag
+  ]);
+}
+
+// What one recovery folds into the head, under its own tag so that no plain anchor reads as one: as
+// anchorHeldOf, and the head of the header it resumes from.
+export circuit anchorRecoveredOf(
+  batch: Bytes<32>, approvals: Uint<64>, signerRoot: MerkleTreeDigest, tag: Bytes<32>, resumesFrom: Bytes<32>,
+): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "midnight-accounts:recovered:"), batch, approvals as Field as Bytes<32>, signerRoot.field as Bytes<32>, tag,
+    resumesFrom
+  ]);
+}
+}

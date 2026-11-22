@@ -6,11 +6,14 @@ import type { Hex } from '../../../src/core/crypto.js';
 import type { PayoutChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 import { withoutTheAccount, type VaultsReadOnce } from './vaults-read-in-the-view.js';
 import { ViewEnded } from './company-view.js';
+import { MONEY_UNREAD, moneyOnChainOf, type MoneyOnChain } from './money-on-chain.js';
 
 /**
  * **THE VAULT IS ONE THE COMPANY'S ACCOUNT ADOPTED, AS THE CHAIN SHOWS IT, AND
  * NEVER AS THE SERVICE SAYS.** Read by the signer's own wallet for this step:
- * the vault is in the set of vaults the company's account itself has adopted.
+ * the vault is in the set of vaults the company's account itself has adopted,
+ * or, for a step that admits them (`retiredAdmitted`), among the vaults it
+ * retired, as the account itself admits a retired vault's change of secret.
  * Answers who holds the account, as read, for the step to go on with.
  */
 export async function theVaultAsItsSignersHoldIt(doors: VaultOnChainDoors, vault: Hex): Promise<AccountHolders> {
@@ -20,7 +23,9 @@ export async function theVaultAsItsSignersHoldIt(doors: VaultOnChainDoors, vault
   } catch (e) {
     throw new VaultNotTheCompanys(vault, `your wallet could not say who holds this vault's company (${(e as Error)?.message ?? e}).`, 'wallet-silent');
   }
-  if (!read.holders.adoptedVaults.includes(String(vault).toLowerCase())) {
+  const v = String(vault).toLowerCase();
+  const retired = (doors.retiredAdmitted ?? []).map((x) => String(x).toLowerCase());
+  if (!read.holders.adoptedVaults.includes(v) && !retired.includes(v)) {
     throw new VaultNotTheCompanys(vault, 'this vault is not one your company\'s account has adopted, as your own wallet read the '
       + 'chain, so nothing is put into or paid from it.', 'not-adopted');
   }
@@ -50,6 +55,28 @@ export async function readHere(
     throw new VaultNotReadHere(vault, `this device could not read the vault from the chain (${(e as Error)?.message ?? e}).`, { cause: e });
   }
   return read;
+}
+
+/** What a vault's read here is made through: the device's builder and the wallet's indexer, and the company's account when its circuits are read too. */
+type ReadHereDoors = Pick<ChainHereDoors, 'builder' | 'indexer'> & { readonly account?: AccountAddress };
+
+/**
+ * The vault as `readHere` reads it, with the company's account when `doors` names one, or null when this device could
+ * not read it (`VaultNotReadHere`): a reader takes null as unread, never as empty. Any other error is thrown as it came.
+ */
+export async function readHereOrUnread(doors: ReadHereDoors, vault: Hex): Promise<Awaited<ReturnType<VaultBuilderClient['vaultOnChain']>> | null> {
+  try {
+    return await readHere(doors, vault, doors.account);
+  } catch (e) {
+    if (e instanceof VaultNotReadHere) return null;
+    throw e;
+  }
+}
+
+/** **WHAT A VAULT HOLDS ON EACH SIDE, AS THIS DEVICE READS IT FROM THE CHAIN NOW**: a vault or a side that could not be read is unread, never empty. */
+export async function moneyHeldHere(doors: ReadHereDoors, vault: Hex): Promise<MoneyOnChain> {
+  const read = await readHereOrUnread(doors, vault);
+  return read === null ? MONEY_UNREAD : moneyOnChainOf(read);
 }
 
 /**
@@ -161,6 +188,8 @@ export async function theVaultReadForItsStart(
 
 export const NOT_PINNED_WHY = 'this vault is not pinned to your company\'s account, or its state is not a vault\'s, as the chain shows it, so '
   + 'money in it would be paid out on somebody else\'s approvals; no money goes in or out of it.';
+/** A read of this build that does not say whether the vault marked itself retired: never taken as not retired. */
+const RETIRED_UNSAID = 'this device\'s read of the vault does not say whether it was retired, so no money goes in or out of it.';
 const ACCOUNT_UNREAD_WHY = 'this vault\'s state could not be read as a vault\'s, so which account it is pinned to and whether it is started '
   + 'are not known; no money goes in or out of it.';
 
@@ -177,6 +206,8 @@ export type VaultStandingHere =
     readonly unread: { readonly says: string; readonly refuses: string } | null;
     readonly pinned: boolean;
     readonly started: boolean;
+    /** Whether the vault carries its own retired mark, so it takes no deposit; read only where the read can be relied on. */
+    readonly retired: boolean;
     /**
      * Read for money and for a start: the first circuit of the vault or of the company's account that is not the one
      * this app was built with, or null when every one is. A read that did not say counts as not this app's.
@@ -222,13 +253,14 @@ export async function vaultStandingHere(doors: ChainHereDoors, vault: Hex, withC
     + `are not known; no money goes in or out of it${read.notesWhy === undefined ? '' : ` (${read.notesWhy})`}.`;
   const unread = read.account === null
     ? { says: ACCOUNT_UNREAD_WHY, refuses: NOT_PINNED_WHY }
-    : !read.notesFromThisBuild ? { says: layout, refuses: layout } : null;
+    : !read.notesFromThisBuild ? { says: layout, refuses: layout }
+      : read.retired === undefined ? { says: RETIRED_UNSAID, refuses: RETIRED_UNSAID } : null;
   /* A read that cannot be relied on is judged before the wallet is asked whether the account adopted the vault. */
   if (unread === null) await theVaultAsItsSignersHoldIt(doors, vault);
   /* A vault pays out on the approvals of the account it is pinned to; a state that names none is not a vault's. */
   const pinned = read.account !== null && read.account.toLowerCase() === String(doors.account).toLowerCase();
   return {
-    onChain: true, view: notesOfARead(vault, read), unread, pinned, started: read.started,
+    onChain: true, view: notesOfARead(vault, read), unread, pinned, started: read.started, retired: read.retired !== false,
     ...(withCircuits ? { circuits: circuitsOfARead(read) } : {}),
   };
 }

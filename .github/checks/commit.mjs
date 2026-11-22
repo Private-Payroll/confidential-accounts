@@ -193,6 +193,14 @@ function unpublishable(text, where, also = []) {
   return null;
 }
 
+
+/** Whether a title's words carry punctuation, a version number's full stops and a package name aside. */
+const hasPunctuation = (description) =>
+  description
+    .split(' ')
+    .filter((word) => !/^@?[a-z0-9][a-z0-9._-]*(\/[a-z0-9._-]+)+$/i.test(word))
+    .some((word) => /[^\p{L}\p{N}]/u.test(word.replace(/(\d)\.(?=\d)/g, '$1')));
+
 /** What is wrong with a subject line, or null if nothing is. */
 export function subjectProblem(subject, also) {
   if (typeof subject !== 'string' || subject.trim() === '') {
@@ -240,6 +248,15 @@ export function subjectProblem(subject, also) {
   }
   if (description[0] !== description[0]?.toLowerCase()) {
     return 'a subject line is not capitalised after the colon';
+  }
+  // A TITLE IS WORDS: no comma, full stop, hyphen, quote or other punctuation.
+  // After the colon only letters, digits and spaces, with two
+  // exceptions a title cannot do without: a full stop inside a version number
+  // (ledger 9.1.0.1), and a package name the dependency bot writes
+  // (actions/checkout, @types/node). The number a squashed merge appends is not
+  // the author's and is read past.
+  if (hasPunctuation(description.replace(/ \(#\d+\)$/, ''))) {
+    return 'a subject line holds only words after the colon: no comma, full stop, hyphen, quote or other punctuation';
   }
   return unpublishable(subject, 'a subject line', also);
 }

@@ -1,4 +1,5 @@
 /** The types of scripts/contract-sources.mjs: the files a contract is compiled from, read off its source. */
+export declare const CONTRACTS: { readonly account: string; readonly vault: string };
 export declare function blank(src: string, strings: boolean): string;
 export declare function statementsOf(text: string, file: string): { line: number; text: string; path?: string }[];
 export declare function contractSources(root: string, main: string): string[];

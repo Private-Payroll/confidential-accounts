@@ -1,0 +1,156 @@
+// What a vault and its account must agree on for a run: the payload, the sum tree a run's payees
+// are paid from, a batch's places and the receipt tokens. Both contracts import it. Nothing here
+// reads the ledger, a witness or the kernel.
+module RunInterface {
+import CompactStandardLibrary;
+
+// What signers approve for a run: its root, which commits its total and its token, its payee
+// count, its window, and the approvals its total needs.
+export circuit runPayload(
+  root: Bytes<32>,
+  payees: Uint<64>,
+  opensAt: Uint<64>,
+  closesAt: Uint<64>,
+  required: Uint<64>,
+): Bytes<32> {
+  return persistentHash<Vector<6, Bytes<32>>>([
+    pad(32, "midnight-accounts:run:"),
+    root,
+    payees as Field as Bytes<32>,
+    opensAt as Field as Bytes<32>,
+    closesAt as Field as Bytes<32>,
+    required as Field as Bytes<32>,
+  ]);
+}
+
+// One payee's leaf: the vault's blinded details and a per-payee secret nonce.
+export circuit payoutLeaf(details: Bytes<32>, nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:payee:"), details, nonce]);
+}
+
+// One level of a payee's path in a run's sum tree: the sibling node, its sum, and which side
+// the path is on.
+export struct SumStep {
+  sibling: Field;
+  siblingSum: Uint<128>;
+  goesLeft: Boolean;
+}
+
+// A node of a run's sum tree, and the sum of the amounts under it.
+struct SumNode {
+  node: Field;
+  sum: Uint<128>;
+}
+
+struct SumLeafPreimage {
+  tag: Field;
+  leaf: Bytes<32>;
+  amount: Uint<128>;
+}
+
+struct SumInnerPreimage {
+  tag: Field;
+  left: Field;
+  leftSum: Uint<128>;
+  right: Field;
+  rightSum: Uint<128>;
+}
+
+struct SumRootPreimage {
+  tag: Field;
+  top: Field;
+  total: Uint<128>;
+  asset: Bytes<32>;
+}
+
+// A payee's node in a run's sum tree: their leaf and the amount it pays.
+export circuit sumLeafNode(leaf: Bytes<32>, amount: Uint<128>): Field {
+  return transientHash<SumLeafPreimage>(SumLeafPreimage { tag: 5 as Field, leaf: leaf, amount: amount });
+}
+
+// An inner node: both children and both children's sums, so a path's sibling sum is fixed by
+// the node above it and the amounts a root can pay add up to its total.
+export circuit sumInnerNode(left: Field, leftSum: Uint<128>, right: Field, rightSum: Uint<128>): Field {
+  return transientHash<SumInnerPreimage>(
+    SumInnerPreimage { tag: 7 as Field, left: left, leftSum: leftSum, right: right, rightSum: rightSum });
+}
+
+// A run's root: the top node, the total it pays and the one token it pays in.
+export circuit sumRootOf(top: Field, total: Uint<128>, asset: Bytes<32>): Bytes<32> {
+  return transientHash<SumRootPreimage>(
+    SumRootPreimage { tag: 9 as Field, top: top, total: total, asset: asset }) as Bytes<32>;
+}
+
+// One step up a path. The sum is cast back to 128 bits, which refuses a sum that overflows.
+circuit sumStepUp(below: SumNode, step: SumStep): SumNode {
+  const left = step.goesLeft ? below.node : step.sibling;
+  const leftSum = step.goesLeft ? below.sum : step.siblingSum;
+  const right = step.goesLeft ? step.sibling : below.node;
+  const rightSum = step.goesLeft ? step.siblingSum : below.sum;
+  return SumNode {
+    node: sumInnerNode(left, leftSum, right, rightSum),
+    sum: (below.sum + step.siblingSum) as Uint<128>,
+  };
+}
+
+// The root a payee's path reaches, from their leaf, the amount and the token.
+export circuit sumPathRoot(
+  leaf: Bytes<32>,
+  amount: Uint<128>,
+  path: Vector<16, SumStep>,
+  asset: Bytes<32>,
+): Bytes<32> {
+  const top = fold(sumStepUp, SumNode { node: sumLeafNode(leaf, amount), sum: amount }, path);
+  return sumRootOf(top.node, top.sum, asset);
+}
+
+// The tag a vault mints its payment receipt under: the token `tokenType(tag, vault)`,
+// which only that vault can mint.
+export circuit paymentReceiptTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:receipt:pay");
+}
+
+// The tag a vault mints its receipt for a change that moves no money under: a token of its
+// own, so a payment's receipt can never stand for a change and the other way round.
+export circuit changeReceiptTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:receipt:change");
+}
+
+// The tag a vault mints its receipt for its own retirement under: a third token of its own, so
+// neither a payment's nor a change's receipt can stand for a retirement.
+export circuit retireReceiptTag(): Bytes<32> {
+  return pad(32, "midnight-accounts:receipt:retire");
+}
+
+// A company-wide run's leaf details, bound to the vault paying it, so no vault can
+// spend another vault's leaf.
+export circuit companyWideDetailsOf(details: Bytes<32>, vault: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "midnight-accounts:company-leaf:"), details, vault
+  ]);
+}
+
+// One place in a batch as the paying vault sends it: whether it pays anyone, the payee's blinded
+// details and nonce, and the amount. An unused place carries nothing.
+export struct BatchSlot {
+  live: Boolean;
+  details: Bytes<32>;
+  nonce: Bytes<32>;
+  amount: Uint<128>;
+}
+
+struct BatchLeafPreimage {
+  tag: Field;
+  leaves: Vector<4, Bytes<32>>;
+  amounts: Vector<4, Uint<128>>;
+}
+
+// A batch's leaf in a run's sum tree: its four places' payee leaves and amounts, in place order,
+// an unused place as zero and nothing. Under a tag of its own, and a different hash from a payee's
+// leaf, so no batch leaf can stand for a payee's leaf or the other way round.
+export circuit batchLeafOf(leaves: Vector<4, Bytes<32>>, amounts: Vector<4, Uint<128>>): Bytes<32> {
+  return transientHash<BatchLeafPreimage>(
+    BatchLeafPreimage { tag: 19 as Field, leaves: leaves, amounts: amounts }) as Bytes<32>;
+}
+}

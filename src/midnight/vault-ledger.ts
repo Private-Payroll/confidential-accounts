@@ -109,8 +109,8 @@ export type VaultPaid =
  * recorded, where that came from, and, when it recorded none, why.
  *
  * `recordedFrom` is not decoration. `'nowhere'` is the one outcome a person has
- * to act on, and before this it was indistinguishable on screen from the other
- * two.
+ * to act on, and without it that outcome would be indistinguishable on screen
+ * from the other two.
  */
 export interface VaultDeposited extends TxRef {
   /** The transaction the note records, by its 32-byte hash. Absent when none could be. */
@@ -229,12 +229,10 @@ export interface CallPlan {
  * one code path rather than two and a payout cannot be assembled by the branch
  * that has no mapping.
  *
- * **It is NOT true that an empty map behaves differently from no map**, and an
- * earlier version of this comment said it did. `createEncryptionPublicKeyResolver`
+ * An empty map behaves the same as no map: `createEncryptionPublicKeyResolver`
  * maps `undefined` and an empty `Map` to the same thing, and the lookup is
- * `mappings?.get(cpk)` either way. The reason is one path, not two behaviours —
- * a plausible-sounding rationale beside correct code is exactly what this repo
- * has paid for more than once.
+ * `mappings?.get(cpk)` either way. The reason for building it every time is one
+ * path, not two behaviours.
  */
 export const planCall = (
   circuit: string, args: unknown[], encryptionKeys?: Record<string, Hex>,
@@ -243,6 +241,11 @@ export const planCall = (
   args: [...args],
   mappings: new Map(Object.entries(encryptionKeys ?? {})),
 });
+
+const NOTHING_MOVED = 'Nothing was proved or sent, and no money moved.';
+/** Why no deposit goes into a vault whose own ledger carries its retired mark, and what to do instead. */
+const VAULT_RETIRED = 'this vault has been retired, so it takes no more money: the vault itself refuses a deposit once it is '
+  + `retired, even after it is adopted again. ${NOTHING_MOVED} Put the money into another of the company's vaults.`;
 
 export class VaultLedger implements PaysFromAVault {
   constructor(
@@ -922,7 +925,7 @@ export class VaultLedger implements PaysFromAVault {
      * deposit here, with nothing filed and nothing proved.
      */
     await this.pool.load(vaultAddress);
-    const heldNow = await this.chainNotes(vaultAddress);
+    const heldNow = await this.chainNotes(vaultAddress, true);
     const createdBefore = await this.depositHistory.everCreated(vaultAddress as Hex);
     const { pureCircuits } = await import('../../contracts/managed-vault/contract/index.js');
 
@@ -1186,11 +1189,11 @@ export class VaultLedger implements PaysFromAVault {
    * and only the second survives somebody refactoring the first.
    *
    * **NO APPROVAL, for `deposit`'s reason: nobody needs permission to be paid.**
-   * The contract refuses a zero deposit — it would seat a colour in
-   * `unshieldedTokens` that `retire` then blocks on, jammable for free by
-   * anybody — and this refuses it too, before a fee, for the reason every
-   * duplicated guard in this file exists: the contract's assert gives an
-   * attacker nothing and this one gives a person a sentence.
+   * The contract refuses a zero deposit and a deposit into a vault carrying its
+   * own retired mark, and this refuses both too, before a fee, for the reason
+   * every duplicated guard in this file exists: the contract's assert gives an
+   * attacker nothing and this one gives a person a sentence. The mark is read
+   * off the vault's state, which is all this reads besides the call.
    *
    * **WHAT IS RECORDED ANYWHERE BY THIS CALL: the COLOUR, on chain, by the
    * circuit, inside the same transaction that moves the money.** Not a balance.
@@ -1205,11 +1208,11 @@ export class VaultLedger implements PaysFromAVault {
   ): Promise<TxRef> {
     if (money.amount <= 0n) {
       throw new Error(
-        'a deposit of nothing is not a deposit. It moves no money and would seat a colour in '
-        + 'this vault\'s unshielded token set, which retire then refuses to pass — a way to jam '
-        + 'a vault\'s retirement for free, by anybody, since a deposit needs no approval.');
+        'a deposit of nothing is not a deposit. It moves no money, and the vault refuses it. '
+        + 'Nothing was proved or sent.');
     }
 
+    await this.chainNotes(vaultAddress, true);
     const { result } = await this.callWithoutPool(
       vaultAddress, 'depositUnshielded', [fromHex(money.token), money.amount]);
     return this.txRef(result, by);
@@ -1782,9 +1785,11 @@ export class VaultLedger implements PaysFromAVault {
   /**
    * The vault's note set as the chain holds it, or a refusal saying we could
    * not read it. This refusal is its own class, apart from a disagreement.
+   * `forADeposit` also refuses, from the same read, a vault whose own ledger
+   * carries its retired mark: the vault refuses every deposit once retired.
    */
   private async chainNotes(
-    vaultAddress: string,
+    vaultAddress: string, forADeposit = false,
   ): Promise<{ member(commitment: Uint8Array): boolean; size(): bigint }> {
     const providers = await this.providers();
 
@@ -1840,6 +1845,10 @@ export class VaultLedger implements PaysFromAVault {
         vaultAddress,
         'the decoded state has no readable "notes" set. That is not an empty vault — an ' +
         'empty set is a true statement about the vault and a missing one is our ignorance');
+    }
+    if (forADeposit && parsed.retired !== false) {
+      throw new Error(parsed.retired === true ? VAULT_RETIRED
+        : `this vault's state does not say whether it was retired, so no money goes into it. ${NOTHING_MOVED}`);
     }
     return notes;
   }

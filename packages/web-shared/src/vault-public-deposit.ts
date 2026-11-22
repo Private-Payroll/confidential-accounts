@@ -14,7 +14,7 @@ import type { VaultService } from './vault-service.js';
 import { sentNothing } from './vault-start-stops.js';
 import { type ChainHereDoors, type Pacing, type VaultOnChainDoors, until } from './vault-doors.js';
 import { theWalletsIndexer } from './vault-read-here.js';
-import { fundableOrThrow } from './vault-fundable-here.js';
+import { takesDepositsOrThrow } from './vault-fundable-here.js';
 import { chainParametersForADeposit, DEPOSIT_CLOCKS_MAY_DIFFER_MS, type DepositDoors, whyNotTheDepositBuilt } from './vault-private-deposit.js';
 
 /**
@@ -82,7 +82,7 @@ export class PublicDepositStoppedByAChange extends PublicDepositSignedNotSent {
       ? 'this page did not send the public deposit, because the company no longer adopts this vault: it was retired after this page first checked it. '
       : 'this page did not send the public deposit, because the company changed while you approved it in your wallet, so it was not sent on what was read before. ')
       + `No money moved. Your wallet already signed the deposit, and until ${at} anyone holding it can still send it. If anyone does, `
-      + (notAdopted ? 'the money goes into this retired vault, and no payout can be approved from it until the company adopts it again. ' : 'the money goes into this vault. ')
+      + (notAdopted ? 'the vault refuses it, because it is retired, and no money moves. ' : 'the money goes into this vault. ')
       + `Do not put money in again before ${at}.`;
     this.name = 'PublicDepositStoppedByAChange';
   }
@@ -265,7 +265,7 @@ export async function depositPubliclyIntoCompanyVault(
     throw new Error('this page cannot send a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
   }
   doors.progress?.('checking the vault');
-  const answer = await fundableOrThrow(doors, vault);
+  const answer = await takesDepositsOrThrow(doors, vault);
   /* Asked before the wallet is, so a deposit into a vault not yet started asks the wallet for nothing. */
   if (answer.of !== 'fundable') throw new Error(answer.why);
   const view = answer.view;

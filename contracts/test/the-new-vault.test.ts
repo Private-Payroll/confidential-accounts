@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  createCircuitContext, createConstructorContext, sampleContractAddress,
+  createCircuitContext, createConstructorContext, sampleContractAddress, upgradeFromTransient,
 } from '@midnight-ntwrk/compact-runtime';
 
 import {
@@ -31,6 +31,7 @@ import { fromHex, toHex } from '../../src/core/crypto.js';
 import { copiesTreeOf } from '../../src/midnight/sealed-copies-tree.js';
 import { noFurtherNote } from '../../src/midnight/vault-step-notes.js';
 import { ACCOUNT_KEYS, keysOnDisk } from './keys-on-disk.js';
+import { copyBaseOf, partKeyOf } from './part-keys.js';
 
 /* A vault's call into its account binds to the account's verifier keys, read from this build's own keys folder. */
 const ACCOUNT_KEYS_ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
@@ -154,10 +155,11 @@ class World {
     return out.result;
   }
 
-  /** A run of `leaves` at `amounts`, naming this vault, approved by `approvers` (the first by raising it). */
-  async approved(leaves: PayoutLeafInput[], amounts: bigint[], seed: number, approvers = [A, B], runVault?: Uint8Array) {
+  /** A run of `leaves` at `amounts` of `asset`, naming this vault, approved by `approvers` (the first by raising it). */
+  async approved(leaves: PayoutLeafInput[], amounts: bigint[], seed: number, approvers = [A, B], runVault?: Uint8Array,
+    asset = TOKEN_BYTES) {
     const vault = runVault ?? this.self;
-    const tree = payoutTreeOf(leaves, amounts, TOKEN_BYTES);
+    const tree = payoutTreeOf(leaves, amounts, asset);
     const c: Change = change(0n, seed);
     await this.sim.as(this.sim.applying(approvers[0]!, c)).proposeRun({
       root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault,
@@ -399,6 +401,27 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('the sealed copies: one approved root, ea
       /* RED WHEN the last copy does not mark this secret's copies as all written. */
       expect(w.ledger.secretCopies.lookup(V.copiesWrittenKey())).toEqual(commitment);
     }
+  });
+
+  it('EVERY PART SITS WHERE THE EXPORTED KEY SAYS, FOR EACH COPY', async () => {
+    const w = await World.make();
+    const commitment = V.secretCommitmentOf(w.self, SECRET);
+    /* Two readers, at places 0 and 1. */
+    const copies = [copyFor(1), copyFor(2)];
+    const before = [...w.ledger.secretCopies].length;
+    await w.setSecret(SECRET, copies, 429);
+    copies.forEach((copy, place) => {
+      for (const part of [0n, 1n, 2n, 3n]) {
+        const key = V.copyKeyOf(commitment, copy.reader, BigInt(place), part);
+        /* RED WHEN the exported key is not the one hash the four parts share plus the part. */
+        expect(hex(key)).toBe(hex(partKeyOf(copyBaseOf(commitment, copy.reader, BigInt(place)), part)));
+        /* RED WHEN the circuit writes a part anywhere but where the exported key says: the reader would find nothing. */
+        expect(w.ledger.secretCopies.lookup(key)).toEqual(copy.parts[Number(part)]);
+      }
+    });
+    /* RED WHEN two parts share a key: eight parts, and the six a first secret writes (its two receipt keys, the root,
+       the count, the count left and the written mark). */
+    expect([...w.ledger.secretCopies].length - before).toBe(14);
   });
 
   it('REFUSES a copy not under the approved root: forged parts, another reader, another secret, a path to another place', async () => {
@@ -771,6 +794,123 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('paying in public money: through the same
     /* RED WHEN public money takes a private payment's details. */
     await expect(w.call('payoutUnshielded', run.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x40)))
       .rejects.toThrow(/that payee is not in the approved run/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/** Retires `w` through the vault, under a retire round raised by A and approved by B. */
+const retired = async (w: World, seed: number) => {
+  const c: Change = change(0n, seed);
+  const payload = P.retireVaultPayload(w.self);
+  await w.sim.as(w.sim.applying(A, c)).propose(payload);
+  const id = w.sim.proposalId(payload, c.salt);
+  await w.sim.as(w.sim.applying(B, c)).approve(id);
+  await w.call('retire', id, c.salt);
+};
+
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('retiring: whatever the vault holds, marked first, against its own receipt [needs contracts/managed/keys; `npm run compact` builds them]', () => {
+  const OTHER = bytes(0x9c);
+  const NOTE: Coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 1_000n };
+  const OTHER_NOTE: Coin = { nonce: bytes(0x78), color: OTHER, value: 400n };
+
+  it('A VAULT NEVER STARTED is retired, and mints one retirement receipt to the account in the colour it works out itself', async () => {
+    const w = await World.make();
+    await retired(w, 801);
+    /* RED WHEN `retire` stops marking the vault. */
+    expect(w.ledger.retired).toBe(true);
+    /* RED WHEN the account's half is not reached. */
+    expect(w.sim.adopted(w.self)).toBe(false);
+    expect(w.sim.ledger.retiredAt.member(w.self)).toBe(true);
+    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
+    /* RED WHEN the retirement mints any other token or amount: a payment's or a change's receipt. */
+    expect(mints(w)).toEqual([[hex(V.retireReceiptTag()), 1n]]);
+    /* RED WHEN the receipt is claimed for anybody but the account, or in a colour read from the first secret
+       run's cache, which a vault never started does not have (the cached colour is all zeros). */
+    expect(receiptsSent(w)).toEqual([['unshielded', L.rawTokenType(V.retireReceiptTag(), w.addr), 'contract', String(w.sim.address), 1n]]);
+  });
+
+  it('THE THREE RECEIPTS ARE THREE TOKENS: none can stand for another in the same transaction', () => {
+    const tags = [V.paymentReceiptTag(), V.changeReceiptTag(), V.retireReceiptTag()].map(hex);
+    /* RED WHEN the retirement's tag is made equal to a payment's or a change's. */
+    expect(new Set(tags).size).toBe(3);
+    /* RED WHEN the vault and the account derive the retirement's tag differently. */
+    expect(hex(P.retireReceiptTag())).toBe(hex(V.retireReceiptTag()));
+  });
+
+  it('A FUNDED VAULT IS RETIRED, AND TAKES NO DEPOSIT FROM THEN ON, EVEN ADOPTED AGAIN', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    await retired(w, 802);
+    /* RED WHEN retiring needs an empty vault again, or takes what it holds. */
+    expect(w.notes()).toEqual([hex(w.held(NOTE))]);
+    /* RED WHEN `deposit` stops refusing a retired vault, or reads the account rather than its own mark. */
+    await expect(w.call('deposit', OTHER_NOTE)).rejects.toThrow(/this vault has been retired, so it takes no more money/);
+    /* RED WHEN `depositUnshielded` stops refusing the same. */
+    await expect(w.call('depositUnshielded', TOKEN_BYTES, 5n)).rejects.toThrow(/this vault has been retired, so it takes no more money/);
+    await w.sim.adoptVault(w.self, [A, B], 803);
+    expect(w.sim.adopted(w.self)).toBe(true);
+    /* RED WHEN adopting it again clears the mark. */
+    await expect(w.call('deposit', OTHER_NOTE)).rejects.toThrow(/this vault has been retired/);
+    await expect(w.call('depositUnshielded', TOKEN_BYTES, 5n)).rejects.toThrow(/this vault has been retired/);
+    expect(w.notes()).toEqual([hex(w.held(NOTE))]);
+  });
+
+  it('A FUNDED RETIRED VAULT IS GIVEN A NEW SECRET, as after a removal, and pays out under it', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    await retired(w, 808);
+    /* RED WHEN the account or the vault refuses a secret change for a retired vault: its money would outlive every reader. */
+    const next = await w.setSecret(NEXT_SECRET, [copyFor(2)], 809);
+    expect(w.ledger.nonceCommitment).toEqual(next.commitment);
+    const run = await w.approved([{ details: toHex(V.payoutDetails(ALICE, TOKEN_BYTES, 1_000n, bytes(0x44))), nonce: toHex(bytes(0xe4)) }], [1_000n], 810);
+    /* RED WHEN a retired vault cannot pay under the secret it was given after its retirement. */
+    await w.call('payout', run.runOf(0), ALICE, TOKEN_BYTES, 1_000n, bytes(0x44), noFurtherNote());
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xe4)))).toBe(true);
+    expect(w.notes()).toEqual([]);
+  });
+
+  it('A RETIRED VAULT SPLITS A NOTE, and both pieces stay in it', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    await retired(w, 811);
+    const spent = w.nullifierOf(NOTE);
+    const run = await w.approved([{ details: toHex(V.splitDetails(w.self, spent, TOKEN_BYTES, 300n)), nonce: toHex(bytes(0xe5)) }], [0n], 812);
+    /* RED WHEN a split is refused on a retired vault, or its pieces leave it. */
+    await w.call('splitNote', run.runOf(0), TOKEN_BYTES, 300n);
+    const piece = { nonce: V.freshNonceOf(V.splitNonceTag(), SECRET, spent), color: TOKEN_BYTES, value: 300n };
+    const rest = { nonce: V.freshNonceOf(V.restNonceTag(), SECRET, spent), color: TOKEN_BYTES, value: 700n };
+    expect(w.notes()).toEqual([hex(w.held(piece)), hex(w.held(rest))].sort());
+  });
+
+  it('A RETIRED VAULT HOLDING TWO COLOURS OF NOTES AND PUBLIC MONEY PAYS EACH OUT, never adopted again', async () => {
+    const w = await World.make();
+    await w.setSecret(SECRET);
+    await w.deposit(NOTE);
+    await w.deposit(OTHER_NOTE);
+    await retired(w, 804);
+    expect(w.sim.adopted(w.self)).toBe(false);
+    /* The second colour, its note the one the witness holds. */
+    const other = await w.approved([{ details: toHex(V.payoutDetails(ALICE, OTHER, 400n, bytes(0x41))), nonce: toHex(bytes(0xe1)) }], [400n], 805, [A, B], undefined, OTHER);
+    /* RED WHEN the account's payment step refuses a vault it has retired. */
+    await w.call('payout', other.runOf(0), ALICE, OTHER, 400n, bytes(0x41), noFurtherNote());
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xe1)))).toBe(true);
+    /* The first colour. */
+    w.priv = { ...w.priv, coin: { ...NOTE, mt_index: 0n } };
+    const first = await w.approved([{ details: toHex(V.payoutDetails(ALICE, TOKEN_BYTES, 1_000n, bytes(0x42))), nonce: toHex(bytes(0xe2)) }], [1_000n], 806);
+    await w.call('payout', first.runOf(0), ALICE, TOKEN_BYTES, 1_000n, bytes(0x42), noFurtherNote());
+    expect(w.sim.ledger.movements.member(P.paidOnceOf(bytes(0xe2)))).toBe(true);
+    expect(w.notes()).toEqual([]);
+    expect(w.ledger.payments).toBe(2n);
+    /* Public money: the account approves the payee of a retired vault, and the vault reaches its balance check, which
+       this simulator cannot meet (it keeps no public balance; see "paying in public money" above). */
+    const pub = await w.approved([{ details: toHex(V.unshieldedPayoutDetails(ALICE, TOKEN_BYTES, 250n, bytes(0x43))), nonce: toHex(bytes(0xe3)) }], [250n], 807);
+    /* RED WHEN a public payment from a retired vault is refused before its balance is read. */
+    await expect(w.call('payoutUnshielded', pub.runOf(0), ALICE, TOKEN_BYTES, 250n, bytes(0x43)))
+      .rejects.toThrow(/does not hold enough of that token/);
   });
 });
 
@@ -1206,5 +1346,52 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a company-wide run and a stricter vault,
     await expect(w.call('setNonceSecret', secret.runOf(0), previous, commitment, tree.root, tree.count, tree.edge, NEXT_SECRET, SECRET))
       .rejects.toThrow(/not enough approvals yet/);
     expect(w.ledger.nonceCommitment).toEqual(previous);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('the tree of copies, one hash per level whichever way the path turns', () => {
+  type Step = { sibling: bigint; goesLeft: boolean };
+  /** The root a leaf and path reach, walked here level by level: the node below on the left when the step goes left. */
+  const walkedRoot = (leaf: bigint, path: Step[]): string =>
+    hex(upgradeFromTransient(path.reduce((n, s) => (s.goesLeft ? V.copyNodeOf(n, s.sibling) : V.copyNodeOf(s.sibling, n)), leaf)));
+  /** The edge check, walked here: an empty place at `count`, every sibling on its right empty, up to `copies`. */
+  const walkedEmptyFrom = (copies: Uint8Array, count: bigint, edge: Step[]): boolean => {
+    let node = 0n; let empty = 0n; let clear = true;
+    for (const s of edge) {
+      clear = clear && (!s.goesLeft || s.sibling === empty);
+      node = s.goesLeft ? V.copyNodeOf(node, s.sibling) : V.copyNodeOf(s.sibling, node);
+      empty = V.copyNodeOf(empty, empty);
+    }
+    return count === V.mostCopies() || (clear && V.copyIndexOf(edge) === count && hex(upgradeFromTransient(node)) === hex(copies));
+  };
+  const siblings = Array.from({ length: 10 }, (_, l) => BigInt(1_000 + 7 * l));
+  const pathOf = (turns: boolean[]): Step[] => turns.map((goesLeft, l) => ({ sibling: siblings[l]!, goesLeft }));
+
+  it('EVERY ROOT IS THE ONE THE LEVEL-BY-LEVEL WALK REACHES, FOR A PATH TURNING EITHER WAY AT EVERY LEVEL', () => {
+    const allLeft = Array.from({ length: 10 }, () => true);
+    const patterns = [allLeft, allLeft.map(() => false), allLeft.map((_, l) => l % 2 === 0), allLeft.map((_, l) => l % 2 === 1),
+      ...allLeft.map((_, flipped) => allLeft.map((_, l) => l !== flipped)), ...allLeft.map((_, only) => allLeft.map((_, l) => l === only))];
+    for (const turns of patterns) {
+      /* RED WHEN a level sets its two nodes the wrong way round for the way the path turns. */
+      expect(hex(V.copiesRootOf(4242n, pathOf(turns)))).toBe(walkedRoot(4242n, pathOf(turns)));
+    }
+  });
+
+  it('THE EDGE WALK ACCEPTS AND REFUSES THE SAME TREES: every tree it was given, and each with one step turned or the count moved', () => {
+    for (const n of [1, 2, 3, 5, 12]) {
+      const tree = treeOf(V.secretCommitmentOf(bytes(0x21), SECRET), Array.from({ length: n }, (_, i) => copyFor(i + 1)));
+      /* RED WHEN the edge past the last copy of a real tree is refused. */
+      expect(V.emptyFrom(tree.root, tree.count, [...tree.edge])).toBe(true);
+      const cases: Array<[bigint, Step[]]> = [[tree.count + 1n, [...tree.edge]], [tree.count - 1n, [...tree.edge]],
+        ...tree.edge.map((_, l): [bigint, Step[]] => [tree.count, tree.edge.map((s, k) => (k === l ? { ...s, goesLeft: !s.goesLeft } : s))])];
+      for (const [count, edge] of cases) {
+        /* RED WHEN the edge walk answers otherwise than the level-by-level walk for any of them. */
+        expect(V.emptyFrom(tree.root, count, edge)).toBe(walkedEmptyFrom(tree.root, count, edge));
+      }
+      /* And the moved counts are refused. */
+      expect(V.emptyFrom(tree.root, tree.count + 1n, [...tree.edge])).toBe(false);
+    }
   });
 });

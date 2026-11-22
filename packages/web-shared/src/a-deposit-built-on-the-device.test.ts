@@ -344,7 +344,7 @@ describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [ne
       },
       vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
         catching('device read', [i.vault, i.indexer]);
-        return { onChain: true as const, state, notes: [...notes], notesFromThisBuild: true, everCreated: [], authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
+        return { onChain: true as const, state, notes: [...notes], notesFromThisBuild: true, retired: false, everCreated: [], authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
           circuits: null, accountCircuits: null };
       },
       /* The block a deposit is built on, read by this device's worker at the wallet's indexer, never asked of the service. */

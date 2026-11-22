@@ -142,6 +142,19 @@ test('the kind is one of the kinds, in lower case', () => {
   }
 });
 
+test('a title is words after the colon, with no punctuation', () => {
+  refused(subjectProblem('fix(build): put the artefact back, then read it'), 'a comma');
+  refused(subjectProblem('fix(build): put the re-read artefact back'), 'a hyphen');
+  refused(subjectProblem("fix(build): put the artefact's copy back"), 'an apostrophe');
+  refused(subjectProblem('fix(build): put it back; read it'), 'a semicolon');
+  refused(subjectProblem('fix(build): put the "artefact" back'), 'quotes');
+  accepted(subjectProblem('feat(network): move to ledger 9.1.0.1 and preprod'), 'a version number');
+  accepted(subjectProblem('chore(deps): bump actions/checkout from 4 to 5'), 'a package name');
+  accepted(subjectProblem('chore(deps): bump @types/node from 22 to 24'), 'a scoped package name');
+  accepted(subjectProblem(squashedSubject('feat(vault): refuse a payout the ledger cannot settle', 16)), 'the number a merge appends');
+  refused(subjectProblem(squashedSubject('feat(vault): refuse a payout, then settle', 16)), 'a comma before the number a merge appends');
+});
+
 test('a scope is lower case, digits, and . _ - / only', () => {
   accepted(subjectProblem('feat(vault): refuse an unsettleable payout'), 'a plain scope');
   accepted(subjectProblem('feat(contracts/vault): refuse an unsettleable payout'), 'a scope with a slash');
@@ -273,8 +286,9 @@ test('a dash that is not a hyphen is refused, including the minus sign', () => {
   // NOT IN THE DASH BLOCK, and what a spreadsheet and several keyboards give
   // somebody who meant to type a hyphen.
   refused(subjectProblem('fix(build): put the artefact back \u2212 the suite reads it'), 'a minus sign in a subject');
-  accepted(subjectProblem('fix(build): put the artefact back, the suite reads it'), 'a subject with no dash at all');
-  accepted(subjectProblem('fix(build): put the artefact back - the suite reads it'), 'a subject with a plain hyphen');
+  refused(messageProblem('fix(build): put the artefact back\n\nthe suite \u2212 which reads it'), 'a minus sign in a body');
+  accepted(messageProblem('fix(build): put the artefact back\n\nthe suite, which reads it, starts first'), 'a body with no dash at all');
+  accepted(messageProblem('fix(build): put the artefact back\n\nthe suite - which reads it - starts first'), 'a body with a plain hyphen');
 });
 
 test('a branch name says what changed, so an empty one is refused', () => {

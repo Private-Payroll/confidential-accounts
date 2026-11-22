@@ -40,7 +40,7 @@
  * takes the rest of the method with it.
  *
  * WHAT THIS FILE REFUSES TO GUESS. Three things, each of which would otherwise
- * be a number nobody measured — rule 9:
+ * be a number nobody measured:
  *
  *   - THE FIELD-INDEX DESCRIPTOR IS NOT HARDCODED. It is `_descriptor_21` in
  *     the account and `_descriptor_26` in the vault; in the vault
@@ -68,6 +68,7 @@
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { CONTRACTS } from './contract-sources.mjs';
 
 /* ------------------------------------------------------ string-aware scan --- */
 
@@ -256,12 +257,11 @@ export type ContractModel = {
    * `contract-info.json` has no entry for it and its emitted method is
    * `initialState`, which does not match `_<name>_<n>` — so a scan over circuit
    * bodies alone reports that `Vault.account` HAS NO WRITER. It is written, at
-   * `contracts/src/Vault.compact:263`, by the constructor, through the exact
+   * `contracts/src/Vault.compact`'s constructor, through the exact
    * `{ push: <index> } … { ins: … }` shape `classifyQuery` already recognises.
    *
-   * `C286` IS THE ROW THAT SAYS WHY THAT MATTERS. *"What makes our vault
-   * unredirectable is only that it declares no circuit that writes `account` —
-   * no assert, no guard, no keyword."* An empty `writers` cell in a generated
+   * WHY THAT MATTERS: the vault cannot be redirected only because it declares
+   * no circuit that writes `account`; no assert, guard or keyword says so. An empty `writers` cell in a generated
    * table is that same absence restated by a machine, in the artefact a layout
    * decision is taken from, and a record or `Map` value in Compact is written
    * whole — so merging `account` into a record hands every writer of that
@@ -297,19 +297,19 @@ export type ArtifactSpec = {
 };
 
 /**
- * BOTH CONTRACTS, AND THE TABLE IS THE ONLY PLACE EITHER IS NAMED.
+ * BOTH CONTRACTS, EACH TAKEN FROM THE ONE TABLE OF THEIR MAIN FILES (`CONTRACTS`).
  * `scripts/artifact-freshness.ts` learned this the expensive way: a guard that
  * knows about the account alone is a guard the vault walks past.
  */
 export const ARTIFACTS: readonly ArtifactSpec[] = [
   {
     label: 'ConfidentialAccount',
-    source: 'contracts/src/ConfidentialAccount.compact',
+    source: CONTRACTS.account,
     managed: 'contracts/managed',
   },
   {
     label: 'Vault',
-    source: 'contracts/src/Vault.compact',
+    source: CONTRACTS.vault,
     managed: 'contracts/managed-vault',
   },
 ];
@@ -495,8 +495,8 @@ function classify(name: string, text: string, circuitNames: ReadonlySet<string>)
  * and 2 through `{ swap: { n: 0 } }`, and the vault's own fields 0, 1 and 2 are
  * `account`, `notes` and `unshieldedTokens`. A scan that took the first decoded
  * index as a field would report `payout` WRITING the vault's `account` field —
- * the contract reference it settles against — and `SC8` is deciding what to
- * group by writer off exactly this table. In the account contract the same trap
+ * the contract reference it settles against — and a reader grouping circuits
+ * by writer reads exactly this table. In the account contract the same trap
  * is quieter and just as wrong: `_approvalNullifier_0` reads `kernel.self()` at
  * slot 0 and `_blockTimeLt_0` reads block time at slot 2, which would have been
  * read as `signers` and `openProposals`.
@@ -556,7 +556,7 @@ export function classifyQuery(args: string, desc: string): QueryKind {
    * ONLY `dup n = p` IS CLAIMED AS THIS CONTRACT'S LEDGER. Everything else that
    * digs or swaps is recorded as being outside it, which is the conservative
    * direction: the cost of getting it wrong the other way is a WRITER attributed
-   * to a field the circuit never touches, in the table `SC8` reads.
+   * to a field the circuit never touches, in the table a reader groups by.
    */
   let pushed = 0;
   for (const op of ops) {
@@ -604,8 +604,7 @@ export type KernelUse = Use & {
  *
  * `ins` DECIDES READ FROM WRITE AND NOT THE ABSENCE OF `idx`, because a map
  * write carries both: it walks into the field and then inserts. Reading that as
- * a read is how a WRITER goes missing from `SC8`'s table, which is the one
- * thing this round was told to get right first.
+ * a read is how a WRITER goes missing from the table of writers.
  */
 export function queriesIn(text: string, desc: string, fieldCount: number, where: string): {
   reads: number[];
@@ -644,8 +643,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    * ROUNDS IT. `contract-info.json` writes `18446744073709551615` and
    * `340282366920938463463374607431768211455`; parsed as numbers they come back
    * as `18446744073709552000` and `3.402823669209385e+38`, and a signature
-   * rendered from those is a number no instrument read off anything — rule 9,
-   * inside the file that quotes the rule. So the integer literals are turned
+   * rendered from those is a number no instrument read off anything. So the integer literals are turned
    * into strings BEFORE parsing and carried as the exact digits the compiler
    * wrote.
    */
@@ -707,8 +705,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
        * else. One loader produced `Acct.recordPayment` and the other
        * `UNKNOWN.recordPayment` — the same artifact, two answers, and no way
        * to make either of them right.
-       * The same fault in the assert needle emptied a whole column earlier in
-       * this round.
+       * The same fault in the assert needle would empty a whole column.
        *
        * SO THE RULE, AND IT IS WHY THIS COMMENT IS LONG: nothing is extracted
        * from an IDENTIFIER in `toString()` text. String literals, property
@@ -757,7 +754,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    *
    * `via` is carried rather than flattened because "approve writes `approvals`"
    * and "approve writes `approvals` through `closeProposal`" are different
-   * facts to `SC8`, which is deciding what to group by WRITER.
+   * facts to a reader deciding what to group by writer.
    */
   const walk = (start: string) => {
     const reads: FieldUse[] = [];
@@ -856,10 +853,8 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
      *   typeError('Contract state constructor', 'argument 1 (…)',
      *             'ConfidentialAccount.compact line NNN char 1',
      *             'Bytes<32>', foundingLeaf_0)
-     * The worked example named `requiredApprovals_0` and a line number until
-     * `S35d`; the argument is gone (`C340` + `C343`) and the line was three
-     * hundred out besides. It carries no number now — an illustration
-     * does not need one and this file has no way to keep one true.
+     * The worked example carries no line number: an illustration does not
+     * need one, and this file has no way to keep one true.
      * That is read here rather than invented. If a compiler stops emitting
      * them the signature comes back empty — which is visibly missing rather
      * than quietly wrong.
@@ -875,7 +870,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
   /*
    * A CONTRACT FROM WHICH NO ASSERT WAS EXTRACTED IS AN EXTRACTION FAILURE, not
    * a contract without guards. Both contracts here carry dozens; the ASSERTS
-   * column is the one the brief calls a MEASUREMENT rather than a list, because
+   * column is a MEASUREMENT rather than a list, because
    * a money circuit with a low count beside a sibling with a higher one is a
    * question worth asking on sight — and a column that silently read zero
    * everywhere would answer that question wrongly and confidently.
@@ -901,7 +896,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    * counter would miscount, and every contract read would classify as a KERNEL
    * access — leaving the READS and WRITES columns EMPTY rather than throwing.
    * That is the same silent shape the assert guard below was written for, and
-   * it had no equivalent until an auditor traced it.
+   * nothing else here catches it.
    */
   const totalFields = circuits0.reduce((n, c) => n + c.reads.length + c.writes.length, 0);
   if (totalFields === 0) {

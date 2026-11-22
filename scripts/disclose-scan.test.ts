@@ -31,9 +31,9 @@ describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
   });
 
   it('does not count a FABRICATED CODE EXAMPLE inside a comment', () => {
-    // ConfidentialAccount.compact:1290 writes
+    // A comment in an earlier version of the account contract wrote
     //   stateCommitment = disclose(stateCommitmentOf(nextBalance(), ...));
-    // and `stateCommitmentOf` does not exist anywhere in the file. A regex over
+    // and `stateCommitmentOf` did not exist anywhere in the file. A regex over
     // raw text emits a disclosure of a value that is not in the contract.
     const src = [
       '/**',
@@ -57,8 +57,8 @@ describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
 
 describe('TRAP 3 — `constructor` is not the keyword `circuit`', () => {
   it('attributes a constructor disclosure rather than dropping it', () => {
-    // TWO real sites live in constructors: `:1590` in the account and `:263` in
-    // the vault. It was four until the constructor's threshold argument was
+    // TWO real sites live in constructors: one in the account's and one in
+    // the vault's. It was four until the constructor's threshold argument was
     // removed, and with it both of that argument's disclosures — its assert
     // and its assignment.
     const src = 'constructor(a: Bytes<32>) {\n  account = disclose(a);\n}\n';
@@ -68,7 +68,7 @@ describe('TRAP 3 — `constructor` is not the keyword `circuit`', () => {
 
 describe('TRAP 4 — a `contract X { … }` interface block declares BODILESS circuits', () => {
   it('does not invent a circuit from an interface member', () => {
-    // Vault.compact:88-126. Both member names collide with REAL exported
+    // The vault's `contract Acct` block. Both member names collide with REAL exported
     // circuits on the account, so a name-keyed index would merge them.
     const src = [
       'contract Acct {',
@@ -150,7 +150,7 @@ describe('the real sources', () => {
     // `grep -c disclose` reports 80 and 52 LINES. There are 68 and 48 SITES:
     // comments overcount and multi-site lines undercount. (The account read 76,
     // then 75, then 80 after an edit whose sixty-five-line
-    // comment at `ConfidentialAccount.compact:2129-2191` is five more lines of
+    // comment in the account is five more lines of
     // PROSE saying `disclose`. The SITE count moved by ONE over that same edit.
     // A line count would have reported five times the change; that is the whole
     // reason this counts sites.)
@@ -164,9 +164,9 @@ describe('the real sources', () => {
     // is unchanged: only comments were added there.
     
     // AND IT MOVED AGAIN ON 3 Sep: 67 -> 68. ONE site,
-    // `ConfidentialAccount.compact:2192`, in `propose`'s RUN branch —
+    // in `propose`'s RUN branch —
     //     assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
-    // — the mirror of the governance branch: `:2319` says a governance proposal
+    // — the mirror of the governance branch, whose assert says a governance proposal
     // names NO vault, this says a run names ONE. The vault's 48 is again
     // unchanged; that edit did not touch the file.
     
@@ -177,22 +177,22 @@ describe('the real sources', () => {
     // every line opened at source:
     
     //   1. MEASURED IN THE COMPILED ARTIFACT, NOT ARGUED FROM THE SOURCE.
-    //      `contracts/managed/contract/index.js:2201-2202` compiles the assert to
+    //      the compiled `contracts/managed/contract/index.js` turns the assert into
     //      `assert(!this._equal_10(vault_0, this._noVault_0()), …)`. NEITHER
-    //      `_equal_10` (`:2854-2857`) NOR `_noVault_0` (`:1471-1473`) TAKES
+    //      `_equal_10` NOR `_noVault_0` TAKES
     //      `context` OR `partialProofData`. Every operation that reaches the
     //      PUBLIC TRANSCRIPT goes through `queryLedgerState(context,
     //      partialProofData, …)` — the very NEXT assert does, because
     //      `openProposals.member(id)` is a ledger READ and compiles to a
-    //      `push`/`member`/`popeq` triple (`index.js:2219-2235`). This site
+    //      `push`/`member`/`popeq` triple. This site
     //      compiles to neither. It contributes ZERO ops to the transcript.
     //   2. THE LEDGER WRITES ARE UNCHANGED. The run branch writes
-    //      `openProposals.insert(id, change)` (`compact:2203`),
-    //      `approvalCounts.insert(id, 0)` (`:2204`) and
-    //      `runWindow.insert(id, Window { opensAt, closesAt })` (`:2221`).
+    //      `openProposals.insert(id, change)`,
+    //      `approvalCounts.insert(id, 0)` and
+    //      `runWindow.insert(id, Window { opensAt, closesAt })`.
     //      `vault` reaches the chain only inside `id`, a `persistentCommit` over
     //      `[domain, payloadHash, vault]` blinded by the WITNESS `proposalSalt()`
-    //      (`:874-881`, `:670`). The assert changes WHETHER those three writes
+    //      (`proposalIdOf`, and the witness's declaration). The assert changes WHETHER those three writes
     //      happen. It changes nothing about what they contain.
     //   3. THE ONE BIT IT ADDS IS TRUE OF EVERY TRANSACTION THAT CAN EXIST.
     //      An observer of a landed run proposal can now infer `vault != noVault()`.
@@ -200,15 +200,15 @@ describe('the real sources', () => {
     //      partitions nothing and carries no bits about WHICH one is being looked
     //      at. It names no value either: `noVault()` is a compile-time constant,
     //      a hash of a padded literal with no witness and no ledger read
-    //      (`compact:1014-1016`; `index.js:1471-1473` is the same constant with
-    //      the string already resolved to bytes). AND THE CHANGE SHRINKS THE
+    //      (`noVault` in the `Seats` module; the compiled code holds the same
+    //      constant with the string already resolved to bytes). AND THE CHANGE SHRINKS THE
     //      OBSERVABLE SURFACE RATHER THAN WIDENING IT: before it, a run raised
     //      at the sentinel LANDED and took a `runWindow` row that opened and
     //      closed with no settlement against any vault, which is a
     //      LOUDER signal than that run simply not existing.
-    //   4. THE STRICTLY STRONGER SHAPE IS ALREADY INSIDE THIS NUMBER. `:2319` is
+    //   4. THE STRICTLY STRONGER SHAPE IS ALREADY INSIDE THIS NUMBER. The governance branch's assert is
     //      `assert(disclose(vault) == noVault(), …)` — it PINS the value exactly
-    //      where `:2192` only excludes one — and it is the `PLUS ONE` in the
+    //      where the run branch's only excludes one — and it is the `PLUS ONE` in the
     //      paragraph above, accepted by this pin on 2 Sep.
     
     // THE STANDING FACT, AND IT MUST NOT BE COPIED OUT OF HERE WITHOUT ITS
@@ -223,11 +223,11 @@ describe('the real sources', () => {
     // ledger READ writes no field and still pushes its value into the public
     // transcript VERBATIM. Which is why point 1 above is a measurement over the
     // artifact and NOT the argument first recorded for it — *`vault` is already
-    // disclosed in the same branch at `:2200`, so `:2192` is free*.
+    // disclosed in the same branch, in the proposal's id, so the run branch's assert is free*.
     
     // BOTH POSITIONS, NEITHER MARKED CORRECT. THAT ARGUMENT IS TRUE AND
-    // THIS PIN DOES NOT USE IT: `:2200` discloses `vault` INTO A SALTED COMMITMENT
-    // and `:2192` discloses it INTO A CONDITION GATING PUBLIC STATE — the
+    // THIS PIN DOES NOT USE IT: the id discloses `vault` INTO A SALTED COMMITMENT
+    // and the run branch's assert discloses it INTO A CONDITION GATING PUBLIC STATE — the
     // language reference's paths (a) and (c), which are different channels
     // (its section on what `disclose` does). *Already
     // disclosed once, therefore free to disclose again* is not sound in general,
@@ -461,7 +461,14 @@ describe('the real sources', () => {
     // 183 -> 184. A raise names the last block time at which it may land (+1):
     // the deadline is public because the chain compares it with its own block
     // time to refuse a raise held back past it. It is a time and carries no id.
-    expect(sites(account)).toBe(184);
+    // 184 -> 167. A run's id is rebuilt by one helper at its three sites, each of
+    // which discloses only whether the id matches, as before (-17: the parts and
+    // the salt disclosed again inside that comparison, six at two sites and five
+    // in `clearRun`, whose root was already disclosed). Nothing new is published.
+    // 167 -> 168. A company change is raised through its own circuit (+1): its
+    // proposal id, as `propose` discloses a raise's id. The raise both circuits
+    // share discloses nothing new.
+    expect(sites(account)).toBe(168);
     // THE VAULT, 104 -> 110, all in `setNonceSecret`. The commitment it replaces
     // is disclosed once and reused (three sites become one, -2). New (+8): the
     // answer to whether the tree shows nothing past its count; whether the
@@ -482,7 +489,10 @@ describe('the real sources', () => {
     // what its notes hold, and the change coin's nonce and token (+17). The merge:
     // whether a second note is offered, and the kept coin's nonce, token and value
     // (+4). Every value given to a coin is inside its commitment, never published.
-    expect(sites(vault)).toBe(137);
+    // 137 -> 123. Both ways to pay ask the account through one helper, so the
+    // fourteen values that call discloses are written once, not twice (-14).
+    // Each payment discloses the same values as before.
+    expect(sites(vault)).toBe(123);
   });
 
   it('every site is attributed — nothing floats outside a body', () => {
@@ -505,7 +515,8 @@ describe('the real sources', () => {
     expect(own(account, 'openedSeat')).toHaveLength(1);
     const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('openedSeat')));
     expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'anchor', 'approve', 'cancel', 'holdRun', 'propose', 'recoverAnchor', 'releaseHold', 'removeSignerAndSetThreshold',
+      ['adopt', 'anchor', 'approve', 'cancel', 'holdRun', 'propose', 'proposeCompanyChange', 'recoverAnchor', 'releaseHold',
+        'removeSignerAndSetThreshold',
         'reseatSigner', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold'],
     );
   });
@@ -572,7 +583,7 @@ describe('the real sources', () => {
       // test must be looked at rather than silently keep reading the old one.
       expect(found.map((e) => e.line),
         `expected exactly one disclose in \`${opensWith}\` in ${relPath}`).toHaveLength(1);
-      return found[0].line;
+      return found[0]!.line;
     };
 
     // THE ACCOUNT. `openedSeat` is the circuit every exported circuit that checks
@@ -582,12 +593,12 @@ describe('the real sources', () => {
     const rsLine = discloseLineIn(ACCOUNT, 'circuit openedSeat(');
     const rs = own(scanSourceFile(ROOT, ACCOUNT), 'openedSeat');
     expect(rs).toHaveLength(1);
-    expect(rs[0].line,
+    expect(rs[0]!.line,
       'the scanner reports a different line for `openedSeat`\'s disclose than the file has '
       + 'it on. An off-by-one here moves every generated `file:line` citation and nothing else '
       + 'in this repository refuses it — the citation check only asks whether the file is long '
       + 'enough to have the line.').toBe(rsLine);
-    expect(rs[0].text,
+    expect(rs[0]!.text,
       'the scanner reports the wrong expression for `openedSeat`\'s disclose. Dropping or '
       + 'adding one character here is the defect this test was written for, and it changes what '
       + 'a published privacy document says a circuit reveals.').toBe('root');
@@ -605,10 +616,10 @@ describe('the real sources', () => {
     const ctorLine = discloseLineIn(VAULT, 'constructor(');
     const ctor = own(scanSourceFile(ROOT, VAULT), 'constructor');
     expect(ctor).toHaveLength(1);
-    expect(ctor[0].line,
+    expect(ctor[0]!.line,
       'the scanner reports a different line for the vault constructor\'s disclose than the file '
       + 'has it on.').toBe(ctorLine);
-    expect(ctor[0].text,
+    expect(ctor[0]!.text,
       'the scanner reports the wrong expression for the vault constructor\'s disclose.')
       .toBe('a');
     expect(readFileSync(join(ROOT, VAULT), 'utf8').split('\n')[ctorLine - 1])
@@ -617,7 +628,9 @@ describe('the real sources', () => {
 
   it('the vault declares NO bodiless circuit as its own', () => {
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');
-    expect(vault.map((c) => c.name)).not.toContain('recordPayment');
-    expect(vault.map((c) => c.name)).not.toContain('retireVault');
+    /* RED WHEN a member of the vault's view of the account, which has no body, is read as the vault's own. */
+    for (const member of ['recordPaymentFromVault', 'approveVaultChange', 'recordBatchFromVault', 'retireVault']) {
+      expect(vault.map((c) => c.name)).not.toContain(member);
+    }
   });
 });

@@ -298,7 +298,7 @@ export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompa
 }
 
 /** Everything the kinds read: the company's chain and builder, the wallet's clock and pause, and each kind's own. */
-export type ProposalKindsReach = AddSignerReach & OneOffPaymentReach & Pick<RemoveSignerReach, 'afterCarried'> & {
+export type ProposalKindsReach = AddSignerReach & OneOffPaymentReach & Pick<RemoveSignerReach, 'afterCarried' | 'beforeCarried'> & {
   readonly chain: () => CompanyChain;
   readonly builder: () => VaultBuilderClient;
   /** The chain, the heads this device kept and the person's own wallet, for a recovery; absent, a recovery is refused. */

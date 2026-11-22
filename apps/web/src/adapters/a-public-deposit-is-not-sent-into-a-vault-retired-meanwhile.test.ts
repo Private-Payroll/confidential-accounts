@@ -44,7 +44,7 @@ const asBuilt = { identifiers: ['00aa'], timeToLive: Date.now() + 3_600_000, cal
   publicTakes: [{ address: VAULT, entryPoint: 'depositUnshielded', colour: PUB, amount: '40' }], publicDeposits: [{ vault: VAULT, colour: PUB, amount: '40' }] };
 vi.mock('./vault-builder.js', () => ({
   theVaultBuilder: async () => ({
-    vaultOnChain: async () => ({ onChain: true, state: 'AAAA', notes: [], notesFromThisBuild: true, everCreated: [], authority: { committee: COMMITTEE, threshold: 2 },
+    vaultOnChain: async () => ({ onChain: true, state: 'AAAA', notes: [], notesFromThisBuild: true, retired: false, everCreated: [], authority: { committee: COMMITTEE, threshold: 2 },
       account: ACCOUNT, started: true, circuits: null, accountCircuits: null }),
     chainAtOneBlock: async () => ({ blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: btoa('midnight:ledger-parameters[v8]:stand-in'), accountState: 'A' }),
     publicDeposit: async () => ({ tx: 'PROVEN' }),
@@ -105,6 +105,7 @@ describe('a public deposit from the page reads who holds the company again befor
     };
     const e = await depositPubliclyIntoCompanyVault(doors as never, VAULT as never, { token: PUB as never, value: 40n }).catch((x: unknown) => x);
     expect(e).toBeInstanceOf(PublicDepositStoppedByAChange);
-    expect((e as Error).message).toMatch(/^this page did not send the public deposit, because the company no longer adopts this vault[^]*No money moved[^]*retired vault/);
+    /* RED WHEN: the person is told the signed deposit would land in the retired vault, which the vault itself refuses. */
+    expect((e as Error).message).toMatch(/^this page did not send the public deposit, because the company no longer adopts this vault[^]*No money moved[^]*the vault refuses it, because it is retired, and no money moves/);
   });
 });

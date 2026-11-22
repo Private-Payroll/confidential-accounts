@@ -60,6 +60,9 @@ const companyRead = () => ({
   accountId: 'acc_1', label: LABEL, account: ACCOUNT, stepView: NO_VIEW_OPENED,
   api: async () => { throw new Error('the change of the vault secrets calls nothing outside the rotation'); },
   holders: async () => ({ seats: [], adoptedVaults: adopted }),
+  chain: { indexer: { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' } },
+  /* The account lists no vault it retired, so only the vaults it adopted are changed here. */
+  builder: { superAdmins: { reads: () => ({ accountAt: async () => ({ authority: {}, vaults: { adopted, retired: [] } }) }) } },
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] } }) },
   companyKeys: {}, roster: async () => null,
 });

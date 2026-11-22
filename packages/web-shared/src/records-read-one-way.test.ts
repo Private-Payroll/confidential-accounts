@@ -119,14 +119,7 @@ const VIEW_DOORS = new Set([
  * The second ways another change owns and finishes, each with that change and why it stands for now: the only ones the
  * check lets through. One no longer found fails, so the list never names a way that is gone.
  */
-const OWNED_ELSEWHERE: readonly { readonly file: string; readonly way: string; readonly owner: string; readonly why: string }[] = Object.freeze([
-  {
-    file: 'packages/web-shared/src/vault-retire-round.ts',
-    way: 'reads the chain around the view (./vault-on-chain-here.js)',
-    owner: 'the change that retires a vault from the device',
-    why: 'it reads the money a vault holds off its own read of the chain; that change moves the read onto the view\'s doors',
-  },
-]);
+const OWNED_ELSEWHERE: readonly { readonly file: string; readonly way: string; readonly owner: string; readonly why: string }[] = Object.freeze([]);
 
 const ownedElsewhere = (w: SecondWay): boolean => OWNED_ELSEWHERE.some((o) => o.file === w.file && o.way === w.way);
 

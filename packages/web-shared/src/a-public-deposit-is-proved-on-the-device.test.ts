@@ -3,7 +3,7 @@
  *
  * The worker's own entry (`startVaultWorker`) runs over the origin's own artefact routes, with the vault's real
  * compiled contract and the real proving keys and public parameters, and the page asks it for a public deposit
- * (`depositUnshielded`, which needs one small proof; the vault's other public circuits `forgetUnshielded` and `retire` are small too, but the public deposit is the page's own path). The proof is real: the
+ * (`depositUnshielded`, which needs one small proof; the vault's `retire` is small too, but the public deposit is the page's own path). The proof is real: the
  * prover checks what it makes against the verifier key it is handed. Nothing is sent anywhere. The vault is a fresh
  * deploy given a started state, because a vault fresh from its deploy is not yet started.
  *

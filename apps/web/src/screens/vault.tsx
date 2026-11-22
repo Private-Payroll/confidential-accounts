@@ -60,7 +60,8 @@ export function Vault() {
 
 /**
  * THE VAULT THE PAGE SHOWS: its name, its two actions, a deposit that runs or has ended, its money and its payouts. A
- * deposit that finishes makes the money below be read again.
+ * deposit that finishes makes the money below be read again. A vault retired shows neither action; one adopted again
+ * after a retire the records hold carried out pays out and offers no deposit, which the vault itself refuses once retired.
  */
 function VaultBody({ records, vault, number }: { records: CompanyRecords; vault: VaultRow; number: number }) {
   const t = useText();
@@ -75,7 +76,8 @@ function VaultBody({ records, vault, number }: { records: CompanyRecords; vault:
         description={t('vaults.tile.created', { date: day(vault.createdAt) })}
         actions={(
           <>
-            {vault.retired === true ? null : <><PaySomeone vault={vault.vault} /><DepositActions company={company} vault={vault.vault} standing={vault.standing} /></>}
+            {vault.retired === true ? null : <PaySomeone vault={vault.vault} />}
+            {vault.retired === true || retireOf(records, vault.vault) !== null ? null : <DepositActions company={company} vault={vault.vault} standing={vault.standing} />}
             <RetireOrAdoptAgain records={records} vault={vault} />
           </>
         )}

@@ -22,10 +22,10 @@ afterEach(() => {
   vi.mocked(authorityIn).mockImplementation(realAuthorityIn);
 });
 const {
-  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD,
+  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD, VAULT_FIELDS,
   accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
   labelInAccountState, labelOnAccount, paymentsInAccountState, rolesInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
-  contractsOnChain, contractInState,
+  contractsOnChain,
 } = await import('./company-label-on-chain.js');
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 import { THRESHOLDS_FIELD, governanceInAccountState } from 'midnight-identity/profile/account-state';
@@ -162,6 +162,13 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     return state.serialize();
   };
 
+  it('counts a vault\'s fields as the compiled vault\'s own constructor lays them out', async () => {
+    const fields = ContractState.deserialize(await vaultState(ACCOUNT, null)).data.state.asArray()!;
+    /* RED WHEN: the count a vault is read at is written by hand and the contract gains or loses a field. */
+    expect(VAULT_FIELDS).toBe(fields.length);
+    expect(vaultInState(VAULT, await vaultState(ACCOUNT, [key(1)])).account).toBe(ACCOUNT);
+  });
+
   it('reads the account the vault is pinned to, as the vault\'s own decoder does, and who holds it', async () => {
     const bytes = await vaultState(ACCOUNT, [key(1), key(2)], 2);
     const bytesZero = await vaultState('00'.repeat(32), null);
@@ -213,12 +220,15 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     /* RED WHEN: a company's account, read as if it were a vault, is taken as one. */
     const account = await deployedState(LABEL_BYTES);
     expect(() => vaultInState(VAULT, account)).toThrow(/not laid out as a company's vault/);
-    /* RED WHEN: a contract laid out otherwise - one field more than a vault has, its first still an address - is read as a vault. */
-    const longer = ContractState.deserialize(await vaultState(ACCOUNT, [key(1)]));
+    /*
+     * RED WHEN: a contract laid out otherwise - one field fewer than a vault has, its first still an address - is read as
+     * a vault. A ledger's top level holds at most fifteen fields, which a vault already fills, so a longer one cannot be built.
+     */
+    const shorter = ContractState.deserialize(await vaultState(ACCOUNT, [key(1)]));
     let fields = (StateValue as any).newArray();
-    for (const f of longer.data.state.asArray()!) fields = fields.arrayPush(f);
-    longer.data = new ChargedState(fields.arrayPush((StateValue as any).newNull()));
-    expect(() => vaultInState(VAULT, longer.serialize())).toThrow(/not laid out as a company's vault/);
+    for (const f of shorter.data.state.asArray()!.slice(0, -1)) fields = fields.arrayPush(f);
+    shorter.data = new ChargedState(fields);
+    expect(() => vaultInState(VAULT, shorter.serialize())).toThrow(/not laid out as a company's vault/);
   });
 
   it('A READ THAT FAILS IS NEVER AN ANSWER: no vault, an unreadable answer, and an account in a vault\'s place', async () => {
@@ -267,31 +277,6 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     /* RED WHEN: a company's account read at a vault's address is taken as a vault. */
     const swapped = await contractsOnChain(ACCOUNT, [VAULT], async () => accountHex);
     expect(swapped.get(VAULT)!.of).toBe('unreadable');
-  });
-});
-
-describe('THE VAULTS AN ACCOUNT LISTS, READ WITH WHO HOLDS IT', () => {
-  it('reads every vault the account adopted and every vault it retired, as the account\'s own decoder lists them', async () => {
-    const [A, B] = [privateStateFor(1), privateStateFor(2)];
-    const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    const kept = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
-    const gone = Uint8Array.from({ length: 32 }, (_, i) => (i < 31 ? 0x60 + i : 0));
-    for (const v of [kept, gone]) await sim.adoptVault(v, [A, B], 391 + v[0]!);
-    const rc = change(0n, 92);
-    const retire = pureCircuits.retireVaultPayload(gone);
-    await sim.as(sim.applying(A, rc)).propose(retire);
-    const rid = sim.proposalId(retire, rc.salt);
-    /* A's raise is A's approval. */
-    await sim.as(B).approve(rid);
-    await sim.retireVault(rid, gone, rc.salt);
-    const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
-    const listed = [...[...sim.ledger.vaults].map((v: Uint8Array) => hexOf(v)), ...[...sim.ledger.retiredAt].map(([v]: [Uint8Array, bigint]) => hexOf(v))];
-    expect(listed).toContain(hexOf(gone));
-    /* RED WHEN: a retired vault is not read, so a change leaving it out is signed as if it named every contract. */
-    const read = contractInState(ACCOUNT, ACCOUNT, bytes);
-    expect(read.of === 'read' && [...(read.vaults ?? [])].sort()).toEqual([...new Set(listed)].sort());
-    expect(read.of === 'read' && read.vaults).toContain(hexOf(gone));
-    expect(read.of === 'read' && read.vaults).toContain(hexOf(kept));
   });
 });
 

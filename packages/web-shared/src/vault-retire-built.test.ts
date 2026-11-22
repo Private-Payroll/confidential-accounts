@@ -1,12 +1,12 @@
 /**
- * **A VAULT'S RETIRE IS BUILT FROM THE DEVICE AGAINST THE PROPOSAL ITS SIGNERS APPROVED.** The vault refuses while it
- * holds money and then asks the company's account to retire it under the proposal and its salt, so the call carries
- * exactly those two, and the account's state it is proved against is served for that account at that block only. The
+ * **A VAULT'S RETIRE IS BUILT FROM THE DEVICE AGAINST THE PROPOSAL ITS SIGNERS APPROVED.** The vault marks itself
+ * retired and asks the company's account to retire it under the proposal and its salt, so the call carries exactly
+ * those two, and the account's state it is proved against is served for that account at that block only. The
  * ledger, the transaction builder and the prover are stand-ins that record what the builder asks.
  */
 import { describe, it, expect } from 'vitest';
 import type { VaultBuilderDeps } from './vault-builder.js';
-import { buildForgetUnshielded, buildRetire, retireAnswered } from './vault-retire-built.js';
+import { buildRetire, retireAnswered } from './vault-retire-built.js';
 
 const VAULT = 'cd'.repeat(32);
 const ACCOUNT = 'ef'.repeat(32);
@@ -47,7 +47,7 @@ describe('a vault retired from the device that carries it', () => {
     const { deps, asked, proved } = standIns();
     const built = await buildRetire(deps, { vault: VAULT.toUpperCase(), account: ACCOUNT, proposal: PROPOSAL, salt: SALT, chain: CHAIN });
     expect([...built.proven]).toEqual([7]);
-    /* RED WHEN: the retire is built as another circuit, or proved as one, so the vault's own emptiness check never runs. */
+    /* RED WHEN: the retire is built as another circuit, or proved as one, so the vault never marks itself retired. */
     expect(asked.map((a) => [a.circuitId, a.contractAddress])).toEqual([['retire', VAULT]]);
     expect(proved).toEqual(['retire']);
     /* RED WHEN: the proposal and the salt swap places, or either is not the one approved. */
@@ -67,35 +67,14 @@ describe('a vault retired from the device that carries it', () => {
   });
 });
 
-describe('a public token taken off a vault\'s list before its retire', () => {
-  const TOKEN = '01'.repeat(32);
-  it('CALLS THE VAULT\'S FORGETUNSHIELDED WITH THAT ONE TOKEN, PROVED AGAINST THE BLOCK READ', async () => {
-    const { deps, asked, proved } = standIns();
-    const built = await buildForgetUnshielded(deps, { vault: VAULT, account: ACCOUNT, token: TOKEN.toUpperCase(), chain: CHAIN });
-    expect([...built.proven]).toEqual([7]);
-    /* RED WHEN: the token is taken off the list by another circuit, or another contract, so the vault's own check that it holds none is skipped. */
-    expect(asked.map((a) => [a.circuitId, a.contractAddress])).toEqual([['forgetUnshielded', VAULT]]);
-    expect(proved).toEqual(['forgetUnshielded']);
-    /* RED WHEN: the call names another token than the one the vault lists at nothing. */
-    expect(asked[0]!.args.map(hex)).toEqual([TOKEN]);
-  });
-
-  it('BUILDS NOTHING FOR A TOKEN, A VAULT OR AN ACCOUNT THAT IS NOT THIRTY-TWO BYTES', async () => {
-    for (const bad of [{ token: '01' }, { token: 'zz'.repeat(32) }, { vault: 'cd' }, { account: '' }]) {
-      const { deps, asked } = standIns();
-      /* RED WHEN: a malformed token reaches the prover, which would spend a proof on a call the chain refuses. */
-      await expect(buildForgetUnshielded(deps, { vault: VAULT, account: ACCOUNT, token: TOKEN, chain: CHAIN, ...bad }))
-        .rejects.toThrow(/nothing was built/u);
-      expect(asked).toHaveLength(0);
-    }
-  });
-
-  it('IS ANSWERED IN THE WORKER UNDER ITS OWN ASK, NEVER AS A RETIRE', async () => {
+describe('a retire answered in the worker', () => {
+  it('IS BUILT AS THE VAULT\'S RETIRE UNDER ITS OWN ASK, FROM THE BLOCK READ', async () => {
     const { deps, asked } = standIns();
     const wire = { blockHash: CHAIN.blockHash, vaultState: 'AQ==', zswapState: 'Ag==', parameters: 'Aw==', accountState: 'BA==' };
-    const answer = await retireAnswered(deps, { id: 3, network: 'undeployed', ask: 'forget-unshielded', vault: VAULT, account: ACCOUNT, token: TOKEN, chain: wire });
-    /* RED WHEN: a forget ask is built as the vault's retire, which the vault refuses while the token is still listed. */
-    expect(answer).toEqual({ id: 3, ok: true, ask: 'forget-unshielded', tx: 'Bw==' });
-    expect(asked.map((a) => a.circuitId)).toEqual(['forgetUnshielded']);
+    const answer = await retireAnswered(deps, { id: 3, network: 'undeployed', ask: 'retire', vault: VAULT, account: ACCOUNT, proposal: PROPOSAL, salt: SALT, chain: wire });
+    /* RED WHEN: the worker answers a retire under another ask, or builds it as another circuit. */
+    expect(answer).toEqual({ id: 3, ok: true, ask: 'retire', tx: 'Bw==' });
+    expect(asked.map((a) => a.circuitId)).toEqual(['retire']);
+    expect(asked[0]!.account).toEqual({ address: ACCOUNT, state: new Uint8Array([4]), blockHash: CHAIN.blockHash });
   });
 });

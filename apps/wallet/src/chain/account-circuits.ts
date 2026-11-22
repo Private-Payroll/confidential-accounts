@@ -30,15 +30,12 @@ export const ACCOUNT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.free
  * the secret the wallet made, a private deposit, which the wallet builds,
  * pays and records whole, a payment out of the vault, private or public, for a
  * one-off or a payroll run, a merge of the vault's notes into one, which a
- * run's plan makes when no single note pays a person, and the two calls that
- * retire an empty vault: dropping a public token it no longer holds from its
- * set, and the retirement itself, which the vault refuses while it holds notes
- * or public money. Every other vault call a company makes is built elsewhere,
- * so the wallet holds no proving key for it.
+ * run's plan makes when no single note pays a person, and the vault's retire,
+ * which marks the vault retired whatever it holds. Every other vault call a
+ * company makes is built elsewhere, so the wallet holds no proving key for it.
  */
 export const VAULT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze([
-  'setNonceSecret', 'writeSecretCopy', 'deposit', 'payout', 'payoutUnshielded', 'mergeNotes',
-  'forgetUnshielded', 'retire',
+  'setNonceSecret', 'writeSecretCopy', 'deposit', 'payout', 'payoutUnshielded', 'mergeNotes', 'retire',
 ]);
 
 /**

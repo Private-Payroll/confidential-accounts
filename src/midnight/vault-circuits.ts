@@ -33,6 +33,8 @@ export interface VaultStartingLedger {
   readonly secretCopies: bigint;
   /** Entries across the seven reserved maps, which no circuit writes. */
   readonly reserved: bigint;
+  /** Whether the vault marked itself retired: set by its `retire`, never cleared, and it takes no deposit once set. */
+  readonly retired: boolean;
   /**
    * Whether the vault takes money: its account has approved a secret and every
    * signer's sealed copy of that secret is on the chain. The vault refuses money
@@ -57,6 +59,7 @@ export const startingLedgerFrom = (l: {
   readonly reserved4: { size(): bigint };
   readonly reserved5: { size(): bigint };
   readonly reserved6: { size(): bigint };
+  readonly retired: boolean;
 }, copiesWrittenKey: Uint8Array): VaultStartingLedger => ({
   account: Array.from(l.account.bytes, (b) => b.toString(16).padStart(2, '0')).join(''),
   notes: l.notes.size(),
@@ -67,6 +70,7 @@ export const startingLedgerFrom = (l: {
   secretCopies: l.secretCopies.size(),
   reserved: [l.reserved0, l.reserved1, l.reserved2, l.reserved3, l.reserved4, l.reserved5, l.reserved6]
     .reduce((n, m) => n + m.size(), 0n),
+  retired: l.retired === true,
   started: l.nonceCommitment.some((b) => b !== 0) && l.secretCopies.member(copiesWrittenKey)
     && sameBytes(l.secretCopies.lookup(copiesWrittenKey), l.nonceCommitment),
 });
@@ -222,7 +226,8 @@ function heldNowByRefusal(state: unknown, holders: Committee, what: string): str
  * never changed, a committee `whyNotInstallable` accepts; no
  * money; this build's circuits; pinned to this company's account; and nothing
  * written that only the company's approved runs write - no note, payment,
- * secret, sealed copy, copies-written mark, split or reserved entry.
+ * secret, sealed copy, copies-written mark, split, reserved entry or retired
+ * mark.
  *
  * The one reading of a vault's state at deploy: the service reads a deploy with
  * it before paying for one, and a signer's device reads the deploy the vault's
@@ -262,6 +267,9 @@ export function vaultBornHeldRefusal(initialState: unknown, expect: VaultBornHel
   if (start.notes !== 0n || start.unshieldedTokens !== 0n || start.payments !== 0n) {
     return `this is not ${what}: it starts with records a new vault does not have - notes, public tokens `
       + 'or payments already written - so its pool could never match it. Nothing was sent.';
+  }
+  if (start.retired) {
+    return `this is not ${what}: it starts marked retired, so it would never take a deposit. Nothing was sent.`;
   }
   /*
    * A vault takes money only once it has a secret, and it gets one only from a

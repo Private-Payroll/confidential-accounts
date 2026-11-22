@@ -156,7 +156,6 @@ export const answerVaultAsk = async (
     case 'write-secret-copy':
       return writeSecretCopyAnswered(withNetwork, ask);
     case 'retire':
-    case 'forget-unshielded':
       return retireAnswered(withNetwork, ask);
     case 'warm-proving': {
       await d.provingWarmed();

@@ -109,7 +109,6 @@ const BARE: Record<string, Record<string, unknown>> = {
   'set-nonce-secret': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), run: {}, proposal: '00', opensAt: '0', closesAt: '1', chain: {} },
   'write-secret-copy': { vault: 'ab'.repeat(32), run: {}, place: 0, state: '' },
   retire: { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), proposal: '00', salt: '00', chain: {} },
-  'forget-unshielded': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), token: '00', chain: {} },
   'account-committee': { account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'contract-authority': { address: 'ab'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
   'super-admin-update': { vault: 'ab'.repeat(32), counter: '0', to: { committee: [], threshold: 1 } },

@@ -24,7 +24,7 @@ const INDEXER = { indexerUri: 'https://indexer.example/api/v3/graphql', indexerW
 type Chain = Extract<VaultOnChainOnTheWire, { onChain: true }>;
 /** The vault as this device's worker reads it: this build's layout and circuits, and its account's, pinned to the company's account, started, empty. */
 const startedVault = (over: Partial<Chain> = {}): VaultOnChainOnTheWire => ({
-  onChain: true, state: 'AAAA', notes: [], notesFromThisBuild: true, everCreated: [], account: ACCOUNT, started: true,
+  onChain: true, state: 'AAAA', notes: [], notesFromThisBuild: true, retired: false, everCreated: [], account: ACCOUNT, started: true,
   circuits: null, accountCircuits: null, ...over,
 });
 
@@ -215,6 +215,35 @@ describe('EVERY DOOR THAT MOVES MONEY REFUSES ON THE ONE ANSWER, IN ITS OWN WORD
       const failed = await door(doorsFor({ chain: new Error('the indexer did not answer') }).doors).catch((e: unknown) => e);
       expect(failed).toBeInstanceOf(VaultNotReadHere);
       expect((failed as Error).message).toMatch(/could not read the vault from the chain \(the indexer did not answer\)\. The company's service is not asked in its place\. Nothing was sent\.$/);
+    });
+  }
+});
+
+const RETIRED = /^this vault has been retired, so it takes no more money: the vault itself refuses a deposit once it is retired, even after it is adopted again\. Nothing was sent and no money moved\. Put the money into another of your company's vaults\.$/;
+
+describe('A VAULT CARRYING ITS OWN RETIRED MARK TAKES NO DEPOSIT, AND STILL PAYS OUT', () => {
+  const marked = () => doorsFor({ chain: startedVault({ retired: true }) });
+  for (const [name, door] of gates.slice(0, 2)) {
+    it(`${name.toUpperCase()} IS REFUSED BY THE VAULT'S OWN MARK, EVEN ADOPTED AGAIN, BEFORE ANYTHING IS BUILT OR ASKED`, async () => {
+      /* RED WHEN: a deposit asks only whether the account holds the vault, so a vault adopted again after its retire is offered money its own deposit refuses. */
+      await expect(door(marked().doors)).rejects.toThrow(RETIRED);
+    });
+  }
+  for (const [name, door] of gates.slice(2)) {
+    it(`${name.toUpperCase()} IS NOT REFUSED FOR THE MARK: WHAT A RETIRED VAULT HOLDS STAYS PAYABLE`, async () => {
+      /* RED WHEN: a payment door refuses on the retired mark, so money in a vault adopted again can never be paid out. */
+      const said = await door(marked().doors).then(() => null, (e: unknown) => (e as Error).message);
+      expect(said ?? '').not.toMatch(/has been retired/);
+    });
+  }
+});
+
+describe('A READ THAT DOES NOT SAY WHETHER THE VAULT WAS RETIRED IS NEVER TAKEN AS NOT RETIRED', () => {
+  for (const [name, door] of gates.slice(0, 2)) {
+    it(`${name.toUpperCase()} IS REFUSED WHEN THE READ CARRIES NO RETIRED MARK, BEFORE ANYTHING IS BUILT OR ASKED`, async () => {
+      const { retired: _r, ...unsaid } = startedVault() as Chain;
+      /* RED WHEN: a read with no retired mark is taken as a vault not retired, so money is offered to a vault that may refuse it. */
+      await expect(door(doorsFor({ chain: unsaid as VaultOnChainOnTheWire }).doors)).rejects.toThrow(/does not say whether it was retired/u);
     });
   }
 });

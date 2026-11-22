@@ -335,6 +335,25 @@ export const retireProposalIn = (rec: ProposalOpened, accountId: string, viewing
   }
 };
 
+/**
+ * **THE VAULT A RUN'S RECORD NAMES**: a filing signed as this company's, sealed under a key this device holds, of kind
+ * `payroll`, `transfer` or `vault-secret`, naming the vault it is a run of. `unopened` for a record this device cannot
+ * open or believe, which may be a run of any vault; null for a record of another kind.
+ */
+export const runVaultIn = (rec: ProposalOpened, accountId: string, viewingKey: KeysHeld): Hex | 'unopened' | null => {
+  if (proposalFilingRefusal(accountId, rec) !== null) return 'unopened';
+  let envelope: { kind: string; vault?: unknown };
+  try {
+    envelope = openRecord<{ kind: string; vault?: unknown }>('proposals', accountId, rec.sealed, keyOf(viewingKey, rec.keyEpoch));
+  } catch {
+    /* Not passed over: a record this device cannot open is said as unopened, never as a record of another vault. */
+    return 'unopened';
+  }
+  if (envelope.kind !== 'payroll' && envelope.kind !== TRANSFER && envelope.kind !== VAULT_SECRET) return null;
+  const vault = typeof envelope.vault === 'string' ? envelope.vault.toLowerCase() : '';
+  return HEX64.test(vault) ? vault as Hex : 'unopened';
+};
+
 /** Whether a value names a proposal kind this file seals. */
 export const isGovernanceKind = (kind: unknown): kind is GovernanceKind =>
   kind === 'add-signer' || kind === 'remove-signer' || kind === 'set-threshold' || kind === 'set-vault-threshold'

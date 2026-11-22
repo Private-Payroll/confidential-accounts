@@ -14,7 +14,7 @@ vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import(
 }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
-  walletIndexerIn: async () => { s.asked.push('indexer'); return s.indexer; },
+  walletIndexerIn: async () => { s.asked.push('indexer'); if (s.indexer instanceof Error) throw s.indexer; return s.indexer; },
 }));
 vi.mock('./vault-builder.js', async (real) => ({
   ...(await real<typeof import('./vault-builder.js')>()),
@@ -64,6 +64,12 @@ describe('the retired vaults of one company are read through one door', () => {
     await Promise.all([readRetiredVaultOnChain(aViewOf(c), 'v1'), readRetiredVaultOnChain(aViewOf(c), 'v2'), readRetiredVaultOnChain(aViewOf(c), 'v3')]);
     /* RED WHEN: a retired vault is not read from the chain, or is read as another vault. */
     expect(s.asked.filter((a) => a.startsWith('vault')).sort()).toEqual(['vault v1', 'vault v2', 'vault v3']);
+  });
+
+  it('a failure that is not a failed read of the vault is thrown, never read as unread', async () => {
+    s.indexer = new Error('the wallet\'s answer could not be opened');
+    /* RED WHEN: any error, a fault in this device's own code included, reads silently as a vault that could not be read. */
+    await expect(readRetiredVaultOnChain(aViewOf(anotherCompany()), 'v')).rejects.toThrow(/could not be opened/u);
   });
 
   it('a door that could not be read is asked again on the next read, never kept as unread', async () => {

@@ -1,10 +1,10 @@
 /**
  * **A VAULT'S RETIRE, AS THE COMPANY'S FEE PAYER CHECKS IT BEFORE PAYING.** It pays for one transaction that moves no
- * coin and makes exactly two calls: this vault's `retire`, which refuses while the vault holds any money, and the
- * `retireVault` of this company's account that it asks. A retire of another vault, or one asking another account, is
- * never paid for under this vault's route. Before a retire, a vault that once held a public token and now holds none of
- * it is sent one `forgetUnshielded` call of its own to take that token off its list, which its `retire` refuses while
- * any token is on it; that call is paid for alone, moving no coin.
+ * coin and makes exactly two calls: this vault's `retire`, which marks the vault retired whatever it holds and mints
+ * the receipt the account takes, and the `retireVault` of this company's account that it asks. A retire of another
+ * vault, or one asking another account, is never paid for under this vault's route. The check of a single
+ * `forgetUnshielded` call, which takes a public token the vault holds none of off its list, is kept for that call alone,
+ * moving no coin.
  */
 import { bare } from '../midnight/account-deploy.js';
 import { callsMovingNothing } from './vault-submission.js';

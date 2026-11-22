@@ -32,6 +32,12 @@ export interface VaultAsTheWalletRead {
 /** Where a step reads its vault's company account from the person's own wallet. */
 export interface VaultOnChainDoors {
   readonly onChain: (vault: Hex) => Promise<VaultAsTheWalletRead>;
+  /**
+   * The vaults the account retired that this step admits as the company's, beside the ones it has adopted: a change of
+   * a retired vault's secret, which the account approves as of an adopted vault's. Read off the account's own list of
+   * the vaults it retired; absent, only an adopted vault is the company's.
+   */
+  readonly retiredAdmitted?: readonly string[];
 }
 
 /** Where a step reads the vault itself: through this device's vault worker, at the indexer the person's own wallet names. */

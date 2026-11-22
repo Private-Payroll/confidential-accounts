@@ -52,11 +52,13 @@ describe.skipIf(!existsSync(CHROMIUM))('A FILE CHANGING WHILE THE PAGE IS OPEN, 
     browser = await chromium.launch(process.env.CHROMIUM_PATH === undefined ? {} : { executablePath: process.env.CHROMIUM_PATH });
   }, 120_000);
 
+  // Closing Chromium can take longer than the default 10 s on a loaded machine;
+  // the same bound as launching it.
   afterAll(async () => {
     await browser?.close();
     for (const s of servers) await s.close();
     if (folder !== '') rmSync(folder, { recursive: true, force: true });
-  });
+  }, 120_000);
 
 
   it('a server left to its defaults does reload the page when a script of it changes, so this check can see a reload', async () => {

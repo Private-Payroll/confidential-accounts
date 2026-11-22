@@ -58,7 +58,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { codeHash } from './contract-version.mjs';
-import { contractSources } from './contract-sources.mjs';
+import { CONTRACTS, contractSources } from './contract-sources.mjs';
 import { dirname, isAbsolute, join } from 'node:path';
 
 /**
@@ -66,11 +66,9 @@ import { dirname, isAbsolute, join } from 'node:path';
  * them.
  *
  * THE DOOR IS NAMED AS A COMMAND THIS REPOSITORY DEFINES, not as a file on one
- * machine. It used to name a local launcher that is not published, so the
- * refusal a stranger met sent them to a file their copy does not contain -- and
- * a refusal naming something nobody can open is not a refusal anybody can act
- * on. `package.json` carries both commands, and a test below holds them to
- * being there.
+ * machine: a refusal that names a file a stranger's copy does not contain is
+ * not a refusal anybody can act on. `package.json` carries both commands, and a
+ * test below holds them to being there.
  */
 export type ArtifactPair = {
   /**
@@ -98,12 +96,12 @@ export type ArtifactPair = {
  */
 export const CONTRACT_ARTIFACTS: readonly ArtifactPair[] = [
   {
-    source: 'contracts/src/ConfidentialAccount.compact',
+    source: CONTRACTS.account,
     artifact: 'contracts/managed/contract/index.js',
     door: 'npm run compact:fast',
   },
   {
-    source: 'contracts/src/Vault.compact',
+    source: CONTRACTS.vault,
     artifact: 'contracts/managed-vault/contract/index.js',
     door: 'npm run compact:vault',
   },

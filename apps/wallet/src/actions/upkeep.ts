@@ -50,6 +50,7 @@ import { WIRE_RECORDS } from '../../../../src/midnight/sealed-record-wire.js';
 import { vaultSecretsKeptFor } from './vault-secret-kept.js';
 import type { VaultDoorsReach } from './vault-doors-here.js';
 import { stillOwed, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
+import { retiredVaultsKeptHere } from './retired-vaults-here.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 import { seatsWithNoRightsRead } from './approvers-here.js';
 
@@ -320,16 +321,19 @@ async function vaultSecretsGiven(
  * **A VAULT SECRET'S CHANGE THAT STOPPED PART WAY IS FINISHED**: for each vault, the copies of a secret the chain holds
  * are written, a secret the chain holds is filed, and a run this seat raised or approved, kept in this wallet and at its
  * approvals, is carried (`vaultSecretsChangedHere` with `finish`). It raises nothing, approves nothing and refuses
- * nothing: a vault still owed a change leaves the upkeep partial, and a signer who stays changes it by a press.
+ * nothing: a vault still owed a change leaves the upkeep partial, and a signer who stays changes it by a press. The
+ * retired vaults are the step's own read of them, handed on so the change does not read them again.
  */
 async function vaultSecretsFinished(
-  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach, vaults: readonly string[], left: () => void,
+  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach,
+  vaults: { readonly adopted: readonly string[]; readonly retired: readonly string[] }, left: () => void,
 ): Promise<void> {
-  if (vaults.length === 0) return;
+  if (vaults.adopted.length === 0 && vaults.retired.length === 0) return;
   const kept = reach.vaultSecrets ?? vaultSecretsInTheWallet();
   if (kept === undefined) { left(); return; }
   try {
-    if (stillOwed(await vaultSecretsChangedHere(ctx, r, kept, await rotationDoorsIn(r), 'finish'))) left();
+    const retired = vaults.retired.map((v) => v.toLowerCase() as Hex);
+    if (stillOwed(await vaultSecretsChangedHere(ctx, r, kept, await rotationDoorsIn(r), 'finish', { retired }))) left();
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     left();
@@ -500,11 +504,19 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       const w = watchedSteps(ctx);
       const r = w.watching(await company.reach(ctx));
       let vaults: readonly string[] = [];
+      let retired: readonly string[] = [];
       let seats: readonly string[] = [];
       try {
         const held = await r.holders();
         vaults = held.adoptedVaults;
         seats = held.seats;
+      } catch (e) {
+        if (e instanceof ActionStopped) throw e;
+        left();
+      }
+      /* Read once for the whole step; one that cannot be read leaves the upkeep partial and holds back no adopted vault's work. */
+      try {
+        retired = await retiredVaultsKeptHere(r, { builder: r.builder, indexer: async () => r.chain.indexer, account: r.account });
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
@@ -515,8 +527,13 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         w.rethrow();
         if ((notes.of !== 'as-filed' && notes.of !== 'filed') || (notes.unsealed ?? []).length > 0) left();
       }
-      await vaultSecretsFinished(ctx, r, w, reach, vaults, left);
-      await vaultSecretsGiven(ctx, r, w, reach, vaults, seats, left);
+      /*
+       * A retired vault whose secret is still kept (it may hold private money, or its last secret change is half written:
+       * the rule the change of the vault secrets reads by) has its secret's change finished and its secret given as an
+       * adopted vault's are; one that never started is passed over.
+       */
+      await vaultSecretsFinished(ctx, r, w, reach, { adopted: vaults, retired }, left);
+      await vaultSecretsGiven(ctx, r, w, reach, [...vaults, ...retired], seats, left);
       await policiesSealedAgain(ctx, r, w, left);
       let anchored = 0;
       try {

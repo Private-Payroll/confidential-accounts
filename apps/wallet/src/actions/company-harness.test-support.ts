@@ -291,11 +291,13 @@ const builderFor = (s: Seat | null, seated: () => Map<string, string>, invitees:
   runsOutrun: async () => ({}),
   vouchedRunIdentity: async () => null,
   seatInvited: seatProofFrom(invitees),
+  /* The account's own list of the vaults it retired: this company retires none. */
+  superAdmins: { reads: () => ({ accountAt: async () => ({ authority: {}, vaults: { adopted: [], retired: [] } }) }) },
 }) as unknown as VaultBuilderClient;
 
 /* Each vault as the indexer holds it: this account's, on this build's circuits, holding no notes and no nonce secret yet, with nothing in its journals. */
 const vaultAsTheIndexerHoldsIt = () => ({
-  onChain: true, state: '', notes: [], notesFromThisBuild: true, everCreated: [], account: ADDRESS, started: true, nonceCommitment: '00'.repeat(32), splitJournal: [],
+  onChain: true, state: '', notes: [], notesFromThisBuild: true, retired: false, everCreated: [], account: ADDRESS, started: true, nonceCommitment: '00'.repeat(32), splitJournal: [],
   circuits: null, accountCircuits: null,
 });
 

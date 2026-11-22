@@ -25,6 +25,8 @@ import { vaultsReadInTheView } from '../../../../packages/web-shared/src/vaults-
 
 const t = vi.hoisted(() => ({
   order: [] as string[],
+  /** The vaults the account lists retired and does not hold again. */
+  retired: [] as string[],
   rotated: [] as unknown[],
   rotationDoors: null as null | Record<string, any>,
   anchorDoors: [] as Record<string, any>[],
@@ -217,6 +219,7 @@ const reachWith = (over: Record<string, unknown> = {}) => ({
   roster: async () => ({ id: 'acc_1', signers: [] }),
   builder: {
     isTheWalletsBuilder: true, roundsOnChain: async () => [],
+    superAdmins: { reads: () => ({ accountAt: async () => ({ authority: {}, vaults: { adopted: [], retired: t.retired } }) }) },
     anchorsOnChain: async (q: { indexer: { indexerUri: string } }) => ({ landed: [], isTheWallets: q.indexer.indexerUri === 'https://indexer.wallet.example' }),
   },
   chain: { indexer: { indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' }, callState: async () => CHAIN_STATE },
@@ -248,6 +251,7 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', {});
   t.changed = []; t.change = []; t.resealed = null; t.resealDoors = null; t.leavingRead = true;
   t.order = []; t.rotated = []; t.rotationDoors = null; t.anchorDoors = []; t.rebuilt = []; t.owedFiled = []; t.gives = []; t.give = null; t.store = null; t.givenOut = [];
+  t.retired = [];
   t.onTheWayIn = { anchored: 2, head: '00' }; t.anchorNow = { anchored: 3, head: '00' };
   t.roster = async () => null; t.notes = { of: 'as-filed', notes: [], unexplained: 0, said: [] };
 });
@@ -438,6 +442,77 @@ describe('the tail finishes a change of a vault secret that stopped part way, an
     expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
   });
 
+  it('finishes an owed change and gives the secret of a vault the company retired, even with no vault adopted', async () => {
+    const RETIRED = 'd9'.repeat(32);
+    t.retired = [RETIRED];
+    const only = givingReach('admin', {
+      holders: async () => ({ seats: [LEAF, JOINER], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT, founding: LEAF }),
+    });
+    const { ctx } = ctxWith('private-deposit');
+    await upkeepSteps(company([only]).doors, {}).last.run(ctx);
+    /*
+     * RED WHEN: a company whose only vaults are retired has a secret change left half done, every payout from the vault
+     * refused until its copies are written, or its secret never given to the seats that lack it, so a leaver strands it.
+     */
+    expect(t.changed.map((x) => x.may)).toEqual(['finish']);
+    expect(t.gives.map((g) => g['vaultIds'])).toEqual([[RETIRED]]);
+  });
+
+  it('passes over a retired vault that never held private money, so the upkeep is not left partial for it', async () => {
+    const FUNDED = 'd9'.repeat(32);
+    const NEVER = 'da'.repeat(32);
+    t.retired = [FUNDED, NEVER];
+    const held = new Map([[FUNDED, ['n1']], [NEVER, []]]);
+    const base = givingReach('admin', {
+      holders: async () => ({ seats: [LEAF, JOINER], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT, founding: LEAF }),
+    }) as any;
+    const read = (q: { vault: string }) => ({ onChain: true, notes: held.get(q.vault), publicBalances: [], nonceCommitment: '00'.repeat(32), started: false, account: ACCOUNT });
+    const only = { ...base, builder: { ...base.builder, vaultOnChain: async (q: { vault: string }) => read(q) } } as never;
+    /* The give answers as the real one does for a vault that was never started: no secret is filed, so there is none to give. */
+    t.give = async (input) => {
+      if (input['vaultIds'][0] === NEVER) throw new Error(`vault ${NEVER} has no nonce secret filed, so there is no copy to give`);
+      return { given: input['vaultIds'], had: [], skipped: [] };
+    };
+    const { ctx, told } = ctxWith('private-deposit');
+    await upkeepSteps(company([only]).doors, {}).last.run(ctx);
+    /* RED WHEN: every action of a company that once retired a never-started vault is told as partial, for a secret that never was. */
+    expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
+    expect(t.gives.map((g) => g['vaultIds'])).toEqual([[FUNDED]]);
+  });
+
+  it('finishes the half-written secret change of a retired vault holding only public money, and gives its secret', async () => {
+    const HALF = 'db'.repeat(32);
+    t.retired = [HALF];
+    const base = givingReach('admin', {
+      holders: async () => ({ seats: [LEAF, JOINER], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT, founding: LEAF }),
+    }) as any;
+    /* The chain holds the vault's new secret and not yet every sealed copy of it, so the vault is not started. */
+    const read = { onChain: true, notes: [], publicBalances: [{ token: '01'.repeat(32), amount: '5' }], nonceCommitment: 'ab'.repeat(32), started: false, account: ACCOUNT };
+    let reads = 0;
+    const only = { ...base, builder: { ...base.builder, vaultOnChain: async () => { reads += 1; return read; } } } as never;
+    const { ctx } = ctxWith('private-deposit');
+    await upkeepSteps(company([only]).doors, {}).last.run(ctx);
+    /*
+     * RED WHEN: a vault retired while its secret change was half written, holding public money and no notes, is passed
+     * over, so no device writes the copies left and every public payout from it is refused.
+     */
+    expect(t.changed.map((x) => x.may)).toEqual(['finish']);
+    expect(t.gives.map((g) => g['vaultIds'])).toEqual([[HALF]]);
+    /* RED WHEN: the change of the vault secrets is not handed the step's read of the retired vaults, so it reads them all again. */
+    expect(t.changed.map((x) => x.o)).toEqual([{ retired: [HALF] }]);
+    expect(reads).toBe(1);
+  });
+
+  it('a list of retired vaults that cannot be read leaves the upkeep partial and holds back no adopted vault\'s change', async () => {
+    const base = reachWith() as any;
+    const unread = { ...base, builder: { ...base.builder, superAdmins: { reads: () => ({ accountAt: async () => { throw new Error('the indexer did not answer'); } }) } } } as never;
+    const { ctx, told } = ctxWith('private-deposit');
+    await upkeepSteps(company([unread]).doors, {}).last.run(ctx);
+    /* RED WHEN: a retired list that could not be read stops the adopted vaults' owed changes too, or is told as all done. */
+    expect(t.changed).toEqual([{ may: 'finish', o: { retired: [] } }]);
+    expect(told).toMatchObject({ upkeep: UPKEEP.partial });
+  });
+
   it('a vault still owed its change leaves the upkeep partial and refuses nothing', async () => {
     t.change = [{ vault: VAULTS[0], did: [], state: 'owed', why: 'a signer who stays changes it by pressing' }];
     const { ctx, told } = ctxWith('private-deposit');
@@ -536,7 +611,7 @@ describe('the tail files each vault again with this seat, then anchors what the 
       expect(typeof doors['seatHere']).toBe('function');
       /* RED WHEN: a deposit whose records the service withheld is known only in this wallet and never named in the vault's record. */
       expect(doors['kept']).toBe(coins);
-      expect(doors['builder']).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function), anchorsOnChain: expect.any(Function) });
+      expect(doors['builder']).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function), anchorsOnChain: expect.any(Function), superAdmins: expect.any(Object) });
     }
     expect(t.order.at(-1)).toBe('anchor');
     expect(told).toEqual({ upkeep: UPKEEP.done, anchored: 2 });
@@ -560,7 +635,7 @@ describe('the tail files each vault again with this seat, then anchors what the 
     expect(doors.material).toEqual({ signingSecret: SEAT.signingSecret, blinding: SEAT.blinding, scope: SEAT.scope });
     /* RED WHEN: the anchors on the chain are read through anything but this wallet's own indexer. */
     expect(await doors.onChain()).toEqual({ landed: [], isTheWallets: true });
-    expect(doors.builder).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function), anchorsOnChain: expect.any(Function) });
+    expect(doors.builder).toEqual({ isTheWalletsBuilder: true, roundsOnChain: expect.any(Function), anchorsOnChain: expect.any(Function), superAdmins: expect.any(Object) });
     for (const name of ['create-vault', 'give-vault-keys', 'private-deposit']) {
       const shape = intentShapeOf(name)!;
       /* RED WHEN: the anchor is sent on a route that is not counted as sending, so a refused send is never said. */

@@ -71,7 +71,7 @@ export type GovernanceOnTheWire =
    * recovery approved before another is carried out can never be used after it.
    */
   | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string }
-  /** A vault taken out of the company's account; the vault itself carries it out once it holds no money. */
+  /** A vault taken out of the company's account; the vault itself carries it out, whatever it holds. */
   | { readonly kind: 'retire-vault'; readonly vault: string };
 
 /**

@@ -228,12 +228,11 @@ describe('the same signer approving the same proposal on two accounts', () => {
 
   it('still lets the same signer approve a LATER proposal', async () => {
     /*
-     * This used to be "the next round", and the mechanism moved underneath it.
-     *
-     * Cancelling rotated the round and burned every approval on the account,
-     * and the property was that the same signer could then approve again. The
-     * round is gone: a nullifier binds to the proposal id, cancelling burns
-     * nothing at all, and a second proposal is simply a second, unrelated
+     * The mechanism moved underneath this test. Cancelling once moved the
+     * account's one proposal counter on and burned every approval on the
+     * account, and the property was that the same signer could then approve
+     * again. The counter is gone: a nullifier binds to the proposal id,
+     * cancelling burns nothing at all, and a second proposal is simply a second, unrelated
      * nullifier. Same property — a signer is not spent by having approved once
      * — asserted against the mechanism that carries it now.
      */
@@ -796,7 +795,13 @@ describe('removing a signer by clearing one slot', () => {
     const seat = govChange(96);
     const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
     await sim.as(FB).approve(id);
-    await expect(sim.seatInvited(id, sim.invited(FD, seat), true)).rejects.toThrow();
+    /* The device's own witness finds no vacated slot and stops before the circuit runs. */
+    await expect(sim.seatInvited(id, sim.invited(FD, seat), true)).rejects.toThrow(/no slot on this account has been vacated/);
+    /* RED WHEN: takeVacatedSlot stops checking that the slot it is given holds the vacancy marker. Every
+     * slot is occupied, so the only path a device can offer leads to a signer's leaf. */
+    await expect(sim.seatInvited(id, sim.dishonest(sim.invited(FD, seat), sim.pathFor(FC)), true))
+      .rejects.toThrow(/that slot has not been vacated/);
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
 
   it('THE ONE THAT WOULD REMOVE THE WRONG PERSON: a path must be for the leaf it claims',
@@ -865,6 +870,26 @@ describe('removing a signer by clearing one slot', () => {
       expect(sim.ledger.signerLeaves.size()).toBe(3n);
       expect(sim.slotOf(FB)).toBe(1n);
       expect(sim.ledger.signers.findPathForLeaf(sim.leafOf(FB))).toBeTruthy();
+    });
+
+  it('a reused slot is proved from this account\'s tree, not from a path that only claims the vacancy marker',
+    async () => {
+      /*
+       * The invitee offers a path whose leaf is the vacancy marker, so the leaf
+       * check passes, but whose position is a live signer's: it leads to a root
+       * this account's tree never had.
+       */
+      const sim = await threeSigners();
+      const seat = govChange(98);
+      const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
+      await sim.as(FB).approve(id);
+      const forged = { ...sim.pathFor(FB), leaf: pureCircuits.vacantSlot() };
+
+      /* RED WHEN: takeVacatedSlot stops checking the path's root against the signers' tree. */
+      await expect(sim.seatInvited(id, sim.dishonest(sim.invited(FD, seat), forged), true))
+        .rejects.toThrow(/that path is not from this tree/);
+      expect(sim.ledger.signerLeaves.size()).toBe(3n);
+      expect(sim.slotOf(FB)).toBe(1n);
     });
 
   it('a removal publishes nothing that identifies who performed it', async () => {
@@ -1036,14 +1061,14 @@ describe('changing the threshold, against the compiled circuits', () => {
     await sim.as(carrying(sim, TA, c)).setThreshold(3n, id);
 
     /*
-     * The round counter this used to assert on is gone.
+     * The proposal counter this used to assert on is gone.
      *
      * It stood for "something consumed the account's one proposal" — `propose`
      * reset the approvals without bumping it, and only an operation that
      * SETTLED moved it on. With several proposals open at once a single global
      * counter cannot say which one was consumed, so consumption is now exactly
      * what it always meant: both of that proposal's map entries are gone. The
-     * replay below is the property the round assertion existed to protect, and
+     * replay below is the property the counter assertion existed to protect, and
      * it is asserted directly rather than through a counter.
      */
     expect(sim.isOpen(id)).toBe(false);

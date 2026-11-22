@@ -29,7 +29,7 @@ import type { SealedPool } from '../../../src/midnight/vault-pool.js';
 import { ownCopyOpened } from '../../../src/midnight/sealed-secret-copy.js';
 import { removalWaitsHere, type RotationDoors } from './company-key-here.js';
 import type { DirectoryRead } from './vault-page-doors.js';
-import type { CreateVaultDoors, RunKept } from './vault-doors.js';
+import type { CreateVaultDoors, RunKept, VaultOnChainDoors } from './vault-doors.js';
 import { removalsOnTheChainHere } from './removals-on-the-chain.js';
 import { theVaultReadForItsStart } from './vault-read-here.js';
 import { ownChainSecret } from './vault-secret-to-spend.js';
@@ -340,16 +340,27 @@ async function waitsHere(doors: VaultRotationDoors, leaf: string | undefined): P
 }
 
 /**
+ * **THE DOORS A RETIRED VAULT'S SECRET IS CHANGED THROUGH**: the same doors, which admit each of `retired` as the
+ * company's beside the vaults the account adopted (`retiredAdmitted`), for this change alone. The account approves a
+ * change of a retired vault's secret as of an adopted vault's; every read, the wallet's included, is as it came.
+ * `retired` is what the caller read off the account's own list of the vaults it retired.
+ */
+export const heldForItsSecret = <D extends VaultOnChainDoors>(doors: D, retired: readonly Hex[]): D =>
+  (retired.length === 0 ? doors : { ...doors, retiredAdmitted: retired.map(lower) });
+
+/**
  * **EVERY VAULT'S SECRET, CHANGED AFTER A REMOVAL**, from a staying signer's
  * device: the removal's waits first (never on the seat that is leaving, never
  * before the company's key is changed), then each vault on its own. Every vault
  * is named to the step's one read of its vaults first, so the first vault's read
  * reads them all and each later one is served from it until the step writes. A
- * vault that cannot go on says why; the others go on.
+ * vault that cannot go on says why; the others go on. Each vault in `o.retired`,
+ * one the account retired, is changed through `heldForItsSecret`.
  */
 export async function vaultSecretsRotatedHere(
-  doors: VaultRotationDoors, vaults: readonly Hex[], may: RotationMay, o: { readonly leaf?: string } = {},
+  given: VaultRotationDoors, vaults: readonly Hex[], may: RotationMay, o: { readonly leaf?: string; readonly retired?: readonly Hex[] } = {},
 ): Promise<readonly VaultSecretRotated[]> {
+  const doors = heldForItsSecret(given, o.retired ?? []);
   let waited: Awaited<ReturnType<typeof waitsHere>>;
   try {
     waited = await waitsHere(doors, o.leaf);

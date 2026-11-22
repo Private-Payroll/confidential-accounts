@@ -137,24 +137,20 @@ export const sponsorFor = (
 
 /**
  * The hand-over with `handed.over` set the moment a call may have reached the network: once the wallet sends it,
- * or once it fails anywhere but before the network was handed it. A call `before` names comes ahead of the act's own
- * call and is not it, so it is counted in `handed.before` instead and never says the act's own call was handed over.
+ * or once it fails anywhere but before the network was handed it.
  */
-export const handOverMarked = (given: HandOver | undefined, handed: Handed, before: (call: ChainCall) => boolean = () => false): HandOver => {
+export const handOverMarked = (given: HandOver | undefined, handed: Handed): HandOver => {
   const over = given ?? THROUGH_THE_SERVICE;
-  const mark = (call: ChainCall): void => {
-    if (before(call)) handed.before = (handed.before ?? 0) + 1;
-    else handed.over = true;
-  };
+  const mark = (): void => { handed.over = true; };
   const marked = (toChain: NonNullable<HandOver['toChain']>): NonNullable<HandOver['toChain']> => async (tx, call) => {
     try {
       await toChain(tx, call);
     } catch (e) {
       const marked = e as { nothingWasSent?: unknown; thisSendNotSent?: unknown } | null;
-      if (marked?.nothingWasSent !== true && marked?.thisSendNotSent !== true) mark(call);
+      if (marked?.nothingWasSent !== true && marked?.thisSendNotSent !== true) mark();
       throw e;
     }
-    mark(call);
+    mark();
   };
   if (over.toChain === undefined && over.fallback === undefined) return over;
   return Object.freeze({
@@ -166,7 +162,7 @@ export const handOverMarked = (given: HandOver | undefined, handed: Handed, befo
 
 
 /**
- * Whether anything of an action has been handed to the service to send, so a refusal after it is never said as nothing
- * sent: its own call (`over`), and how many calls that come ahead of it (`before`).
+ * Whether an action's own call has been handed over to be sent (`over`), so a refusal after it is never said as nothing
+ * sent.
  */
-export interface Handed { over: boolean; before?: number }
+export interface Handed { over: boolean }

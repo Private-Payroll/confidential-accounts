@@ -1,9 +1,9 @@
 /**
  * **A VAULT RETIRED FROM THE PERSON'S OWN WALLET**: the retire raised with this seat's approval counted, carried out by
  * the vault itself once the chain holds it at the company's threshold, and the same retire approved and carried from
- * the proposals list. The wallet refuses before raising or carrying while the chain it reads shows the vault holding
- * any money, or while this wallet keeps a deposit into it or a payment out of it on its way. Money paid into a vault
- * after it is retired waits there until the company adopts the vault again.
+ * the proposals list. A retire gives up whatever the vault holds, which stays payable: each approving wallet reads what
+ * the vault holds and the runs open on it itself and shows them before the approval. The wallet refuses before raising or carrying only while it keeps a deposit into the
+ * vault or a payment out of it on its way. A retired vault takes no deposit, even once adopted again.
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { readVaultAddress } from 'midnight-identity/profile/company-label';
@@ -14,7 +14,8 @@ import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-ap
 import { browserDepositsInFlight, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import {
-  approveRetireHere, carryRetireHere, RetireRefused, retireFoundHere, retireRaisedHere, type RetireDoors, type RetireNamed,
+  approveRetireHere, carryRetireHere, RetireRefused, retireFoundHere, retireGivesUpHere, retireRaisedHere,
+  type RetireDoors, type RetireGivesUp, type RetireNamed,
 } from '../../../../packages/web-shared/src/vault-retire-round.js';
 import { VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
@@ -61,9 +62,8 @@ const keptInTheWallet = (opener: InFlightOpener): NonNullable<RetireDoors['inFli
 });
 
 /**
- * The doors a retire acts through, each marking `handed` once it hands a call over. A call taking a token off the
- * vault's list is not the retire: it is counted in `handed.before`, never marking the retire handed over. `proves`
- * answers from the vault circuits this wallet holds proving keys for.
+ * The doors a retire acts through, each marking `handed` once it hands a call over. `proves` answers from the vault
+ * circuits this wallet holds proving keys for.
  */
 export function retireDoorsFor(ctx: StepContext, r: CompanyReach, reach: RetireVaultReach, handed: Handed): RetireDoors {
   if (reach.indexerHttp === undefined) {
@@ -73,7 +73,7 @@ export function retireDoorsFor(ctx: StepContext, r: CompanyReach, reach: RetireV
   const service = governedCallServiceThrough(r.stepView);
   return {
     ...d,
-    handOver: handOverMarked(d.handOver, handed, (call) => call.kind === 'vault-forget'),
+    handOver: handOverMarked(d.handOver, handed),
     proves: (circuit) => VAULT_CIRCUITS_THE_WALLET_PROVES.includes(circuit),
     approveSent: (id, body) => { handed.over = true; return service.approve(id, body); },
     ...(service.closed === undefined ? {} : { closedSent: service.closed.bind(service) }),
@@ -98,7 +98,16 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string): never => {
 const retireShown = (intent: ActIntent): readonly ShownLine[] => [
   { key: 'act.retire-vault.shown.vault', values: { vault: intent.fields['vault'] ?? '' }, from: 'page' },
   { key: 'act.retire-vault.shown.checks', from: 'action' },
-  { key: 'act.retire-vault.shown.forget', from: 'action' },
+];
+
+/** One side of what the vault holds, as the confirm line names it. */
+const SIDE: Readonly<Record<RetireGivesUp['money']['notes'], string>> = { holds: 'holds', none: 'none', unread: 'unread' };
+
+/** The lines an approver confirms: what the vault holds on each side and the runs open on it, as this wallet read them. */
+const givesUpLines = (up: RetireGivesUp): Words[] => [
+  { key: `act.retire-vault.confirm.private.${SIDE[up.money.notes]}` },
+  { key: `act.retire-vault.confirm.public.${SIDE[up.money.public]}` },
+  up.openRuns === null ? { key: 'act.retire-vault.confirm.runs-unread' } : { key: 'act.retire-vault.confirm.runs', values: { runs: up.openRuns } },
 ];
 
 /**
@@ -111,13 +120,18 @@ export function retireVaultKind(reach: RetireVaultReach): ProposalKind {
   const kind: ProposalKind = {
     fields: ['vault'],
     changesTheCompany: true,
+    /* What the retire gives up is read by this wallet and confirmed by the person before the approval is sent. */
+    readsFirst: true,
     shown: async (intent): Promise<readonly ShownLine[]> => [...retireShown(intent), { key: 'act.retire-vault.shown.approve', from: 'action' }],
     check: (intent) => (vaultOf(intent) === null ? why('not-a-vault') : null),
     opened: async (ctx, r, intent) => {
       const handed: Handed = { over: false };
       try {
-        const found = await retireFoundHere(retireDoorsFor(ctx, r, reach, handed), namedOf(intent));
-        return { id: found.rec.id, chainId: found.round.chainId };
+        const doors = retireDoorsFor(ctx, r, reach, handed);
+        const named = namedOf(intent);
+        const found = await retireFoundHere(doors, named);
+        const up = await retireGivesUpHere(doors, named.vault);
+        return { id: found.rec.id, chainId: found.round.chainId, read: up, confirm: givesUpLines(up) };
       } catch (e) {
         return stoppedAs(e, handed, 'not-approved');
       }
@@ -141,8 +155,9 @@ export function retireVaultKind(reach: RetireVaultReach): ProposalKind {
 }
 
 /**
- * **THE RETIRE RAISED FROM THIS WALLET**: the vault read empty on the chain first, the retire raised with this seat's
- * approval counted, and carried out by the vault at once when that already meets the company's threshold.
+ * **THE RETIRE RAISED FROM THIS WALLET**: what the vault holds and the runs open on it read and confirmed first, the
+ * retire raised with this seat's approval counted, and carried out by the vault at once when that already meets the
+ * company's threshold.
  */
 export function retireVaultAction(reach: RetireVaultReach): ActionDefinition {
   return Object.freeze({
@@ -153,7 +168,7 @@ export function retireVaultAction(reach: RetireVaultReach): ActionDefinition {
       ...upkeepShown(),
       { key: 'act.retire-vault.shown.nothing-else', from: 'action' as const },
     ],
-    checks: [{ key: 'act.retire-vault.check.empty' }, { key: 'act.retire-vault.check.seat' }, UPKEEP_CHECK],
+    checks: [{ key: 'act.retire-vault.check.on-its-way' }, { key: 'act.retire-vault.check.seat' }, UPKEEP_CHECK],
     check: async (intent) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
       return vaultOf(intent) === null ? why('not-a-vault') : null;
@@ -170,7 +185,10 @@ export function retireVaultAction(reach: RetireVaultReach): ActionDefinition {
           const handed: Handed = { over: false };
           let raised: Awaited<ReturnType<typeof retireRaisedHere>>;
           try {
-            raised = await retireRaisedHere(retireDoorsFor(ctx, r, reach, handed), vaultOf(intent)!);
+            const doors = retireDoorsFor(ctx, r, reach, handed);
+            /* The raise counts this seat's approval, so the person confirms what the retire gives up first, as this wallet read it. */
+            await ctx.confirm(givesUpLines(await retireGivesUpHere(doors, vaultOf(intent)!)));
+            raised = await retireRaisedHere(doors, vaultOf(intent)!);
           } catch (e) {
             return stoppedAs(e, handed, 'not-raised');
           }
@@ -200,5 +218,6 @@ async function carryRetireOnce(ctx: StepContext, r: CompanyReach, named: RetireN
     return stoppedAs(e, handed, 'not-carried');
   }
   if (out.said !== null) ctx.tell({ said: 'proposal-not-written-down' });
-  return out.state === 'waiting' ? { state: RETIRE_STATE.waiting } : undefined;
+  if (out.state === 'waiting') return { state: RETIRE_STATE.waiting };
+  return undefined;
 }

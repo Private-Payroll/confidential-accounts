@@ -114,7 +114,7 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
    * a verifier key already on disk stands in for each operation's key, because an
    * unproven transaction only needs one to name its key location.
    */
-  const build = async (sim: AccountSimulator, args: unknown[]) => {
+  const build = async (sim: AccountSimulator, args: unknown[], circuitId = 'recordPaymentFromVault') => {
     const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const rt: any = await import('@midnight-ntwrk/compact-runtime');
     const { CompiledContract } = await import('@midnight-ntwrk/compact-js');
@@ -128,7 +128,7 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
       state.setOperation(n, op);
     }
     const compiled = CompiledContract.make('ConfidentialAccount', Contract as any).pipe(
-      CompiledContract.withWitnesses(witnesses as any));
+      CompiledContract.withWitnesses(witnesses as never));
     const zk = {
       getVerifierKey: async () => key,
       getVerifierKeys: async (ns: string[]) => ns.map((n) => [n, key]),
@@ -139,7 +139,7 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
     };
     const out = await callsTheProductBuilds().buildCall(zk, {
       compiledContract: compiled,
-      circuitId: 'recordPaymentFromVault',
+      circuitId,
       contractAddress: sim.address,
       coinPublicKey: hex(bytes(7)),
       network: 'undeployed',
@@ -187,6 +187,27 @@ describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, lea
      */
     expect(owed.get(`unshielded:${receipt}`)).toBe(-1n);
     /* And nothing else in it is short: the one missing unit is the whole refusal. */
+    expect([...owed].filter(([k, v]) => v !== 0n && k !== `unshielded:${receipt}`)).toEqual([]);
+  });
+
+  it("A DIRECT RETIREMENT, with the approved round and its salt but no vault, leaves the vault's retirement receipt one short", async () => {
+    const sim = await AccountSimulator.liveAccount([A, B], 2n);
+    sim.at(WALL);
+    await sim.adoptVault(PAYROLL, [A, B]);
+    const c = change(0n, 12);
+    const payload = pureCircuits.retireVaultPayload(PAYROLL);
+    await sim.as(sim.applying(A, c)).propose(payload);
+    const id = sim.proposalId(payload, c.salt);
+    await sim.as(sim.applying(B, c)).approve(id);
+
+    const { tx, L } = await build(sim, [id, PAYROLL, c.salt], 'retireVault');
+    const receipt = L.rawTokenType(pureCircuits.retireReceiptTag(), hex(PAYROLL));
+    const owed = new Map<string, bigint>();
+    for (const [token, amount] of tx.imbalances(0, 0n) as Map<{ tag: string; raw?: string }, bigint>) {
+      owed.set(`${token.tag}:${token.raw ?? ''}`, amount);
+    }
+    /* RED WHEN `retireVault` stops receiving the vault's receipt: a vault would be left unmarked as retired, still taking deposits. */
+    expect(owed.get(`unshielded:${receipt}`)).toBe(-1n);
     expect([...owed].filter(([k, v]) => v !== 0n && k !== `unshielded:${receipt}`)).toEqual([]);
   });
 });
@@ -261,6 +282,36 @@ describe('the roads a payment could be recorded on without a vault paying, each 
 });
 
 /* ------------------------------------------------------------------ */
+
+describe('adopting and retiring a vault', () => {
+  it('each is carried out only for the vault, and with the salt, its approved proposal names', async () => {
+    const sim = await live();
+    const c = change(0n, 71);
+    const adopt = pureCircuits.adoptVaultPayload(PAYROLL);
+    await sim.as(sim.applying(A, c)).propose(adopt);
+    const id = sim.proposalId(adopt, c.salt);
+    await sim.as(B).approve(id);
+    /* RED WHEN `adopt` stops rebuilding its proposal from the vault it adopts. */
+    await expect(sim.as(sim.applying(A, c)).adopt(TREASURY, id))
+      .rejects.toThrow(/that proposal does not authorise adopting this vault/);
+    expect(sim.adopted(TREASURY)).toBe(false);
+
+    await sim.adoptVault(PAYROLL, [A, B]);
+    await sim.adoptVault(TREASURY, [A, B], 393);
+    const rc = change(0n, 72);
+    const retire = pureCircuits.retireVaultPayload(PAYROLL);
+    await sim.as(sim.applying(A, rc)).propose(retire);
+    const rid = sim.proposalId(retire, rc.salt);
+    await sim.as(B).approve(rid);
+    /* RED WHEN `retireVault` stops rebuilding its proposal from the vault it retires and the salt it is given. */
+    await expect(sim.retireVault(rid, TREASURY, rc.salt))
+      .rejects.toThrow(/that proposal does not authorise retiring this vault/);
+    await expect(sim.retireVault(rid, PAYROLL, change(0n, 73).salt))
+      .rejects.toThrow(/that proposal does not authorise retiring this vault/);
+    expect(sim.adopted(TREASURY)).toBe(true);
+    expect(sim.adopted(PAYROLL)).toBe(true);
+  });
+});
 
 describe('which vault may pay', () => {
   it('A RETIRED VAULT STILL PAYS: "ever adopted", never "adopted now"', async () => {
@@ -475,7 +526,7 @@ describe('the account moves no money of its own', () => {
    */
   const MONEY = /\b(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|kernel\.(?:mint\w*|claim\w*|inc\w*))\b/g;
 
-  it('only the two vault steps touch money, and each only to receive one receipt', () => {
+  it('only the three vault steps touch money, and each only to receive one receipt', () => {
     const src = contractSourceText(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE);
     /* The text read is every file of the list: one module declaration for each file past the main one. */
     expect(src.match(/^module \w+ \{/gm)?.length ?? 0).toBe(contractSources(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE).length - 1);
@@ -487,11 +538,16 @@ describe('the account moves no money of its own', () => {
       const hits = [...body.matchAll(MONEY)].map((h) => h[1]!);
       if (hits.length) touched[(m[1] ?? m[2])!] = hits;
     });
-    /* RED WHEN any circuit, or the constructor, gains a line that moves money. The two payment
-       steps, one payee and a batch, receive their receipt in the checks they share. */
+    /* RED WHEN any circuit, or the constructor, gains a line that moves money, or `retireVault` stops
+       taking the retiring vault's receipt. The two payment steps, one payee and a batch, receive their
+       receipt in the checks they share. */
     expect(touched).toEqual({
-      requirePayable: ['receiveUnshielded'], approveVaultChange: ['receiveUnshielded'],
+      requirePayable: ['receiveUnshielded'], approveVaultChange: ['receiveUnshielded'], retireVault: ['receiveUnshielded'],
     });
+    /* RED WHEN the retirement takes a payment's or a change's receipt, or one from any contract but the vault it retires. */
+    const retireBody = src.slice(src.search(/^export circuit retireVault\(/m));
+    expect(retireBody.match(/receiveUnshielded\(([^;]*)\);/)?.[1])
+      .toBe('tokenType(retireReceiptTag(), ContractAddress { bytes: forVault }), 1');
     /* The scan saw every circuit and the constructor, not a truncated file. */
     expect(starts.length).toBeGreaterThan(40);
     /* RED WHEN any circuit but the two payment steps reaches the shared checks, and with them the receive. */
@@ -500,10 +556,10 @@ describe('the account moves no money of its own', () => {
     expect(callers.sort()).toEqual(['recordBatchFromVault', 'recordPaymentFromVault']);
   });
 
-  it('and the compiled contract agrees: one receive helper, called once by each', () => {
+  it('and the compiled contract agrees: one receive helper, called once by each of the three', () => {
     const js = readFileSync(join(import.meta.dirname, '..', 'managed', 'contract', 'index.js'), 'utf8');
     /* RED WHEN the compiled contract gains a send, a mint or a second receive. */
     expect(js.match(/this\._(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|mintShieldedToken)_\d+\(/g))
-      .toEqual(['this._receiveUnshielded_0(', 'this._receiveUnshielded_0(']);
+      .toEqual(['this._receiveUnshielded_0(', 'this._receiveUnshielded_0(', 'this._receiveUnshielded_0(']);
   });
 });

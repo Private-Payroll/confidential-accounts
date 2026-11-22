@@ -10,6 +10,7 @@ import { authorityIn } from 'midnight-identity/profile/contract-authority';
 import type { ContractAuthority } from 'midnight-identity/profile/contract-authority';
 import type { ChainRead, ContractOnTheChain } from 'midnight-identity/profile/committee-sign';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
+import VAULT_INFO from '../../../../contracts/managed-vault/compiler/contract-info.json' with { type: 'json' };
 
 /**
  * **THE WALLET READS A COMPANY'S LABEL OFF ITS ACCOUNT ITSELF.**
@@ -43,8 +44,8 @@ export const OPEN_PROPOSALS_FIELD = 2;
 /** Where a vault's public state names the account it is pinned to: written once, by its constructor. */
 export const VAULT_ACCOUNT_FIELD = 0;
 
-/** How many fields a vault's public state has, as this product deploys one. */
-export const VAULT_FIELDS = 14;
+/** How many fields a vault's public state has: the compiled vault's own list of its ledger fields, so it moves with the contract. */
+export const VAULT_FIELDS = VAULT_INFO.ledger.length;
 
 /**
  * **WHO HOLDS THE ACCOUNT, AS THIS WALLET READ IT FROM THE CHAIN**: the keys of
