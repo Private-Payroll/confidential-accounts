@@ -199,6 +199,9 @@ export async function actInTheWallet(
     try { write(`action ${intentName}: ${line}`); } catch { /* a line that cannot be written never stops the action */ }
   };
   const counts = (): string => `relayed ${relayed}, unconfirmed ${handedOver - relayed}`;
+  /* A clock that reads no time leaves the line without one; writing a line never stops the action. */
+  const handedAt = (at: number): string => (Number.isFinite(at) ? `handed at ${new Date(at).toISOString()}` : 'handed at a time the clock did not read');
+  const tookSince = (at: number): string => `in ${Math.max(0, now() - at)} ms`;
   let stepSince = now();
   let heardAt = now();
   let beat: number | null = null;
@@ -288,7 +291,8 @@ export async function actInTheWallet(
       const sends = sendsIn(route, calling.body);
       if (sends) handedOver += 1;
       at = { step: calling.step, steps: calling.steps };
-      log(`${under(calling)}: ${called}`);
+      const calledAt = now();
+      log(`${under(calling)}: ${called}, ${handedAt(calledAt)}`);
       relaying = relaying.then(async () => {
         let answer: { status: number; body: unknown } | null | 'unreached' = null;
         try {
@@ -296,12 +300,12 @@ export async function actInTheWallet(
             { step: calling.step, steps: calling.steps, n: calling.n });
           answer = Number.isSafeInteger(got.status) && got.status >= 100 && got.status <= 599 ? { status: got.status, body: got.body ?? null } : null;
         } catch (e) {
-          log(`${under(calling)}: ${called} failed: ${errorLine(e)}`);
+          log(`${under(calling)}: ${called} failed ${tookSince(calledAt)}: ${errorLine(e)}`);
           /* No answer came back from the service at all: the wallet is told so, never that the call was refused, so it can go around it. */
           answer = serviceNotReached(e) ? 'unreached' : null;
         }
         if (answer !== null && answer !== 'unreached' && sends && answer.status >= 200 && answer.status < 300) relayed += 1;
-        log(`${under(calling)}: ${called} ${answer === null ? 'refused' : answer === 'unreached' ? 'not answered by the service' : `answered ${answer.status}`} (${counts()})`);
+        log(`${under(calling)}: ${called} ${answer === null ? 'refused' : answer === 'unreached' ? 'not answered by the service' : `answered ${answer.status}`} ${tookSince(calledAt)} (${counts()})`);
         acknowledgeCall(calling.n, answer);
       });
       return;
@@ -314,18 +318,19 @@ export async function actInTheWallet(
     expected += 1;
     handedOver += 1;
     at = { step: handed.step, steps: handed.steps };
-    log(`${under(handed)}: the wallet handed over ${transaction}; sending`);
+    const handedOverAt = now();
+    log(`${under(handed)}: the wallet handed over ${transaction}, ${handedAt(handedOverAt)}; sending`);
     relaying = relaying.then(async () => {
       let sent = false;
       try { sent = await asked.relay(handed.transaction, {
         step: handed.step, steps: handed.steps, n: handed.n,
         ...(handed.what === undefined ? {} : { what: handed.what }), ...(handed.also === undefined ? {} : { also: handed.also }),
       }); } catch (e) {
-        log(`${under(handed)}: sending ${transaction} failed: ${errorLine(e)}`);
+        log(`${under(handed)}: sending ${transaction} failed ${tookSince(handedOverAt)}: ${errorLine(e)}`);
         sent = false;
       }
       if (sent) relayed += 1;
-      log(`${under(handed)}: ${transaction} ${sent ? 'relayed' : 'refused'} (${counts()})`);
+      log(`${under(handed)}: ${transaction} ${sent ? 'relayed' : 'refused'} ${tookSince(handedOverAt)} (${counts()})`);
       acknowledge(handed.n, sent ? 'relayed' : 'refused');
     });
   };

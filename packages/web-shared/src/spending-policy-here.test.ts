@@ -9,15 +9,21 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { canonical, newSigningKeypair, newWrappingKeypair, seal } from '../../../src/core/crypto.js';
+import { canonical, newSigningKeypair, newWrappingKeypair, seal, type Hex } from '../../../src/core/crypto.js';
 import { signedFoundingState } from '../../../src/core/founding-state.js';
 import { TEST_TOKEN } from '../../../src/testing/assets.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { openSpendingPolicy, sealSpendingPolicy } from '../../../src/midnight/spending-policy-record.js';
 import { MOST_ROLES_ASKED } from 'midnight-identity/profile/request';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
-import { chainReadThroughTheWallet, policyProposedHere, policyReadHere, setPolicyBarOnDevice, setSpendingPolicyOnDevice, type PolicyGovernanceDoors } from './spending-policy-here.js';
-import { spendingPolicyHere } from './spending-policy-read-here.js';
+import {
+  chainReadThroughTheWallet, policyProposedHere, policyReadHere, refusePolicyChangeHere, setPolicyBarOnDevice, setSpendingPolicyOnDevice,
+  type PolicyGovernanceDoors,
+} from './spending-policy-here.js';
+import { spendingPoliciesHere, spendingPolicyHere, type PolicyPair } from './spending-policy-read-here.js';
+import { accountReadsAnswered } from './account-reads-answered.js';
+import { spendingPolicyKeysOf } from './governed-call-builder.js';
+import { assetIdHex } from '../../../src/core/assets.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
 import { pureCircuits } from '../../../contracts/managed/contract/index.js';
 import { withCompanyKeys } from './governed-call-on-device.js';
@@ -210,6 +216,78 @@ describe('A VAULT\'S SPENDING POLICY, READ AND SET ON THIS DEVICE', () => {
     await expect(read([elsewhere])).rejects.toThrow(/None of the company's records/u);
   });
 
+  it('THE COMMITMENT OF EVERY STORED VERSION IS MADE IN ONE ASK OF THE WORKER, HOWEVER MANY ARE STORED, AND A VERSION WHOSE KEYS CANNOT BE MADE IS STILL REFUSED', async () => {
+    /* The chain holds the first version's commitment, so every newer version is opened and checked before it. */
+    const asks = { one: 0, each: 0 };
+    const readOf = (stored: number, refuse: string | null = null) => {
+      const filed = Array.from({ length: stored }, (_, i) => versionOf(i + 1, `${(0xb1 + i).toString(16)}`.repeat(32), [ME], founder));
+      const doors = reader(chainHolding('b1'.repeat(32)), filed);
+      const policies = doors.records.spendingPolicies!;
+      const keysOfEach = async (pairs: Parameters<typeof policies.keys>[0][]) => {
+        asks.each += 1;
+        return pairs.map((p): PromiseSettledResult<ReturnType<typeof keysOf>> => (p.policy?.blinding === refuse
+          ? { status: 'rejected', reason: new Error('the worker could not make these keys') } : { status: 'fulfilled', value: keysOf(p as never) }));
+      };
+      const counted = { ...policies, keys: async (i: Parameters<typeof policies.keys>[0]) => { asks.one += 1; return policies.keys(i); }, keysOfEach };
+      return spendingPolicyHere({ ...doors, records: { ...doors.records, spendingPolicies: counted as never } }, { vault: VAULT, asset: TEST_TOKEN });
+    };
+    for (const stored of [2, 4]) {
+      asks.one = 0;
+      asks.each = 0;
+      /* RED WHEN: each stored version's commitment is asked of the worker on its own, so a policy changed more often is read with more asks. */
+      await expect(readOf(stored)).resolves.toMatchObject({ state: 'set', version: 1 });
+      expect(asks).toEqual({ one: 1, each: 1 });
+    }
+    /* RED WHEN: a newer version whose keys the worker could not make is passed over, and an older one is read as the policy. */
+    await expect(readOf(4, 'b3'.repeat(32))).rejects.toThrow(/could not make these keys/u);
+  });
+
+  it('EVERY CHECK OF A CHANGE TO A POLICY MAKES THE COMMITMENTS OF ITS STORED VERSIONS IN ONE ASK OF THE WORKER, HOWEVER MANY ARE STORED', async () => {
+    /* Every stored version has the same terms and the chain holds the first one's commitment, so each newer one is checked before it. */
+    const FIRST = made('commitment', TERMS.periodLimit, 'b1'.repeat(32));
+    const asks = { one: 0, each: 0 };
+    const countedAt = (stored: number) => {
+      asks.one = 0;
+      asks.each = 0;
+      const filed = Array.from({ length: stored }, (_, i) => versionOf(i + 1, `${(0xb1 + i).toString(16)}`.repeat(32), [ME], founder));
+      const doors = reader(chainHolding('b1'.repeat(32)), filed);
+      const policies = doors.records.spendingPolicies!;
+      const keysOfEach = async (pairs: Parameters<typeof policies.keys>[0][]) => {
+        asks.each += 1;
+        return pairs.map((p): PromiseSettledResult<ReturnType<typeof keysOf>> => ({ status: 'fulfilled', value: keysOf(p as never) }));
+      };
+      const keys = async (i: Parameters<typeof policies.keys>[0]) => { asks.one += 1; return policies.keys(i); };
+      return {
+        ...doors, records: { ...doors.records, spendingPolicies: { ...policies, keys, keysOfEach } as never },
+        service: new Proxy({}, { get: () => async () => { throw new Error('nothing is sent here'); } }),
+        material: { signingSecret: founder.secret, blinding: '00'.repeat(32), scope: '00'.repeat(32) },
+        filing: { seat: SEAT, keyEpoch: 0, salt: () => '11'.repeat(32), newId: () => 'p1' },
+        approvers: async () => { throw new Error('not read here'); }, vaultName: () => 'the vault',
+        builder: { policyBarKey: async () => made('bar') },
+      } as unknown as PolicyGovernanceDoors & ReturnType<typeof reader>;
+    };
+    const asset = assetIdHex(TEST_TOKEN) as Hex;
+    const keys = keysOf({ vault: VAULT, asset, assetBlinding: '' }) as never;
+    round.opened = { chainId: 'CC'.repeat(32), governance: { kind: 'spending-policy', vault: VAULT, assetKey: made('asset', TEST_TOKEN), commitment: FIRST } };
+    try {
+      for (const stored of [2, 4]) {
+        /* RED WHEN: checking the policy in force and the one a proposal sets asks the worker for each stored version's commitment on its own. */
+        await expect(refusePolicyChangeHere(countedAt(stored), VAULT, asset, keys, { commitment: FIRST })).resolves.toBeUndefined();
+        expect(asks).toEqual({ one: 0, each: 1 });
+        /* RED WHEN: a raise asks for each stored version's commitment on its own, in its check of the policy in force or of the terms it raises. */
+        await expect(setSpendingPolicyOnDevice(countedAt(stored), { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS }))
+          .rejects.toThrow(/already has exactly this spending policy/u);
+        expect(asks).toEqual({ one: 1, each: 2 });
+        /* RED WHEN: reading the policy a proposal sets asks for each stored version's commitment on its own. */
+        await expect(policyReadHere(countedAt(stored), withCompanyKeys({ proposal: 'p1', vault: VAULT, among: [TEST_TOKEN] }, VIEWING)))
+          .resolves.toMatchObject({ commitment: FIRST, opening: { terms: TERMS, blinding: 'b1'.repeat(32) } });
+        expect(asks).toEqual({ one: 1, each: 1 });
+      }
+    } finally {
+      round.opened = null;
+    }
+  });
+
   it('A FILED VERSION IS REUSED FOR A CHANGE ONLY WHEN THIS DEVICE BELIEVES IT AND IT IS SEALED TO EXACTLY THE SEATS BELIEVED NOW; A NEW ONE IS SEALED TO THOSE SEATS', async () => {
     const sent: string[] = [];
     const govern = (chain: Map<string, string>, filed: SealedCompanyRecord[], secondSeated = false) => ({
@@ -316,5 +394,80 @@ describe('A VAULT\'S SPENDING POLICY, READ AND SET ON THIS DEVICE', () => {
     await expect(read(many)).rejects.toThrow(new RegExp(`at most ${MOST_ROLES_ASKED} of the account's entries`, 'u'));
     expect(asked.length).toBe(before);
     await expect(read(many.slice(1))).resolves.toHaveProperty('size', MOST_ROLES_ASKED);
+  });
+});
+
+describe('EVERY VAULT AND CURRENCY A PAGE SHOWS, READ TOGETHER', () => {
+  const MARKED = 'fb'.repeat(32);
+  const UNOPENED = 'fc'.repeat(32);
+  const PLAIN = 'fd'.repeat(32);
+  const REFUSED = 'fe'.repeat(32);
+  const B = 'b1'.repeat(32);
+  /* The worker's one ask for every pair, stood in for with the same keys as the one-pair ask; a pair of REFUSED is refused. */
+  const keysAsked: unknown[] = [];
+  const keysOfEach = async (pairs: readonly Parameters<typeof keysOf>[0][]): Promise<readonly PromiseSettledResult<ReturnType<typeof keysOf>>[]> => {
+    keysAsked.push(pairs);
+    return pairs.map((p) => (p.vault === REFUSED ? { status: 'rejected', reason: new Error('no keys for this vault') } : { status: 'fulfilled', value: keysOf(p) }));
+  };
+  const countingReads = (chain: Map<string, string>, filed: SealedCompanyRecord[]) => {
+    const doors = reader(chain, filed);
+    const asked: string[][] = [];
+    const policies = doors.records.spendingPolicies!;
+    const onChain = async (keys: readonly string[]) => { asked.push([...keys]); return policies.onChain(keys); };
+    return { doors: { ...doors, records: { ...doors.records, spendingPolicies: { ...policies, onChain } } }, asked };
+  };
+
+  it('EACH PAIR STANDS AS IT DOES READ ALONE, WITH THE KEYS ASKED ONCE AND THE CHAIN READ ONCE, AND ONE PAIR\'S FAILURE IS ITS OWN', async () => {
+    const chain = new Map([...chainHolding(B), [made('on', MARKED), '01'], [made('on', UNOPENED), '01'], [made('policy', UNOPENED), made('commitment', '1', B)]]);
+    const filed = [versionOf(1, B, [ME], founder)];
+    const { doors, asked } = countingReads(chain, filed);
+    keysAsked.length = 0;
+    const pairs: PolicyPair[] = [VAULT, MARKED, UNOPENED, PLAIN, REFUSED].map((vault) => ({ vault: vault.toUpperCase(), asset: TEST_TOKEN }));
+    const read = await spendingPoliciesHere(doors, pairs, keysOfEach);
+    /* RED WHEN: the pairs' keys are asked of the worker one pair at a time, or the chain is read once for each pair. */
+    expect(keysAsked).toHaveLength(1);
+    expect(asked).toHaveLength(1);
+    /* RED WHEN: a pair read together stands otherwise than it does read alone: a set policy, none, or another currency's. */
+    for (const [i, vault] of [VAULT, MARKED, PLAIN].map((v) => [[VAULT, MARKED, UNOPENED, PLAIN].indexOf(v), v] as const)) {
+      expect(read[i]).toEqual({ status: 'fulfilled', value: await spendingPolicyHere(reader(chain, filed), { vault, asset: TEST_TOKEN }) });
+    }
+    expect(read.map((r) => (r.status === 'fulfilled' ? r.value.state : 'unread'))).toEqual(['set', 'not-for-this-currency', 'unread', 'none', 'unread']);
+    /* RED WHEN: a pair whose policy cannot be opened, or whose keys could not be made, is shown as none, or takes another pair down with it. */
+    await expect(spendingPolicyHere(reader(chain, filed), { vault: UNOPENED, asset: TEST_TOKEN })).rejects.toThrow();
+    expect(read[4]).toMatchObject({ status: 'rejected', reason: { message: 'no keys for this vault' } });
+  });
+
+  it('THE CHAIN IS READ IN PARTS NO LARGER THAN THE WALLET TAKES, AND A PART THAT FAILS IS ASKED KEY BY KEY, SO ONLY THE PAIR WHOSE OWN KEY FAILS IS UNREAD', async () => {
+    const vaults = Array.from({ length: MOST_ROLES_ASKED }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
+    const { doors, asked } = countingReads(new Map(), []);
+    const read = await spendingPoliciesHere(doors, vaults.map((vault) => ({ vault, asset: TEST_TOKEN })), keysOfEach);
+    /* RED WHEN: more keys are put to the wallet at once than it takes, or the keys are read again for each pair. */
+    expect(asked.map((a) => a.length)).toEqual([MOST_ROLES_ASKED, MOST_ROLES_ASKED]);
+    expect(read.every((r) => r.status === 'fulfilled' && r.value.state === 'none')).toBe(true);
+    const failing = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies, onChain: async (keys: readonly string[]) => {
+      if (keys.includes(made('on', vaults[0]!))) throw new Error('the wallet did not answer');
+      return new Map(keys.map((k) => [k, null]));
+    } } } };
+    const partly = await spendingPoliciesHere(failing, vaults.map((vault) => ({ vault, asset: TEST_TOKEN })), keysOfEach);
+    expect(partly[0]).toMatchObject({ status: 'rejected', reason: { message: 'the wallet did not answer' } });
+    /* RED WHEN: a part that fails leaves every pair in it unread, rather than asking each of its keys alone. */
+    expect(partly.slice(1).every((r) => r.status === 'fulfilled' && r.value.state === 'none')).toBe(true);
+  });
+
+  it('THE WORKER MAKES EVERY PAIR\'S KEYS IN ONE ANSWER, EACH THE SAME AS ASKED ALONE, AND REFUSES A PAIR WITHOUT REFUSING ANOTHER', async () => {
+    const d = { accountPure: pureCircuits } as never;
+    const asset = assetIdHex(TEST_TOKEN);
+    const pairs = [
+      { vault: VAULT, asset, assetBlinding: 'ab'.repeat(32) },
+      { vault: 'not a vault', asset, assetBlinding: 'ab'.repeat(32) },
+      { vault: 'fb'.repeat(32), asset, assetBlinding: 'ab'.repeat(32), policy: { terms: TERMS, blinding: B }, total: '15' },
+    ];
+    const answer = await accountReadsAnswered(d, null as never, { id: 7, network: 'undeployed', ask: 'spending-policy-keys', pairs });
+    /* RED WHEN: the keys made for many pairs at once differ in any byte from the keys made for each pair alone. */
+    expect(answer).toEqual({
+      id: 7, ok: true, ask: 'spending-policy-keys',
+      keys: [{ keys: spendingPolicyKeysOf(d, pairs[0]!) }, { refused: expect.any(String) }, { keys: spendingPolicyKeysOf(d, pairs[2]!) }],
+    });
+    expect(() => spendingPolicyKeysOf(d, pairs[1]!)).toThrow();
   });
 });

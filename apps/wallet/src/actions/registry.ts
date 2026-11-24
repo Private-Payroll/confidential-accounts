@@ -134,9 +134,10 @@ export const reachOf = (name: string): unknown => REACHES[name];
 
 /**
  * The doors through which an action can spend from the person's own accounts: the wallet that pays a call's fee, the
- * chain that carries it, and the balance doors that move coins.
+ * chain that carries it, the balance doors that move coins, and the chain a company is created over (built once; the
+ * one finishing a company is given).
  */
-export const SPENDING_DOORS = Object.freeze({ ownWallet, chain: companyChain, balance: liveBalanceDoors });
+export const SPENDING_DOORS = Object.freeze({ ownWallet, chain: companyChain, balance: liveBalanceDoors, creation: liveCreationChain() });
 
 /**
  * EVERY ACTION THIS WALLET RUNS, ONE DEFINITION PER ACTION A PAGE MAY NAME.
@@ -148,7 +149,7 @@ export const SPENDING_DOORS = Object.freeze({ ownWallet, chain: companyChain, ba
 export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Object.freeze({
   'finish-company': finishCompanyAction(given('finish-company', {
     build: accountBuilding(),
-    chain: liveCreationChain(),
+    chain: SPENDING_DOORS.creation,
     ledger: async () => (await import('@midnightntwrk/ledger-v9')) as unknown as CreationLedger,
     construction: liveConstruction,
     built: builtAccountKeys,

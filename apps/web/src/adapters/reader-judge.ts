@@ -28,8 +28,8 @@ const ENDED = { readDone: 'its read is done' } as const;
 /* A reader holds no seat on the company, so its page opens no account and no company key. */
 const readerHoldsNoSeat = (): never => { throw new Fault(FAULT.readerHoldsNoSeat); };
 
-/** The judges of a reader's view: every one of them reads the company through it, and none holds a seat. */
-const readerJudgesOf = (view: ReaderView) => companyJudges({
+/** The judges of a reader's view: every one of them reads the company through it, and through it alone, and none holds a seat. */
+export const readerJudgesOf = (view: ReaderView) => companyJudges({
   view: onlyItsOwn(view),
   indexer: () => indexerOnPage(view),
   builder: () => theVaultBuilder(),

@@ -56,7 +56,7 @@ let logPath = '';
 const consoleWas = { warn: console.warn, error: console.error };
 
 beforeEach(() => {
-  logPath = join(mkdtempSync(join(tmpdir(), 'act-log-')), 'REPORT-WEB-CONSOLE.txt');
+  logPath = join(mkdtempSync(join(tmpdir(), 'act-log-')), 'console-report.log');
   vi.stubEnv('WEB_CONSOLE_LOG', logPath);
   vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
   console.warn = () => {};
@@ -103,7 +103,7 @@ describe('an action in the wallet writes where it got to in the console report',
     /* RED WHEN: the step before is not written as finished, with what was relayed by then. */
     expect(report).toContain('action move-between-vaults: step 1 of 3 finished (relayed 1, unconfirmed 0)');
     /* RED WHEN: a transaction the page relays is not written by its number, its kind and what became of it. */
-    expect(report).toContain('action move-between-vaults: step 1 of 3: transaction 1 (creation) relayed (relayed 1, unconfirmed 0)');
+    expect(report).toContain('action move-between-vaults: step 1 of 3: transaction 1 (creation) relayed in 0 ms (relayed 1, unconfirmed 0)');
     /* RED WHEN: a step running past a minute is not written as still running, with its minutes, each minute. */
     expect(report).toContain('action move-between-vaults: still running step 2 of 3, 1 minute (');
     expect(report).toContain('action move-between-vaults: still running step 2 of 3, 2 minutes (');
@@ -169,6 +169,63 @@ describe('an action in the wallet writes where it got to in the console report',
       expect(report.split(`step ${step} of 5 finished`).length - 1, `step ${step} finished`).toBe(1);
     }
     expect(report).not.toContain('step 1 of 5:');
+  });
+
+  it('each call and transaction the page relays is written with the time it was handed over and how long it took to be answered or to fail', async () => {
+    const page = new APage();
+    const run = actInTheWallet(page, WALLET, {
+      intent: { name: 'name-a-vault', company: 'acc_1' }, nonce: NONCE, now: () => page.clock,
+      relay: async () => { page.clock += 1200; return true; },
+      call: async (_c, where) => {
+        page.clock += where.n === 2 ? 75 : 250;
+        if (where.n === 2) throw new Error('the service is gone');
+        return { status: 200, body: {} };
+      },
+    });
+    const at = new Date(START).toISOString();
+    page.say({ schema: READY_PING });
+    page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 2 });
+    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 2, method: 'GET', path: '/api/accounts/acc_1' });
+    await settle();
+    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 2, step: 1, steps: 2, method: 'GET', path: '/api/accounts/acc_1' });
+    await settle();
+    page.say({ schema: ACT_RELAY_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 2, transaction: SECRET_TRANSACTION, what: 'creation' });
+    await settle();
+    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'done', step: 2, steps: 2, relayed: 1, unconfirmed: 0 });
+    await settle();
+    await run;
+    const report = readFileSync(logPath, 'utf8');
+    /* RED WHEN: a relayed call is written with no time it was handed over, or with no time it took to be answered. */
+    expect(report).toContain(`step 1 of 2: call 1 GET /api/accounts/acc_1, handed at ${at}`);
+    expect(report).toContain('step 1 of 2: call 1 GET /api/accounts/acc_1 answered 200 in 250 ms');
+    /* RED WHEN: a call that fails is written with no time it took to fail. */
+    expect(report).toContain(`step 1 of 2: call 2 GET /api/accounts/acc_1, handed at ${new Date(START + 250).toISOString()}`);
+    expect(report).toContain('call 2 GET /api/accounts/acc_1 failed in 75 ms: ');
+    /* RED WHEN: a relayed transaction is written with no time it was handed over, or with no time it took to be sent. */
+    expect(report).toContain(`transaction 1 (creation), handed at ${new Date(START + 325).toISOString()}; sending`);
+    expect(report).toContain('transaction 1 (creation) relayed in 1200 ms');
+  });
+
+  it('a clock that reads no time still lets each call and transaction be relayed, and the line says the time was not read', async () => {
+    const page = new APage();
+    const relayed: number[] = [];
+    const run = actInTheWallet(page, WALLET, {
+      intent: { name: 'name-a-vault', company: 'acc_1' }, nonce: NONCE, now: () => Number.NaN,
+      relay: async (_t, where) => { relayed.push(where.n); return true; },
+      call: async () => ({ status: 200, body: {} }),
+    });
+    page.say({ schema: READY_PING });
+    page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 1 });
+    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 1, method: 'GET', path: '/api/accounts/acc_1' });
+    await settle();
+    page.say({ schema: ACT_RELAY_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 1, transaction: SECRET_TRANSACTION, what: 'creation' });
+    await settle();
+    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'done', step: 1, steps: 1, relayed: 1, unconfirmed: 0 });
+    await settle();
+    await run;
+    /* RED WHEN: a time the clock did not read stops a handed-over transaction from being sent. */
+    expect(relayed).toEqual([1]);
+    expect(readFileSync(logPath, 'utf8')).toContain('call 1 GET /api/accounts/acc_1, handed at a time the clock did not read');
   });
 
   it('the minute line stops once the action has ended', async () => {

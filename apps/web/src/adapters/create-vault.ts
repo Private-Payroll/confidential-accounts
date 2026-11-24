@@ -140,8 +140,11 @@ type Opened = {
   /** The page's view of the company, which everything here was read through. */
   view: PageView;
   sealed: SealedAccount; keys: NonNullable<Awaited<ReturnType<typeof keysOnTheWayIn>>>; roster: () => Promise<BelievedAccount>;
-  /** The company's keys as this device believes them (`companyKeysFor`). */
-  companyKeys: CompanyKeyHere;
+  /**
+   * The company's keys as this device believes them (`companyKeysFor`), read through the view at each call: the view
+   * keeps them, so nothing here holds them past its end, and a call once it ended is refused (`ViewEnded`).
+   */
+  companyKeys(): Promise<CompanyKeyHere>;
 };
 
 /** Keys saved for the person that are not open in this tab, and a read that does not ask the wallet to open them. */
@@ -153,9 +156,10 @@ const LOCKED = READY.locked;
  * tab, never a seat's secret. The wallet is asked to read the keys saved for
  * them when `open` says to (an action the person pressed); a read never asks
  * it, and says the keys are not open yet rather than that they are on another
- * device.
+ * device. The company's keys are not opened here: what is handed back reads them
+ * through the view when asked (`companyKeys`).
  */
-async function opened(personId: string, view: PageView, open: boolean): Promise<Opened | ActRefusal | typeof LOCKED> {
+export async function openedForAVault(personId: string, view: PageView, open: boolean): Promise<Opened | ActRefusal | typeof LOCKED> {
   if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
   if (!canOpenCompanies(view.company)) {
@@ -171,7 +175,8 @@ async function opened(personId: string, view: PageView, open: boolean): Promise<
     if (account === null) throw new Fault(FAULT.vaultCompanyDidNotOpen);
     return account;
   };
-  return { view, sealed, keys, roster, companyKeys: await companyKeysFor(view, sealed, { signingPublicKey: keys.signingPublicKey }) };
+  const { signingPublicKey } = keys;
+  return { view, sealed, keys, roster, companyKeys() { return companyKeysFor(view, sealed, { signingPublicKey }); } };
 }
 
 /**
@@ -191,7 +196,7 @@ async function opened(personId: string, view: PageView, open: boolean): Promise<
  */
 export async function readVaultReadiness(personId: string, view: PageView): Promise<Readiness> {
   try {
-    const o = await opened(personId, view, false);
+    const o = await openedForAVault(personId, view, false);
     if (o === LOCKED) return { of: READY.locked };
     if (typeof o === 'string') return { of: ACTED.refused, why: o };
     const label = o.sealed.companyLabel, account = o.sealed.contractAddress;
@@ -199,7 +204,8 @@ export async function readVaultReadiness(personId: string, view: PageView): Prom
     if (authority?.company === null || typeof label !== 'string' || typeof account !== 'string') return { of: READY.notOnChain };
     const [named, served] = await Promise.all([o.roster(), o.view.list(LIST.vaultKeyOffers)]);
     const [companyLabel, accountAddress] = [label as CompanyLabel, account as AccountAddress];
-    const offers = offersOpenHere(view.company, served, o.companyKeys, companyLabel, accountAddress);
+    const believed = await o.companyKeys();
+    const offers = offersOpenHere(view.company, served, believed, companyLabel, accountAddress);
     /*
      * The roster as pressing Create would fold it: a signer with no keys in the roster takes the keys of their own open
      * offer, on their own seat, and only an offer the fold would take (`rosterEntryRefusal`, against the seats and entries
@@ -212,7 +218,7 @@ export async function readVaultReadiness(personId: string, view: PageView): Prom
         return offer === undefined || !taken(s, offer) ? s : { ...s, vaultKeys: offer.keys };
       }),
     });
-    const readFor = (roster: typeof named) => directoryHereFor(o.view, companyLabel, accountAddress, o.companyKeys, async () => roster)();
+    const readFor = (roster: typeof named) => directoryHereFor(o.view, companyLabel, accountAddress, believed, async () => roster)();
     const before = await readFor(withOffers(() => true));
     const witnesses: RosterWitnesses = {
       accountId: view.company, label: companyLabel, account: accountAddress, seatsOnTheChain: before.holders.seats,

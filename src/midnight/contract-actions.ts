@@ -17,6 +17,8 @@ const HEX_HASH = /^[0-9a-f]{64}$/;
 export type ServedAction = {
   readonly __typename?: unknown;
   readonly state?: unknown;
+  /** The block the state is dated at: the action's own, or a later ledger hard fork's that translated it. */
+  readonly stateAt?: { readonly height?: unknown };
   readonly entryPoint?: unknown;
   readonly transaction?: {
     readonly hash?: unknown;

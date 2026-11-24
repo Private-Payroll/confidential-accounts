@@ -13,7 +13,7 @@ const COMPANY = 'c1';
 
 /** A service in memory: the directory, the newest version entered of each record, and every call made to it. */
 const aService = () => {
-  const state = { directory: 2, newest: new Map<string, number>(), refuseWrites: false, people: [] as unknown[] };
+  const state = { directory: 2, newest: new Map<string, number>(), refuseWrites: false, dropAnswers: false, people: [] as unknown[] };
   const calls: { readonly path: string; readonly method: string; readonly body: any }[] = [];
   const call: ServiceCall = async (path, init) => {
     const method = init?.method ?? 'GET';
@@ -24,6 +24,7 @@ const aService = () => {
       if (state.refuseWrites) throw new Error('refused');
       if (p.endsWith('/manifest/entries') || p.endsWith('/tree/headers')) for (const e of body.entries ?? []) state.newest.set(`${e.kind}:${e.id}`, Math.max(e.version, state.newest.get(`${e.kind}:${e.id}`) ?? 0));
       if (p.includes('/directory/')) state.directory = body.version;
+      if (state.dropAnswers) throw new Error('the connection dropped');
       return { ok: true };
     }
     if (p.endsWith('/directory')) return { filings: Array.from({ length: state.directory }, (_, i) => ({ company: COMPANY, version: i + 1 })) };
@@ -130,6 +131,35 @@ describe('a view reads each thing once, however many ask, and joins what is aske
     expect(asked).toHaveLength(2);
     expect((asked[1] as { records: unknown[] }).records).toEqual([{ store: 'company', ...person(1) }]);
   });
+
+  it('lets go of the held answer, what is built on it and the chain\'s head once, for a body newer than it, and never twice', async () => {
+    let [held, chain, built] = [0, 0, 0];
+    const view = companyViewFor(serviceSource(aService().call, COMPANY), { ...holdersOf(seated('a', 'b')),
+      onChain: async () => { chain += 1; return { landed: [], now: { approvals: 1 } } as never; } }, async () => { held += 1; return {} as ReadHere; });
+    const layer = () => view.layer('believed', async () => { built += 1; return built; });
+    await Promise.all([view.doors.onChain(), view.held(), layer(), view.newest([{ store: 'company', ...person(1) }])]);
+    const newestBefore = view.counts()['newest']!;
+    expect(await view.heldAgain()).toBe(true);
+    await Promise.all([view.doors.onChain(), view.held(), layer(), view.newest([{ store: 'company', ...person(1) }])]);
+    /* RED WHEN: the held answer, the directory built on it or the chain's head is kept, so a body read after it is judged by the same answer again. */
+    expect([held, chain, built]).toEqual([2, 2, 2]);
+    /* RED WHEN: the newest versions the held read is judged with are kept from before. */
+    expect(view.counts()['newest']).toBe(newestBefore + 1);
+    /* RED WHEN: a second body refused as newer reads held again: one fresh read a view, so a service changing records cannot keep a step reading. */
+    expect(await view.heldAgain()).toBe(false);
+    await view.held();
+    expect(held).toBe(2);
+  });
+
+  it('keeps what it served when it lets go of held, so a write built on a version read before still stops', async () => {
+    const { service, view } = aView();
+    await view.newest([{ store: 'company', ...person(1) }]);
+    service.state.newest.set('person:p1', 2);
+    expect(await view.heldAgain()).toBe(true);
+    expect(await view.newest([{ store: 'company', ...person(1) }])).toEqual([2]);
+    /* RED WHEN: a fresh held read moves what the check compares, so a step that read version 0 writes past version 2. */
+    await expect(view.write([{ to: 'roster', body: {} }])).rejects.toBeInstanceOf(CompanyChangedMeanwhile);
+  });
 });
 
 describe('A VIEW READS WHO HOLDS THE ACCOUNT, THE COMMITTEE CHANGE OWED, THE VAULTS\' READERS AND THE ROLES ONCE, AND SENDS THE CHANGE BY ITS OWN ROUTE', () => {
@@ -162,25 +192,50 @@ describe('A VIEW READS WHO HOLDS THE ACCOUNT, THE COMMITTEE CHANGE OWED, THE VAU
     expect(service.calls.filter((c) => c.path.includes('/committee-change/'))).toEqual([]);
   });
 
-  it('reads the roles asked once for each set asked, again after a call reached the chain, and none without the door', async () => {
+  it('reads each role asked once, the ones not yet read together, again after a call reached the chain, and none without the door', async () => {
     const service = aService();
     const asked: string[][] = [];
-    const roles = async (r: readonly string[]) => { asked.push([...r]); return { roles: [] }; };
+    const roles = async (r: readonly string[]) => { asked.push([...r]); return { roles: r.map((key) => ({ key, value: `held-${key}` })) }; };
     const view = companyViewFor(serviceSource(service.call, COMPANY), { ...holdersOf(seated('a')), roles }, NO_HELD);
-    await Promise.all([view.roles(['x', 'y']), view.roles(['y', 'x']), view.roles(['z'])]);
+    const [, yx] = await Promise.all([view.roles(['x', 'y']), view.roles(['y', 'x']), view.roles(['z'])]);
     expect(asked).toEqual([['x', 'y'], ['z']]);
+    /* RED WHEN: an ask answered from what the view kept gives the roles in another order than asked. */
+    expect(yx).toEqual({ roles: [{ key: 'y', value: 'held-y' }, { key: 'x', value: 'held-x' }] });
+    /* RED WHEN: an ask whose keys were all read before is read again, or one with a key not yet read asks again for the keys already read. */
+    expect(await view.roles(['z', 'x'])).toEqual({ roles: [{ key: 'z', value: 'held-z' }, { key: 'x', value: 'held-x' }] });
+    expect(asked).toEqual([['x', 'y'], ['z']]);
+    expect(await view.roles(['y', 'w'])).toEqual({ roles: [{ key: 'y', value: 'held-y' }, { key: 'w', value: 'held-w' }] });
+    expect(asked).toEqual([['x', 'y'], ['z'], ['w']]);
+    asked.length = 0;
     await view.write([{ to: 'proven', tx: 'ab' }]);
     await view.roles(['x', 'y']);
     /* RED WHEN: after a call reached the chain, the roles are answered from before it. */
-    expect(asked).toHaveLength(3);
-    expect(view.counts()['roles']).toBe(3);
+    expect(asked).toEqual([['x', 'y']]);
+    expect(view.counts()['roles']).toBe(4);
     await expect(aView().view.roles(['x'])).rejects.toThrow(/no way to read its roles/u);
+  });
+
+  it('keeps no role from an answer that does not name every key asked, and none once the view has ended', async () => {
+    const service = aService();
+    const asked: string[][] = [];
+    let answer = (r: readonly string[]) => ({ roles: r.slice(1).map((key) => ({ key, value: null as string | null })) });
+    const roles = async (r: readonly string[]) => { asked.push([...r]); return answer(r); };
+    const view = companyViewFor(serviceSource(service.call, COMPANY), { ...holdersOf(seated('a')), roles }, NO_HELD);
+    /* RED WHEN: an answer that leaves out a key asked is given back as the chain's, or any key of it is kept. */
+    expect(await view.roles(['x', 'y'])).toEqual({});
+    answer = (r) => ({ roles: r.map((key) => ({ key, value: null })) });
+    expect(await view.roles(['y'])).toEqual({ roles: [{ key: 'y', value: null }] });
+    expect(asked).toEqual([['x', 'y'], ['y']]);
+    /* RED WHEN: a role kept before the view ended is answered after it. */
+    view.end('a reload');
+    await expect(view.roles(['y'])).rejects.toBeInstanceOf(ViewEnded);
+    expect(asked).toHaveLength(2);
   });
 
   it('asks and sends a change of the super admins by its own routes, each with the headers given', async () => {
     const service = aService();
     const headers: unknown[] = [];
-    const asks = superAdminAsks(async (path, init) => { headers.push(init?.headers); return service.call(path, init); }, COMPANY);
+    const asks = superAdminAsks(async (path, init) => { headers.push(init?.headers); return service.call(path, init); }, COMPANY, async () => null);
     const h = { 'x-signed': 'yes' };
     await asks.raise({ r: 1 }, h);
     await asks.join({ j: 1 }, h);
@@ -333,6 +388,40 @@ describe('a view writes only when the company is as it read it', () => {
     await expect(view.write([{ to: 'roster', body: {} }])).resolves.toHaveLength(1);
   });
 
+  it('files a header again as a repair: past another signer\'s change, and never ending the view, refused or unanswered', async () => {
+    const { service, view } = aView();
+    await view.filings();
+    service.state.directory = 3;
+    /* RED WHEN: a repair is stopped by the check before a write, as though it changed what the step read. */
+    await expect(view.tree.refileHeader!(COMPANY, {} as never, [])).resolves.toBe(true);
+    expect(service.readsOf('/tree/headers')).toBe(1);
+    service.state.refuseWrites = true;
+    /* RED WHEN: a repair refused or unanswered ends the view, so the held read the repair was for throws ViewEnded. */
+    await expect(view.tree.refileHeader!(COMPANY, {} as never, [])).resolves.toBe(false);
+    expect(view.ended).toBeNull();
+    const filings = service.readsOf('/directory');
+    await Promise.all([view.filings(), view.filings()]);
+    /* RED WHEN: a re-file keeps the filings a header write changes, or reads them more than once after. */
+    expect(service.readsOf('/directory')).toBe(filings + 1);
+  });
+
+  it('takes its own entries a re-filed header carries as its own only when the service answered it kept', async () => {
+    const own = [filedBy(entry('p7', 1), 'AA'.repeat(32))];
+    const kept = aView(NO_HELD, 'aa'.repeat(32));
+    await kept.view.newest([{ store: 'company', ...person(7) }]);
+    await expect(kept.view.tree.refileHeader!(COMPANY, {} as never, own)).resolves.toBe(true);
+    /* RED WHEN: a re-file the service kept is taken for another signer's change. */
+    await expect(kept.view.write([{ to: 'roster', body: {} }])).resolves.toHaveLength(1);
+    const lost = aView(NO_HELD, 'aa'.repeat(32));
+    await lost.view.newest([{ store: 'company', ...person(7) }]);
+    /* The entry is entered meanwhile, and the re-file's answer never comes back: whose version it is, is not known. */
+    lost.service.state.dropAnswers = true;
+    await expect(lost.view.tree.refileHeader!(COMPANY, {} as never, own)).resolves.toBe(false);
+    lost.service.state.dropAnswers = false;
+    /* RED WHEN: an unanswered re-file is taken as this device's own, so another seat's version entered meanwhile is passed over. */
+    await expect(lost.view.write([{ to: 'roster', body: {} }])).rejects.toBeInstanceOf(CompanyChangedMeanwhile);
+  });
+
   it('does not take another seat\'s entry a header it files carries as its own, so the next write stops on it', async () => {
     const { view } = aView(NO_HELD, 'aa'.repeat(32));
     await view.newest([{ store: 'company', ...person(7) }]);
@@ -403,15 +492,16 @@ describe('a view writes only when the company is as it read it', () => {
     const reads = () => { const v = held.current(); return Promise.all([v.vaultChain('v1'), v.payoutState('v1'), v.account(), v.list('vaults'), v.vaultRecords([{ vault: 'v1', record: 'pool' } as never])]); };
     await reads();
     const first = held.current();
-    await first.write([{ to: 'vault-send', act: 'deposit', vault: 'v1', tx: 'cd' }]);
+    await first.write([{ to: 'vault-send', tx: 'cd', calls: [{ act: 'deposit', vault: 'v1' }] }]);
     expect(service.calls.at(-1)).toMatchObject({ path: '/api/accounts/c1/vaults/v1/deposit', method: 'POST', body: { tx: 'cd' } });
     /* RED WHEN: a send into a vault leaves the view open, where the same send through the runner's door ends it. */
     expect(first.endedAs).toBe('sent');
-    await held.current().write([{ to: 'vault-send', act: 'deploy', tx: 'ef' }]);
+    await held.current().write([{ to: 'vault-send', tx: 'ef', calls: [{ act: 'deploy' }] }]);
     expect(service.calls.at(-1)).toMatchObject({ path: '/api/accounts/c1/vaults', method: 'POST', body: { tx: 'ef' } });
     await reads();
     /* RED WHEN: after a vault call reached the chain, the vault, its payouts, the account, the vaults or the vault's records are answered from before it. */
-    expect(['/chain', '/payout-state', '/accounts/c1', '/vault-records/read'].map((end) => service.readsOf(end))).toEqual([2, 2, 2, 2]);
+    /* The account once more: the check read it again before the first send, as it was served; the deploy's view had not read it. */
+    expect(['/chain', '/payout-state', '/accounts/c1', '/vault-records/read'].map((end) => service.readsOf(end))).toEqual([2, 2, 3, 2]);
     expect(service.calls.filter((c) => c.method === 'GET' && c.path === '/api/accounts/c1/vaults')).toHaveLength(2);
   });
 
@@ -420,7 +510,7 @@ describe('a view writes only when the company is as it read it', () => {
       const { service, view } = aView();
       await view.account();
       /* RED WHEN: money goes into a vault the company's account does not adopt, which a vault's own deposits do not check. */
-      await expect(view.write([{ to: 'vault-send', act, vault: 'v9', tx: 'cd' }])).rejects.toMatchObject({ name: 'VaultNotAdopted', nothingWasSent: true });
+      await expect(view.write([{ to: 'vault-send', tx: 'cd', calls: [{ act, vault: 'v9' }] }])).rejects.toMatchObject({ name: 'VaultNotAdopted', nothingWasSent: true });
       expect(service.calls.filter((c) => c.method === 'POST' && c.path.includes('/vaults/')), act).toEqual([]);
       expect(view.endedAs, act).toBe('not-adopted');
     }
@@ -448,7 +538,8 @@ describe('a view writes only when the company is as it read it', () => {
     await Promise.all([view.account(), view.list('vault-key-offers')]);
     await view.write([{ to: 'vault-keys', body: {} }]);
     await view.list('vault-key-offers');
-    expect(service.readsOf('/accounts/c1')).toBe(2);
+    /* Twice by the view, once after each write it changed, and twice by the check before each write, as it was served. */
+    expect(service.readsOf('/accounts/c1')).toBe(4);
     expect(service.readsOf('/vault-keys/offers')).toBe(3);
   });
 
@@ -862,5 +953,229 @@ describe('THE VAULTS A STEP STANDS ON ARE READ ONCE FOR IT, IN ITS VIEW', () => 
     expect(withoutTheAccount(aVault('v1'))).not.toHaveProperty('accountCircuits');
     expect(withoutTheAccount(aVault('v1'))).toMatchObject({ state: 'v1', circuits: null });
     expect(withoutTheAccount({ onChain: false })).toEqual({ onChain: false });
+  });
+});
+
+/** A company whose handovers, invitations and account the test moves, as another seat or the service would. */
+const aCompanyOfFacts = () => {
+  const service = aService();
+  const facts = {
+    handovers: new Map<string, unknown>([['p1', { inbox: 'sealed to p1' }]]),
+    vendorHandovers: new Map<string, unknown>([['v1', { inbox: 'sealed to v1' }]]),
+    invites: [{ kind: 'employee', subjectId: 'p1', role: 'payee', createdBy: 'u-a', createdAt: 't0' } as Record<string, unknown>],
+    /* The account as the service answers it: the sealed account with the newest roster filed beside it (index.ts withRoster). */
+    account: {
+      id: COMPANY, createdAt: 't0', keyEpoch: 1, signerCount: 1, memberUserIds: ['u-a'], pendingSigners: [], wrappedKeys: [{ signerId: 's-a', body: 'k-a' }],
+      inboxPublicKey: 'ee', sealedPolicy: { body: 'p' }, sealedRoster: { body: 'r1' }, roster: { version: 1, body: 'r1' },
+    } as Record<string, any>,
+  };
+  const seen = (path: string, method: string, body?: unknown) => { service.calls.push({ path, method, body }); };
+  const call: ServiceCall = async (path, init) => {
+    const p = path.split('?')[0]!;
+    const method = init?.method ?? 'GET';
+    if (method === 'GET' && p === `/api/accounts/${COMPANY}`) { seen(path, method); return structuredClone(facts.account); }
+    if (method === 'GET' && p.endsWith('/invites')) { seen(path, method); return structuredClone(facts.invites); }
+    if (p.endsWith('/handovers')) {
+      const body = JSON.parse(String(init?.body));
+      seen(path, method, body);
+      return body.people === undefined
+        ? { handovers: body.vendors.map((v: string) => facts.vendorHandovers.get(v) ?? { inbox: null }) }
+        : { handovers: body.people.map((id: string) => facts.handovers.get(id) ?? { inbox: null }) };
+    }
+    /* The service, on an admission, lets the subject's handover go (people-route.ts). */
+    if (p.endsWith('/admit')) { const id = decodeURIComponent(p.split('/').at(-2)!); facts.handovers.set(id, { inbox: null }); facts.vendorHandovers.set(id, { inbox: null }); }
+    return service.call(path, init);
+  };
+  const view = companyViewFor(serviceSource(call, COMPANY), holdersOf(seated('a', 'b')), NO_HELD);
+  return { service, facts, call, view };
+};
+
+const NOTHING_NEW = { to: 'entries' as const, entries: [] };
+
+describe('the check reads again what a write rests on that carries no version', () => {
+  it('stops a write when what a person or a vendor handed over moved meanwhile, read again from the service and not from the view', async () => {
+    const { facts, view } = aCompanyOfFacts();
+    await view.handovers(['p1']);
+    facts.handovers.set('p1', { inbox: 'sealed to someone else' });
+    /* RED WHEN: the check compares no handover, or reads it through the view's own kept answer. */
+    await expect(view.write([NOTHING_NEW])).rejects.toMatchObject({ moved: ['what p1 handed over'], nothingWasSent: true });
+    const other = aCompanyOfFacts();
+    await other.view.vendorHandovers(['v1']);
+    other.facts.vendorHandovers.set('v1', { inbox: null });
+    await expect(other.view.write([NOTHING_NEW])).rejects.toMatchObject({ moved: ['what the vendor v1 handed over'] });
+  });
+
+  it('reads every handover served again in one request, and nothing that was not served', async () => {
+    const { service, view } = aCompanyOfFacts();
+    await view.write([NOTHING_NEW]);
+    /* RED WHEN: the check reads the account, the invitations or a handover no read of the step was answered with. */
+    expect(['/handovers', '/invites', `/accounts/${COMPANY}`].map((end) => service.readsOf(end))).toEqual([0, 0, 0]);
+    await view.handovers(['p1', 'p2', 'p3']);
+    await view.write([NOTHING_NEW]);
+    expect(service.readsOf('/handovers')).toBe(2);
+    expect(service.calls.filter((c) => c.path.endsWith('/handovers')).at(-1)!.body).toEqual({ people: ['p1', 'p2', 'p3'] });
+  });
+
+  it('lets the view\'s own admission through, and its next write; another seat withdrawing the invitation stops the admission', async () => {
+    const { view } = aCompanyOfFacts();
+    await Promise.all([view.handovers(['p1']), view.list('invites')]);
+    await view.write([{ to: 'person', id: 'p1', act: 'admit', body: {} }]);
+    /* RED WHEN: the admission's own clearing of the handover is taken for another signer's change (its entries are then never written). */
+    await expect(view.write([NOTHING_NEW])).resolves.toBeDefined();
+    const vendor = aCompanyOfFacts();
+    await Promise.all([vendor.view.vendorHandovers(['v1']), vendor.view.list('invites')]);
+    await vendor.view.write([{ to: 'vendor-admitted', id: 'v1', body: {} }]);
+    await expect(vendor.view.write([NOTHING_NEW])).resolves.toBeDefined();
+    const withdrawn = aCompanyOfFacts();
+    await Promise.all([withdrawn.view.handovers(['p1']), withdrawn.view.list('invites')]);
+    withdrawn.facts.invites[0]!['revokedAt'] = 't1';
+    /* RED WHEN: an invitation withdrawn after the step read the list is admitted all the same. */
+    await expect(withdrawn.view.write([{ to: 'person', id: 'p1', act: 'admit', body: {} }])).rejects.toMatchObject({ moved: ['the company\'s invitations'] });
+  });
+
+  it('takes an invitation accepted or a late seat asked for meanwhile for no change', async () => {
+    const { facts, view } = aCompanyOfFacts();
+    await view.list('invites');
+    Object.assign(facts.invites[0]!, { acceptedAt: 't1', lateSeatRequests: [{ leaf: '00', userId: 'u-b', id: 'r1' }] });
+    /* RED WHEN: the whole list is compared, so every payee accepting anywhere stops the company's writes. */
+    await expect(view.write([NOTHING_NEW])).resolves.toBeDefined();
+  });
+
+  it('stops a write when the account\'s roster, waiting signers, wrapped keys or key epoch moved meanwhile, and for nothing else of it', async () => {
+    const moves: readonly ((a: Record<string, any>) => void)[] = [
+      (a) => { a['roster'] = { version: 2, body: 'r2' }; }, (a) => { a['sealedRoster'] = { body: 'r2' }; },
+      (a) => { a['pendingSigners'] = [{ id: 's-b', leaf: '00' }]; }, (a) => { a['wrappedKeys'] = [...a['wrappedKeys'], { signerId: 's-b', body: 'k-b' }]; },
+      (a) => { a['keyEpoch'] = 2; }, (a) => { a['memberUserIds'] = ['u-a', 'u-b']; },
+    ];
+    for (const move of moves) {
+      const { facts, view } = aCompanyOfFacts();
+      await view.account();
+      facts.account['inboxPublicKey'] = 'ff';
+      await expect(view.write([NOTHING_NEW])).resolves.toBeDefined();
+      move(facts.account);
+      /* RED WHEN: a roster, a vault's keys or an admission are built on an account another seat changed after the step read it. */
+      await expect(view.write([NOTHING_NEW])).rejects.toMatchObject({ moved: ['the company\'s account'] });
+    }
+  });
+
+  it('serves the account the doors read and the one the view answers from one request', async () => {
+    const { service, view } = aCompanyOfFacts();
+    await Promise.all([view.doors.account(), view.account(), view.doors.account()]);
+    expect(service.readsOf(`/accounts/${COMPANY}`)).toBe(1);
+  });
+
+  it('after its own write of a kind, serves the next read of it afresh and compares from there', async () => {
+    const { facts, view } = aCompanyOfFacts();
+    await view.account();
+    await view.write([{ to: 'roster', body: {} }]);
+    /* The roster filed is the step's own change, read afresh. */
+    facts.account['roster'] = { version: 2, body: 'r2' };
+    await view.account();
+    await expect(view.write([NOTHING_NEW])).resolves.toBeDefined();
+    facts.account['roster'] = { version: 3, body: 'r3' };
+    /* RED WHEN: a step's write rests on an account read before its own write, never compared again. */
+    await expect(view.write([NOTHING_NEW])).rejects.toMatchObject({ moved: ['the company\'s account'] });
+  });
+
+  it('gives the same facts for the same answer, whatever order its rows and fields come in', async () => {
+    const { servedFactsOf } = await import('./records-source.js');
+    const a = { kind: 'employee', subjectId: 'p1', role: 'payee' };
+    const b = { subjectId: 'p2', kind: 'vendor', revokedAt: 't1' };
+    expect(servedFactsOf('invites', [a, b])).toBe(servedFactsOf('invites', [{ ...b }, { role: 'payee', subjectId: 'p1', kind: 'employee' }]));
+    expect(servedFactsOf('account', { pendingSigners: [{ id: 'x', b: 1 }, { id: 'y' }], wrappedKeys: [], memberUserIds: ['u2', 'u1'] }))
+      .toBe(servedFactsOf('account', { wrappedKeys: [], inboxPublicKey: 'other', memberUserIds: ['u1', 'u2'], pendingSigners: [{ id: 'y' }, { b: 1, id: 'x' }] }));
+    expect(servedFactsOf('invites', [a])).not.toBe(servedFactsOf('invites', [{ ...a, revokedAt: 't1' }]));
+  });
+});
+
+describe('a send is checked call by call', () => {
+  it('sends no transaction one of whose calls deposits into a vault the company does not adopt', async () => {
+    const { service, view } = aView();
+    await view.holders();
+    /* RED WHEN: only one call of a transaction is checked, so a second deposit goes into a vault the account does not adopt. */
+    await expect(view.write([{ to: 'vault-send', tx: 'aa', calls: [{ act: 'deposit', vault: 'v1' }, { act: 'deposit', vault: 'v9' }] }]))
+      .rejects.toMatchObject({ name: 'VaultNotAdopted', vault: 'v9', nothingWasSent: true });
+    expect(service.calls.filter((c) => c.method === 'POST' && c.path.includes('/vaults'))).toHaveLength(0);
+  });
+
+  it('sends no deposit into a vault an earlier write of the batch stopped adopting, and reads on from what landed', async () => {
+    const service = aService();
+    const retired = (h: Holders): Holders => ({ ...h, adoptedVaults: [] });
+    const source = { ...serviceSource(service.call, COMPANY), movesOf: (w: { readonly to: string }) => (w.to === 'proposal' ? retired as never : undefined) };
+    const view = companyViewFor(source, holdersOf(seated('a', 'b')), NO_HELD);
+    await view.holders();
+    const failed = await view.write([
+      { to: 'proposal', id: 'r1', act: 'retirement', body: {} }, { to: 'vault-send', tx: 'bb', calls: [{ act: 'deposit', vault: 'v1' }] },
+    ]).catch((e: unknown) => e);
+    /* RED WHEN: every deposit is checked only against the holders read before the batch, so it goes into the vault just retired. */
+    expect(failed).toMatchObject({ name: 'VaultNotAdopted', vault: 'v1', thisSendNotSent: true });
+    expect((failed as { nothingWasSent?: unknown }).nothingWasSent).toBeUndefined();
+    expect(service.calls.filter((c) => c.path.endsWith('/vaults/v1/deposit'))).toHaveLength(0);
+    /* RED WHEN: the reading stays where it was before the retirement that landed, so the next view stops as if another signer moved it. */
+    expect(view.carried().holders).toBe(holdersStandingOf(retired(seated('a', 'b'))));
+  });
+
+  it('refuses at the service\'s door a transaction of more calls than its vault routes file, and sends nothing', async () => {
+    const service = aService();
+    await expect(serviceSource(service.call, COMPANY).write({ to: 'vault-send', tx: 'cc', calls: [{ act: 'payout', vault: 'v1' }, { act: 'merge', vault: 'v1' }] }))
+      .rejects.toMatchObject({ nothingWasSent: true });
+    expect(service.calls).toHaveLength(0);
+  });
+});
+
+describe('an ended view lets go of what it read', () => {
+  it('keeps no answer and no key a layer opened once it ends', async () => {
+    const v8 = await import('node:v8');
+    const vm = await import('node:vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    const { view } = aView();
+    const refs: WeakRef<object>[] = [];
+    await view.layer('company-keys', async () => { const keys = { opened: new Uint8Array(1 << 16) }; refs.push(new WeakRef(keys)); return keys; }).then(() => undefined);
+    await view.account().then(() => undefined);
+    view.end('the screen closed');
+    for (let i = 0; i < 5 && refs[0]!.deref() !== undefined; i += 1) { await new Promise((r) => setTimeout(r, 0)); gc(); }
+    /* RED WHEN: an ended view still holds the keys its layers opened for as long as anything holds the view. */
+    expect(refs[0]!.deref()).toBeUndefined();
+    await expect(view.layer('company-keys', async () => ({}))).rejects.toBeInstanceOf(ViewEnded);
+  });
+});
+
+describe('the builder\'s doors and the rounds of reading again, through the view', () => {
+  const INDEXER = { indexerUri: 'i', indexerWsUri: 'w' };
+  it('reads the vaults on the chain through the door its opener gave, refuses plainly when it gave none, and nothing once ended', async () => {
+    const { view } = aView();
+    /* RED WHEN: a view given no way to read the vaults answers as if it read them, or fails with no word of the missing door. */
+    await expect(view.doors.builder.vaultsOnChain({ vaults: ['v1'], indexer: INDEXER })).rejects.toThrow(/vaultsOnChain/u);
+    const asked: string[][] = [];
+    const given = companyViewFor(serviceSource(aService().call, COMPANY), {
+      ...holdersOf(seated('a')),
+      builder: { anchorHeads: async () => ({}) as never, vaultsOnChain: async (a) => { asked.push([...a.vaults]); return []; } },
+    }, NO_HELD);
+    await given.doors.builder.vaultsOnChain({ vaults: ['v1'], indexer: INDEXER });
+    expect(asked).toEqual([['v1']]);
+    given.end('the screen closed');
+    /* RED WHEN: an ended view still reads the chain for whoever kept its builder. */
+    await expect(given.doors.builder.vaultsOnChain({ vaults: ['v1'], indexer: INDEXER })).rejects.toBeInstanceOf(ViewEnded);
+    expect(asked).toHaveLength(1);
+  });
+
+  it('hands out rounds from 1, one for each press, and a write drops no count', async () => {
+    const { view } = aView();
+    const first = [view.nextRound(), view.nextRound()];
+    await view.write([NOTHING_NEW]);
+    /* RED WHEN: two presses share a round, or a write starts the rounds again, so a press is shown an earlier press's read. */
+    expect([...first, view.nextRound()]).toEqual([1, 2, 3]);
+  });
+});
+
+describe('THE CHECK BEFORE A WRITE ASKS THE NEWEST VERSIONS BY NAME ALONE', () => {
+  it('a record served or read before with more than its name, a run\'s entry with its digest among them, is asked by its name only', () => {
+    const base = new Baseline();
+    const entry = { store: 'run', kind: 'run', id: 'run_aaaaaaaaaaa1', digest: 'ab'.repeat(32), version: 1 } as unknown as RecordName;
+    base.served(entry, 1);
+    base.readBefore({ ...entry, id: 'run_aaaaaaaaaaa2' } as RecordName, 1);
+    /* RED WHEN: a name keeps what else its entry carried, which the service's ask for the newest versions refuses with a 400. */
+    expect(base.names().slice(1).map((n) => Object.keys(n).sort())).toEqual([['id', 'kind', 'store'], ['id', 'kind', 'store']]);
   });
 });

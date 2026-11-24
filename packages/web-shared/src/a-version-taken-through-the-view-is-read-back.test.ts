@@ -148,8 +148,9 @@ describe('a filing refused through the view, said as the service answered it', (
 
 describe('a version of a company\'s record taken, told through the view', () => {
   const COMPANY = 'acc_taken';
-  const roster = (body: string) => ({
-    company: COMPANY, kind: 'roster', id: 'roster', version: 1, keyEpoch: 0, wrapped: [],
+  /* A vendor: a roster or a person is filed by its own route, and never put through the record route (E4). */
+  const vendor = (body: string) => ({
+    company: COMPANY, kind: 'vendor', id: 'v1', version: 1, keyEpoch: 0, wrapped: [],
     sealed: { iv: '11'.repeat(12), tag: '22'.repeat(16), body },
   }) as never;
   const storeOver = (view: ThroughTheView) => new HttpCompanyRecordStore(COMPANY, view, SIGNING.secret, believeAll);
@@ -173,14 +174,14 @@ describe('a version of a company\'s record taken, told through the view', () => 
     vaultRecord: async () => { throw new Error('no vault record is read'); },
     companyRecord: async (asked) => {
       if (taken === 'unreadable' || asked.every !== true) throw new Error('this read of the company has ended');
-      return { kind: 'roster', id: 'roster', versions: [taken] };
+      return { kind: 'vendor', id: 'v1', versions: [taken] };
     },
     file: async () => { throw Object.assign(new Error('the version is taken'), { body: { refused: 'version-already-filed', version: 1 } }); },
     manifest: { newest: async () => [0], enter: async () => {} },
     company: COMPANY,
   });
-  const mine = roster('33');
-  const theirs = roster('44');
+  const mine = vendor('33');
+  const theirs = vendor('44');
 
   /* RED WHEN: this device's own version, filed by a request delivered twice, is taken for another writer's. */
   it('is filed when the version holds this store\'s own bytes', async () => {

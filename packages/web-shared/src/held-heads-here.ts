@@ -128,7 +128,7 @@ export const headsHere = (doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder
   const landedBy = new Map(landed.map((l) => [l.head.toLowerCase(), l]));
   /* The batch this device started checking from: the heads before it are the ones read from the headers. */
   const base = kept?.base ?? 0;
-  /* Every head this device checked, by the seq of the batch that left it. */
+  /* Every head this device checked on the chain's line, by the seq of the batch that left it: `heads` is in seq order from `base`. */
   const headsBySeq = new Map<number, Hex>((kept?.heads ?? []).map((h, i) => [base + i, h.toLowerCase() as Hex]));
   /* The runs before the start this device kept and still believes, and the ones found by this read. */
   const keptRuns = keptRunsStillTied(kept?.before ?? [], landedBy, headsBySeq);

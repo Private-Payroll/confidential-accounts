@@ -41,10 +41,10 @@ const scriptedSocket = (script: () => unknown[]) => {
 };
 const step = (
   kind: string, hash: string, state = 'abcd', block: unknown = { height: 7, timestamp: 1_700_000_000_000 }, entryPoint?: unknown,
-  status: string | null = 'SUCCESS', raw: unknown = 'beef',
+  status: string | null = 'SUCCESS', raw: unknown = 'beef', dated?: number | null,
 ) =>
   ({ id: '1', type: 'next', payload: { data: { contractActions: {
-    __typename: kind, state, transaction: { hash, ...(raw === null ? {} : { raw }), block, ...(status === null ? {} : { transactionResult: { status } }) },
+    __typename: kind, state, ...(dated === null ? {} : { stateAt: { height: dated ?? (block as { height?: unknown } | undefined)?.height } }), transaction: { hash, ...(raw === null ? {} : { raw }), block, ...(status === null ? {} : { transactionResult: { status } }) },
     ...(kind === 'ContractCall' ? { entryPoint: entryPoint ?? 'approve' } : {}),
   } } } });
 
@@ -65,13 +65,35 @@ describe('A CONTRACT\'S HISTORY, AS THE INDEXER SERVES IT', () => {
     const subscribe = socket.sent.find((m) => m.type === 'subscribe');
     /* RED WHEN: the subscription starts anywhere but the first block, or does not ask for each step's kind and state. */
     expect(subscribe.payload.variables).toEqual({ a: CONTRACT, o: { height: 0 } });
-    expect(subscribe.payload.query).toMatch(/__typename state transaction \{ hash raw block \{ height timestamp \} /);
+    expect(subscribe.payload.query).toMatch(/__typename state stateAt \{ height \} transaction \{ hash raw block \{ height timestamp \} /);
     /* RED WHEN: a step's block is not the one its transaction is in - the height or the time its author set dropped or swapped. */
     expect(list.map((s) => [s.block.height, s.block.at])).toEqual([[1, 1000], [2, 2000], [3, 3000], [4, 4000], [4, 4000]]);
     /* RED WHEN: a call is listed without the circuit it called, or a deploy or an update with one - which step raised or closed a round is read off it. */
     expect(subscribe.payload.query).toMatch(/\.\.\. on ContractCall \{ entryPoint \}/);
     expect(list.map((s) => s.entryPoint)).toEqual([undefined, undefined, 'propose', undefined, 'cancel']);
     expect(socket.closed()).toBeGreaterThan(0);
+  });
+
+  it('LEAVES OUT A STEP THE INDEXER SERVES AGAIN AT A LEDGER HARD FORK, AND KEEPS TWO REAL CALLS OF ONE TRANSACTION', async () => {
+    const socket = scriptedSocket(() => [
+      step('ContractDeploy', H(1), '01', { height: 1, timestamp: 1000 }),
+      /* Two real calls to one circuit in one transaction: one hash, one entry point, one state (the block's), both dated at their block. */
+      step('ContractCall', H(2), '02', { height: 2, timestamp: 2000 }, 'anchor'),
+      step('ContractCall', H(2), '02', { height: 2, timestamp: 2000 }, 'anchor'),
+      /* The fork's re-emission of the latest action: the same transaction and entry point, its state translated and dated at the fork block. */
+      step('ContractCall', H(2), 'ff02', { height: 2, timestamp: 2000 }, 'anchor', 'SUCCESS', 'beef', 9),
+    ]);
+    const list = await indexerContractHistory('u', 'w', { post: latestIs(H(2)).post, open: socket.open, settleMs: 5 }).of(CONTRACT);
+    /* RED WHEN: a re-emission is listed as a step (one anchor call counted twice), or two real calls of one transaction are joined into one. */
+    expect(list.map((s) => [s.kind, s.transaction, s.entryPoint, s.block.height])).toEqual([
+      ['deploy', H(1), undefined, 1], ['call', H(2), 'anchor', 2], ['call', H(2), 'anchor', 2],
+    ]);
+    /* RED WHEN: the state now is left in the encoding before the fork, which the ledger after it may not decode. */
+    expect(list.map((s) => Buffer.from(s.state).toString('hex'))).toEqual(['01', 'ff02', 'ff02']);
+    const undated = scriptedSocket(() => [step('ContractCall', H(1), '01', { height: 1, timestamp: 1000 }, 'anchor', 'SUCCESS', 'beef', null)]);
+    /* RED WHEN: a step whose state carries no block is taken as the chain's own step - a re-emission could not then be told apart. */
+    await expect(indexerContractHistory('u', 'w', { post: latestIs(H(1)).post, open: undated.open, settleMs: 5 }).of(CONTRACT))
+      .rejects.toThrow(/not dated at a block/);
   });
 
   it('SAYS WHETHER EACH STEP\'S TRANSACTION SUCCEEDED IN FULL, AS THE INDEXER RECORDS ITS RESULT, AND LISTS A FAILED ONE AS NOT', async () => {

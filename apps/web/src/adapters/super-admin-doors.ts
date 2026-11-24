@@ -2,7 +2,6 @@ import type { SuperAdminSignature } from 'vaults-web-shared/proposal-file.js';
 import type { SuperAdminDoors } from 'vaults-web-shared/super-admin-change.js';
 import type { SuperAdminAsks } from 'vaults-web-shared/records-source.js';
 import { superAdminOnPage } from 'vaults-web-shared/asks-on-page.js';
-import { indexerNamedByTheWallet } from 'vaults-web-shared/chain-before-a-view.js';
 import { superAdminSigned, superAdminWallet, type SuperAdminCompany } from 'vaults-web-shared/super-admin-ask.js';
 import type { KeptChange, SuperAdminService } from 'vaults-web-shared/super-admins-on-the-service.js';
 import { ACCOUNT_ORIGIN } from './session.js';
@@ -27,8 +26,8 @@ export interface SuperAdminReach {
 const headersFor = async (reach: SuperAdminReach, acting: boolean): Promise<Record<string, string>> =>
   (reach.asSuperAdmin || acting ? (await superAdminSigned(reach.company, ACCOUNT_ORIGIN)).headers : {});
 
-/** The super admins' asks of the company, over the page's service transport: each carries the headers it is given. */
-const asksOf = (reach: SuperAdminReach): SuperAdminAsks => superAdminOnPage(reach.company.accountId);
+/** The super admins' asks of the company, over the page's service transport (each carries the headers it is given) and the person's wallet. */
+const asksOf = (reach: SuperAdminReach): SuperAdminAsks => superAdminOnPage(reach.company.accountId, ACCOUNT_ORIGIN);
 
 /** The signatures the service keeps for the company's change, read with the headers a read carries. */
 const keptFor = async (reach: SuperAdminReach): Promise<{ changes?: unknown; signatures?: unknown }> =>
@@ -56,13 +55,13 @@ export const superAdminService = (reach: SuperAdminReach): SuperAdminService => 
 
 /**
  * **THE DOORS `governance-from-the-chain.ts` RAISES, JOINS AND APPROVES A CHANGE WITH.** The chain is read through
- * the indexer the person's own wallet names. No seat and no record of the company is read: the super admins are the
+ * the indexer the person's own wallet names, asked through the super admins' asks of the company. No seat and no record of the company is read: the super admins are the
  * committee the chain holds, and a vault the company created and the account does not list yet is left out of the change.
  * Null when the wallet named no indexer, so who holds the company cannot be read here, or when the vault worker this
  * page started offers no super admins' reads.
  */
 export async function superAdminDoorsFor(reach: SuperAdminReach): Promise<SuperAdminDoors | null> {
-  const indexer = await indexerNamedByTheWallet(ACCOUNT_ORIGIN, { company: reach.company.label, account: reach.company.account });
+  const indexer = await asksOf(reach).indexer({ company: reach.company.label, account: reach.company.account });
   if (indexer === null) return null;
   const worker = (await theVaultBuilder()).superAdmins;
   if (worker === undefined) return null;

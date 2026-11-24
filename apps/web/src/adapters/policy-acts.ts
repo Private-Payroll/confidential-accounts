@@ -9,7 +9,7 @@ import {
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import type { CompanyRecordsHere } from 'vaults-web-shared/run-rebuilt-here.js';
 import { spendingPoliciesFor } from 'vaults-web-shared/spending-policies-reach.js';
-import { spendingPolicyHere, type SpendingPolicyDoors } from 'vaults-web-shared/spending-policy-read-here.js';
+import { spendingPoliciesHere, type PolicyPair, type SpendingPolicyDoors, type SpendingPolicyStanding } from 'vaults-web-shared/spending-policy-read-here.js';
 import { Fault, FAULT } from '../faults.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import { READ, type Read } from './reads.js';
@@ -111,6 +111,7 @@ function recordsForPolicies(here: SeatAndRecordsHere, companyId: string): Compan
   const policies = spendingPoliciesFor({
     accountId: companyId, leaf: here.leaf, companyKey: here.companyKey, records: (asked) => here.view.records(asked),
     keys: (input) => here.builder.spendingPolicyKeys(input),
+    keysOfEach: (pairs) => here.builder.spendingPolicyKeysOfEach(pairs),
     /* The account's roles as the person's own wallet reads them off the chain, asked through the view: once for each set asked. */
     roles: (asked) => here.view.roles(asked),
     directory: here.directory,
@@ -129,25 +130,31 @@ function recordsForPolicies(here: SeatAndRecordsHere, companyId: string): Compan
   };
 }
 
-async function heldOf(doors: SpendingPolicyDoors, vault: string, asset: Asset): Promise<PolicyHeld> {
+function heldOf(read: PromiseSettledResult<SpendingPolicyStanding>, vault: string, asset: Asset): PolicyHeld {
   const token = asset.code;
-  try {
-    const standing = await spendingPolicyHere(doors, { vault, asset: token });
-    if (standing.state !== 'set') return { vault, token, of: standing.state };
-    const { terms } = standing.policy;
-    return {
-      vault, token, of: POLICY_HELD.set,
-      terms: {
-        bands: terms.bands.map((b) => ({ ceiling: privateAmount(b.ceiling, asset.decimals, asset.symbol), ceilingText: formatAmount(b.ceiling, asset), approvals: countOf(b.approvals) })),
-        limit: privateAmount(terms.periodLimit, asset.decimals, asset.symbol), limitText: formatAmount(terms.periodLimit, asset),
-        periodStart: terms.periodStart, periodLength: terms.periodLength, version: standing.version,
-      },
-    };
-  } catch {
-    // A policy this device cannot open or read is shown as unread, never as none: saying none would invite a second policy over a real one.
-    return { vault, token, of: POLICY_HELD.unread };
-  }
+  // A policy this device cannot open or read is shown as unread, never as none: saying none would invite a second policy over a real one.
+  if (read.status === 'rejected') return { vault, token, of: POLICY_HELD.unread };
+  const standing = read.value;
+  if (standing.state !== 'set') return { vault, token, of: standing.state };
+  const { terms } = standing.policy;
+  return {
+    vault, token, of: POLICY_HELD.set,
+    terms: {
+      bands: terms.bands.map((b) => ({ ceiling: privateAmount(b.ceiling, asset.decimals, asset.symbol), ceilingText: formatAmount(b.ceiling, asset), approvals: countOf(b.approvals) })),
+      limit: privateAmount(terms.periodLimit, asset.decimals, asset.symbol), limitText: formatAmount(terms.periodLimit, asset),
+      periodStart: terms.periodStart, periodLength: terms.periodLength, version: standing.version,
+    },
+  };
 }
+
+/** Every pair's standing, read together; when what every pair shares (the account's blinding, the worker's one ask) cannot be read, every pair is unread. */
+const standingsOf = async (doors: SpendingPolicyDoors, here: SeatAndRecordsHere, pairs: readonly PolicyPair[]): Promise<readonly PromiseSettledResult<SpendingPolicyStanding>[]> => {
+  try {
+    return await spendingPoliciesHere(doors, pairs, (asked) => here.builder.spendingPolicyKeysOfEach(asked));
+  } catch (e) {
+    return Promise.allSettled(pairs.map(() => Promise.reject(e)));
+  }
+};
 
 
 /**
@@ -163,11 +170,9 @@ export async function readPolicies(
     /* The company's keys as this device believes them, which `seatAndRecordsHere` made with `companyKeysFor`, handed on typed as such. */
     const viewingKey: CompanyKeyHere = here.viewingKey;
     const doors: SpendingPolicyDoors = { records: recordsForPolicies(here, view.company), accountId: view.company, viewingKey };
-    const held: PolicyHeld[] = [];
-    for (const vault of vaults) {
-      for (const asset of registry.all()) held.push(await heldOf(doors, vault.toLowerCase(), asset));
-    }
-    return { of: POLICIES_READ.read, held };
+    const each = vaults.flatMap((vault) => registry.all().map((asset) => ({ vault: vault.toLowerCase(), asset })));
+    const read = await standingsOf(doors, here, each.map((p) => ({ vault: p.vault, asset: p.asset.code })));
+    return { of: POLICIES_READ.read, held: each.map((p, i) => heldOf(read[i]!, p.vault, p.asset)) };
   } catch (e) {
     return { of: POLICIES_READ.refused, why: refusalOf(e) };
   }

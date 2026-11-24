@@ -97,7 +97,7 @@ const carriedAs = (circuit: string, chainMoves: () => void): CarryOut => async (
   const sent = await view.current().write([{ to: 'proposal', id: 'prp_1', act: 'carry', body: {} }]).then(() => true, () => false);
   if (!sent) {
     const straight = (r as unknown as { straight: StepContext['sendStraight'] }).straight;
-    await straight(async (door) => { door.handedOver(); }, undefined, { circuit, contract: ACCOUNT.toUpperCase() });
+    await straight(async (door) => { door.handedOver(); }, [], [{ circuit, contract: ACCOUNT.toUpperCase() }]);
   }
   chainMoves();
   await view.current().write([{ to: 'proposal', id: 'prp_1', act: 'closed', body: {} }]);
@@ -148,7 +148,7 @@ describe('a carry moves what the step read by its kind\'s own move, by whichever
       const straight: string[] = [];
       const carryOut: CarryOut = async (_ctx, r) => {
         await (r as unknown as { straight: StepContext['sendStraight'] }).straight(async (door) => { door.handedOver(); straight.push('sent'); },
-          undefined, { circuit: 'setPolicyBar', contract: ACCOUNT });
+          [], [{ circuit: 'setPolicyBar', contract: ACCOUNT }]);
       };
       await go(c, kind, carryOut);
       /* RED WHEN: a carry sends straight to the chain a call no table entry of its kind declares a move for. */
@@ -165,7 +165,7 @@ describe('a carry moves what the step read by its kind\'s own move, by whichever
     const straightOnly: CarryOut = async (_ctx, r) => {
       const view = (r as unknown as { stepView: { current(): { holders(): Promise<unknown>; write(w: unknown[]): Promise<unknown> } } }).stepView;
       await view.current().holders();
-      await (r as unknown as { straight: StepContext['sendStraight'] }).straight(async (door) => { door.handedOver(); }, undefined, { circuit: 'setThreshold', contract: ACCOUNT });
+      await (r as unknown as { straight: StepContext['sendStraight'] }).straight(async (door) => { door.handedOver(); }, [], [{ circuit: 'setThreshold', contract: ACCOUNT }]);
       c.chain.approvals = 2;
       await view.current().write([{ to: 'proposal', id: 'prp_1', act: 'closed', body: {} }]);
     };

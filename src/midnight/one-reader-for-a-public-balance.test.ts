@@ -162,10 +162,11 @@ describe('a vault\'s public balance has one way in', () => {
   it('on the page, the device\'s read of a vault writes the list, it crosses from the worker, and only the vault holdings reader reads it', () => {
     /*
      * RED WHEN a screen reads the list itself and so skips the refusal of a list it cannot read. The device's own
-     * summary of a vault's money (`moneyOnChainOf`) reads it too, and answers a list it could not read as unread.
+     * summary of a vault's money (`moneyOnChainOf`) reads it too, and answers a list it could not read as unread. The
+     * screens' stand-in for the worker writes the list on the vault rows it serves, as the worker does, and reads none.
      */
     expect(where(SERVED_LIST).filter((f) => f.startsWith('apps/web/') || f.startsWith('packages/web-shared/')))
-      .toEqual(['packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/money-on-chain.ts',
+      .toEqual(['apps/web/src/screens/company-harness.test-support.ts', 'packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/money-on-chain.ts',
         'packages/web-shared/src/vault-on-chain-here.ts', 'packages/web-shared/src/vault-worker-wire.ts']);
   });
 });

@@ -228,6 +228,12 @@ describe('what each action is given to reach holds the two lists true', () => {
     expect(doorsIn(reachOf('recovery'))).toContain('ownWallet');
   });
 
+  it('the walk sees the door finishing a company is given, and that action is not one named as sending nothing', () => {
+    /* RED WHEN: finishing a company builds its creation door inline, out of the doors named for spending, so no walk over them sees it. */
+    expect(doorsIn(reachOf('finish-company'))).toContain('creation');
+    expect(SENDS_NOTHING).not.toContain('finish-company');
+  });
+
   it('every action given the doors that move coins is named a coin payer, and no other is', () => {
     const coins = Object.keys(ACTIONS).filter((name) => doorsIn(reachOf(name)).includes('balance'));
     /* RED WHEN: an action that can move the person's coins is described as paying only a fee, and starts at once. */

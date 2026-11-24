@@ -144,8 +144,8 @@ export const HEX64 = /^[0-9a-f]{64}$/u;
 export const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 /** One proposal, opened on this device from the company's own records (`openTheRoundHere`), and from nowhere else. */
-export const opensFor = (doors: LeavingReads) => (proposalId: string, viewingKey: KeysHeld, forARaise: boolean): Promise<OpenedRound> =>
-  openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise, doors.records, doors.leaves);
+export const opensFor = (doors: LeavingReads) => (proposalId: string, viewingKey: KeysHeld, forARaise: boolean, onlyKind?: string): Promise<OpenedRound> =>
+  openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise, doors.records, doors.leaves, false, onlyKind);
 
 /** Sent, and the chain has not shown it yet. Not a failure, and not to be sent again. */
 export class SentAndNotYetSeen extends Error {

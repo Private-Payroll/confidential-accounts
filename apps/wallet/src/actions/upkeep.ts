@@ -31,6 +31,7 @@ import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-bl
 import { browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn, type DirectoryHere, type DirectoryRead } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
+import { VaultRecordsHeld } from '../../../../packages/web-shared/src/vault-records-filed-together.js';
 import type { CompanyView } from '../../../../packages/web-shared/src/company-view.js';
 import { serviceSource, type RecordWrite } from '../../../../packages/web-shared/src/records-source.js';
 import { stopsFor } from './leaving-read-in-the-wallet.js';
@@ -233,9 +234,10 @@ export async function rotationDoorsIn(r: CompanyReach): Promise<RotationDoors> {
 
 /**
  * What one vault's records are filed again from: this seat, the directory's signers, and the coins this wallet kept.
- * A caller that has already read the directory in this step hands that read in, so it is read once.
+ * A caller that has already read the directory in this step hands that read in, so it is read once. With `held`, what
+ * the records filed waits there to be sent with the step's other vault filings as one checked batch.
  */
-export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, reach: UpkeepReach, read?: DirectoryRead): RebuildDoors {
+export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, reach: UpkeepReach, read?: DirectoryRead, held?: VaultRecordsHeld): RebuildDoors {
   if (ctx.person === null) throw new StepRefused(why('no-person'));
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   const directory = read ?? r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
@@ -248,7 +250,7 @@ export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, reach: UpkeepR
     vaultsHere: r.vaultsHere,
     onChain: async () => ({ holders: await r.holders() }),
     me,
-    records: deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
+    records: deviceRecordsFor(r.seat.signingSecret, judge, { ...readsJoinedIn(r.stepView, stopsFor(r)), ...(held === undefined ? {} : { held }) }),
     signers: readersIn(directory).signers,
     seatHere: () => seatHereIn(directory, r.seat.signingSecret),
     ...unnamedKeptIn(r.stepView.current()),
@@ -271,19 +273,34 @@ export async function anchoredAtTheEnd(doors: AnchorDoors): Promise<{ readonly a
 }
 
 /**
+ * The vault filings the step held back, sent as one checked batch. One refused, not known or not sent after a refusal
+ * is left for the company's next seat action, which files it again. A pool version another seat filed first is left
+ * too: the notes this seat found are not in the pool the other seat filed, and the batch is past the point where the
+ * rebuild could read the pool again, so the next seat action rebuilds them over it. Only a stop ends the step.
+ */
+export async function heldFilingsSent(held: Pick<VaultRecordsHeld, 'sent'>, left: () => void): Promise<void> {
+  for (const { outcome } of await held.sent()) {
+    if (outcome.status === 'fulfilled') continue;
+    if (outcome.reason instanceof ActionStopped) throw outcome.reason;
+    left();
+  }
+}
+
+/**
  * Each vault's secret given to every other seat the chain holds that lacks it, before the anchor so the copies filed
  * are anchored with the action's own records. Each vault is tried alone with `giveEachVaultSecretHere`, which files
  * one version per vault wrapping the secret to the records key each lacking seat's believed directory entry names, and
  * gives nothing to a seat already holding it. Only a seat this wallet believes, whose role may file a vault's nonce
  * secret, gives: any other seat gives nothing, since every device would refuse the version it filed. A seat the give
  * skipped (no believed entry yet, or not one this device believes), a vault this seat holds no copy of, or a filing the
- * service refused is left for the company's next seat action; only a stop ends the step. A stop from a read made
+ * service refused is left for the company's next seat action; only a stop ends the step. With `held`, each vault's
+ * version waits there and is sent with the step's other vault filings (`heldFilingsSent`). A stop from a read made
  * through the company's own calls reaches the catch as itself, so it is rethrown there; one the record store wrapped is
  * caught by the watched calls after each vault.
  */
 async function vaultSecretsGiven(
   ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach,
-  vaults: readonly string[], seats: readonly string[], left: () => void,
+  vaults: readonly string[], seats: readonly string[], left: () => void, held?: VaultRecordsHeld,
 ): Promise<void> {
   const others = [...new Set(seats.map((x) => x.toLowerCase()))].filter((x) => x !== r.leaf.toLowerCase());
   if (vaults.length === 0 || others.length === 0) return;
@@ -293,7 +310,7 @@ async function vaultSecretsGiven(
   let doors: RebuildDoors;
   let mine: { readonly role: Parameters<typeof mayFile>[0]['role'] } | null = null;
   try {
-    doors = rebuildDoorsIn(ctx, r, reach, directory);
+    doors = rebuildDoorsIn(ctx, r, reach, directory, held);
     mine = (await doors.seatHere?.()) ?? null;
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
@@ -344,7 +361,8 @@ async function vaultSecretsFinished(
 /**
  * Each spending policy in force whose version in force is not believed or leaves out a signer who stays sealed again
  * to every signer this wallet believes and every policy reader, after the act's own admission and before the anchor so
- * what it files is anchored with the act's own records. A seat that may not file a policy (its role, or a seat this
+ * what it files is anchored with the act's own records. Every policy sealed again is sent as one checked batch of its
+ * own, after the vault filings' batch; one another seat filed first is passed over and left for the next seat action. A seat that may not file a policy (its role, or a seat this
  * wallet does not believe) seals none and names each policy a seat that may still owes a seal; a policy this wallet
  * could not seal again, or a read that failed, is said. Either leaves the upkeep partial for the next seat action that
  * runs the upkeep. What it left alone because nothing was owed is not said.
@@ -522,8 +540,10 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         left();
       }
       await vaultRecordsDeclared(r, vaults);
+      /* Every vault's records and secret copies are filed together after they are all read: one check, then each in order. */
+      const held = new VaultRecordsHeld((writes) => r.stepView.current().write(writes));
       for (const vault of vaults) {
-        const notes = await vaultNotesHere(rebuildDoorsIn(ctx, r, reach), vault.toLowerCase() as Hex);
+        const notes = await vaultNotesHere(rebuildDoorsIn(ctx, r, reach, undefined, held), vault.toLowerCase() as Hex);
         w.rethrow();
         if ((notes.of !== 'as-filed' && notes.of !== 'filed') || (notes.unsealed ?? []).length > 0) left();
       }
@@ -533,7 +553,9 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
        * adopted vault's are; one that never started is passed over.
        */
       await vaultSecretsFinished(ctx, r, w, reach, { adopted: vaults, retired }, left);
-      await vaultSecretsGiven(ctx, r, w, reach, [...vaults, ...retired], seats, left);
+      await vaultSecretsGiven(ctx, r, w, reach, [...vaults, ...retired], seats, left, held);
+      await heldFilingsSent(held, left);
+      w.rethrow();
       await policiesSealedAgain(ctx, r, w, left);
       let anchored = 0;
       try {

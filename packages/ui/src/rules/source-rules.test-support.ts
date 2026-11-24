@@ -1017,6 +1017,7 @@ export const CODES: Readonly<Record<string, string>> = {
   'apps/web/src/adapters/refusal-codes.ts#ACT_REFUSAL': 'why an action on a company did not happen, one of a fixed set that a screen turns into its own phrase',
   'apps/web/src/adapters/refusal-codes.ts#ACTED': 'what an action\'s answer is, compared by the code',
   'apps/web/src/adapters/handover-state.ts#HANDOVER': 'where a company stands on being held by its committee, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/vault-private-money.ts#MONEY_READ': 'the store and the vault records a vault\'s private money is read from, and the name of the view\'s layer it is kept in, asked for and never shown',
   'apps/web/src/adapters/committee-change.ts#CHANGE': 'where a committee change and its signatures are written through the view, and the two writes of it, sent and never shown',
   'apps/web/src/adapters/reader-judge.ts#ENDED': 'why the reader\'s page ends a view, as the view says it to whoever reads through it afterwards',
   'apps/web/src/adapters/handover-state.ts#SERVICE': 'the service\'s word for the chain\'s answer, compared and never shown',

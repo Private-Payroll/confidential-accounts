@@ -657,7 +657,7 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
     expect(line).toMatch(/adds your seat's approval to the removal the network already holds/u);
   });
 
-  it('only the two files that ask the wallet for acts of the signers page name the removal or the vault secret change: no screen does', () => {
+  it('only the two files that ask the wallet for acts of the signers page, and the list of every place a company is read from, name the removal or the vault secret change: no screen does', () => {
     const root = fileURLToPath(new URL('../../../../', import.meta.url));
     const shipping = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
       const p = join(dir, n);

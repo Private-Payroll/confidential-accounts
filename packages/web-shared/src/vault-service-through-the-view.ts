@@ -16,7 +16,7 @@ interface VaultView { current(): Pick<CompanyView<unknown>, 'write' | 'vaultChai
 export const vaultServiceThrough = (held: VaultView): Omit<VaultService, 'keys'> => {
   /* The route's own answer to a send, its refusal keeping the service's mark of whether anything was sent. */
   const sent = <T>(send: VaultSend, tx: string): Promise<T> =>
-    marked(async () => (await held.current().write([{ to: 'vault-send', tx, ...send }]))[0] as T);
+    marked(async () => (await held.current().write([{ to: 'vault-send', tx, calls: [send] }]))[0] as T);
   return {
     deploy: (tx) => sent({ act: 'deploy' }, tx),
     handover: (vault, tx) => sent({ act: 'handover', vault }, tx),

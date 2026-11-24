@@ -147,7 +147,8 @@ const sampled = (method: string, sent: string): string =>
 /* The shared files an action's named asks live in, loaded as the wallet loads them (outside this package's sources). */
 const shared = (file: string): Promise<Record<string, any>> =>
   import(pathToFileURL(path.join(REPO, 'packages', 'web-shared', 'src', file)).href) as Promise<Record<string, any>>;
-const { invitationSource, creationSource } = await shared('records-source.ts');
+const { invitationSource, creationSource, serviceSource } = await shared('records-source.ts');
+const RECORDS_SOURCE = readFileSync(path.join(REPO, 'packages', 'web-shared', 'src', 'records-source.ts'), 'utf8');
 
 /** The one route `run` sends through a stand-in call that records it; refused when it sends none, or more than one. */
 const routeOfAsk = async (what: string, run: (seen: string[]) => Promise<unknown>): Promise<string> => {
@@ -162,14 +163,164 @@ const invitationAsk = (name: string): Promise<string> => routeOfAsk(`invitationS
 const creationAsk = (name: string): Promise<string> => routeOfAsk(`creationSource().${name}`, (seen) => creationSource(recorder(seen))[name](SAMPLE, {}));
 
 /* Every ask an action makes over the step's call, by its name: a call written there, or a named ask the runner handed it (an invitation's call to take a seat names the send to the gate, and asks nothing). */
-const ASKS = /\bctx\.(?:call\b|invitations\.(?!seatCall\b)\w+\(|creation\.\w+\()/gu;
+/* Every form an action asks through: the call itself, a named ask, a record source or its call adapter, and the invitation asks handed on whole. */
+const ASKS = /\bctx\.(?:call\b|invitations\.(?!seatCall\b)\w+\(|creation\.\w+\()|\bserviceSource\(|\bserviceCallOver\(|\bctx\.invitations\b(?!\.)/gu;
 
-/** Every route an action file asks for: each call written there, then each named ask made over its call, by the route the ask sends. */
-const askedIn = async (code: string): Promise<{ readonly literal: string[]; readonly all: string[] }> => {
+/* A file that hands `ctx.invitations` on whole names here the function it hands them to, so its asks are read in that function. */
+const HANDED_ON_TO: Readonly<Record<string, { readonly file: string; readonly fn: string }>> = {
+  'add-signer-by-code.ts': { file: path.join(REPO, 'packages', 'web-shared', 'src', 'invitation-by-code.ts'), fn: 'addSignerFromCodeHere' },
+};
+
+const sampledAny = (method: string, sent: string): string =>
+  key(method, shapeOf(sent.split('?')[0]!.split('/').map((s, i, all) => (s === SAMPLE || /^\d+$/u.test(s) || (all[i - 1] === 'records' && s !== 'read') ? ':' : s)).join('/')));
+
+const unionOf = (name: string): string[] => {
+  const m = RECORDS_SOURCE.match(new RegExp(`export type ${name} =\\s*([^;]*);`, 'u'));
+  if (m === null) throw new Error(`the type ${name} could not be read from the record source`);
+  return [...m[1]!.matchAll(/'([a-z-]+)'/gu)].map((x) => x[1]!);
+};
+
+/* One write for each way the record source writes; the route each takes is read by running the real source over a recorder. */
+const WRITES = (): Record<string, unknown>[] => {
+  const body = {};
+  const header = { seq: 1 };
+  return [
+    { to: 'entries', entries: [] }, { to: 'header', header }, { to: 'directory', filing: { version: 1 } },
+    { to: 'record', kind: 'policy', id: SAMPLE, version: 1, body }, { to: 'vault-record', vault: SAMPLE, record: 'notes', version: 1, body },
+    { to: 'roster', body }, { to: 'vault-keys', body }, { to: 'admission', signer: SAMPLE, body }, { to: 'readers', body },
+    { to: 'proposal-filed', body }, ...unionOf('ProposalAct').map((act) => ({ to: 'proposal', id: SAMPLE, act, body })),
+    { to: 'carried', id: SAMPLE, body }, { to: 'proven', tx: SAMPLE },
+    { to: 'vault-send', tx: SAMPLE, calls: [{ act: 'deploy' }] },
+    ...['handover', 'deposit', 'public-deposit', 'payout', 'merge', 'public-payout'].map((act) => ({ to: 'vault-send', tx: SAMPLE, calls: [{ act, vault: SAMPLE }] })),
+    { to: 'invitation', body }, { to: 'signer-withdrawn', signer: SAMPLE, body },
+    ...['status', 'details', 'admit'].map((act) => ({ to: 'person', id: SAMPLE, act, body })),
+    { to: 'run', body }, { to: 'vendor-admitted', id: SAMPLE, body }, { to: 'fee', body }, { to: 'fee-done', body }, { to: 'self-payee', body },
+    ...unionOf('VaultStartStep').map((step) => ({ to: 'vault-start', vault: SAMPLE, step, body })),
+    ...['signatures', 'send'].map((act) => ({ to: 'committee-change', act, body })),
+  ];
+};
+
+/* The arguments each reading method of the record source is run with. */
+const READS: Readonly<Record<string, readonly unknown[][]>> = {
+  account: [[]], filings: [[]], newest: [[['sample']]], pending: [['0x00']], proofs: [[{ records: [] }]], headers: [[0, 1]],
+  records: [[[]]], vaultRecords: [[[]]], handovers: [[[]]], vendorHandovers: [[[]]],
+  list: [...RECORDS_SOURCE.match(/const LIST_KINDS = \[([^\]]*)\]/u)![1]!.matchAll(/'([a-z-]+)'/gu)].map((m) => [m[1]!]),
+  standing: [[SAMPLE]], callState: [[]], vaultChain: [[SAMPLE]], payoutState: [[SAMPLE]], authority: [[]], committeeChange: [[]], vaultKeys: [[]],
+};
+
+/** Every route the record source asks, read by running its reads and each of its writes over a recorder. */
+const sourceRoutes = async (): Promise<{ readonly routes: string[]; readonly writes: Record<string, unknown>[] }> => {
+  const seen: string[] = [];
+  const source = serviceSource((sent: string, init?: { method?: string }) => {
+    seen.push(sampledAny(String(init?.method ?? 'GET').toUpperCase(), sent));
+    return Promise.resolve({});
+  }, SAMPLE) as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const writes = WRITES();
+  const runs: (() => Promise<unknown>)[] = [];
+  for (const name of Object.keys(source).filter((n) => typeof source[n] === 'function' && n !== 'write')) {
+    const withArgs = READS[name];
+    if (withArgs === undefined) throw new Error(`the record source reads with ${name}, which this check does not run`);
+    for (const args of withArgs) runs.push(() => source[name]!(...args));
+  }
+  for (const w of writes) runs.push(() => source['write']!(w));
+  for (const run of runs) {
+    const before = seen.length;
+    await run().catch(() => undefined);
+    if (seen.length !== before + 1) throw new Error(`a call of the record source sent ${seen.length - before} routes where one was expected, so this check cannot read it`);
+  }
+  return { routes: seen, writes };
+};
+
+/* Every route the record source can ask, and what the company view reads or writes through it. The source is the view's one way to the service, the same for every action, so no action's intent holds it. */
+const SOURCE_ROUTES: Readonly<Record<string, string>> = Object.freeze({
+  'GET /api/accounts/:': 'the company\'s account record, read for who holds it and how it stands',
+  'GET /api/accounts/:/authority': 'who holds the company\'s account on the chain, read to see where it is held',
+  'GET /api/accounts/:/call-state': 'the account\'s state before a call, read to build the call on it',
+  'GET /api/accounts/:/committee-change': 'the change of the account\'s committee that is owed, read to show it and sign it',
+  'GET /api/accounts/:/directory': 'the company\'s directory of seats, read to know who is seated',
+  'GET /api/accounts/:/invites': 'the invitations the company has made, read for the people list',
+  'GET /api/accounts/:/manifest/tree/headers': 'the record headers anchored so far, read to follow the company\'s records',
+  'GET /api/accounts/:/manifest/tree/pending': 'the record entries not yet anchored, read to anchor them',
+  'GET /api/accounts/:/people': 'the company\'s people, read for the people list',
+  'GET /api/accounts/:/proposals': 'the company\'s proposals, read for the proposals list',
+  'GET /api/accounts/:/runs': 'the company\'s payment runs, read for the runs list',
+  'GET /api/accounts/:/vault-keys': 'the vault keys the company holds, read to give them to a seat',
+  'GET /api/accounts/:/vault-keys/offers': 'the vault keys offered to the company, read to take them in',
+  'GET /api/accounts/:/vaults': 'the company\'s vaults, read for the vaults list',
+  'GET /api/accounts/:/vaults/:/chain': 'what the chain holds for one vault, read before a vault step',
+  'GET /api/accounts/:/vaults/:/payout-state': 'where a vault\'s payout stands, read before paying',
+  'POST /api/accounts/:/committee-change/send': 'the signed change of the account\'s committee, sent to the chain',
+  'POST /api/accounts/:/committee-change/signatures': 'a seat\'s signature on the change of the account\'s committee, filed',
+  'POST /api/accounts/:/fee': 'a fee the company sponsors, asked for',
+  'POST /api/accounts/:/fee/done': 'a sponsored fee, reported paid',
+  'POST /api/accounts/:/handovers': 'what each person or vendor handed over, read in one batch',
+  'POST /api/accounts/:/invites': 'an invitation to a seat or a payee, filed',
+  'POST /api/accounts/:/manifest/entries': 'entries of the company\'s records, filed',
+  'POST /api/accounts/:/manifest/newest': 'the newest version entered of each record, read in one batch',
+  'POST /api/accounts/:/manifest/tree/headers': 'a header of the company\'s records, filed',
+  'POST /api/accounts/:/manifest/tree/proofs': 'the proofs of records against an anchored root, read in one batch',
+  'POST /api/accounts/:/proposals': 'a proposal, filed',
+  'POST /api/accounts/:/proven': 'a proven transaction, handed over to be sent',
+  'POST /api/accounts/:/readers': 'the list of readers the signers granted, filed',
+  'POST /api/accounts/:/records/read': 'the company\'s records, read in one batch',
+  'POST /api/accounts/:/roster': 'the company\'s roster, filed',
+  'POST /api/accounts/:/runs': 'a payment run, filed',
+  'POST /api/accounts/:/self-payee': 'a person making themselves payable, filed',
+  'POST /api/accounts/:/signers/:/admit': 'a signer\'s admission, filed',
+  'POST /api/accounts/:/signers/:/withdraw': 'a signer\'s withdrawal, filed',
+  'POST /api/accounts/:/vault-records/read': 'the vaults\' records, read in one batch',
+  'POST /api/accounts/:/vaults': 'a new vault\'s creation, sent',
+  'POST /api/accounts/:/vaults/:/deposit': 'a private deposit into a vault, sent',
+  'POST /api/accounts/:/vaults/:/handover': 'a vault\'s handover to the company\'s keys, sent',
+  'POST /api/accounts/:/vaults/:/merge': 'a merge of a vault\'s notes, sent',
+  'POST /api/accounts/:/vaults/:/payout': 'a private payout from a vault, sent',
+  'POST /api/accounts/:/vaults/:/public-deposit': 'a public deposit into a vault, sent',
+  'POST /api/accounts/:/vaults/:/public-payout': 'a public payout from a vault, sent',
+  'POST /api/accounts/:/vaults/:/start/account': 'the first step of starting a vault, sent',
+  'POST /api/accounts/:/vaults/:/start/copy': 'the copy step of starting a vault, sent',
+  'POST /api/accounts/:/vaults/:/start/secret': 'the secret step of starting a vault, sent',
+  'POST /api/accounts/:/vendors/:/admit': 'a vendor\'s admission, filed',
+  'POST /api/employees/:/admit': 'an employee\'s admission, filed',
+  'POST /api/people/:/details': 'a person\'s details, filed',
+  'POST /api/people/:/status': 'a person\'s status, filed',
+  'POST /api/proposals/:/approve': 'a seat\'s approval of a proposal, sent',
+  'POST /api/proposals/:/cancel': 'a proposal\'s withdrawal, sent',
+  'POST /api/proposals/:/carried': 'a proposal carried out, reported',
+  'POST /api/proposals/:/carry': 'a proposal carried out, sent',
+  'POST /api/proposals/:/charge': 'a run\'s charge, sent',
+  'POST /api/proposals/:/closed': 'a proposal closed, reported',
+  'POST /api/proposals/:/retirement': 'a vault\'s retirement, sent',
+  'POST /api/proposals/:/send': 'a proposal\'s raise, sent',
+  'POST /api/proposals/:/standing': 'where a proposal stands, read',
+  'PUT /api/accounts/:/directory/:': 'a version of the company\'s directory, filed',
+  'PUT /api/accounts/:/records/:/:/:': 'a version of a company record, filed',
+  'PUT /api/accounts/:/vault-keys': 'the vault keys given to a seat, filed',
+  'PUT /api/vaults/:/records/:/:': 'a version of a vault\'s record, filed',
+});
+
+/** The routes a file hands its invitation asks on to: those the file that asks through them names. */
+const handedOnRoutes = async (file: string, code: string): Promise<string[]> => {
+  const to = HANDED_ON_TO[file];
+  if (to === undefined) throw new Error(`${file} hands its invitation asks on to a function this check is not told of`);
+  expect(code, `${file} no longer calls ${to.fn}`).toMatch(new RegExp(`\\b${to.fn}\\(`, 'u'));
+  const whole = read(to.file);
+  const from = whole.search(new RegExp(`function ${to.fn}\\(`, 'u'));
+  if (from < 0) throw new Error(`${to.fn} is not in ${path.basename(to.file)}`);
+  const body = whole.slice(from, whole.indexOf('\nexport ', from) < 0 ? undefined : whole.indexOf('\nexport ', from));
+  return Promise.all([...body.matchAll(/\.invitations\.(?!seatCall\b)(\w+)\(/gu)].map((m) => invitationAsk(m[1]!)));
+};
+
+const askedIn = async (code: string, file: string): Promise<{ readonly literal: string[]; readonly all: string[]; readonly forms: number }> => {
   const literal = [...code.matchAll(/\bctx\.call\(\s*['"`](GET|PUT|POST)['"`]\s*,\s*`([^`]*)`/gu)].map((m) => key(m[1]!, asked(m[2]!)));
   const invited = [...code.matchAll(/\bctx\.invitations\.(?!seatCall\b)(\w+)\(/gu)].map((m) => invitationAsk(m[1]!));
   const created = [...code.matchAll(/\bctx\.creation\.(\w+)\(/gu)].map((m) => creationAsk(m[1]!));
-  return { literal, all: [...literal, ...await Promise.all([...invited, ...created])] };
+  const handedOnForms = (code.match(/\bctx\.invitations\b(?!\.)/gu) ?? []).length;
+  const handedOn = handedOnForms > 0 ? await handedOnRoutes(file, code) : [];
+  const sourceForms = (code.match(/\bserviceSource\(|\bserviceCallOver\(/gu) ?? []).length;
+  return {
+    literal, all: [...literal, ...await Promise.all([...invited, ...created]), ...handedOn],
+    forms: literal.length + invited.length + created.length + handedOnForms + sourceForms,
+  };
 };
 
 describe('an action asks the service only for the routes its intent lists', () => {
@@ -178,11 +329,14 @@ describe('an action asks the service only for the routes its intent lists', () =
   /* Each file's calls written there (`WRITTEN`), and every route it asks for, those and its named asks' (`CALLED`). */
   const WRITTEN = new Map<string, string[]>();
   const CALLED = new Map<string, string[]>();
+  /* The forms this check parsed in each file, to hold against every form the file spells. */
+  const PARSED = new Map<string, number>();
   beforeAll(async () => {
     for (const [file, code] of sources) {
-      const { literal, all } = await askedIn(code);
+      const { literal, all, forms } = await askedIn(code, file);
       if (literal.length > 0) WRITTEN.set(file, literal);
       if (all.length > 0) CALLED.set(file, all);
+      PARSED.set(file, forms);
     }
   });
   const NAMED_IN_THE_ACTION = ['claim-by-address', 'join-by-code', 'seat-invited', 'finish-company'];
@@ -197,10 +351,34 @@ describe('an action asks the service only for the routes its intent lists', () =
       const calls = CALLED.get(`${name}.ts`) ?? [];
       expect(listed.length, `${name} lists no calls`).toBeGreaterThan(0);
       expect([...new Set(calls)].sort(), name).toEqual(listed);
-      const code = sources.get(`${name}.ts`)!;
-      /* Every use of the step's call is one this check read: a call written there, or one named ask made over it. */
-      expect((code.match(ASKS) ?? []).length, `${name} asks through a call this check cannot read`).toBe(calls.length);
     }
+  });
+
+  it('every form an action file asks through is one this check read', () => {
+    /* RED WHEN: an action file asks through a form of the step's call, a named ask or a record source that this check does not parse. */
+    const unread = [...sources].filter(([file, code]) => (code.match(ASKS) ?? []).length !== PARSED.get(file)).map(([file]) => file);
+    expect(unread).toEqual([]);
+    expect([...PARSED.values()].reduce((a, b) => a + b, 0)).toBeGreaterThan(NAMED_IN_THE_ACTION.length);
+  });
+
+  it('the files that build the record source or its call adapter are the ones this check names', () => {
+    /* RED WHEN: an action file starts building the record source or its call adapter, so asks through it need reading and listing. */
+    const builders = [...sources].filter(([, code]) => /\bserviceSource\(|\bserviceCallOver\(/u.test(code)).map(([file]) => file).sort();
+    expect(builders).toEqual(['run.ts', 'step-views.ts', 'upkeep.ts']);
+  });
+
+  it('the routes the record source and its builders can ask are the routes listed for it, no more and no fewer', async () => {
+    /* RED WHEN: the record source asks a route no list names, or a route listed for it is no longer asked. */
+    const builders = [...sources].filter(([, code]) => /\bserviceSource\(/u.test(code)).map(([file]) => file);
+    expect(builders.length, 'no action file builds the record source').toBeGreaterThan(0);
+    const { routes, writes } = await sourceRoutes();
+    const written = RECORDS_SOURCE.slice(RECORDS_SOURCE.indexOf('const written = '), RECORDS_SOURCE.indexOf('export const serviceSource'));
+    const covered = new Set(writes.map((w) => w['to']));
+    expect([...written.matchAll(/^ {4}case '([a-z-]+)':/gmu)].map((m) => m[1]!).filter((c) => !covered.has(c)), 'a write of the record source this check does not run').toEqual([]);
+    const asked = new Set(routes);
+    expect([...asked].filter((r) => !Object.hasOwn(SOURCE_ROUTES, r)).sort()).toEqual([]);
+    expect(Object.keys(SOURCE_ROUTES).filter((r) => !asked.has(r)).sort()).toEqual([]);
+    expect(Object.values(SOURCE_ROUTES).filter((why) => why.trim() === '')).toEqual([]);
   });
 
   it('no other action writes a call in its own file, since only these are held to their file', () => {
@@ -311,7 +489,10 @@ describe('every route an action may ask for is answered by the service and its r
       return am === km && ap.length === kp.length
         && ap.every((seg, i) => seg === kp[i] || (seg === ':' && (kp[i] === ':' || (kp[i - 1] === 'records' && kinds.includes(kp[i]!)))));
     });
-    const missing = [...listed].filter(([k]) => !answeredAs(k)).map(([k, v]) => `${k} (listed by ${[...new Set(v.by)].join(', ')})`);
+    const missing = [
+      ...[...listed].filter(([k]) => !answeredAs(k)).map(([k, v]) => `${k} (listed by ${[...new Set(v.by)].join(', ')})`),
+      ...Object.keys(SOURCE_ROUTES).filter((k) => !answeredAs(k)).map((k) => `${k} (listed for the record source)`),
+    ];
     expect(missing).toEqual([]);
     const lost = relayed.filter((r) => FINISH_ROUTE[r.split(':')[1]!] === undefined || !answers.has(key('POST', FINISH_ROUTE[r.split(':')[1]!]!)));
     expect(lost).toEqual([]);
@@ -321,7 +502,7 @@ describe('every route an action may ask for is answered by the service and its r
   it('every file that answers a listed route is mounted by the service', () => {
     /* RED WHEN: a route file the lists depend on is no longer mounted, so a listed route would answer "not found". */
     const wanted = new Set<string>();
-    for (const k of listed.keys()) for (const a of answers.get(k) ?? []) wanted.add(a.file);
+    for (const k of [...listed.keys(), ...Object.keys(SOURCE_ROUTES)]) for (const a of answers.get(k) ?? []) wanted.add(a.file);
     for (const r of relayed) for (const a of answers.get(key('POST', FINISH_ROUTE[r.split(':')[1]!] ?? '')) ?? []) wanted.add(a.file);
     expect(LIVE.length).toBeGreaterThan(0);
     expect([...wanted].filter((f) => !mounted(f)).sort()).toEqual([]);

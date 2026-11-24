@@ -24,9 +24,10 @@
 import { publicDataProviderFor, refuseEndpointsThatCannotWork, type IndexerEndpoints } from './public-data.js';
 import {
   eventOnTheWire, indexerNoteEvents, indexerVaultTransactions, transactionThatCreatedOutput,
-  type EventOnTheWire, type NoteEvents, type VaultTransactions,
+  type EventOnTheWire, type NoteEvents, type ServedEvent, type VaultTransactions,
 } from '../../../src/midnight/note-index.js';
-import { vaultOutputHistoryFrom } from '../../../src/midnight/deposit-nonce.js';
+import { HISTORIES_AT_ONCE, indexerVaultHistories, type VaultHistories } from '../../../src/midnight/indexer-queries.js';
+import { outputsMadeFor, vaultOutputHistoryFrom } from '../../../src/midnight/deposit-nonce.js';
 import { assertVaultLedgerIsThisBuilds } from '../../../src/midnight/vault-ledger-shape.js';
 import { circuitsNotThisBuilds, startingLedgerFrom } from '../../../src/midnight/vault-circuits.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -56,6 +57,8 @@ export interface VaultChainSource {
   deployState(address: string): Promise<unknown>;
   readonly transactions: VaultTransactions;
   readonly events: NoteEvents;
+  /** Every transaction of many vaults with its events, in one request; without it each vault's history is read alone. */
+  readonly histories?: VaultHistories;
   /**
    * The newest block the indexer holds, named first, and as of that one block:
    * the commitment tree, the vault's state and the ledger's parameters, and the
@@ -131,6 +134,7 @@ export const vaultChainSourceAt = (indexer: IndexerEndpoints): VaultChainSource 
     },
     transactions: indexerVaultTransactions(indexer.indexerUri, indexer.indexerWsUri),
     events: indexerNoteEvents(indexer.indexerUri),
+    histories: indexerVaultHistories(indexer.indexerUri),
     /*
      * Read as `atOneBlockOver` says: one block named first, and both
      * contracts as of it. The indexer's reader is made once, when this
@@ -197,7 +201,7 @@ type AccountCircuitsRead = ReturnType<typeof accountCircuitsFrom> | undefined;
  */
 async function vaultReadFrom(
   d: VaultReadDeps, source: Pick<VaultChainSource, 'transactions' | 'events'>, vault: string,
-  served: { serialize(): Uint8Array }, accountCircuits: AccountCircuitsRead,
+  served: { serialize(): Uint8Array }, accountCircuits: AccountCircuitsRead, made?: ReadonlySet<string>,
 ): Promise<VaultOnChainOnTheWire> {
   const bytes = served.serialize();
   const state = d.runtimeState.deserialize(bytes) as { data: unknown };
@@ -222,7 +226,7 @@ async function vaultReadFrom(
     retired = start.retired;
     account = String(start.account).toLowerCase();
   } catch { /* a state that is not a vault's cannot be read for its account or start: `account` stays null, which the reader of this answer takes as unreadable, never as pinned elsewhere */ }
-  const everCreated = [...await vaultOutputHistoryFrom({ transactions: source.transactions, events: source.events })
+  const everCreated = [...made ?? await vaultOutputHistoryFrom({ transactions: source.transactions, events: source.events })
     .everCreated(vault as Hex)];
   /* The one reader of a contract's public balance, over the state the indexer served now. */
   let publicBalances: Array<{ token: string; amount: string }> | undefined;
@@ -447,8 +451,34 @@ export async function readVaultsOnChain(
     circuits ??= { found: accountCircuitsFrom(d, served[addresses.length]) };
     return circuits.found;
   };
+  const made = await createdTogether(source, addresses.filter((_, i) => served[i] !== null && served[i] !== undefined));
   return Promise.all(addresses.map(async (vault, i) => {
     const state = served[i];
-    return { vault, read: state === null || state === undefined ? { onChain: false } : await vaultReadFrom(d, source, vault, state, accountCircuits()) };
+    return {
+      vault,
+      read: state === null || state === undefined ? { onChain: false } : await vaultReadFrom(d, source, vault, state, accountCircuits(), made.get(vault)),
+    };
+  }));
+}
+
+/**
+ * Every coin the chain ever made for each of `vaults`, from their histories asked together, in parts the indexer's
+ * query complexity takes. A vault left out of the answer (its list may be cut short) is read alone, and so is every
+ * vault when the question asked together fails: the answer is the same, in more requests.
+ */
+async function createdTogether(source: VaultChainSource, vaults: readonly string[]): Promise<ReadonlyMap<string, ReadonlySet<string>>> {
+  const histories = source.histories;
+  if (histories === undefined || vaults.length === 0) return new Map();
+  let served: ReadonlyArray<ReadonlyArray<ServedEvent> | null>;
+  try {
+    served = await inParts(vaults as readonly Hex[], (part) => histories.eventsOfEvery(part), HISTORIES_AT_ONCE);
+  } catch {
+    /* Asked together the question can fail where asked alone it does not (an indexer that limits a request's size or
+     * fields more than this one asks for): each vault is then read alone, which is whole or refuses on its own. */
+    return new Map();
+  }
+  return new Map(vaults.flatMap((vault, i) => {
+    const events = served[i];
+    return events === null || events === undefined ? [] : [[vault, outputsMadeFor(vault as Hex, events, new Set())] as const];
   }));
 }

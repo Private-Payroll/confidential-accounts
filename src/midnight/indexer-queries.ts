@@ -1,6 +1,7 @@
 /**
  * The questions the service asks Midnight's indexer about a vault: the note events of one transaction, the
- * transactions behind a list of identifiers, and every transaction that acted on a vault. Each answer is read
+ * transactions behind a list of identifiers, and every transaction that acted on a vault, or on many vaults in one
+ * request. Each answer is read
  * whole and refused when it is unreadable or incomplete, never shortened, because a short answer would say a
  * note was never created when the chain holds it. What the answers mean is decided in note-index.ts.
  */
@@ -82,31 +83,40 @@ export function indexerNoteEvents(
           + 'identifier, name it by its hash instead.');
       }
 
-      const { Event } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
-      const served = txs[0]?.zswapLedgerEvents;
-      if (!Array.isArray(served)) {
-        throw new NoteIndexUnreadable(
-          `the indexer's answer about ${where} carries no event list. Nothing is recorded.`);
-      }
-      return served.map((e: any, i: number): ServedEvent => {
-        const hex = bare(String(e?.raw ?? ''));
-        if (!/^(?:[0-9a-f]{2})+$/.test(hex)) {
-          throw new NoteIndexUnreadable(
-            `event ${i + 1} of ${where} is not hex. Nothing is recorded.`);
-        }
-        let event: any;
-        try {
-          event = Event.deserialize(Uint8Array.from(Buffer.from(hex, 'hex')));
-        } catch (cause) {
-          throw new NoteIndexUnreadable(
-            `event ${i + 1} of ${where} did not deserialise as a ledger event `
-            + `(${(cause as Error)?.message ?? String(cause)}). A skipped event could be the one `
-            + 'that answers, so nothing is recorded.', { cause });
-        }
-        return { transactionHash: String(event.source.transactionHash), details: event.content };
-      });
+      return servedEventsOf(where, txs[0]?.zswapLedgerEvents);
     },
   };
+}
+
+
+/**
+ * The events one transaction's answer serves, each deserialised whole by the ledger. A list that is missing, an
+ * event that is not hex or one that does not deserialise stops the read, because a skipped event could be the one
+ * that answers.
+ */
+async function servedEventsOf(where: string, served: unknown): Promise<ServedEvent[]> {
+  const { Event } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
+  if (!Array.isArray(served)) {
+    throw new NoteIndexUnreadable(
+      `the indexer's answer about ${where} carries no event list. Nothing is recorded.`);
+  }
+  return served.map((e: any, i: number): ServedEvent => {
+    const hex = bare(String(e?.raw ?? ''));
+    if (!/^(?:[0-9a-f]{2})+$/.test(hex)) {
+      throw new NoteIndexUnreadable(
+        `event ${i + 1} of ${where} is not hex. Nothing is recorded.`);
+    }
+    let event: any;
+    try {
+      event = Event.deserialize(Uint8Array.from(Buffer.from(hex, 'hex')));
+    } catch (cause) {
+      throw new NoteIndexUnreadable(
+        `event ${i + 1} of ${where} did not deserialise as a ledger event `
+        + `(${(cause as Error)?.message ?? String(cause)}). A skipped event could be the one `
+        + 'that answers, so nothing is recorded.', { cause });
+    }
+    return { transactionHash: String(event.source.transactionHash), details: event.content };
+  });
 }
 
 /**
@@ -249,6 +259,95 @@ export function indexerVaultTransactions(
 }
 
 const HEX_HASH = /^[0-9a-f]{64}$/;
+
+/**
+ * How many vaults' histories one request asks: the indexer's default query complexity (200) over the seven fields each
+ * vault's part of the request names.
+ */
+export const HISTORIES_AT_ONCE = 28;
+
+/** The most actions asked for one contract in a query; the indexer may list fewer, newest first. */
+export const ACTIONS_LISTED = 500;
+
+/** Every transaction that acted on each of many vaults, with its zswap events, asked in one request. */
+export interface VaultHistories {
+  /**
+   * For each vault, in the order asked, the zswap events of every transaction that acted on it, each transaction once;
+   * or null for a vault whose list one request cannot vouch is whole (its oldest entry is not the vault's deploy, so the
+   * indexer cut it short, whatever its length), which is then read alone. Throws `NoteIndexUnaskable` when the indexer will not take the question, and
+   * `NoteIndexUnreadable` when it cannot be asked or answers in part.
+   */
+  eventsOfEvery(vaults: readonly Hex[]): Promise<ReadonlyArray<ReadonlyArray<ServedEvent> | null>>;
+}
+
+/** The indexer's answer to every vault's actions, newest first, each carrying its transaction's events, by alias. */
+export function indexerVaultHistories(indexerUrl: string, post: typeof fetch = fetch): VaultHistories {
+  return {
+    async eventsOfEvery(vaults) {
+      if (vaults.length === 0) return [];
+      const data = await historiesAnswered(indexerUrl, post, vaults);
+      const read: Array<ReadonlyArray<ServedEvent> | null> = [];
+      for (let i = 0; i < vaults.length; i++) read.push(await historyServed(data, i));
+      return read;
+    },
+  };
+}
+
+async function historiesAnswered(indexerUrl: string, post: typeof fetch, vaults: readonly Hex[]): Promise<Record<string, unknown>> {
+  const where = `the transactions of ${vaults.length} vault(s)`;
+  const query = `query (${vaults.map((_, i) => `$a${i}: HexEncoded!`).join(', ')}) { `
+    + vaults.map((_, i) => `c${i}: contract(address: $a${i}) { actions(limit: ${ACTIONS_LISTED}) `
+      + '{ __typename transaction { hash zswapLedgerEvents { raw } } } }').join(' ')
+    + ' }';
+  const variables = Object.fromEntries(vaults.map((v, i) => [`a${i}`, bare(v)]));
+  let body: { readonly errors?: unknown; readonly data?: unknown } | null;
+  try {
+    const res = await post(indexerUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) throw new Error(`the indexer answered HTTP ${res.status}`);
+    body = await res.json() as { readonly errors?: unknown; readonly data?: unknown } | null;
+  } catch (cause) {
+    throw new NoteIndexUnreadable(
+      `the indexer at ${shownAddress(indexerUrl)} could not be asked for ${where} `
+      + `(${(cause as Error)?.message ?? String(cause)}). Check this machine can reach the indexer, then read again.`, { cause });
+  }
+  const errors = body?.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    const said = everyThingSaid(errors);
+    if (theQuestionCannotBeAsked(errors)) throw new NoteIndexUnaskable(`the indexer will not take the question for ${where}: ${said}.`);
+    throw new NoteIndexUnreadable(`the indexer refused the question for ${where}: ${said}. Nothing is recorded.`);
+  }
+  const data = body?.data;
+  if (typeof data !== 'object' || data === null) throw new NoteIndexUnreadable(`the indexer's answer for ${where} holds nothing. Nothing is recorded.`);
+  return data as Record<string, unknown>;
+}
+
+async function historyServed(data: Record<string, unknown>, i: number): Promise<ServedEvent[] | null> {
+  if (!Object.hasOwn(data, `c${i}`)) {
+    throw new NoteIndexUnreadable('the indexer\'s answer left a vault out of a request that asked for it. Nothing is recorded.');
+  }
+  const contract = data[`c${i}`] as { actions?: unknown } | null;
+  if (contract === null) return null;
+  const actions = contract.actions;
+  if (!Array.isArray(actions)) throw new NoteIndexUnreadable('the indexer answered a vault with no list of actions. Nothing is recorded.');
+  if (actions.length === 0 || actions[actions.length - 1]?.__typename !== 'ContractDeploy') return null;
+  const seen = new Set<string>();
+  const events: ServedEvent[] = [];
+  for (const action of actions) {
+    const hash = bare(String(action?.transaction?.hash ?? ''));
+    if (!HEX_HASH.test(hash)) {
+      throw new NoteIndexUnreadable('the indexer listed a vault\'s transaction without a hash of sixty-four hex characters. Nothing is recorded.');
+    }
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    events.push(...await servedEventsOf(named({ hash: hash as Hex }), action.transaction.zswapLedgerEvents));
+  }
+  return events;
+}
 
 /** How the vault's transaction list words each refusal. */
 const VAULT_WORDING: ActionsWording = {

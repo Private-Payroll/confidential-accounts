@@ -71,10 +71,13 @@ const CARRIED_BY: Readonly<Record<GovernedThroughTheRecords['kind'], CarryCircui
  * this change. The one the chain holds first, then the newest; given `proposal`,
  * only the one with that identity on the chain, so a record another seat filed
  * for the same change is never taken up in its place. Null when there is none,
- * and a new one is written down.
+ * and a new one is written down. Only open proposals of the change's own kind
+ * are opened past their sealed kind: a payroll run or a one-off payment is
+ * never this change, and opening one reads the company's payments, which a
+ * change to who is seated does not read.
  */
 async function liveRoundHere(
-  doors: GovernanceDoors, viewingKey: KeysHeld, change: GovernanceOnTheWire, proposal?: string,
+  doors: GovernanceDoors, viewingKey: KeysHeld, change: GovernedThroughTheRecords, proposal?: string,
 ): Promise<{ round: RoundOnThePage; opened: OpenedRound; filed: SealedProposal; enteredNow: boolean } | null> {
   const { service } = doors;
   if (!service.sealedProposals) {
@@ -101,7 +104,7 @@ async function liveRoundHere(
     let opened: OpenedRound;
     let enteredNow = false;
     try {
-      opened = await opensFor(doors)(p.id, viewingKey, false);
+      opened = await opensFor(doors)(p.id, viewingKey, false, KIND_OF[change.kind]);
     } catch (e) {
       /*
        * One that opened as a kind this page does not act on - a new vault's adoption or first secret run, set up
@@ -117,7 +120,7 @@ async function liveRoundHere(
       try {
         await proposalEntered(doors, proposalEntry(doors.accountId, p));
         enteredNow = true;
-        opened = await opensFor(doors)(p.id, viewingKey, false);
+        opened = await opensFor(doors)(p.id, viewingKey, false, KIND_OF[change.kind]);
       } catch (e) {
         notEntered ??= e;
         continue;

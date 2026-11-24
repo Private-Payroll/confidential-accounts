@@ -25,14 +25,14 @@ import { ReadRanOutOfTime, SERVICE_READ_BOUND_MS } from './read-bound.js';
 import type {
   AnchorPlacement, AnchorsOnChain, GovernedCallOrder, HeadStepAsked, OpenedRound, ProposalIdentity, RoundChangeOnTheWire, RoundOnChain, SignerMaterial, SpendingPolicyKeys, VouchedRunOnTheWire,
 } from './governed-call-builder.js';
-import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { AddressClaimFor, UnshieldedAddressClaim } from 'midnight-identity/profile/address-claim';
 import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 
 export type * from './vault-worker-wire.js';
 import type {
-  AccountCallChainOnTheWire, AccountPresenceOnTheWire, CoinOnTheWire, CreatingTransactionAnswer, InvitedSeatOnTheWire, OneOffOnTheWire, OrderOnTheWire, PayoutChainOnTheWire, SeatOpeningsAnswer, SigningKeyOnTheWire, VaultAnswer, VaultAsk, VaultOnChainOnTheWire, VaultRequest,
+  AccountCallChainOnTheWire, AccountPresenceOnTheWire, CoinOnTheWire, CreatingTransactionAnswer, InvitedSeatOnTheWire, OneOffOnTheWire, OrderOnTheWire, PayoutChainOnTheWire, SeatOpeningsAnswer, SigningKeyOnTheWire,
+  SpendingPolicyKeysAsked, SpendingPolicyKeysMade, VaultAnswer, VaultAsk, VaultOnChainOnTheWire, VaultRequest,
 } from './vault-worker-wire.js';
 export { VaultAskFailed };
 
@@ -225,9 +225,12 @@ export interface VaultBuilderClient {
    * makes, and with `policy` and a run's `total` the approvals its band needs,
    * each made with the account's own functions.
    */
-  spendingPolicyKeys(input: {
-    vault: string; asset: string; assetBlinding: string; policy?: PolicyOpeningOnTheWire; total?: string;
-  }): Promise<SpendingPolicyKeys>;
+  spendingPolicyKeys(input: SpendingPolicyKeysAsked): Promise<SpendingPolicyKeys>;
+  /**
+   * The keys of every vault and currency asked, as `spendingPolicyKeys` makes each, in one ask of the worker: each pair
+   * answered on its own, in the order asked, a pair whose keys could not be made refused with why.
+   */
+  spendingPolicyKeysOfEach(pairs: readonly SpendingPolicyKeysAsked[]): Promise<readonly PromiseSettledResult<SpendingPolicyKeys>[]>;
   /** The key the account keeps the approvals any change to a spending policy needs under, made with the account's own function. */
   policyBarKey(): Promise<string>;
   /**
@@ -688,6 +691,12 @@ export function startVaultBuilder(network: string): Promise<VaultBuilderClient> 
 type Ask = ReturnType<typeof askOver>['ask'];
 
 /** Every ask of the client, each through the one `ask`. */
+/** Each pair's keys as the worker answered them, in the order asked; an answer that does not give one for every pair is refused whole. */
+const keysEachOf = (pairs: readonly SpendingPolicyKeysAsked[], made: readonly SpendingPolicyKeysMade[]): PromiseSettledResult<SpendingPolicyKeys>[] => {
+  if (made.length !== pairs.length) throw new Error('the worker did not answer the keys of every vault and currency asked.');
+  return made.map((m): PromiseSettledResult<SpendingPolicyKeys> => ('keys' in m ? { status: 'fulfilled', value: m.keys } : { status: 'rejected', reason: new Error(m.refused) }));
+};
+
 function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]): VaultBuilderClient {
   return {
     proofsInProgress,
@@ -785,7 +794,12 @@ function clientFrom(ask: Ask, proofsInProgress: () => readonly ProofInProgress[]
     proposalIdentity: async (change, salt) => (await ask({ ask: 'proposal-identity', change, salt })).identity,
     vouchedRunIdentity: async (run) => (await ask({ ask: 'vouched-run-identity', run })).chainId,
     companyWide: async () => (await ask({ ask: 'company-wide' })).value,
-    spendingPolicyKeys: async (input) => (await ask({ ask: 'spending-policy-keys', ...input })).keys,
+    spendingPolicyKeys: async (input) => {
+      const [made] = keysEachOf([input], (await ask({ ask: 'spending-policy-keys', pairs: [input] })).keys);
+      if (made!.status === 'rejected') throw made!.reason;
+      return made!.value;
+    },
+    spendingPolicyKeysOfEach: async (pairs) => keysEachOf(pairs, (await ask({ ask: 'spending-policy-keys', pairs })).keys),
     policyBarKey: async () => (await ask({ ask: 'policy-bar-key' })).value,
     addressClaimRefusal: async (claim, f) => (await ask({ ask: 'address-claim-refusal', claim, for: f })).refusal,
     openOneOff: async (rec, key) => (await ask({ ask: 'one-off-opened', rec, key })).oneOff,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as keyring from './keyring.js';
 import * as transport from './service-transport.js';
+import { ServiceNotReached } from './hand-over.js';
 
 /**
  * **A 401 SIGNS THE PERSON OUT; A 503 `could-not-check` AND A NETWORK FAILURE NEVER DO.**
@@ -76,7 +77,8 @@ describe('resuming a sign-in', () => {
   it('a network failure is asked again the same way and signs nobody out', async () => {
     await signedIn();
     answers = [() => { throw new TypeError('Failed to fetch'); }];
-    await expect(keyring.resumeSession(null, async () => {})).rejects.toBeInstanceOf(TypeError);
+    /* RED WHEN: a request that got no answer, which the page's transport says as not reached, is not asked again, or signs the person out. */
+    await expect(keyring.resumeSession(null, async () => {})).rejects.toBeInstanceOf(ServiceNotReached);
     expect(asked).toBe(4);
     expect(keyring.currentUser()?.id).toBe('u1');
   });

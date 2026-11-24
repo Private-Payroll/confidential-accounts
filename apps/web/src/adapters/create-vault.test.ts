@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { openViewOf, type PageView } from './filing-judge.js';
+import { ViewEnded } from 'vaults-web-shared/company-view.js';
 import { seatOpenedFor } from '../../../../src/testing/directory-seats.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_ROOT } from '../../../../src/midnight/record-tree.js';
@@ -89,6 +90,9 @@ const kr = vi.hoisted(() => ({
   noBornHeld: false,
   /* The worker fails when it reads how the sent vault was created. */
   readAsBornFails: false,
+  /* The company's keys are built in the view, and each one built is watched. */
+  keysInTheView: false,
+  keysMade: [] as WeakRef<object>[],
 }));
 /* Each read here stands for a page opened afresh, so each is handed a view of its own, as the page opens it. */
 const aViewOf = (company: string): PageView => openViewOf(company);
@@ -96,8 +100,15 @@ vi.mock('./filing-judge.js', async (real) => {
   const judge = await real<typeof import('./filing-judge.js')>();
   return {
   ...judge,
-  /* The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never changed. */
-  companyKeysFor: async () => ({ epoch: 0, newest: 0, key: '5e'.repeat(32), keyAt: () => '5e'.repeat(32), sealing: () => ({ key: '5e'.repeat(32), epoch: 0 }) }),
+  /*
+   * The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never
+   * changed; where a test says, built in a layer of the view as the real judges build them, and watched by a weak reference.
+   */
+  companyKeysFor: async (view: PageView) => {
+    const keys = () => ({ epoch: 0, newest: 0, key: '5e'.repeat(32), keyAt: () => '5e'.repeat(32), sealing: () => ({ key: '5e'.repeat(32), epoch: 0 }) });
+    if (!kr.keysInTheView) return keys();
+    return view.layer('company-keys', async () => { const made = keys(); kr.keysMade.push(new WeakRef(made)); return made; });
+  },
 };
 });
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
@@ -367,7 +378,7 @@ beforeEach(async () => {
   kr.chain = null;
   kr.adoptedAlso = [];
   kr.seatsAlso = [];
-  kr.holdersFail = null; kr.walletAskFails = false; kr.holdersThreshold = 1; kr.holdersReads = 0; kr.noBornHeld = false; kr.readAsBornFails = false;
+  kr.keysInTheView = false; kr.keysMade = []; kr.holdersFail = null; kr.walletAskFails = false; kr.holdersThreshold = 1; kr.holdersReads = 0; kr.noBornHeld = false; kr.readAsBornFails = false;
   startRoutes();
   kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' };
   kr.roster = rosterWith(MINE);
@@ -608,5 +619,33 @@ describe('whether a vault can be created', () => {
     expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
     kr.answers[ROUTE()] = new TypeError('fetch failed');
     expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'refused', why: 'unreachable' });
+  });
+});
+
+describe('the company\'s keys a vault is read with', () => {
+  /* RED WHEN: what the vault's read is handed holds the company's opened keys itself, so they outlive the view that opened them. */
+  it('are read through the view at each call: once the view ends the reader refuses, and nothing holds the keys', async () => {
+    const v8 = await import('node:v8');
+    const vm = await import('node:vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    const m = await load();
+    named();
+    kr.keysInTheView = true;
+    const view = aViewOf('c1');
+    const o = await m.openedForAVault('u1', view, false);
+    if (typeof o === 'string') throw new Error(`the company did not open: ${o}`);
+    expect((await o.companyKeys()).key).toBe('5e'.repeat(32));
+    expect(kr.keysMade).toHaveLength(1);
+    view.end('the panel closed');
+    await expect(o.companyKeys()).rejects.toBeInstanceOf(ViewEnded);
+    /* Collected, after a turn and a collection at a time, at most five times. */
+    const collected = async (ref: WeakRef<object>, left: number): Promise<boolean> => {
+      if (ref.deref() === undefined || left === 0) return ref.deref() === undefined;
+      await new Promise((r) => setTimeout(r, 0));
+      gc();
+      return collected(ref, left - 1);
+    };
+    expect(await collected(kr.keysMade[0]!, 5)).toBe(true);
   });
 });

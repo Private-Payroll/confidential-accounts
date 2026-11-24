@@ -131,13 +131,6 @@ export async function readVaultPublicMoney(personId: string, view: PageView, vau
   }
 }
 
-/**
- * Names to the view the record of each adopted vault's name a screen is about to draw, so the first name read proves
- * them all in one held read, however many vaults the company holds, rather than one more for each vault drawn.
- */
-export const declareVaultNamesIn = (view: PageView, vaults: readonly Pick<VaultRow, 'vault' | 'adopted'>[]): void =>
-  view.declare({ records: vaults.filter((v) => v.adopted === true).map((v) => ({ store: PROVEN.company, kind: VAULT_INFO_KIND, id: v.vault.toLowerCase() })) });
-
 /** What `readVaultName` answers, when asked to, for a name it could not read, apart from none filed. */
 export const NAME_NOT_READ: unique symbol = Symbol();
 
@@ -147,6 +140,8 @@ export const NAME_NOT_READ: unique symbol = Symbol();
  * to show: none was filed, it is blank, or - unless `unread` is given, which is answered instead - it could not be
  * read or believed, nobody or somebody else is signed in, or the company names no account. A screen then says the
  * vault by its number. The record code is loaded when a name is asked for, so a page that shows no name does not carry it.
+ * The vault's name record is named to the view before anything is awaited, so the names asked in one turn are proven
+ * together in one held read, however many vaults a screen draws.
  */
 export async function readVaultName(personId: string, view: PageView, vault: string): Promise<string | null>;
 export async function readVaultName(personId: string, view: PageView, vault: string, unread: typeof NAME_NOT_READ): Promise<string | null | typeof NAME_NOT_READ>;
@@ -154,6 +149,7 @@ export async function readVaultName(
   personId: string, view: PageView, vault: string, unread?: typeof NAME_NOT_READ,
 ): Promise<string | null | typeof NAME_NOT_READ> {
   const notRead = unread ?? null;
+  view.declare({ records: [{ store: PROVEN.company, kind: VAULT_INFO_KIND, id: vault.toLowerCase() }] });
   try {
     if (!(await keyringFor(personId))) return notRead;
     const sealed = await sealedIn(view);

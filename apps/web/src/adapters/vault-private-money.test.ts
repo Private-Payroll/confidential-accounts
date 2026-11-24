@@ -7,7 +7,7 @@ import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { directoryEntryMade } from '../../../../src/midnight/seat-directory.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import { HttpSealedPoolStore } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { sendOnPage } from 'vaults-web-shared/service-transport.js';
+import { serviceAnswered } from 'vaults-web-shared/service-transport.js';
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
@@ -64,6 +64,13 @@ const kr = vi.hoisted(() => ({
   /* How often the seat's public half, and the seat's own leaf from its secrets, were asked for. */
   shown: 0,
   ownSeatAsked: 0,
+  /* The other vaults the account adopted, each vault's state on the chain where it differs, and each ask of the chain, one vault or many. */
+  alsoAdopted: [] as string[],
+  viewOf: {} as Record<string, unknown>,
+  chainAsks: [] as string[],
+  /* The vaults each read of vault records named, and whether a read naming more than one vault fails whole. */
+  recordsAsked: [] as string[][],
+  failJoined: false,
 }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
@@ -100,7 +107,7 @@ vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
   holdersFromTheWallet: async () => {
     if (kr.holdersFail !== null) throw kr.holdersFail;
     return {
-    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: kr.adopted ? [VAULT] : [], vaultThresholds: [], policyBar: null, founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
+    holders: { committee: kr.committee, threshold: 1, seats: kr.seated, approvals: 1, adoptedVaults: kr.adopted ? [VAULT, ...kr.alsoAdopted] : [], vaultThresholds: [], policyBar: null, founding: SEAT, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
     vault: null,
     /* The indexer the wallet reads through: the vault is read there on this device, and nowhere else. */
     indexer: kr.indexer,
@@ -112,14 +119,17 @@ vi.mock('vaults-web-shared/service-transport.js', async (real) => {
     kr.asked.push(path);
     /* The newest version entered of each record named: the pool's once it is filed, and none of any other. */
     if (path === '/api/accounts/c1/manifest/newest') {
-      const b = JSON.parse(String(init?.body)) as { records: { store: string; kind: string }[] };
+      const b = JSON.parse(String(init?.body)) as { records: { store: string; kind: string; id: string }[] };
       const filed = (kr.filed as { version?: number } | null)?.version ?? 0;
-      return { versions: b.records.map((r) => (r.store === 'vault' && r.kind === 'pool' ? filed : 0)) };
+      return { versions: b.records.map((r) => (r.store === 'vault' && r.kind === 'pool' && r.id === VAULT ? filed : 0)) };
     }
     /* The vault records read by name, each as its own read answers it. */
     if (path === '/api/accounts/c1/vault-records/read') {
-      const b = JSON.parse(String(init?.body)) as { records: { record: string }[] };
-      return { records: b.records.map((r) => ({ record: r.record, filed: r.record === 'pool' ? kr.filed : null })) };
+      const b = JSON.parse(String(init?.body)) as { records: { vault: string; record: string }[] };
+      const vaults = [...new Set(b.records.map((r) => r.vault))];
+      kr.recordsAsked.push(vaults);
+      if (kr.failJoined && vaults.length > 1) throw new Error('a read of many vaults failed');
+      return { records: b.records.map((r) => ({ record: r.record, filed: r.record === 'pool' && r.vault === VAULT ? kr.filed : null })) };
     }
     if (path === '/api/accounts/c1/records/read') {
       const b = JSON.parse(String(init?.body)) as { records: { kind: string; id: string; every?: boolean }[] };
@@ -169,14 +179,20 @@ vi.mock('./vault-builder.js', () => ({
     },
     vaultOnChain: async (i: { vault: string; indexer: { indexerUri: string } }) => {
       kr.readHere.push(`${i.vault} at ${i.indexer.indexerUri}`);
-      if (kr.view instanceof Error) throw kr.view;
-      return kr.view;
+      kr.chainAsks.push(i.vault);
+      const view = kr.viewOf[i.vault] ?? kr.view;
+      if (view instanceof Error) throw view;
+      return view;
     },
-    vaultsOnChain: async (i: { vaults: readonly string[]; indexer: { indexerUri: string } }) => i.vaults.map((vault) => {
-      kr.readHere.push(`${vault} at ${i.indexer.indexerUri}`);
-      if (kr.view instanceof Error) throw kr.view;
-      return kr.view;
-    }),
+    vaultsOnChain: async (i: { vaults: readonly string[]; indexer: { indexerUri: string } }) => {
+      kr.chainAsks.push(i.vaults.join(','));
+      return i.vaults.map((vault) => {
+        kr.readHere.push(`${vault} at ${i.indexer.indexerUri}`);
+        const view = kr.viewOf[vault] ?? kr.view;
+        if (view instanceof Error) throw view;
+        return view;
+      });
+    },
   }),
 }));
 
@@ -225,7 +241,7 @@ const RECORDS = recordsKeypairFrom(new Uint8Array(32).fill(0x11));
 
 /** The pool filed by `filer`, wrapped under `seat` to `to`, holding `notes`. */
 async function filePool(notes: Array<{ nonce: Hex; token: Hex; value: bigint }>, filer = SIGNING, to = RECORDS.publicKey, seat = SEAT) {
-  const store = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(sendOnPage(() => 'u1'), { directory: 'empty', newest: 'none-entered' }), 'acc_private', manifestKept().manifest), filer.secret, async () => () => null);
+  const store = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(serviceAnswered(() => 'u1'), { directory: 'empty', newest: 'none-entered' }), 'acc_private', manifestKept().manifest), filer.secret, async () => () => null);
   kr.filedBy = filer.secret;
   await new SealedNotePool(store, { signerId: seat, wrappingSecret: RECORDS.secret }, async () => [{ id: seat, wrappingPublicKey: to }]).create(VAULT, { notes });
 }
@@ -251,6 +267,7 @@ async function load() {
 }
 beforeEach(() => {
   kr.signedIn = 'u1'; kr.released = 0; kr.filed = null; kr.asked = []; kr.companyKey = COMPANY_KEY; kr.ownSeat = SEAT; kr.readHere = []; kr.adopted = false; kr.rebuilt = null; kr.refusePut = false; kr.holdersFail = null; kr.shown = 0; kr.ownSeatAsked = 0;
+  kr.alsoAdopted = []; kr.viewOf = {}; kr.chainAsks = []; kr.recordsAsked = []; kr.failJoined = false;
   kr.indexer = { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' };
   kr.filings = [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }];
   kr.seated = [SEAT];
@@ -468,5 +485,85 @@ describe('a vault\'s private money, read on this device', () => {
     expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }), 'no keys').toEqual(COULD_NOT('no-keys'));
     kr.keys = { signerId: 's1', signingSecret: SIGNING.secret, wrappingSecret: WRAPPING.secret, blinding: 'cc'.repeat(32) };
     expect(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: registryOf([asset('A', 6, TOKEN), asset('B', 6, TOKEN.toUpperCase())]) }), 'one token twice').toEqual(COULD_NOT('other'));
+  });
+});
+
+/* A second vault the account adopted: no pool of it is filed, and the chain holds no note of it. */
+const SECOND = 'cd'.repeat(32);
+const amountsOf = (a: Awaited<ReturnType<typeof import('./vault-private-money.js').readVaultPrivateMoney>>) => heldOf(a).amounts.map((x) => x.symbol);
+
+describe('every adopted vault\'s private money, read through one view of the company', () => {
+  beforeEach(() => {
+    kr.adopted = true;
+    kr.alsoAdopted = [SECOND];
+    kr.viewOf = { [SECOND]: chainHolding([]) };
+  });
+
+  /* RED WHEN: a vault's records are read apart from the other adopted vaults', or one vault's money is taken from or for another's. */
+  it('reads every adopted vault\'s records in one ask, and still finds each vault\'s money on its own', async () => {
+    await filePool(NOTES);
+    const { readVaultPrivateMoney } = await load();
+    const view = aViewOf('c1');
+    /* One vault read after the other, as tiles drawn at different times read them. */
+    expect(amountsOf(await readVaultPrivateMoney('u1', view, VAULT, { registry: REGISTRY }))).toEqual(['TDUST', 'OTHER']);
+    expect(await readVaultPrivateMoney('u1', view, SECOND, { registry: REGISTRY })).toEqual({ of: 'nothing-yet' });
+    expect(kr.recordsAsked).toEqual([[VAULT, SECOND]]);
+  });
+
+  /* RED WHEN: one vault's record that is not believed, or whose chain read fails, is shown as nothing held, or stops another vault's money being shown. */
+  it('says a vault\'s record not believed, or its read failed, for that vault alone', async () => {
+    await filePool(NOTES);
+    const { readVaultPrivateMoney } = await load();
+    for (const [name, chain, found] of [
+      ['the chain holds fewer of its notes', chainHolding(NOTES.slice(1)), { of: 'not-believed' }],
+      ['its read on the chain fails', new Error('down'), COULD_NOT('chain')],
+    ] as const) {
+      kr.viewOf = { [SECOND]: chainHolding([]), [VAULT]: chain };
+      const view = aViewOf('c1');
+      const [first, second] = await Promise.all([VAULT, SECOND].map((v) => readVaultPrivateMoney('u1', view, v, { registry: REGISTRY })));
+      expect(first, name).toEqual(found);
+      expect(second, name).toEqual({ of: 'nothing-yet' });
+    }
+  });
+
+  /* RED WHEN: a joined read of every vault's records that fails is taken as each vault's answer, so one vault's fault fails every tile, or is not asked again vault by vault. */
+  it('asks each vault\'s records alone after the joined read of them fails', async () => {
+    await filePool(NOTES);
+    kr.failJoined = true;
+    const { readVaultPrivateMoney } = await load();
+    const view = aViewOf('c1');
+    const [first, second] = await Promise.all([VAULT, SECOND].map((v) => readVaultPrivateMoney('u1', view, v, { registry: REGISTRY })));
+    expect(amountsOf(first!)).toEqual(['TDUST', 'OTHER']);
+    expect(second).toEqual({ of: 'nothing-yet' });
+    expect(kr.recordsAsked[0]).toEqual([VAULT, SECOND]);
+    expect(kr.recordsAsked.slice(1).every((vaults) => vaults.length === 1)).toBe(true);
+  });
+
+  /* RED WHEN: a vault is read on the chain alone, or a press to read again reads from what the read before it was answered. */
+  it('reads every vault on the chain in one ask, and once more for each press to read again', async () => {
+    await filePool(NOTES);
+    const { readVaultPrivateMoney } = await load();
+    const { vaultReadAgainIn } = await import('./filing-judge.js');
+    const view = aViewOf('c1');
+    const both = (round: number) => Promise.all([VAULT, SECOND].map((v) => readVaultPrivateMoney('u1', view, v, { registry: REGISTRY, round })));
+    await both(0);
+    expect(kr.chainAsks).toEqual([`${VAULT},${SECOND}`]);
+    const round = vaultReadAgainIn(view);
+    const [first] = await both(round);
+    expect(amountsOf(first!)).toEqual(['TDUST', 'OTHER']);
+    expect(kr.chainAsks).toEqual([`${VAULT},${SECOND}`, `${VAULT},${SECOND}`]);
+  });
+
+  /* RED WHEN: what one view read of the seat or the records is kept past its end, or answers a read through another view. */
+  it('keeps nothing of a view that ended, and reads afresh through the next', async () => {
+    await filePool(NOTES);
+    const { readVaultPrivateMoney } = await load();
+    const view = aViewOf('c1');
+    expect(amountsOf(await readVaultPrivateMoney('u1', view, VAULT, { registry: REGISTRY }))).toEqual(['TDUST', 'OTHER']);
+    view.end('the page moved on');
+    expect((await readVaultPrivateMoney('u1', view, VAULT, { registry: REGISTRY })).of).toBe('unreadable');
+    const asked = kr.recordsAsked.length;
+    expect(amountsOf(await readVaultPrivateMoney('u1', aViewOf('c1'), VAULT, { registry: REGISTRY }))).toEqual(['TDUST', 'OTHER']);
+    expect(kr.recordsAsked.length).toBe(asked + 1);
   });
 });

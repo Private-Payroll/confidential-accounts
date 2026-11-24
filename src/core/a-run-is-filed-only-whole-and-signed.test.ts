@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { newSigningKeypair } from './crypto.js';
-import { runFilingRefusal, signRunFiling, type RunToFile } from './run-filing.js';
+import { runFilingMessage, runFilingRefusal, signRunFiling, type RunToFile } from './run-filing.js';
 
 const CO = 'acc_1';
 const seat = newSigningKeypair();
@@ -52,5 +52,13 @@ describe('A RUN A SEAT FILED', () => {
       /* RED WHEN: a run with that wrong is kept, or refused for another reason than that one. */
       expect(runFilingRefusal(CO, run), why).toBe(says);
     }
+  });
+
+  it('IS THE SAME RUN, AND STILL SIGNED, WHEN A LIST SERVES IT WITH THE WORD FOR WHICH LEDGER WROTE IT', () => {
+    const run = filed({});
+    const listed = { ...run, provenance: 'chain' };
+    /* RED WHEN: the service's word on a listed run changes the bytes its entry and signature cover, so every run a seat filed is refused when the list is read. */
+    expect(runFilingMessage(CO, listed as unknown as RunToFile)).toBe(runFilingMessage(CO, run));
+    expect(runFilingRefusal(CO, listed)).toBeNull();
   });
 });

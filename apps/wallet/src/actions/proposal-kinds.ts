@@ -236,16 +236,18 @@ const carrying = (ctx: StepContext, kind: ProposalKind, intent: ActIntent, round
   };
   const carryingCtx: StepContext = {
     ...ctx,
-    sendStraight: (send, into, call) => {
-      if (call !== undefined && movesWhoHoldsByCircuit(call.circuit)) {
+    sendStraight: (send, into, calls = []) => {
+      const moving = calls.filter((c) => movesWhoHoldsByCircuit(c.circuit));
+      if (moving.length > 0) {
         const own = moves === undefined ? null : carriedCall(moves, account());
-        if (own === null || own.circuit !== call.circuit || own.contract !== call.contract.toLowerCase()) {
-          return Promise.reject(Object.assign(new Error(`the call ${call.circuit} is not what carries this proposal out, so this wallet sent nothing.`),
+        const stranger = moving.find((c) => own === null || own.circuit !== c.circuit || own.contract !== c.contract.toLowerCase());
+        if (stranger !== undefined) {
+          return Promise.reject(Object.assign(new Error(`the call ${stranger.circuit} is not what carries this proposal out, so this wallet sent nothing.`),
             { nothingWasSent: true, thisSendNotSent: true }));
         }
-        ctx.movesWhoHolds([...carryWrites(round.id, moves!), own], moves!.move);
+        ctx.movesWhoHolds([...carryWrites(round.id, moves!), own!], moves!.move);
       }
-      return ctx.sendStraight(send, into, call);
+      return ctx.sendStraight(send, into, calls);
     },
   };
   return { ctx: carryingCtx, declare };

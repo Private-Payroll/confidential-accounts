@@ -60,7 +60,7 @@ export interface RecoveryDoors extends FromTheChainDoors {
   /** Where this device keeps the headers it signed, to file again; absent, none is kept. */
   readonly headers?: HeadersKeptStore;
   /** Where the service keeps the company's headers; absent or refusing, the recovery's header is kept on this device only. */
-  readonly tree?: Pick<TreeService, 'fileHeader'>;
+  readonly tree?: Pick<TreeService, 'fileHeader' | 'refileHeader'>;
   readonly now?: () => Date;
   /** The recovery window this wallet kept as of the last records it checked (`KeptRecoveryWindow`); null when it kept none. */
   readonly window: () => Promise<KeptRecoveryWindow | null>;
@@ -452,7 +452,9 @@ export async function carryOutRecoveryHere(
   await doors.headers?.signed(company, keptWith(header, () => undefined, () => undefined));
   let filed = false;
   try {
-    if (doors.tree !== undefined) { await doors.tree.fileHeader(company, header); filed = true; }
+    /* A repair as the recovery files it: through the view it never ends the read the carrying out stands on. */
+    if (doors.tree?.refileHeader !== undefined) filed = await doors.tree.refileHeader(company, header);
+    else if (doors.tree !== undefined) { await doors.tree.fileHeader(company, header); filed = true; }
   } catch { /* the service would not keep it: kept here, and filed again when it can be */ }
   const failedBefore = (standing.failedCalls ?? []).filter((c) => c === 'recoverAnchor').length;
   const { sentBy, went } = await sentFromHere(doors, built.tx, carriedOutOnTheChain(doors, file.chainId, chainHead, head, failedBefore));

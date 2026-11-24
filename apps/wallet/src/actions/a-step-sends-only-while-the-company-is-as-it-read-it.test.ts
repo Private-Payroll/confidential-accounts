@@ -93,7 +93,7 @@ const go = (channel: ActingChannel, steps: readonly ActionStep[]) => runAction({
 const stepThat = (run: (c: StepContext) => Promise<void>): ActionStep => ({ title: { key: 'ask.act.headline' }, run });
 const DEPOSIT = `POST /api/accounts/acc_1/vaults/${VAULT}/deposit`;
 /** A deposit into the vault, as a step writes it through its view. */
-const DEPOSITED = { to: 'vault-send' as const, act: 'deposit' as const, vault: VAULT, tx: 'AA' };
+const DEPOSITED = { to: 'vault-send' as const, tx: 'AA', calls: [{ act: 'deposit' as const, vault: VAULT }] };
 /* A send the step asks by name and not through a view, which the runner checks at its gate: the company's pay key filed. */
 const PAY_KEY_PATH = '/api/accounts/acc_1/creation/pay-key';
 const PAY_KEY = `POST ${PAY_KEY_PATH}`;
@@ -103,6 +103,31 @@ beforeEach(() => { vi.useFakeTimers({ now: START }); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe('a send into a vault goes only while the company\'s account adopts it', () => {
+  it('hands over no transaction one of whose calls deposits into a vault another of its calls retires', async () => {
+    const c = aCompany();
+    const sent: string[] = [];
+    await go(c.channel, [stepThat(async (ctx) => {
+      await c.viewOf(ctx).current().holders();
+      ctx.movesWhoHolds([{ circuit: 'retireVault', contract: 'cd0' }], (h) => ({ ...h, adoptedVaults: h.adoptedVaults.filter((v) => v !== VAULT) }));
+      await ctx.sendStraight(async (door) => { door.handedOver(); sent.push('sent by the wallet'); }, [{ vault: VAULT }], [{ circuit: 'retireVault', contract: 'Cd0' }]);
+    })]);
+    /* RED WHEN: a deposit is checked only against the account as read, so public money goes into a vault the same transaction retires. */
+    expect(sent).toEqual([]);
+    expect(c.ended[0]).toMatchObject({ ended: 'stopped', refused: 'act.reach.why.vault-not-adopted' });
+  });
+
+  it('checks every vault a transaction deposits into, not its first alone', async () => {
+    const c = aCompany();
+    const sent: string[] = [];
+    await go(c.channel, [stepThat(async (ctx) => {
+      await c.viewOf(ctx).current().holders();
+      await ctx.sendStraight(async (door) => { door.handedOver(); sent.push('sent by the wallet'); }, [{ vault: VAULT }, { vault: 'cd'.repeat(32) }]);
+    })]);
+    /* RED WHEN: the gate checks one deposit of a transaction of several. */
+    expect(sent).toEqual([]);
+    expect(c.ended[0]).toMatchObject({ ended: 'stopped', refused: 'act.reach.why.vault-not-adopted' });
+  });
+
   it('hands the deposit over after reading the company again in its turn, when nothing moved', async () => {
     const c = aCompany();
     await go(c.channel, [stepThat(async (ctx) => {
@@ -226,7 +251,7 @@ describe('a send the step says moves who holds the company moves what the step r
 });
 
 describe('a send the step\'s view writes itself is checked once, by the view, and held to the same rules', () => {
-  const deposit = { to: 'vault-send' as const, act: 'deposit' as const, vault: VAULT, tx: 'AA' };
+  const deposit = { to: 'vault-send' as const, tx: 'AA', calls: [{ act: 'deposit' as const, vault: VAULT }] };
   it('hands a deposit written through the view over after one read of the company, not two', async () => {
     const c = aCompany();
     await go(c.channel, [stepThat(async (ctx) => {
@@ -282,7 +307,7 @@ describe('a send the step\'s view writes itself is checked once, by the view, an
       const held = c.viewOf(ctx);
       await held.current().holders();
       await held.current().write([deposit]).catch(() => undefined);
-      await ctx.sendStraight(async (door) => { await door.ready(); door.handedOver(); sent.push('sent by the wallet'); }, { vault: VAULT });
+      await ctx.sendStraight(async (door) => { await door.ready(); door.handedOver(); sent.push('sent by the wallet'); }, [{ vault: VAULT }]);
     })]);
     /* RED WHEN: the own-DUST send after a refused write finds no view to check the vault against and is refused. */
     expect(sent).toEqual(['sent by the wallet']);
@@ -309,7 +334,7 @@ describe('a send the step\'s view writes itself is checked once, by the view, an
     await go(c.channel, [stepThat(async (ctx) => {
       const view = c.viewOf(ctx).current();
       await view.holders();
-      await view.write([{ ...deposit, act: 'public-deposit' }]).catch(() => undefined);
+      await view.write([{ ...deposit, calls: [{ act: 'public-deposit', vault: VAULT }] }]).catch(() => undefined);
     })]);
     /* RED WHEN: public money goes into a vault the company's account does not adopt, which the vault's own contract does not check. */
     expect(c.posted.filter((p) => p.endsWith('/public-deposit'))).toEqual([]);
@@ -362,7 +387,7 @@ describe('a send the step\'s view writes itself is checked once, by the view, an
       await held.current().holders();
       ctx.movesWhoHolds(adoptionSends(ACCOUNT, NEW), adopted(NEW));
       await expect(held.current().write([{ to: 'vault-start', vault: NEW, step: 'account', body: {} }])).rejects.toMatchObject({ status: 502, nothingWasSent: true });
-      await ctx.sendStraight(async (door) => { door.handedOver(); }, undefined, { circuit: 'adopt', contract: ACCOUNT.toUpperCase() });
+      await ctx.sendStraight(async (door) => { door.handedOver(); }, [], [{ circuit: 'adopt', contract: ACCOUNT.toUpperCase() }]);
       c.chain.adoptedVaults = [...c.chain.adoptedVaults, NEW];
       await payKeySent(ctx);
     })]);
@@ -393,11 +418,25 @@ describe('a send the step\'s view writes itself is checked once, by the view, an
     await go(c.channel, [stepThat(async (ctx) => {
       await c.viewOf(ctx).current().holders();
       ctx.movesWhoHolds([{ proposal: 'prp_1' }, { circuit: 'seatInvited', contract: 'cd0' }], (h) => ({ ...h, seats: [...h.seats, 'bb'] }));
-      await ctx.sendStraight(async (door) => { door.handedOver(); }, undefined, { circuit: 'seatInvited', contract: 'Cd0' });
+      await ctx.sendStraight(async (door) => { door.handedOver(); }, [], [{ circuit: 'seatInvited', contract: 'Cd0' }]);
       c.chain.seats = ['aa', 'bb'];
       await payKeySent(ctx);
     })]);
     /* RED WHEN: a declared move handed straight to the chain is taken for another signer's change. */
+    expect(c.posted.filter((p) => p === PAY_KEY)).toHaveLength(1);
+    expect(c.ended[0]).toMatchObject({ ended: 'done' });
+  });
+  it('moves what the step read by every move declared for the calls of one transaction, in order', async () => {
+    const c = aCompany();
+    await go(c.channel, [stepThat(async (ctx) => {
+      await c.viewOf(ctx).current().holders();
+      ctx.movesWhoHolds([{ circuit: 'seatInvited', contract: 'cd0' }], (h) => ({ ...h, seats: [...h.seats, 'bb'] }));
+      ctx.movesWhoHolds([{ circuit: 'setThreshold', contract: 'cd0' }], (h) => ({ ...h, threshold: h.threshold + 1 }));
+      await ctx.sendStraight(async (door) => { door.handedOver(); }, [], [{ circuit: 'seatInvited', contract: 'Cd0' }, { circuit: 'setThreshold', contract: 'Cd0' }]);
+      Object.assign(c.chain, { seats: ['aa', 'bb'], threshold: 2 });
+      await payKeySent(ctx);
+    })]);
+    /* RED WHEN: one transaction of two calls moves the reading by one of them, and the next send is stopped as another signer's change. */
     expect(c.posted.filter((p) => p === PAY_KEY)).toHaveLength(1);
     expect(c.ended[0]).toMatchObject({ ended: 'done' });
   });
@@ -455,7 +494,7 @@ describe('every send of a step is checked against what the step read, its own se
       const held = c.viewOf(ctx);
       await held.current().holders();
       await held.current().write([DEPOSITED]).catch(() => undefined);
-      await ctx.sendStraight(async (door) => { await door.ready(); door.handedOver(); sent.push('sent by the wallet'); }, { vault: VAULT });
+      await ctx.sendStraight(async (door) => { await door.ready(); door.handedOver(); sent.push('sent by the wallet'); }, [{ vault: VAULT }]);
     })]);
     /* RED WHEN: a deposit the service took nothing of ends the step's read, so its own-DUST send is refused as a vault let go. */
     expect(sent).toEqual(['sent by the wallet']);

@@ -158,10 +158,13 @@ export interface StepContext {
    * The runner's one door for a transaction this wallet sends itself (`send`), into a vault (`into`) or not: the
    * step's views read the company again first, and again when the send calls `door.ready()` after a wait, and the
    * send counts as handed over once it calls `door.handedOver()`. A change by another signer, or a vault the account
-   * no longer adopts, throws before anything is sent and stops the action. `call` names the chain call it sends, for a
-   * move the step declared for it.
+   * no longer adopts, throws before anything is sent and stops the action. `into` names every vault a call of the
+   * transaction deposits into, and `calls` every chain call it carries, in order, for the moves the step declared for
+   * them; a deposit is sent only into a vault the account adopts both as read and as those calls move it.
    */
-  sendStraight<T>(send: (door: StraightDoor) => Promise<T>, into?: { readonly vault: string }, call?: { readonly circuit: string; readonly contract: string }): Promise<T>;
+  sendStraight<T>(
+    send: (door: StraightDoor) => Promise<T>, into?: readonly { readonly vault: string }[], calls?: readonly { readonly circuit: string; readonly contract: string }[],
+  ): Promise<T>;
   /**
    * Says that this wallet has itself handed one transaction to the chain or to the company's own service, without the
    * page (`sentFromTheOwnWallet`). The page cannot see such a send, so without this an action that stops after one

@@ -60,7 +60,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { fromHex, toHex, utf8, type Hex } from '../core/crypto.js';
-import type { NoteEvents, VaultTransactions } from './note-index.js';
+import type { NoteEvents, ServedEvent, VaultTransactions } from './note-index.js';
 import type { DepositJournal } from './vault-ledger.js';
 
 const KEY_BYTES = 32;
@@ -229,6 +229,26 @@ export interface VaultOutputHistory {
 const bare = (hex: string): string => hex.trim().toLowerCase().replace(/^0x/u, '');
 
 /**
+ * Adds to `made` the commitment of every output among `served` that the chain created for `vault`. An output of the
+ * vault's served without its commitment stops the read, because the list would have a hole in it.
+ */
+export function outputsMadeFor(vault: Hex, served: Iterable<ServedEvent>, made: Set<string>): Set<string> {
+  const mine = bare(vault);
+  for (const e of served) {
+    if (e.details.tag !== 'zswapOutput') continue;
+    if (typeof e.details.contract !== 'string' || bare(e.details.contract) !== mine) continue;
+    if (typeof e.details.commitment !== 'string') {
+      throw new Error(
+        'an output the chain created for this vault was served without its commitment, so the '
+        + 'list of coins this vault has ever held has a hole in it. Nothing is deposited; read '
+        + 'again.');
+    }
+    made.add(bare(e.details.commitment));
+  }
+  return made;
+}
+
+/**
  * The history, read from the chain: every transaction that acted on the
  * vault, and every output each one created that the vault owns. The list of
  * transactions refuses to answer short, and a transaction that cannot be read
@@ -239,22 +259,10 @@ export const vaultOutputHistoryFrom = (chain: {
   readonly events: NoteEvents;
 }): VaultOutputHistory => ({
   async everCreated(vault) {
-    const mine = bare(vault);
     const hashes = await chain.transactions.of(vault);
     const made = new Set<string>();
     for (const hash of hashes) {
-      const served = await chain.events.eventsOf({ hash });
-      for (const e of served) {
-        if (e.details.tag !== 'zswapOutput') continue;
-        if (typeof e.details.contract !== 'string' || bare(e.details.contract) !== mine) continue;
-        if (typeof e.details.commitment !== 'string') {
-          throw new Error(
-            'an output the chain created for this vault was served without its commitment, so the '
-            + 'list of coins this vault has ever held has a hole in it. Nothing is deposited; read '
-            + 'again.');
-        }
-        made.add(bare(e.details.commitment));
-      }
+      outputsMadeFor(vault, await chain.events.eventsOf({ hash }), made);
     }
     return made;
   },

@@ -23,9 +23,12 @@ export type RunToFile = Omit<SealedRun, 'wiring' | 'filedBy'>;
 /** A run as it is filed: kept, and signed by the seat that filed it. */
 export type SignedRunFiling = RunToFile & { readonly filedBy: { readonly publicKey: Hex; readonly signature: Hex } };
 
-/** The run as it is kept, without who wrote it or who signed it: what the signature covers. */
-const keptPart = (r: RunToFile & { readonly wiring?: unknown; readonly filedBy?: unknown }): RunToFile => {
-  const { wiring: _wiring, filedBy: _filedBy, ...kept } = r;
+/**
+ * The run as it is kept, without who wrote it, who signed it, or the word a list serves it with for which ledger
+ * wrote it (the service's, never signed): what the signature and the run's entry in the company's records cover.
+ */
+const keptPart = (r: RunToFile & { readonly wiring?: unknown; readonly filedBy?: unknown; readonly provenance?: unknown }): RunToFile => {
+  const { wiring: _wiring, filedBy: _filedBy, provenance: _provenance, ...kept } = r;
   return kept;
 };
 

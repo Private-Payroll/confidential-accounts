@@ -644,4 +644,79 @@ describe('A RE-SEAL AND A PERSON\'S OWN POLICY RAISE PICK THE SAME NEXT VERSION'
     /* RED WHEN: the re-sealed old terms, filed after the raise, are read as the policy in force once the raise is approved. */
     await expect(read(w)).resolves.toMatchObject({ state: 'set', version: 2, commitment: commitmentOf(OTHER_TERMS, B2) });
   });
+
+  it('EVERY POLICY THE COMPANY FILED IS ASKED OF THE CHAIN IN ONE ASK WHEN THEY ARE SEALED AGAIN, HOWEVER MANY THERE ARE', async () => {
+    const another = (n: string): SealedCompanyRecord => signCompanyFiling(sealSpendingPolicy({
+      company: COMPANY, id: n.repeat(32) as never, version: 1, keyEpoch: 0,
+      secrets: { vault: VAULT, asset: TEST_TOKEN, opening: { terms: TERMS, blinding: B1 } },
+      signers: [ADA].map((x) => ({ id: x.seat, wrappingPublicKey: x.wrap.publicKey })) as never,
+    }), ADA.filing.secret as never);
+    const w: World = { seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: chainHolding(TERMS, B1), filed: [versionOf(1, B1, [ADA], ADA), another('c1'), another('c2')] };
+    const doors = doorsOf(w);
+    const asked: (readonly string[])[] = [];
+    const counted = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies,
+      onChain: async (keys: readonly string[]) => { asked.push(keys); return doors.records.spendingPolicies!.onChain(keys); } } } };
+    const resealed = await sealPoliciesToNewSignersHere({ ...counted, keyEpoch: 0, filingKey: ADA.filing.publicKey } as never);
+    expect(resealed.sealed).toEqual([POLICY_KEY]);
+    /* RED WHEN: each policy is asked of the chain on its own, so every seat action reads the chain once more for each policy filed. */
+    expect(asked.map((k) => k.length)).toEqual([3]);
+  });
+});
+
+describe('A VERSION WHOSE KEYS THE WORKER CANNOT MAKE STOPS ITS POLICY WITH THE WORKER\'S REASON', () => {
+  it('the bands a change counts, strict and not, and the re-seal each give the worker\'s reason when the newest version\'s keys are refused', async () => {
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1),
+      filed: [versionOf(1, B1, [ADA, BO, CY], ADA), versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS)],
+    };
+    const doors = doorsOf(w);
+    const why = 'the worker could not make the keys of this version';
+    const refusing = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies!,
+      keysOfEach: async (each: readonly Parameters<typeof keysOf>[0][]) => each.map((i) => (i.policy?.blinding === B2
+        ? { status: 'rejected' as const, reason: new Error(why) } : { status: 'fulfilled' as const, value: keysOf(i) })) as never } } };
+    /* The control: with every version's keys made, the version the chain holds is found under the newer one. */
+    expect(await bandsInForceHere(doors)).toEqual([{ vault: VAULT, band: 1 }]);
+    /* RED WHEN: a version whose keys the worker could not make is passed over, so a policy change counts an older version's band. */
+    await expect(bandsInForceHere(refusing)).rejects.toThrow(why);
+    /* RED WHEN: a removal refuses such a policy in other words than the worker's, or counts an older version's band. */
+    await expect(bandsInForceHere(refusing, { strict: true })).rejects.toThrow(why);
+    /* RED WHEN: the re-seal passes over the version it could not make keys for, and says nothing of why. */
+    expect((await sealPoliciesToNewSignersHere({ ...refusing, keyEpoch: 0, filingKey: ADA.filing.publicKey })).refused).toEqual([{ id: POLICY_KEY, why }]);
+  });
+});
+
+describe('THE VERSION IN FORCE OF EVERY POLICY IS FOUND TOGETHER: A DECLARATION THAT FAILS, AND KEYS WITH NO COMMITMENT', () => {
+  const twoVersions = (): World => ({
+    seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1),
+    filed: [versionOf(1, B1, [ADA, BO, CY], ADA), versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS)],
+  });
+
+  it('a declaration of the policies the chain holds that fails rejects the whole re-seal and refuses the bands a change counts', async () => {
+    const why = 'the company\'s records could not be declared';
+    /* The first read that names records is the declaration of every policy the chain holds; it fails, and every read after it is served. */
+    const failingDeclaration = () => {
+      const doors = doorsOf(twoVersions());
+      let declared = false;
+      const directory: CompanyRecordsHere['directory'] = async (asked) => {
+        if (!declared && asked !== undefined && 'records' in asked) { declared = true; throw new Error(why); }
+        return doors.records.directory(asked);
+      };
+      return { ...doors, records: { ...doors.records, directory } };
+    };
+    /* RED WHEN: a declaration that failed is passed over and the re-seal goes on to seal from reads the view never proved together. */
+    await expect(sealPoliciesToNewSignersHere({ ...failingDeclaration(), keyEpoch: 0, filingKey: ADA.filing.publicKey })).rejects.toThrow(why);
+    /* RED WHEN: a removal or a policy change counts its bands from reads whose declaration failed. */
+    await expect(bandsInForceHere(failingDeclaration())).rejects.toThrow(why);
+  });
+
+  it('a version whose keys come back with no commitment is passed over, and the version the chain holds is the one read and counted', async () => {
+    const doors = doorsOf(twoVersions());
+    const noCommitment = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies!,
+      keysOfEach: async (each: readonly Parameters<typeof keysOf>[0][]) => each.map((i) => ({
+        status: 'fulfilled' as const, value: { ...keysOf(i), ...(i.policy?.blinding === B2 ? { commitment: null } : {}) },
+      })) as never } } };
+    /* RED WHEN: a newer version whose keys name no commitment refuses the policy, though an older version makes the commitment the chain holds. */
+    await expect(spendingPolicyHere(noCommitment, { vault: VAULT, asset: TEST_TOKEN })).resolves.toMatchObject({ state: 'set', version: 1, commitment: commitmentOf(TERMS, B1) });
+    expect(await bandsInForceHere(noCommitment)).toEqual([{ vault: VAULT, band: 1 }]);
+  });
 });

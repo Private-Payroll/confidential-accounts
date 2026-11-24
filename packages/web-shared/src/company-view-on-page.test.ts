@@ -16,6 +16,7 @@ vi.mock('./service-transport.js', async (real) => ({
     if (path.endsWith('/directory')) return { filings: [] };
     if (path.endsWith('/manifest/newest')) return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => 0) };
     if (path.endsWith('/vaults')) return { rows: [] };
+    if (init?.method === 'POST' && path.endsWith('/manifest/entries')) return { ok: true };
     throw new Error(`nothing is served at ${path}`);
   },
 }));
@@ -25,6 +26,7 @@ vi.mock('./wallet-asks.js', async (real) => ({
 }));
 
 const page = await import('./company-view-on-page.js');
+const { ViewEnded } = await import('./company-view.js');
 const doors: Parameters<typeof page.openOnPage>[1] = {
   walletOrigin: 'https://wallet.example',
   builder: async () => { throw new Error('no read here asks the builder'); },
@@ -34,7 +36,7 @@ const doors: Parameters<typeof page.openOnPage>[1] = {
 const accountReads = (): number => t.paths.filter((p) => p === '/api/accounts/c1').length;
 
 beforeEach(() => {
-  t.paths.length = 0; t.wallet = 0; t.adopted = [];
+  t.paths.length = 0; t.wallet = 0; t.adopted = []; t.indexer = { indexerUri: 'i', indexerWsUri: 'w' };
   t.sealed = { id: 'c1', companyLabel: 'co_1', contractAddress: 'acct1' };
 });
 
@@ -60,6 +62,57 @@ describe('one view of a company on the page', () => {
     /* RED WHEN: a company with no account on the chain is read through a view as if somebody held it. */
     await expect(view.list('vaults')).rejects.toBeInstanceOf(page.NotOnTheChainYet);
     expect(t.wallet).toBe(0);
+  });
+});
+
+describe('the check before a write, on the page', () => {
+  it('reads the account again from the service, so signers another seat changed meanwhile stop the write', async () => {
+    t.sealed = { id: 'c1', companyLabel: 'co_1', contractAddress: 'acct1', keyEpoch: 1, pendingSigners: [], wrappedKeys: [], roster: { version: 1 } };
+    const view = page.openOnPage('c1', doors);
+    await page.accountOnPage(view);
+    t.sealed = { ...t.sealed, roster: { version: 2 } };
+    /* RED WHEN: the check is answered from the page's own kept account, so a vault's keys are sealed to a roster that changed. */
+    await expect(view.write([{ to: 'entries', entries: [] }])).rejects.toMatchObject({ moved: ['the company\'s account'] });
+  });
+});
+
+describe('the page keeps nothing beside its view', () => {
+  it('carries the wallet\'s indexer in the holders, and a fresh read naming another indexer, nothing else moved, stops no write', async () => {
+    const view = page.openOnPage('c1', doors);
+    expect(await page.indexerOnPage(view)).toEqual(t.indexer);
+    t.indexer = { indexerUri: 'another', indexerWsUri: 'another-ws' };
+    /* RED WHEN: the check compares who holds the company with the indexer it was read through, so a wallet that moved indexers stops every write. */
+    await expect(view.write([{ to: 'entries', entries: [] }])).resolves.toHaveLength(1);
+    expect(t.wallet).toBe(2);
+  });
+
+  it('reads nothing once ended: not the indexer, not where the company is, not a vault', async () => {
+    const view = page.openOnPage('c1', doors);
+    await view.holders();
+    view.end('the page moved on');
+    /* RED WHEN: a read kept beside the view still answers after the view ended. */
+    await expect(page.indexerOnPage(view)).rejects.toBeInstanceOf(ViewEnded);
+    await expect(page.onTheChain(view)).rejects.toBeInstanceOf(ViewEnded);
+    await expect(page.vaultOnPage(view, 'v1', t.indexer as never)).rejects.toBeInstanceOf(ViewEnded);
+  });
+
+  it('opened where the company is on the chain, reads no account to find it', async () => {
+    const view = page.openOnPage('c1', doors, { company: 'co_1' as never, account: 'acct1' as never });
+    await Promise.all([view.holders(), page.indexerOnPage(view)]);
+    /* RED WHEN: a view opened from a row that names the company on the chain reads the company's account again to find it. */
+    expect([accountReads(), t.wallet]).toEqual([0, 1]);
+  });
+
+  it('writes nothing through a view opened at a place on the chain the company\'s own account does not name', async () => {
+    const wrong = page.openOnPage('c1', doors, { company: 'co_1' as never, account: 'acct2' as never });
+    await wrong.holders();
+    /* RED WHEN: the check before a write takes the place the opener named without the company's account naming it. */
+    await expect(wrong.stillAsRead()).rejects.toThrow();
+    expect(wrong.endedAs).toBe('refused');
+    const right = page.openOnPage('c1', doors, { company: 'co_1' as never, account: 'acct1' as never });
+    await right.holders();
+    await right.stillAsRead();
+    expect(right.ended).toBeNull();
   });
 });
 

@@ -13,7 +13,7 @@
  * copies are still owed has them written by the next press (`afterClosed`).
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { readCompanyLabel, readAccountAddress, readVaultAddress } from 'midnight-identity/profile/company-label';
+import { readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
@@ -24,7 +24,7 @@ import { type CreateVaultDoors } from '../../../../packages/web-shared/src/vault
 import { approversHere, runsOutrunHere } from './approvers-here.js';
 import { governanceDoorsFor, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { handOverMarked, type Handed } from './hand-over-in-the-wallet.js';
-import { vaultDoorsFor, type CreateVaultReach } from './create-vault.js';
+import { seatsShownFor, vaultDoorsFor, type CreateVaultReach } from './create-vault.js';
 import { codeOfError, StepRefused, type ShownLine, type StepContext, type Words } from './definition.js';
 import { oneOffNeeded } from './one-off-payment.js';
 import { carryStep, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
@@ -126,10 +126,7 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
           { key: 'act.approve-start.shown.approve', from: 'action' },
         ];
       }
-      const label = readCompanyLabel(intent.fields['company']);
-      const account = readAccountAddress(intent.fields['account']);
-      const seated = label === null || account === null ? null
-        : await reach.chain().holders(account, label).then((h) => ('key' in h ? null : h.seats.length), () => null);
+      const seated = await seatsShownFor(reach, intent);
       const readers = intent.fields['readers'];
       return [
         { key: 'act.approve-start.shown.secret', values: { vault }, from: 'page' },

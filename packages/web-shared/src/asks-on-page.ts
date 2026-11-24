@@ -7,19 +7,24 @@
 import {
   creationAsks, invitationSource, superAdminAsks, type CreationAsks, type InvitationSource, type SuperAdminAsks,
 } from './records-source.js';
-import { sendOnPage, serviceCall, type PageSend } from './service-transport.js';
+import { indexerNamedByTheWallet } from './chain-before-a-view.js';
+import { serviceAnswered, serviceCall, type PageSend } from './service-transport.js';
 
 /** A company's creation, asked as the page's `api` answers. */
 export const creationOnPage: CreationAsks<unknown> = creationAsks(serviceCall);
 
 /** An invitation's own asks, each answered with its status, for the person `signedInAs`. */
 export const invitationOnPage = (signedInAs: () => string | null): InvitationSource => {
-  const send = sendOnPage(signedInAs);
+  const send = serviceAnswered(signedInAs);
   return invitationSource((method, path, body) => send(path, { method, ...(body === undefined ? {} : { body }) }));
 };
 
-/** The super admins' change of the company `company`, asked as the page's `api` answers. */
-export const superAdminOnPage = (company: string): SuperAdminAsks => superAdminAsks(serviceCall, company);
+/**
+ * The super admins' change of the company `company`, asked as the page's `api` answers, and the indexer the person's
+ * wallet at `walletOrigin` names for it: a super admin holds no view of the company, so this is their one read of it.
+ */
+export const superAdminOnPage = (company: string, walletOrigin: string): SuperAdminAsks =>
+  superAdminAsks(serviceCall, company, (where) => indexerNamedByTheWallet(walletOrigin, where));
 
 /** A call the wallet hands the page to send, as it named it. */
 interface WalletCall { readonly method: 'GET' | 'PUT' | 'POST'; readonly path: string; readonly body?: string }
@@ -29,6 +34,6 @@ interface WalletCall { readonly method: 'GET' | 'PUT' | 'POST'; readonly path: s
  * service holds each to the sign-in it carries.
  */
 export const walletCallsOnPage = (signedInAs: () => string | null) => {
-  const send = sendOnPage(signedInAs);
+  const send = serviceAnswered(signedInAs);
   return (request: WalletCall): ReturnType<PageSend> => send(request.path, { method: request.method, ...(request.body === undefined ? {} : { body: request.body }) });
 };

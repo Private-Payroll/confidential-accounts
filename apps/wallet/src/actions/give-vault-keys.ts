@@ -4,7 +4,7 @@ import {
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
-import { ownEntryFiled, vaultKeysOfferedAndFolded } from '../../../../packages/web-shared/src/vault-keys-given.js';
+import { ownEntryFiled, vaultKeysOfferedAndFolded, type HeldForTheSeat } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withOwedEntry, withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
@@ -21,7 +21,8 @@ import { UPKEEP_CHECK, upkeepShown, upkeepSteps, type UpkeepReach } from './upke
  * and its directory entry itself, for the seat its own keys hold and the chain
  * seats; keeps the entry in the person's saved keys before it is filed, so an
  * entry the page did not file is filed on a later press; files it, offers the
- * company the seat's vault keys and folds them into the roster - each filing
+ * company the seat's vault keys unless the roster already holds them and the
+ * entry as signed, and folds the offers into the roster - each filing
  * signed here with the seat's own key and sent through the page, and each read
  * the service answers judged against the chain and the directory first. The
  * action starts with what the company is owed of this seat and ends by filing
@@ -37,10 +38,14 @@ export interface VaultKeysReach extends UpkeepReach {
   readonly leafOf?: LeafReader;
 }
 
-/** What giving the keys leaves the steps after it: the company as read, and the records key the wallet signed. */
+/**
+ * What giving the keys leaves the steps after it: the company as read, the records key the wallet signed, and what the
+ * roster read held for this seat before it.
+ */
 export interface KeysGiven {
   readonly reach: CompanyReach;
   readonly signed: RecordsKeyAnswer;
+  readonly held: HeldForTheSeat;
 }
 
 /*
@@ -88,7 +93,8 @@ export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?
     const r = await company(ctx);
     if (given !== null) return given;
     const roster = await r.roster();
-    const named = roster.signers.find((s) => s.id === r.seat.signerId && s.status === 'active')?.leafCommitment ?? null;
+    const own = roster.signers.find((s) => s.id === r.seat.signerId && s.status === 'active');
+    const named = own?.leafCommitment ?? null;
     if (named === null) refuse('no-seat-on-the-roster');
     if (named!.toLowerCase() !== r.leaf) refuse('not-your-seat');
     const holders = await r.holders();
@@ -119,7 +125,7 @@ export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?
     } catch (e) {
       throw new StepRefused(why('records-key-refused', { says: (e as Error).message }));
     }
-    given = { reach: r, signed };
+    given = { reach: r, signed, held: own! };
     return given;
   };
 
@@ -148,13 +154,16 @@ export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?
   const offered: ActionStep = {
     title: { key: `${titles}.step.offer` },
     run: async (ctx) => {
-      /* The answer the wallet signed is kept from the step before; the company is this step's own read of it. */
-      const { signed } = await sign(ctx);
+      /*
+       * The answer the wallet signed and what the roster held for this seat are kept from the step before; the company
+       * is this step's own read of it. Keys and an entry the roster already holds as signed are not offered again.
+       */
+      const { signed, held } = await sign(ctx);
       const r = await company(ctx);
       await vaultKeysOfferedAndFolded({
         accountId: r.accountId, label: r.label, account: r.account, signerId: r.seat.signerId,
         signingSecret: r.seat.signingSecret, companyKey: r.companyKey, companyKeys: r.companyKeys,
-        committeeKey: signed.committeeKey as never, recordsKey: signed.statement, entry: signed.entry!,
+        committeeKey: signed.committeeKey as never, recordsKey: signed.statement, entry: signed.entry!, held,
         reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account), entered: enteredFor(r), view: r.stepView,
       });
     },

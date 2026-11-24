@@ -19,10 +19,23 @@ import { keysCheckedAgainst } from 'vaults-web-shared/vault-service-doors.js';
 import { readsJoinedIn, type ThroughTheView } from 'vaults-web-shared/http-sealed-pool-store.js';
 import type { Filed, ManifestService, RecordsEntered } from 'vaults-web-shared/record-entered-here.js';
 import { enteredHere } from './records-entered.js';
+import { readRoutesOverSend, type RoutesKept } from './service-routes-in-memory.js';
 import { vaultServiceThrough } from 'vaults-web-shared/vault-service-through-the-view.js';
 
-/** The company's writes made over `send`, each through that company's source. */
-export const writesOver = (send: InvitationSend): CompanyWrites => (company, w) => serviceSource(serviceCallOf(send), company).write(w);
+/** The routes a test's stand-in service leaves to the routes in memory: the company has filed nothing and entered no record. */
+export const NOTHING_FILED: RoutesKept = Object.freeze({ directory: 'empty', newest: 'none-entered' });
+
+/**
+ * The company's writes made over `send`, each through a view of that company opened anew for it, which checks the company
+ * has not moved before the write is sent: another seat's filing in the directory or a newer entered version stops it, while who
+ * holds the company on the chain is held still. `send` answers the view's read routes itself, as the service does; a stand-in
+ * that answers only some of them gets the rest by `kept` (`readRoutesOverSend`).
+ */
+export const writesOver = (send: InvitationSend, kept?: RoutesKept): CompanyWrites => async (company, w) => {
+  const reached = kept === undefined ? send : readRoutesOverSend(send, kept);
+  const [answer] = await viewOpenedEachTime(serviceCallOf(reached), company).current().write([w]);
+  return answer;
+};
 
 /** A code's person added over `send`: the company's writes, and the invitation's own acceptance asked by its route. */
 export const codeAsksOver = (send: InvitationSend): CodeAsks => ({
@@ -30,7 +43,11 @@ export const codeAsksOver = (send: InvitationSend): CodeAsks => ({
   invitations: invitationSource((method, path, body) => send(path, { method, ...(body === undefined ? {} : { body }) })),
 });
 
-/** The company's lists, records and hand-overs read over `send`, through that company's source. */
+/**
+ * The company's lists, records and hand-overs read over `send`, through that company's source itself, not a view: the
+ * service tests that take it check what the routes keep and answer, so their device reads the lists as the routes
+ * serve them; the product reads every list only through the company's view, which the one-way check holds.
+ */
 export const listsOver = (send: InvitationSend, company: string): ListsView => serviceSource(serviceCallOf(send), company);
 
 /** Who holds the company, as a test that does not move it reads it: the same at every check. */
@@ -63,7 +80,10 @@ export const viewOver = (call: ServiceCall, company: string, holders: () => Prom
 export const viewOpenedEachTime = (call: ServiceCall, company: string, holders?: () => Promise<HoldersStanding>): ViewHeld<HoldersStanding> =>
   Object.freeze({ current: () => viewOver(call, company, holders).current(), again: () => viewOver(call, company, holders).current() });
 
-/** The first state and roster `company` was founded with, read over `call` as an anchor without a view reads them. */
+/**
+ * The first state and roster `company` was founded with, read over `call` through the company's source itself, as an
+ * anchor reads them before it has a view: they are the records the view's own proofs start from.
+ */
 export const foundingRecordsOver = (call: ServiceCall, company: string) => async (): Promise<{ readonly state: SealedCompanyRecord | null; readonly roster: SealedCompanyRecord | null }> => {
   const state = stateRecordId(FOUNDING_KEY_EPOCH);
   const [s, r] = await serviceSource(call, company).records([{ kind: 'state', id: state, every: true }, { kind: 'roster', id: ROSTER_ID, every: true }]);
@@ -72,14 +92,15 @@ export const foundingRecordsOver = (call: ServiceCall, company: string) => async
 
 /**
  * Whether a request a test logged as `METHOD path [body]` only reads the company: a GET, or a POST to one of the
- * company's read routes (its records, its vaults' records, or what its people and vendors handed over).
+ * company's read routes (its records, its vaults' records, what its people and vendors handed over, or the newest
+ * version entered of each record).
  */
 export const onlyReads = (logged: string): boolean =>
-  /^(GET |POST \/api\/accounts\/[^/ ]+\/(records\/read|vault-records\/read|handovers)( |$))/u.test(logged);
+  /^(GET |POST \/api\/accounts\/[^/ ]+\/(records\/read|vault-records\/read|handovers|manifest\/newest)( |$))/u.test(logged);
 
 /**
  * The company's vault routes over `call`, as a device takes them: each send a write through that company's view, its chain
- * and payout state read through it, and its vault keys checked against the roster `roster` opens. A send into a vault
+ * and payout state and its vault keys read through it, the keys checked against the roster `roster` opens. A send into a vault
  * goes only to one `holders` shows the company's account adopting.
  */
 export const vaultServiceOver = (
@@ -87,7 +108,7 @@ export const vaultServiceOver = (
 ): VaultService => {
   const held = viewOver(call, company, holders);
   return {
-    keys: () => keysCheckedAgainst(async () => await serviceSource(call, company).vaultKeys() as Awaited<ReturnType<VaultService['keys']>>, roster),
+    keys: () => keysCheckedAgainst(async () => await held.current().vaultKeys() as Awaited<ReturnType<VaultService['keys']>>, roster),
     ...vaultServiceThrough(held),
   };
 };

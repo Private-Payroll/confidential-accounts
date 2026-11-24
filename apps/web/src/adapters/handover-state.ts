@@ -73,7 +73,7 @@ export function handoverFrom(a: Authority, owed: ChangeOwed | null): Handover {
 export function failureOf(e: unknown): Handover {
   if (e instanceof AnotherPersonError) return { of: HANDOVER.anotherPerson };
   if (e instanceof AuthError) return { of: HANDOVER.notSignedIn };
-  if (e instanceof TypeError) return { of: HANDOVER.unreachable };
+  if ((e instanceof Error && e.name === 'ServiceNotReached') || e instanceof TypeError) return { of: HANDOVER.unreachable };
   return { of: HANDOVER.unreadable };
 }
 

@@ -46,7 +46,7 @@ import {
   aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chains, CO, DANA, danasCode, EVE, fromAda, KEY, LABEL, metered, ORIGIN, OTHER, OTHER_ADDRESS, OTHER_LABEL, refusals,
   type Seat,
   newestPerson, peopleRecords, personVersions, sendAs, store, wire } from './a-company-of-two-seats.test-support.js';
-import { writesOver, codeAsksOver } from '../testing/writes-over-a-send.js';
+import { NOTHING_FILED, onlyReads, writesOver, codeAsksOver } from '../testing/writes-over-a-send.js';
 import { payeeCodeFingerprint } from 'midnight-identity/profile/fingerprint';
 import { scopeOfRole } from '../core/seat-rights.js';
 /* The leaf each opening makes, as a device's vault worker works it out with the account's own scheme. */
@@ -91,7 +91,7 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
     const filingFrom = async (seat: Seat, over: Partial<InvitationFiling> = {}): Promise<{ person: unknown; invitation: InvitationFiling }> => {
       let caught: { person: unknown; invitation: InvitationFiling } | null = null;
       /* Only caught here, never filed, so it is not entered either. */
-      await inviteHere(ACME, { ...seat, entered: enteredHere() }, 'employee', DANA, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }));
+      await inviteHere(ACME, { ...seat, entered: enteredHere() }, 'employee', DANA, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }, NOTHING_FILED));
       return { person: caught!.person, invitation: { ...caught!.invitation, ...over } };
     };
     const post = (who: string, body: unknown, company = CO) => sendAs(who)(`/api/accounts/${company}/invites`, { method: 'POST', body: JSON.stringify(body) });
@@ -126,7 +126,7 @@ describe('A PAYEE IS INVITED FROM A SIGNER\'S DEVICE', () => {
     expect((await post('ada', { ...good, invitation: { ...good.invitation, name: 'Dana' } })).body).toMatchObject({ refused: 'not-an-invitation' });
     /* RED WHEN: a signer's invitation is filed as a payee's. */
     let signerFiling: InvitationFiling | null = null;
-    await inviteHere(ACME, ADA, 'signer', { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, writesOver(async (_p, init) => { signerFiling = JSON.parse(init.body!).invitation; return { status: 201, body: {} }; }));
+    await inviteHere(ACME, ADA, 'signer', { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, writesOver(async (_p, init) => { signerFiling = JSON.parse(init.body!).invitation; return { status: 201, body: {} }; }, NOTHING_FILED));
     expect((await post('ada', { person: good.person, invitation: signerFiling })).body).toMatchObject({ refused: 'not-an-invitation' });
     /* RED WHEN: an invitation is kept although the person filed with it was refused. */
     const tampered = { ...(good.person as Record<string, unknown>), digest: '0'.repeat(64) };
@@ -378,7 +378,7 @@ describe('A SIGNER IS INVITED AND ACCEPTS THROUGH THE ONE SEAT PATH', () => {
     await expect(refused).rejects.toBeInstanceOf(InvitationRefused);
     /* RED WHEN: a signer invitation is kept with no seat's signature. */
     let caught: { invitation: InvitationFiling } | null = null;
-    await inviteHere(ACME, ADA, 'signer', { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }));
+    await inviteHere(ACME, ADA, 'signer', { name: 'Zed', role: 'admin', person: 'zed' }, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }, NOTHING_FILED));
     const { filedBy: _f, ...unsigned } = caught!.invitation;
     expect((await fromAda(`/api/accounts/${CO}/invites`, { method: 'POST', body: JSON.stringify({ invitation: unsigned }) })).body).toMatchObject({ refused: 'not-signed' });
   });
@@ -671,7 +671,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
     'super-admin': { name: 'Sue Committeeson', address: 'mn_shield-addr_test1suesaddress' },
   };
   const filedPaths: string[] = [];
-  const recordingFromAda: InvitationSend = async (path, init) => { filedPaths.push(`${init.method} ${path}`); return fromAda(path, init); };
+  const recordingFromAda: InvitationSend = async (path, init) => { if (!onlyReads(`${init.method} ${path}`)) filedPaths.push(`${init.method} ${path}`); return fromAda(path, init); };
 
   it('an employee, a vendor and a signer are filed on the one route, kept as their kind, and open as that kind with the moment it was made', async () => {
     filedPaths.length = 0;
@@ -708,7 +708,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
     expect(filedPaths).toEqual([]);
     /* RED WHEN: the service keeps a super admin's invitation a seat signed. */
     let caught: { invitation: InvitationFiling } | null = null;
-    await inviteHere(ACME, ADA, 'signer', SPECS.signer, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }));
+    await inviteHere(ACME, ADA, 'signer', SPECS.signer, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }, NOTHING_FILED));
     const { filedBy: _f, ...unsigned } = caught!.invitation;
     const asSuperAdmin = signInvitationFiling({ ...unsigned, kind: 'super-admin' }, ADA.signingSecret);
     expect((await fromAda(`/api/accounts/${CO}/invites`, { method: 'POST', body: JSON.stringify({ invitation: asSuperAdmin }) })).body)
@@ -729,7 +729,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
   it('employees and vendors are kept apart by kind: each files its own kind of id, and hands over only as its own kind', async () => {
     /* RED WHEN: an employee's invitation is filed under a vendor's id, so the two lists could share a person. */
     let caught: { person: unknown; invitation: InvitationFiling } | null = null;
-    await inviteHere(ACME, { ...ADA, entered: enteredHere() }, 'employee', DANA, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }));
+    await inviteHere(ACME, { ...ADA, entered: enteredHere() }, 'employee', DANA, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }, NOTHING_FILED));
     const { filedBy: _f, ...unsigned } = caught!.invitation;
     const asVendorsId = signInvitationFiling({ ...unsigned, person: 'ven_' + '0b'.repeat(10) }, ADA.signingSecret);
     expect((await fromAda(`/api/accounts/${CO}/invites`, { method: 'POST', body: JSON.stringify({ person: caught!.person, invitation: asVendorsId }) })).body)
@@ -815,7 +815,7 @@ describe('ONE INVITATION SYSTEM FOR FOUR KINDS: AN EMPLOYEE, A VENDOR, A SIGNER 
     expect(opening({ ...vendor, endDate: '2026-11-01' })).toThrow(/end date is before its start date/u);
     /* RED WHEN: the service keeps an invitation of a kind that is none of the four. */
     let caught: { invitation: InvitationFiling } | null = null;
-    await inviteHere(ACME, { ...ADA, entered: enteredHere() }, 'vendor', VERA_ADDED, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }), NO_VENDOR_HELD);
+    await inviteHere(ACME, { ...ADA, entered: enteredHere() }, 'vendor', VERA_ADDED, ORIGIN, writesOver(async (_p, init) => { caught = JSON.parse(init.body!); return { status: 201, body: {} }; }, NOTHING_FILED), NO_VENDOR_HELD);
     const { filedBy: _f, ...unsigned } = caught!.invitation;
     const odd = signInvitationFiling({ ...unsigned, kind: 'contractor' as never }, ADA.signingSecret);
     expect((await fromAda(`/api/accounts/${CO}/invites`, { method: 'POST', body: JSON.stringify({ invitation: odd }) })).body)

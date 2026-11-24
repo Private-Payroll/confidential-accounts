@@ -7,7 +7,7 @@
  * send). Each is a check of its own, made before its own write, so none is merged into another.
  */
 import { aCompanyOf } from './company-harness.test-support.js';
-import { ACTION_PINS_FOUR_BATCHES } from './action-count-pins.test-support.js';
+import { ACTION_PINS_FOUR_BATCHES, ACTION_PINS_FOUR_BATCHES_ASKED } from './action-count-pins.test-support.js';
 import { actionsCountedOn } from './action-counts.test-support.js';
 
 /* Anchored in four batches, as the company its reads are held to was. */
@@ -17,4 +17,4 @@ const company = aCompanyOf({ people: 300, vendors: 4, vaults: 4, proposals: 2, a
 const NEWEST = 'route POST /api/accounts/:record/manifest/newest';
 const REPAIR = ACTION_PINS_FOUR_BATCHES['repair-company-key']!.map((step, i) => (i === 2 ? { ...step, [NEWEST]: step[NEWEST]! + 5 } : step));
 
-actionsCountedOn(company, { ...ACTION_PINS_FOUR_BATCHES, 'repair-company-key': REPAIR }, {}, ['with 6 people', 'with 300 people']);
+actionsCountedOn(import.meta.url, company, { reads: { ...ACTION_PINS_FOUR_BATCHES, 'repair-company-key': REPAIR }, asked: ACTION_PINS_FOUR_BATCHES_ASKED }, ['with 6 people', 'with 300 people']);

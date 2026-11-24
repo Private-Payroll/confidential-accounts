@@ -11,7 +11,9 @@ import { readsJoinedIn, type FreshJudge, type ReadsThroughTheView } from 'vaults
 import { treeKeptHere } from 'vaults-web-shared/tree-kept-here.js';
 import { companyJudges, openAccountWith, seatsAdmittedWith } from 'vaults-web-shared/company-judges.js';
 import type { JudgeView } from 'vaults-web-shared/company-view-judges.js';
-import { accountOnPage, indexerOnPage, onTheChain, openOnPage, vaultOnPage, vaultRoundOnPage, type OnTheChain, type PageDoors } from 'vaults-web-shared/company-view-on-page.js';
+import {
+  accountOnPage, indexerOnPage, onTheChain, openOnPage, vaultOnPage, vaultRoundOnPage, whereOnTheChainIn, type OnTheChain, type PageDoors,
+} from 'vaults-web-shared/company-view-on-page.js';
 import type { VaultOnChainOnTheWire } from 'vaults-web-shared/vault-worker-client.js';
 import { watchReadsStale } from 'vaults-web-shared/company-reads-stale.js';
 import { Fault, FAULT } from '../faults.js';
@@ -45,11 +47,11 @@ const judgesFor = new WeakMap<PageView, Judges>();
 /**
  * How a record store reaches the company's records on this page: through the opening's view alone, for reads only. The
  * page files nothing through a store, so the reach carries no way to file, and a store that could file cannot be made
- * over it.
+ * over it. A body newer than the view's held answer is judged once more over a fresh one (the view's `heldAgain`).
  */
 export const storeReachIn = (view: PageView): ReadsThroughTheView => {
-  const { vaultRecord, companyRecord, company } = readsJoinedIn({ current: () => view });
-  return { vaultRecord, companyRecord, company };
+  const { vaultRecord, companyRecord, company, heldAgain } = readsJoinedIn({ current: () => view });
+  return { vaultRecord, companyRecord, company, heldAgain };
 };
 
 /* Each door reaches its module at the moment it is used, never when this file loads. */
@@ -95,17 +97,19 @@ function judgesOf(view: PageView): Judges {
 
 /**
  * A new view of `companyId`, for one opening of a screen: the screen holds it, hands it to every tile, hook and action
- * of the opening, and ends it.
+ * of the opening, and ends it. `where`, when the opener already has it, is where the company is on the chain, so the
+ * view finds it there without reading the company's account (`openOnPage`).
  */
-export const openViewOf = (companyId: string): PageView => openOnPage(companyId, pageDoors);
+export const openViewOf = (companyId: string, where?: OnTheChain): PageView => openOnPage(companyId, pageDoors, where);
 
 /**
  * `read` through a view of `companyId` opened for it alone and ended when it is done: a read no screen's opening
  * makes (each company in the list of the person's companies, a deposit that runs on whatever the screen does), and a
- * read made again after an action in the wallet ended the screen's view.
+ * read made again after an action in the wallet ended the screen's view. `listedAs`, a row of the person's companies
+ * the opener already has, names where the company is on the chain, so the view reads no account to find it.
  */
-export const readThroughAViewOf = async <T>(companyId: string, read: (view: PageView) => Promise<T>): Promise<T> => {
-  const view = openViewOf(companyId);
+export const readThroughAViewOf = async <T>(companyId: string, read: (view: PageView) => Promise<T>, listedAs?: unknown): Promise<T> => {
+  const view = openViewOf(companyId, whereOnTheChainIn(listedAs) ?? undefined);
   try {
     return await read(view);
   } finally {

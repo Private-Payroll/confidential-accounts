@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
 import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountFigureOnly, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, StatTiles, useLanguage, useText, type AmountKind, type TokenAmount } from 'vaults-ui';
 import { proposalsNotRead } from './counts.js';
 import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
 import { companyPagesOpen, INVITED, OPENED, READ, visibilityKnown, type CompanyRecords, type InvitationRow, type Read, type VendorRow } from '../adapters/company-records.js';
 import { ADMIT_BY, PAID, PAID_STATE, STANDING, type AdmitBy, type Paid, type PersonRow, type PersonStanding, type ProposalRow, type RunRow, type VaultRow } from '../adapters/company-rows.js';
-import { declareVaultNamesIn, readVaultPublicMoney } from '../adapters/company-vaults-read.js';
+import { readVaultPublicMoney } from '../adapters/company-vaults-read.js';
 import { vaultReadAgainIn } from '../adapters/filing-judge.js';
 import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
@@ -546,8 +546,6 @@ function VaultMoneyLines({ money }: { money: VaultMoney }) {
  * vaults there are.
  */
 export function VaultTiles({ company, rows }: { company: string; rows: readonly VaultRow[] }) {
-  const view = useCompanyView();
-  useLayoutEffect(() => { if (view !== null && view.company === company) declareVaultNamesIn(view, rows); }, [view, company, rows]);
   return <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} company={company} vault={v} index={i} />)}</StatTiles>;
 }
 

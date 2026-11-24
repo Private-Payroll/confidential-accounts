@@ -11,6 +11,7 @@ import {
   type IndexerSocket, type NoteEvents, type ServedEvent,
 } from './note-index.js';
 import type { Hex } from '../core/crypto.js';
+import { ACTIONS_LISTED, indexerVaultHistories } from './indexer-queries.js';
 import type { NotePool } from './vault-ledger.js';
 import { VaultPoolAdvancedSinceRead } from './vault-pool.js';
 import type { Note, VaultNotes } from './vault-notes.js';
@@ -878,5 +879,80 @@ describe('§8 the transactions that acted on a vault, from the indexer', () => {
       indexerVaultTransactions('u', 'w', { post: latestIs(H(0x03)).post, open: bad.open }).of(VAULT as Hex),
       'RED WHEN: a listed transaction with no usable hash is passed on as a candidate',
     ).rejects.toThrow(/a transaction without a hash of sixty-four hex characters/);
+  });
+});
+
+const HISTORIES_URL = 'https://indexer.example/graphql';
+const A = VAULT as Hex;
+const B = OTHER_VAULT as Hex;
+
+const historiesAnswering = (data: unknown, o: { status?: number; errors?: unknown } = {}) => {
+  const asked: Array<{ query: string; variables: Record<string, string> }> = [];
+  const post = (async (_u: string, init: { body: string }) => {
+    asked.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ data, ...(o.errors === undefined ? {} : { errors: o.errors }) }), { status: o.status ?? 200 });
+  }) as unknown as typeof fetch;
+  return { post, asked };
+};
+const raw = (e: { serialize(): Uint8Array }) => ({ raw: Buffer.from(e.serialize()).toString('hex') });
+const action = (hash: string, events: Array<{ serialize(): Uint8Array }> | unknown, kind = 'ContractCall') =>
+  ({ __typename: kind, transaction: { hash, zswapLedgerEvents: Array.isArray(events) ? events.map(raw) : events } });
+const deploy = (hash: string, events: Array<{ serialize(): Uint8Array }> | unknown) => action(hash, events, 'ContractDeploy');
+
+/* Every transaction of many vaults, with its events, in one request: each vault's actions asked by alias, each
+ * carrying its transaction's zswap events, read whole; a list that may be cut short is not used as the history. */
+describe('§9 every vault\'s history, asked in one request', () => {
+  it('asks every vault\'s actions by alias with their events, and reads each transaction once, however many of its calls acted on the vault', async () => {
+    const first = applyOutputs(LedgerState.blank(NETWORK), [100n, 7n]);
+    const second = applyOutputs(first.next, [5n]);
+    const h1 = first.events[0]!.source.transactionHash;
+    const h2 = second.events[0]!.source.transactionHash;
+    const { post, asked } = historiesAnswering({ c0: { actions: [action(h2, second.events), action(h1, first.events), deploy(h1, first.events)] }, c1: { actions: [deploy(h1, first.events)] } });
+    const got = await indexerVaultHistories(HISTORIES_URL, post).eventsOfEvery([A, B]);
+    /* RED WHEN: the vaults are asked one request each, without their transactions' events, or past the listing's limit. */
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.query).toMatch(/c0: contract\(address: \$a0\) \{ actions\(limit: 500\) \{ __typename transaction \{ hash zswapLedgerEvents \{ raw \} \} \} \} c1: contract\(address: \$a1\)/u);
+    expect(asked[0]!.variables).toEqual({ a0: A, a1: B });
+    /* RED WHEN: a transaction two calls of which acted on the vault is read twice, or an event is lost. */
+    expect(got[0]!.map((e) => e.transactionHash)).toEqual([h2, h1, h1]);
+    expect(new Set(got[0]!.map((e) => e.details.commitment))).toEqual(new Set([...second.outputs, ...first.outputs].map((o) => o.commitment)));
+    expect(got[1]!.map((e) => e.transactionHash)).toEqual([h1, h1]);
+  });
+
+  it('a list whose oldest entry is not the vault\'s deploy, whatever its length, one that names nothing, or a vault the indexer holds no contract at, is not used, so that vault is read alone', async () => {
+    const hundred = Array.from({ length: 100 }, (_, i) => action(i.toString(16).padStart(64, '0'), []));
+    const full = Array.from({ length: ACTIONS_LISTED }, (_, i) => action(i.toString(16).padStart(64, '0'), []));
+    const { post } = historiesAnswering({
+      c0: { actions: hundred }, c1: { actions: full }, c2: { actions: [] }, c3: null,
+      c4: { actions: [...hundred.slice(0, 99), deploy('e1'.repeat(32), [])] },
+    });
+    const got = await indexerVaultHistories(HISTORIES_URL, post).eventsOfEvery([A, B, A, B, A]);
+    /* RED WHEN: a list the indexer may have cut short (its oldest entry not the deploy), or an empty one, is read as the vault's whole history. */
+    expect(got.slice(0, 4)).toEqual([null, null, null, null]);
+    /* RED WHEN: a whole list, down to the vault's deploy, is not used because of its length. */
+    expect(got[4]).toEqual([]);
+  });
+
+  it('an answer that leaves a vault out, a transaction without its hash or events, an event that does not deserialise, or a failed request is a throw, never a short history', async () => {
+    const ask = (data: unknown, o?: { status?: number; errors?: unknown }) => indexerVaultHistories(HISTORIES_URL, historiesAnswering(data, o).post).eventsOfEvery([A, B]);
+    const fine = { actions: [deploy('e1'.repeat(32), [])] };
+    /* RED WHEN: any of these is read as a vault with no coins made for it. */
+    await expect(ask({ c0: fine })).rejects.toThrow(NoteIndexUnreadable);
+    await expect(ask({ c0: fine, c1: { actions: 'none' } })).rejects.toThrow(NoteIndexUnreadable);
+    await expect(ask({ c0: fine, c1: { actions: [deploy('e1', [])] } })).rejects.toThrow(/sixty-four hex/u);
+    await expect(ask({ c0: fine, c1: { actions: [deploy('e1'.repeat(32), null)] } })).rejects.toThrow(/no event list/u);
+    await expect(ask({ c0: fine, c1: { actions: [deploy('e1'.repeat(32), undefined)] } })).rejects.toThrow(NoteIndexUnreadable);
+    await expect(ask({ c0: fine, c1: { actions: [{ __typename: 'ContractDeploy', transaction: { hash: 'e1'.repeat(32), zswapLedgerEvents: [{ raw: 'zz' }] } }] } })).rejects.toThrow(/not hex/u);
+    await expect(ask({ c0: fine, c1: { actions: [{ __typename: 'ContractDeploy', transaction: { hash: 'e1'.repeat(32), zswapLedgerEvents: [{ raw: 'abcd' }] } }] } })).rejects.toThrow(/did not deserialise/u);
+    await expect(ask(null, { status: 502 })).rejects.toThrow(/502/u);
+    await expect(ask(null)).rejects.toThrow(NoteIndexUnreadable);
+    await expect(ask(null, { errors: [{ message: 'the indexer is busy' }] })).rejects.toThrow(NoteIndexUnreadable);
+  });
+
+  it('an indexer that will not take the question asked together says so, apart from one that could not answer', async () => {
+    const { post } = historiesAnswering(null, { errors: [{ message: 'Unknown field "actions" on type "ContractCall"' }] });
+    /* RED WHEN: a question the indexer cannot take is not told apart, so the vaults are never read alone. */
+    await expect(indexerVaultHistories(HISTORIES_URL, post).eventsOfEvery([A])).rejects.toThrow(NoteIndexUnaskable);
+    expect(await indexerVaultHistories(HISTORIES_URL, historiesAnswering({}).post).eventsOfEvery([])).toEqual([]);
   });
 });

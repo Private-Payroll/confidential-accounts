@@ -34,6 +34,7 @@ import {
   AnotherPersonError, AuthError, CouldNotCheckError, ServiceRefused, theSignInIsHeldBy,
 } from './service-transport.js';
 import { walletCallsOnPage } from './asks-on-page.js';
+import { ServiceNotReached } from './hand-over.js';
 import { personOnPage } from './person-on-page.js';
 import { doneWaiting, forgetTheWalletsIndexer, openTheWallet, putAway } from './wallet-asks.js';
 import { readsAreStale, STALE } from './company-reads-stale.js';
@@ -439,7 +440,7 @@ export async function resumeSession(
       return me;
     } catch (e) {
       if (e instanceof AuthError) return null;
-      const notChecked = e instanceof CouldNotCheckError || e instanceof TypeError;
+      const notChecked = e instanceof CouldNotCheckError || e instanceof ServiceNotReached || e instanceof TypeError;
       if (!notChecked || attempt >= RESUME_BACKOFF_MS.length) throw e;
       await wait(RESUME_BACKOFF_MS[attempt]!);
     }

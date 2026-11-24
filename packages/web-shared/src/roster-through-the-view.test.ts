@@ -41,12 +41,13 @@ describe('A ROSTER IS READ AND FILED THROUGH THE COMPANY\'S VIEW', () => {
     await s.file({ to: 'roster', body: {} }); await s.file({ to: 'admission', signer: 's 1', body: {} }); await s.file({ to: 'vault-keys', body: {} });
     /*
      * RED WHEN: a read or write of the roster reaches another route than its own, or names the signer it admits unescaped, or a
-     * write is sent without the view having read the company's directory and the newest versions just before it.
+     * write is sent without the view having read the company's directory and the newest versions just before it, and the
+     * account too while the roster it was read for has not been filed.
      */
     const check = ['GET /api/accounts/acc_1/directory', 'POST /api/accounts/acc_1/manifest/newest'];
     expect(paths).toEqual([
       ...check, 'GET /api/accounts/acc_1', 'GET /api/accounts/acc_1/proposals', 'GET /api/accounts/acc_1/vault-keys/offers',
-      ...check, 'POST /api/accounts/acc_1/roster', ...check, 'POST /api/accounts/acc_1/signers/s%201/admit', ...check, 'PUT /api/accounts/acc_1/vault-keys',
+      ...check, 'GET /api/accounts/acc_1', 'POST /api/accounts/acc_1/roster', ...check, 'POST /api/accounts/acc_1/signers/s%201/admit', ...check, 'PUT /api/accounts/acc_1/vault-keys',
     ]);
   });
 });

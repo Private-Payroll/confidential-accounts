@@ -3,6 +3,7 @@ import { WalletClosed, type WalletRefusal } from 'vaults-web-shared/wallet-sign-
 import * as keyring from 'vaults-web-shared/keyring.js';
 import * as transport from 'vaults-web-shared/service-transport.js';
 import { ReadRanOutOfTime } from 'vaults-web-shared/read-bound.js';
+import { ServiceNotReached } from 'vaults-web-shared/hand-over.js';
 import { ACT_REFUSAL, refusalOf } from './refusals.js';
 import { RosterNotBelieved } from 'vaults-web-shared/roster-here.js';
 
@@ -18,6 +19,14 @@ describe('a company not finished', () => {
     expect(keyring).not.toHaveProperty('ACompanyIsBeingCreated');
     expect(Object.values(ACT_REFUSAL)).not.toContain('company-kept');
     expect(refusalOf(new Error('a company you started is not finished yet'))).toBe(ACT_REFUSAL.didNotFinish);
+  });
+});
+
+describe('a service that gave no answer', () => {
+  /* RED WHEN: a request the service never answered is told as an ask that did not finish, so the person is not told the service could not be reached. */
+  it('is told as unreachable when the error is the one a request with no answer throws', () => {
+    expect(refusalOf(new ServiceNotReached('the company\'s service could not be reached (no answer)', false))).toBe(ACT_REFUSAL.unreachable);
+    expect(refusalOf(new ServiceNotReached('the company\'s service could not be reached (no answer)', true))).toBe(ACT_REFUSAL.unreachable);
   });
 });
 

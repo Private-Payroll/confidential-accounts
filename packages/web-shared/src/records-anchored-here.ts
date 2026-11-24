@@ -180,7 +180,7 @@ const ANCHOR_SEND_WATCH_MS = 5_000;
  * the same head may never be answered, so the head is what this device waits
  * on. `settled` stops the reads.
  */
-const whereTheSendWent = (
+export const whereTheSendWent = (
   doors: Pick<AnchorDoors, 'onChain' | 'watch'>, from: string, to: string, settled: { done: boolean },
 ): Promise<'landed' | 'superseded'> => {
   const everyMs = doors.watch?.everyMs ?? ANCHOR_SEND_WATCH_MS;

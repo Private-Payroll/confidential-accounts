@@ -20,10 +20,9 @@ import { treeKeptInMemory, type TreeKept } from '../../../../packages/web-shared
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { approveProposalAction } from './approve-proposal.js';
 import { StepRefused, type ActionDefinition, type StepContext } from './definition.js';
-import { moreThanTheFeeRefusal, notOneCallRefusal, recoveryAction, type OwnWalletDoors, type RecoveryReach } from './recovery.js';
+import { moreThanTheFeeRefusal, notOneCallRefusal, recoveryAction, type RecoveryReach } from './recovery.js';
+import { intentOf, ownWalletOver, type Over } from './own-wallet-double.test-support.js';
 import * as ledger from '@midnightntwrk/ledger-v9';
-import { of } from 'rxjs';
-import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 import { stepOverItsCall } from './step-views.test-support.js';
 
 /*
@@ -127,44 +126,6 @@ const builderOver = (c: ReturnType<typeof aTreeCompany>, chain: ReturnType<typeo
   }),
   anchorTag: anchorFunctions.anchorTag,
   anchorHeads: anchorFunctions.anchorHeads,
-});
-
-/** A proven call as the ledger reads it: the one call its words name, to the account, moving nothing, unless `over` adds to it. */
-/** One intent as the ledger shapes it: every field the checks read is there, set only where `over` sets it. */
-const intentOf = (actions: readonly unknown[], over: Record<string, unknown> = {}) =>
-  ({ actions, guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined, ...over });
-const callRead = (raw: string, over: Record<string, unknown> = {}) => {
-  const t = JSON.parse(Buffer.from(raw, 'base64').toString()) as { circuit: string };
-  return {
-    raw, guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([{ address: ACCOUNT, entryPoint: t.circuit }])]]),
-    imbalances: () => new Map(), ...over,
-  };
-};
-
-/** The person's own wallet: pays each call's fee with one DUST spend and hands it to the chain; `adds` is anything more it would add. */
-interface Over { call?: Record<string, unknown>; adds?: Record<string, unknown>; noDust?: boolean; approvals?: number; carryFails?: boolean }
-const ownWalletOver = (chain: ReturnType<typeof aChain>, log: string[], o: Over = {}): OwnWalletDoors => ({
-  ledger: async () => ({ Transaction: { deserialize: (_s: 'signature', _p: 'proof', _b: 'pre-binding', raw: Uint8Array) => callRead(Buffer.from(raw).toString('base64'), o.call) } }),
-  signSegment: () => (async () => 'signed') as never,
-  facade: async () => ({
-    dust: { state: { subscribe: (w: { next: (s: { progress: { isConnected: boolean; isStrictlyComplete(): boolean } }) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
-    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
-    /* A handle the facade adopts carries the call its bytes are, read as the ledger reads them. */
-    adoptTransaction: (raw: Uint8Array) => callRead(Buffer.from(raw).toString('base64'), o.call),
-    balanceUnboundTransaction: async (call: never, options: { tokenKindsToBalance?: 'all' | string[] }) => {
-      if (o.noDust === true) throw Object.assign(new Error('Insufficient funds'), { name: 'InsufficientFundsError' });
-      const kinds = options.tokenKindsToBalance;
-      log.push(`fee in ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
-      return {
-        baseTransaction: call,
-        balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([], { dustActions: { spends: [1], registrations: [] } })]]), ...o.adds },
-      };
-    },
-    signRecipe: async (r: never) => r,
-    finalizeRecipe: async (r: never) => r,
-    submitTransaction: async (r: never) => { const raw = (r as { baseTransaction: { raw: string } }).baseTransaction.raw; log.push('own wallet sent'); chain.takes(raw); },
-    revert: async () => { log.push('fee undone'); },
-  }) as never,
 });
 
 const aCompany = async () => {

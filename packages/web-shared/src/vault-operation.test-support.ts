@@ -161,6 +161,7 @@ export const builder = (log: string[]): VaultBuilderClient => ({
   vouchedRunIdentity: async () => { throw new Error('a vault operation never asks what a run vouches for'); },
   companyWide: async () => { throw new Error('a vault operation never asks what a company-wide run names'); },
   spendingPolicyKeys: async () => { throw new Error('a vault operation never asks for a spending policy\'s keys'); },
+  spendingPolicyKeysOfEach: async () => { throw new Error('a vault operation never asks for a spending policy\'s keys'); },
   policyBarKey: async () => { throw new Error('a vault operation never asks for the policy bar\'s key'); },
   clearRun: async () => { throw new Error('a vault operation never charges a run to its period'); },
   periodTotal: async () => { throw new Error('a vault operation never works out a period\'s total'); },

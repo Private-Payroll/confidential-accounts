@@ -43,13 +43,13 @@ export const viewsOfTheStep = (call: AnsweredCall): Pick<StepContext, 'viewFor' 
     movesWhoHolds: views.movesWhoHolds,
     invitations: invitationSource(call),
     creation: creationSource(call),
-    sendStraight: async (send, into) => {
-      await views.check(into);
+    sendStraight: async (send, into, calls = []) => {
+      await views.check(into, calls);
       let handed = false;
       try {
-        return await send({ ready: () => views.check(into), handedOver: () => { handed = true; } });
+        return await send({ ready: () => views.check(into, calls), handedOver: () => { handed = true; } });
       } finally {
-        if (handed) views.sent();
+        if (handed) views.sent(calls); else views.notSent(calls);
       }
     },
   };

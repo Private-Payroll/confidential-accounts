@@ -90,7 +90,7 @@ const setUp = async () => {
     startStanding: async () => ({ standing: { adopted: true, removals: 0 } }) as never,
     confirmPayment: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, vouchedRunIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, mergeNotes: refuse, payoutPublicly: refuse, governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
-    ownSeat: refuse, spendingPolicyKeys: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, paidLeaves: refuse, runsOutrun: refuse, invitedSeats: refuse, seatInvited: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
+    ownSeat: refuse, spendingPolicyKeys: refuse, spendingPolicyKeysOfEach: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, paidLeaves: refuse, runsOutrun: refuse, invitedSeats: refuse, seatInvited: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
     secretIsTheVaults: async () => true,
     deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
     /* The built deposit ends an hour on, as the call is built; it and what the wallet hands back call this vault's deposit and create the one coin built. */
