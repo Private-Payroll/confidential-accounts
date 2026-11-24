@@ -134,6 +134,14 @@ describe('A RECORD STORE ON THIS PAGE ONLY READS', () => {
     expect(() => new HttpCompanyRecordStore('acc_northwind', reach, SECRET, judge)).not.toThrow();
     expect(new HttpCompanyRecordStore('acc_northwind', reach, null, judge)).toBeInstanceOf(HttpCompanyRecordStore);
   });
+
+  it('lets a store judge a body newer than the view\'s held answer once more, over the view\'s one fresh held read', async () => {
+    const reach = judged.storeReachIn(judged.openViewOf('acc_northwind'));
+    /* RED WHEN: the page's stores are handed no way to read held again, so a body entered after the held read is refused as not entered. */
+    expect(await reach.heldAgain?.()).toBe(true);
+    /* RED WHEN: the view lets go of held more than once, so a service changing records keeps a screen reading. */
+    expect(await reach.heldAgain?.()).toBe(false);
+  });
 });
 
 describe('THE KEY EVERY PAGE OPENS AND SEALS WITH', () => {

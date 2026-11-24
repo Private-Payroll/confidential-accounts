@@ -11,7 +11,7 @@ import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-s
 import { CompanyChangedMeanwhile } from '../../../../packages/web-shared/src/company-view-probe.js';
 import { creationSource, invitationSource, type AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
 import {
-  answeredNothingSent, gateRefusal, serviceCallOver, StepViews, type StraightDoor,
+  answeredNothingSent, gateRefusal, serviceCallOver, StepViews, type MovingSend, type StraightDoor,
 } from './step-views.js';
 
 /** A signal aborted at Stop, and abortable on its own when the action ends or runs out of time. */
@@ -297,8 +297,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       handed = !answeredNothingSent(out);
       return out;
     } finally {
-      if (handed && handedOver > before) views?.sent(path === undefined ? undefined : { path });
-      else views?.notSent(path === undefined ? undefined : { path });
+      if (handed && handedOver > before) views?.sent(path === undefined ? [] : [{ path }]);
+      else views?.notSent(path === undefined ? [] : [{ path }]);
     }
   };
   const relay = (at: StepAt, transaction: string, label?: RelayLabel): Promise<void> =>
@@ -316,12 +316,12 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     watch();
     return latched;
   };
-  const gate = async (into?: { readonly vault: string }): Promise<void> => {
+  const gate = async (into: readonly { readonly vault: string }[] = [], calls: readonly MovingSend[] = []): Promise<void> => {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
     try {
       if (views?.changed() === true) throw new CompanyChangedMeanwhile([]);
-      await views?.check(into);
+      await views?.check(into, calls);
     } catch (e) {
       const { words, marks } = gateRefusal(e, handedOver);
       throw Object.assign(words === null ? (e instanceof Error ? e : new Error(String(e))) : new ActionStopped(latchedAtTheGate(words)), marks);
@@ -329,14 +329,15 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   };
   /* A transaction this wallet sends itself: the gate in its turn first, again when the send asks, and marked once handed over. */
   const sendStraight = async <T>(
-    send: (door: StraightDoor) => Promise<T>, into?: { readonly vault: string }, call?: { readonly circuit: string; readonly contract: string },
+    send: (door: StraightDoor) => Promise<T>, into: readonly { readonly vault: string }[] = [],
+    calls: readonly { readonly circuit: string; readonly contract: string }[] = [],
   ): Promise<T> => {
-    await inTurn(() => gate(into));
+    await inTurn(() => gate(into, calls));
     let handed = false;
     try {
-      return await send({ ready: () => inTurn(() => gate(into)), handedOver: () => { handed = true; handedOver += 1; sentStraight += 1; } });
+      return await send({ ready: () => inTurn(() => gate(into, calls)), handedOver: () => { handed = true; handedOver += 1; sentStraight += 1; } });
     } finally {
-      if (handed) views?.sent(call); else views?.notSent(call);
+      if (handed) views?.sent(calls); else views?.notSent(calls);
     }
   };
   const callOne = async (at: StepAt, method: 'GET' | 'PUT' | 'POST', path: string, body?: string): Promise<{ status: number; body: unknown }> => {

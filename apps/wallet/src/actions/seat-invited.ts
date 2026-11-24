@@ -102,7 +102,14 @@ const leafTheChainLeft = (held: SavedAccountKeys | undefined, onChain: ReadonlyS
   return onChain.has(leaf) ? null : leaf;
 };
 
-/** The company's directory as the service serves it, for a seat this wallet held there; refused, never read as empty, when it cannot be read. */
+/**
+ * The company's directory as the service serves it, for a seat this wallet held there; refused, never read as empty,
+ * when it cannot be read. Read through the invitee door, not a view: the reader is a wallet whose seat the chain no
+ * longer holds, so it holds no seat that opens a view of the company. The chain is read first, and the served directory
+ * decides only for a seat the chain has already removed (`left`), so it can only make this wallet set aside, and keep,
+ * saved keys that sign for nothing on the chain, or refuse. The signature check on a served retirement
+ * (`retiredInTheDirectory`) stops a careless service, not a dishonest one: what limits a served directory is the chain read.
+ */
 const directoryServed = async (ctx: StepContext, company: string): Promise<readonly unknown[]> => {
   try {
     return await ctx.invitations.filings(company);

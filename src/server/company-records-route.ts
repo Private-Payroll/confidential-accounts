@@ -315,7 +315,7 @@ export const companyRecordsRoutes = (deps: {
       res.status(400).json({ refused: 'not-a-list', error: `${asked}. Name one to ${READ_AT_ONCE} of the company's records, each by its kind and id. Nothing was read.` });
       return;
     }
-    if (readerAskedBeyondItsKinds(res, asked.map(({ kind }) => ({ store: 'company' as const, kind })))) return;
+    if (readerAskedBeyondItsKinds(res, asked.map(({ kind, id }) => ({ store: 'company' as const, kind, id })), 'body')) return;
     try {
       res.status(200).json({
         records: await Promise.all(asked.map((r) => (r.every ? every(company, r.kind, r.id) : newest(company, r.kind, r.id)))),

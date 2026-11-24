@@ -176,14 +176,24 @@ export class StepViews {
     return this.opened.some((v) => v.endedAs === 'not-adopted');
   }
 
+  /** What the moves declared for `sends` do together, in order, without taking them: null when none was declared. */
+  private movesFor(sends: readonly MovingSend[]): HoldersMove | null {
+    const entries = [...new Set(sends.map((s) => this.moving.get(keyOf(s))).filter((e): e is Moving => e !== undefined))];
+    if (entries.length === 0) return null;
+    return (<H extends Parameters<HoldersMove>[0]>(before: H): H => entries.reduce((h, e) => e.move(h), before)) as HoldersMove;
+  }
+
   /**
    * The gate: every view the step holds, opened again after the step's own send or a failed write where it was, finds
-   * the company as the step read it, and for a send into `into.vault`, the account adopts that vault now. A step that
-   * opened no view of the company reads nothing of it, so it has nothing to check and passes. A step that held views,
-   * none of which is left to check against, is refused, and so is any send into a vault when no view is left.
+   * the company as the step read it, and the account adopts every vault in `into`, both now and as the calls `sends`
+   * carries move who holds the company, so no call of one transaction deposits into a vault another call of it
+   * retires. A step that opened no view of the company reads nothing of it, so it has nothing to check and passes. A
+   * step that held views, none of which is left to check against, is refused, and so is any send into a vault when no
+   * view is left.
    */
-  async check(into?: { readonly vault: string }): Promise<void> {
-    if (this.notAdopted()) throw new VaultNotAdopted(into?.vault ?? '');
+  async check(into: readonly { readonly vault: string }[] = [], sends: readonly MovingSend[] = []): Promise<void> {
+    if (this.notAdopted()) throw new VaultNotAdopted(into[0]?.vault ?? '');
+    const moved = into.length === 0 ? null : this.movesFor(sends);
     let checked = 0;
     for (const { company, view, at } of this.held) {
       const now = view.current();
@@ -191,19 +201,22 @@ export class StepViews {
       const holders = await now.stillAsRead(serviceSource(this.calls.direct, company));
       at.checked = holders;
       checked += 1;
-      if (into !== undefined && !adopts(holders, into.vault)) throw new VaultNotAdopted(into.vault);
+      const after = moved === null ? holders : moved(holders);
+      for (const { vault } of into) if (!adopts(holders, vault) || !adopts(after, vault)) throw new VaultNotAdopted(vault);
     }
-    if (checked === 0 && (into !== undefined || this.held.length > 0)) {
-      throw into !== undefined ? new VaultNotAdopted(into.vault) : new CompanyChangedMeanwhile(['no view of the company was left to check this send against']);
+    if (checked === 0 && (into.length > 0 || this.held.length > 0)) {
+      throw into.length > 0 ? new VaultNotAdopted(into[0]!.vault) : new CompanyChangedMeanwhile(['no view of the company was left to check this send against']);
     }
   }
 
   /**
-   * The step handed `send` over: each view it holds is opened again, from the same reading, before it is next used;
-   * when the step declared that this send moves who holds the company, the reading's holders are moved by it.
+   * The step handed over a transaction of the calls `sends`: each view it holds is opened again, from the same reading,
+   * before it is next used; the reading's holders are moved by every move the step declared for those calls, in order.
    */
-  sent(send?: MovingSend): void {
-    const declared = this.take(send);
+  sent(sends: readonly MovingSend[] = []): void {
+    const taken = sends.map((s) => this.take(s)).filter((m): m is HoldersMove => m !== null);
+    const declared = taken.length === 0 ? null
+      : (<H extends Parameters<HoldersMove>[0]>(before: H): H => taken.reduce((h, m) => m(h), before)) as HoldersMove;
     for (const { view, at } of this.held) {
       const now = view.current();
       if (now.ended !== null) continue;
@@ -213,11 +226,11 @@ export class StepViews {
   }
 
   /**
-   * `send` went nowhere: the move declared for it is dropped from it, so no later send by that way takes it; a send by
-   * another way it was declared under (the chain behind a refused service) still takes it.
+   * `sends` went nowhere: the move declared for each is dropped from it, so no later send by that way takes it; a send
+   * by another way it was declared under (the chain behind a refused service) still takes it.
    */
-  notSent(send?: MovingSend): void {
-    this.drop(send);
+  notSent(sends: readonly MovingSend[] = []): void {
+    for (const s of sends) this.drop(s);
   }
 
   /** What stops the action once the step is over: a deposit a view refused, or another signer's change a view found. */

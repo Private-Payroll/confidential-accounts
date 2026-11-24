@@ -559,3 +559,44 @@ describe('A READ IS TIMED FROM WHEN THE WORKER STARTS IT, NOT FROM WHEN THE WORK
     expect(warm.done).toBe(true);
   });
 });
+
+describe('A SPENDING POLICY\'S KEYS, ASKED FOR ONE PAIR OR FOR EVERY PAIR AT ONCE', () => {
+  const PAIR = { vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) };
+  const KEYS = { assetKey: '01', policyKey: '02', onKey: '03', barKey: '04', commitment: null };
+  const answering = async (c: ReturnType<typeof aClient>, keys: unknown) => {
+    await settle();
+    const w = c.started[c.started.length - 1]!;
+    if (w.posted.length === 0) { w.says({ kind: 'vault-worker-ready' }); await settle(); }
+    const m = w.posted[w.posted.length - 1];
+    w.says({ id: m.id, ok: true, ask: m.ask, keys });
+    return m;
+  };
+
+  it('every pair goes in one message and each is answered on its own, a refused pair refused alone', async () => {
+    const c = aClient();
+    const each = c.client.spendingPolicyKeysOfEach([PAIR, { ...PAIR, vault: 'zz' }]);
+    const posted = await answering(c, [{ keys: KEYS }, { refused: 'not a vault' }]);
+    /* RED WHEN: the pairs are sent to the worker in more than one message, or one pair's refusal refuses another. */
+    expect(posted).toMatchObject({ ask: 'spending-policy-keys', pairs: [PAIR, { ...PAIR, vault: 'zz' }] });
+    const read = await each;
+    expect(read[0]).toEqual({ status: 'fulfilled', value: KEYS });
+    expect(read[1]).toMatchObject({ status: 'rejected', reason: { message: 'not a vault' } });
+    /* RED WHEN: an answer that leaves out a pair is taken, so a pair would be shown another's keys or none. */
+    const short = c.client.spendingPolicyKeysOfEach([PAIR, PAIR]);
+    await answering(c, [{ keys: KEYS }]);
+    await expect(short).rejects.toThrow(/every vault and currency asked/u);
+  });
+
+  it('one pair asked alone gives its keys, or throws why they could not be made', async () => {
+    const c = aClient();
+    const one = c.client.spendingPolicyKeys(PAIR);
+    const posted = await answering(c, [{ keys: KEYS }]);
+    expect(posted).toMatchObject({ ask: 'spending-policy-keys', pairs: [PAIR] });
+    expect(await one).toEqual(KEYS);
+    /* RED WHEN: a pair whose keys the worker refused is given back as keys. */
+    const refused = c.client.spendingPolicyKeys(PAIR);
+    const thrown = expect(refused).rejects.toThrow('not a vault');
+    await answering(c, [{ refused: 'not a vault' }]);
+    await thrown;
+  });
+});

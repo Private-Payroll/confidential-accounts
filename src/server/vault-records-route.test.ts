@@ -6,13 +6,13 @@
  * checked, and nothing on the server can open what it keeps.
  */
 import { vaultRecordEntry } from '../midnight/record-manifest.js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { vaultRecordsRoutes, VAULT_RECORD_BODY_LIMIT, type MayTouchVaultRecords } from './vault-records-route.js';
 import { FilingNotBelieved, HttpSealedPoolStore, type FilingJudge, type FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
-import { sendOnPage } from 'vaults-web-shared/service-transport.js';
+import { serviceAnswered } from 'vaults-web-shared/service-transport.js';
 import { FILING_REFUSAL } from '../midnight/seat-directory.js';
 import {
   MemorySealedPoolStore, SealedNotePool, sealedOf, sealPool, VaultPoolVersionAlreadyFiled, VaultRecordRefused,
@@ -353,11 +353,16 @@ describe('a vault\'s sealed records, from the page to the server and back', () =
       sent.push({ url, init });
       return new Response(JSON.stringify({ ok: 1 }), { status: 200 });
     }) as unknown as typeof fetch;
-    const r = await sendOnPage(() => 'ada', fake)('/api/vaults/x', { method: 'GET' });
-    expect(r).toEqual({ status: 200, body: { ok: 1 } });
-    expect(sent[0]!.init.credentials).toBe('same-origin');
-    expect((sent[0]!.init.headers as Record<string, string>)['x-signed-in-as']).toBe('ada');
-    await expect(sendOnPage(() => 'ada', fake)('https://elsewhere.example/api', { method: 'GET' }),
-      'RED WHEN: a request can be sent anywhere but this product\'s own server').rejects.toThrow(/nowhere else/);
+    vi.stubGlobal('fetch', fake);
+    try {
+      const r = await serviceAnswered(() => 'ada')('/api/vaults/x', { method: 'GET' });
+      expect(r).toEqual({ status: 200, body: { ok: 1 } });
+      expect(sent[0]!.init.credentials).toBe('same-origin');
+      expect((sent[0]!.init.headers as Record<string, string>)['x-signed-in-as']).toBe('ada');
+      await expect(serviceAnswered(() => 'ada')('https://elsewhere.example/api', { method: 'GET' }),
+        'RED WHEN: a request can be sent anywhere but this product\'s own server').rejects.toThrow(/nowhere else/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

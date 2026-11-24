@@ -104,7 +104,7 @@ const BARE: Record<string, Record<string, unknown>> = {
   'policy-bar-key': {},
   'one-off-opened': { rec: { company: 'c1', kind: 'transfer', id: 'one_' + '00'.repeat(16), version: 1, keyEpoch: 0, sealed: {}, wrapped: [] }, key: '11'.repeat(32) },
   'address-claim-refusal': { claim: { kind: 'unshielded', address: 'mn_addr_undeployed1', verifyingKey: 'ab'.repeat(32), signature: 'cd'.repeat(64) }, for: {} },
-  'spending-policy-keys': { vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) },
+  'spending-policy-keys': { pairs: [{ vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) }] },
   'start-standing': { vault: 'ab'.repeat(32), accountState: '', vaultState: '', now: '0' },
   'set-nonce-secret': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), run: {}, proposal: '00', opensAt: '0', closesAt: '1', chain: {} },
   'write-secret-copy': { vault: 'ab'.repeat(32), run: {}, place: 0, state: '' },

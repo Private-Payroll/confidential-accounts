@@ -4,7 +4,9 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
-import { FilingNotBelieved, type FreshJudge } from 'vaults-web-shared/http-sealed-pool-store.js';
+import { FilingNotBelieved, type FreshJudge, type ReadsThroughTheView } from 'vaults-web-shared/http-sealed-pool-store.js';
+import type { VaultRecordAsked } from 'vaults-web-shared/records-source.js';
+import type { VaultsReadOnce } from 'vaults-web-shared/vaults-read-in-the-view.js';
 import { companyKeyReleasedFor, seatShownHere, type OpenedAccount } from 'vaults-web-shared/keyring.js';
 import { browserInFlightRecords } from 'vaults-web-shared/in-flight-in-this-browser.js';
 import { deviceSignerFrom, readersIn, recordsReadHere, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
@@ -181,6 +183,72 @@ export async function seatAndRecordsHere(
   return { view, sealed, company, account, opened, builder, companyKey, mine, leaf: own.seat, viewingKey, directory, judge, readers, records };
 }
 
+/*
+ * Where a vault's private money is read from: the vault store, its pool and the journals a rebuild of its notes reads,
+ * and the name of the view's layer that holds the seat and records every vault's read shares.
+ */
+const MONEY_READ = { store: 'vault', records: ['pool', 'deposit-journal', 'payment-journal'], layer: 'vault-private-money:' } as const;
+
+/**
+ * The seat and records a vault's private money is read with, made once for every vault read through one view, or why
+ * this seat cannot read any. `records` are the vault records as this view reads them (`vaultRecordsJoinedIn`).
+ */
+type MoneyReadInTheView = { readonly refused: ActRefusal; readonly here?: never } | { readonly refused?: never; readonly here: SeatAndRecordsHere; readonly records: DeviceRecords };
+
+/**
+ * THE VAULT RECORDS OF EVERY VAULT THE ACCOUNT ADOPTED, READ IN ONE ASK: each
+ * is named to the view's held read (`declare`) so one held read proves them all,
+ * and read together the first time any is asked. A record of a vault not
+ * adopted, or a list of every version, is read through the view as it is
+ * asked. If the joined read fails, each record is then asked alone, one after
+ * another, so a fault of one vault's read fails only that vault's tile.
+ */
+function vaultRecordsJoinedIn(view: PageView, adopted: readonly string[]): ReadsThroughTheView {
+  const reach = storeReachIn(view);
+  const asked: VaultRecordAsked[] = adopted.flatMap((v) => MONEY_READ.records.map((record) => ({ vault: v.toLowerCase(), record })));
+  view.declare({ records: asked.map((a) => ({ store: MONEY_READ.store, kind: a.record, id: a.vault })) });
+  const vaults = new Set(asked.map((a) => a.vault));
+  const declared = (a: VaultRecordAsked): boolean => vaults.has(a.vault) && (MONEY_READ.records as readonly string[]).includes(a.record);
+  let joined: Promise<void> | null = null;
+  let joinedFailed = false;
+  let alone: Promise<void> = Promise.resolve();
+  const vaultRecord = async (a: VaultRecordAsked): Promise<unknown> => {
+    if (a.every === true || !declared(a)) return reach.vaultRecord(a);
+    /* A joined read that failed is kept as failed, never as an answer: each record is asked alone after it. */
+    joined ??= view.vaultRecords(asked).then(() => undefined, () => { joinedFailed = true; });
+    await joined;
+    if (!joinedFailed) return reach.vaultRecord(a);
+    /* One after another, so no two join in one ask again. */
+    const own = alone.then(() => reach.vaultRecord(a));
+    alone = own.then(() => undefined, () => { /* This record's failure is its own read's answer; the next is still asked. */ });
+    return own;
+  };
+  return { ...reach, vaultRecord };
+}
+
+/**
+ * THE SEAT AND THE VAULT RECORDS A READ OF ANY VAULT'S PRIVATE MONEY USES,
+ * made once in the view (`layer`) for the person `personId`, so every tile of
+ * one opening shares them and they go when the view ends.
+ */
+const moneyReadIn = (personId: string, view: PageView): Promise<MoneyReadInTheView> =>
+  view.layer(MONEY_READ.layer + personId, async () => {
+    const here = await seatAndRecordsHere(personId, view);
+    if (typeof here === 'string') return { refused: here };
+    const joined = vaultRecordsJoinedIn(view, (await view.holders()).adoptedVaults);
+    return { here, records: recordsReadHere(here.judge, joined) };
+  });
+
+/**
+ * The vault's state on the chain as a rebuild of its notes reads it, through the view's one read of every adopted
+ * vault in `round`. The rebuild reads no circuits, so the account a read names is not asked for: what it is answered
+ * is the same read with the account's circuits left out.
+ */
+const chainReadIn = (view: PageView, round: number): VaultsReadOnce => ({
+  declare: () => {},
+  read: (v, indexer) => vaultOnChainIn(view, v, indexer, round),
+});
+
 /**
  * WHAT THE VAULT `vault` OF THE COMPANY `companyId` HOLDS PRIVATELY, for the
  * person `personId`, and which of four things the read found: the amounts
@@ -199,13 +267,14 @@ export async function readVaultPrivateMoney(
   personId: string, view: PageView, vault: string, { registry = assets, round = 0 }: { readonly registry?: AssetRegistry; readonly round?: number } = {},
 ): Promise<VaultPrivateMoney> {
   try {
-    const here = await seatAndRecordsHere(personId, view);
-    if (typeof here === 'string') {
+    const read = await moneyReadIn(personId, view);
+    if (read.refused !== undefined) {
+      const here = read.refused;
       return unreadable(here === ACT_REFUSAL.noKeysHere ? COULD_NOT_READ.noKeys
         : WALLET_DID_NOT_ANSWER.has(here) ? COULD_NOT_READ.walletRefused
         : here === ACT_REFUSAL.unreachable ? COULD_NOT_READ.chain : COULD_NOT_READ.other);
     }
-    const { builder, account: address, mine, readers, records } = here;
+    const { here: { builder, account: address, mine, readers }, records } = read;
     const poolStore = records(LEDGER.pool);
     const pool = new SealedNotePool(poolStore, { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }, readers.signers);
     const holdings = deviceVaultHoldings({
@@ -229,6 +298,7 @@ export async function readVaultPrivateMoney(
           account: address, builder, me: mine, records, signers: readers.signers,
           /* No seat is given: the read files nothing, and what it finds owed is filed by a seat action in the wallet. */
           indexer: () => walletIndexerIn(view),
+          vaultsHere: chainReadIn(view, round),
           onChain: async () => ({ holders: await view.holders() }),
           /* A note nobody's records name is looked for once in the same records: the device's own store of the company keeps it. */
           ...unnamedKeptIn(view),

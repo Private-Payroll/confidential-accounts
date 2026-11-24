@@ -57,7 +57,20 @@ export const startRefusalOf = (e: unknown, ctx: Pick<StepContext, 'tell'>): Step
   return null;
 };
 
-/** Create a vault: the seat's vault keys given first, then the vault built, started and its secret set, in one action. */
+/**
+ * How many seats a vault's secret is sealed to, shown before the passkey: the seats the chain holds for the company and
+ * account the intent names, read from this wallet's own indexer, which needs no seed. Null when the intent does not
+ * name both, or the chain could not be read, so the line says it was not read.
+ */
+export const seatsShownFor = (
+  reach: Pick<VaultKeysReach, 'chain'>, intent: { readonly fields: Readonly<Record<string, string>> },
+): Promise<number | null> => {
+  const label = readCompanyLabel(intent.fields['company']);
+  const account = readAccountAddress(intent.fields['account']);
+  return label === null || account === null ? Promise.resolve(null)
+    : reach.chain().holders(account, label).then((h) => ('key' in h ? null : h.seats.length), () => null);
+};
+
 /** The doors a start acts through: for a retired vault adopted again, carrying the proposal that retired it as the chain shows it. */
 const adoptedAgainFrom = async (doors: CreateVaultDoors, vault: Hex | undefined, retired: string | undefined): Promise<CreateVaultDoors> => {
   if (retired === undefined || vault === undefined) return doors;
@@ -69,17 +82,14 @@ const adoptedAgainFrom = async (doors: CreateVaultDoors, vault: Hex | undefined,
   }
 };
 
+/** Create a vault: the seat's vault keys given first, then the vault built, started and its secret set, in one action. */
 export function createVaultAction(reach: CreateVaultReach): ActionDefinition {
   return Object.freeze({
     headline: 'act.create-vault.headline',
     shown: async (intent) => {
       const named = intent.fields['vault'];
       const readers = intent.fields['readers'];
-      /* Read before the passkey from this wallet's own indexer, which needs no seed: how many seats the secret is sealed to. */
-      const label = readCompanyLabel(intent.fields['company']);
-      const account = readAccountAddress(intent.fields['account']);
-      const seated = label === null || account === null ? null
-        : await reach.chain().holders(account, label).then((h) => ('key' in h ? null : h.seats.length), () => null);
+      const seated = await seatsShownFor(reach, intent);
       return [
         ...vaultKeysShown(intent, 'act.create-vault'),
         ...(named === undefined
@@ -119,7 +129,9 @@ export function createVaultAction(reach: CreateVaultReach): ActionDefinition {
       const start: ActionStep = {
         title: { key: 'act.create-vault.step.start' },
         run: async (ctx) => {
-          const { reach: r } = await keys.given(ctx);
+          /* The keys the wallet gave in the step before; the company is this step's own read, taken after that step's roster write. */
+          await keys.given(ctx);
+          const r = await keys.company(ctx);
           const vault = intent.fields['vault'];
           if (vault !== undefined) ctx.tell({ vault: vault.toLowerCase() });
           /* A new vault is built only once every seat the chain holds can be given its secret, so none is left half set up for want of a signer's keys. */

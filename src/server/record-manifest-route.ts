@@ -126,7 +126,7 @@ export const recordManifestRoutes = (deps: {
       res.status(400).json({ error: `name at most ${ENTRIES_AT_ONCE * 4} records to read the newest version of. Nothing was read.` });
       return;
     }
-    if (readerAskedBeyondItsKinds(res, b.data.records)) return;
+    if (readerAskedBeyondItsKinds(res, b.data.records, 'proof')) return;
     res.json({ versions: b.data.records.map((r) => deps.store.newestEntered(company, recordKeyOf(r))) });
   });
 
@@ -282,7 +282,7 @@ export const recordManifestRoutes = (deps: {
       return;
     }
     const reader = readerKindsOf(res);
-    res.json({ entries: reader === null ? pending : pending.filter((e) => aReaderMay(reader, e)) });
+    res.json({ entries: reader === null ? pending : pending.filter((e) => aReaderMay(reader, e, 'proof')) });
   });
 
   /* Every kind a company files, in each store, so a device can ask about all of them in one read. */
@@ -297,7 +297,7 @@ export const recordManifestRoutes = (deps: {
       res.status(400).json({ error: `name the root to prove against and at most ${PROVEN_AT_ONCE} records and ${KINDS_AT_ONCE} kinds. Nothing was read.` });
       return;
     }
-    if (readerAskedBeyondItsKinds(res, [...b.data.records, ...b.data.kinds])) return;
+    if (readerAskedBeyondItsKinds(res, [...b.data.records, ...b.data.kinds], 'proof')) return;
     const given = proofsOf(deps.store.keptTreeOf(company), b.data);
     if (given === null) {
       /* Answered, not failed: a root not kept here is an answer the device acts on (it reads the head again). */

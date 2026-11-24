@@ -56,6 +56,12 @@ export interface TreeService {
   headersAfter(accountId: string, seq: number, limit: number): Promise<HeadersPage>;
   /** `entries`: the entries its changes name, kept with it by this device, for a service that no longer holds them. */
   fileHeader(accountId: string, header: TreeHeader, entries?: readonly ManifestEntry[]): Promise<void>;
+  /**
+   * The same header filed again as a repair, which changes nothing a step read: sent without the check before a
+   * write, and never ending the step's read of the company. True when the service kept it; false when it refused it or
+   * its answer is not known, and then nothing of it is taken as this device's own.
+   */
+  refileHeader?(accountId: string, header: TreeHeader, entries?: readonly ManifestEntry[]): Promise<boolean>;
   /** Null when the service keeps no header that makes the root asked. */
   proofs(accountId: string, ask: ProofsAsk): Promise<ProofsGiven | null>;
   /** Every entry newer than its record's leaf at `root`, as the service says; null when it keeps no header making that root. */

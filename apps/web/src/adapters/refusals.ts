@@ -32,7 +32,8 @@ export function refusalOf(e: unknown): ActRefusal {
   if (e instanceof Error && e.name === 'RosterNotBelieved') return ACT_REFUSAL.rosterNotBelieved;
   /* A company whose key the person's wallet has not released on this visit: a page load never asks, the person is offered the ask. */
   if (e instanceof Error && e.name === 'CompanyKeyNotOpened') return ACT_REFUSAL.notOpenedYet;
-  if (e instanceof TypeError) return ACT_REFUSAL.unreachable;
+  /* No answer at all, as the page's transport says it (`ServiceNotReached`, by its kind's name) or a fetch fails as the browser's does. */
+  if ((e instanceof Error && e.name === 'ServiceNotReached') || e instanceof TypeError) return ACT_REFUSAL.unreachable;
   if (e instanceof ServiceRefused && e.code === 'fee-not-paid') return ACT_REFUSAL.feeNotPaid;
   if (e instanceof ServiceRefused && e.code === 'network-refused') return ACT_REFUSAL.networkRefused;
   if (e instanceof WalletClosed) {

@@ -109,7 +109,7 @@ export function depositSentFor(
           return true;
         },
         handedOver: door.handedOver,
-      }), { vault });
+      }), [{ vault }]);
       ctx.show({ key: 'act.fell-back.own-dust' });
       return { txRef: PLAIN_REF.test(id) ? id : '', transactionHash: null };
     } catch (e) {
@@ -121,7 +121,7 @@ export function depositSentFor(
   return async (v, tx) => {
     let answer: { txRef?: unknown; transactionHash?: unknown } | null;
     try {
-      answer = (await r.stepView.current().write([{ to: 'vault-send', act: 'deposit', vault: v, tx }]))[0] as typeof answer;
+      answer = (await r.stepView.current().write([{ to: 'vault-send', tx, calls: [{ act: 'deposit', vault: v }] }]))[0] as typeof answer;
     } catch (e) {
       if (e instanceof CompanyChangedMeanwhile || (e as { thisSendNotSent?: unknown } | null)?.thisSendNotSent === true) {
         throw Object.assign(e as Error, { nothingWasSent: true });

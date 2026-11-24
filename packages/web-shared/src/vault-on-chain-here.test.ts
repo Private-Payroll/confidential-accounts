@@ -14,7 +14,7 @@ import * as vaultModule from '../../../contracts/managed-vault/contract/index.js
 import { identityFromSecret } from 'midnight-identity';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
-import { accountPresenceAt, accountAtOneBlockOver, contractStatesAt, STATES_AT_ONCE, atOneBlockOver, readAccountCallChain, readVaultOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
+import { accountPresenceAt, accountAtOneBlockOver, contractStatesAt, STATES_AT_ONCE, atOneBlockOver, readAccountCallChain, readVaultOnChain, readVaultsOnChain, vaultChainSourceAt, type BlockReader, type VaultChainSource } from './vault-on-chain-here.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
 import { vaultAsDeployed } from './vault-as-deployed.js';
 import { newestTimeToLive, readTransaction } from './vault-builder.js';
@@ -23,6 +23,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import * as accountModule from '../../../contracts/managed/contract/index.js';
 import { DEPLOYED_CIRCUITS } from '../../../src/midnight/deferral.js';
 import { contractStateAt } from '../../../src/midnight/contract-state-at.js';
+import { NoteIndexUnaskable, NoteIndexUnreadable, type ServedEvent } from '../../../src/midnight/note-index.js';
+import { HISTORIES_AT_ONCE } from '../../../src/midnight/indexer-queries.js';
 import * as L from '@midnightntwrk/ledger-v9';
 
 const VAULT = 'ab'.repeat(32);
@@ -723,5 +725,65 @@ describe('EVERY VAULT A STEP READS, READ TOGETHER ON THIS DEVICE', () => {
     expect(sent.map((b) => Object.keys((JSON.parse(b) as { variables: object }).variables).length)).toEqual([STATES_AT_ONCE, 150 - STATES_AT_ONCE]);
     /* RED WHEN: a part's answers are put back out of the order asked. */
     expect(read.map((r) => r !== null)).toEqual(many.map((_, i) => i % 2 === 0));
+  });
+  /* Each vault's history as the indexer serves it in one request: the transactions of each with their events. */
+  const madeFor = (vault: string, commitment: string): ServedEvent[] => [
+    { transactionHash: 'e1'.repeat(32), details: { tag: 'zswapOutput', commitment, contract: vault, mtIndex: 3n } },
+    { transactionHash: 'e1'.repeat(32), details: { tag: 'zswapOutput', commitment: 'f9'.repeat(32), contract: 'cd'.repeat(32), mtIndex: 4n } },
+  ];
+  const historiesOf = (asked: string[], answer: (part: readonly string[]) => ReadonlyArray<ServedEvent[] | null>): Pick<VaultChainSource, 'histories'> => ({
+    histories: { eventsOfEvery: async (part) => { asked.push(`histories of ${part.map((a) => a.slice(0, 4)).join(' ')}`); return answer(part); } },
+  });
+
+  it('EVERY VAULT\'S HISTORY GOES IN ONE REQUEST, AND EACH VAULT HOLDS THE COINS A READ OF ITS HISTORY ALONE GIVES', async () => {
+    const asked: string[] = [];
+    /* Each request answered with the events the indexer above serves for a vault's one transaction, read alone. */
+    const source = { ...together(states, asked), ...historiesOf(asked, (part) => part.map(() => madeFor(VAULT, 'f0'.repeat(32)))) };
+    const reads = await readVaultsOnChain(d, source, [VAULT, OTHER, NONE], ACCOUNT);
+    /* RED WHEN: a vault's history is read in a request of its own, or one the indexer holds no state for is asked. */
+    expect(asked.filter((a) => a.startsWith('histor'))).toEqual([`histories of ${VAULT.slice(0, 4)} ${OTHER.slice(0, 4)}`]);
+    /* RED WHEN: the coins read together are not the ones the vault's own history gives, read alone. */
+    const alone = async (vault: string) => (await readVaultOnChain(d, together(states, []), vault, ACCOUNT));
+    expect(reads.map((r) => r.read)).toEqual([await alone(VAULT), await alone(OTHER), { onChain: false }]);
+    expect(reads[0]!.read).toMatchObject({ everCreated: ['f0'.repeat(32)] });
+  });
+
+  it('THE HISTORIES ARE ASKED IN PARTS THE INDEXER\'S QUERY COMPLEXITY TAKES, AND EACH PART\'S ANSWERS STAY WITH THEIR VAULTS', async () => {
+    const asked: string[] = [];
+    const many = Array.from({ length: 40 }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
+    const source = {
+      ...together(Object.fromEntries(many.map((v) => [v, states[OTHER]!])), asked),
+      ...historiesOf(asked, (part) => part.map((v) => madeFor(v, v.slice(0, 62) + 'ff'))),
+    };
+    const reads = await readVaultsOnChain(d, source, many);
+    /* RED WHEN: more vaults are asked in one request than its complexity takes, or one at a time. */
+    expect(asked.filter((a) => a.startsWith('histor')).map((a) => a.split(' ').length - 2)).toEqual([HISTORIES_AT_ONCE, 40 - HISTORIES_AT_ONCE]);
+    /* RED WHEN: a part's answers are put back against other vaults. */
+    expect(reads.map((r) => (r.read as { everCreated: readonly string[] }).everCreated)).toEqual(many.map((v) => [v.slice(0, 62) + 'ff']));
+  });
+
+  it('A VAULT WHOSE LIST MAY BE CUT SHORT IS READ ALONE, AND SO IS EVERY VAULT WHEN THE QUESTION ASKED TOGETHER FAILS; A HISTORY THAT CANNOT BE READ ALONE EITHER STOPS THE READ', async () => {
+    const asked: string[] = [];
+    const short = { ...together(states, asked), ...historiesOf(asked, (part) => part.map((v) => (v === VAULT ? null : madeFor(v, 'f0'.repeat(32))))) };
+    const reads = await readVaultsOnChain(d, short, [VAULT, OTHER]);
+    /* RED WHEN: a vault whose list one request cannot vouch for is read as holding only what that list shows. */
+    expect(asked.filter((a) => a.startsWith('history'))).toEqual([`history of ${VAULT.slice(0, 4)}`]);
+    expect(reads.map((r) => (r.read as { everCreated: readonly string[] }).everCreated)).toEqual([['f0'.repeat(32)], ['f0'.repeat(32)]]);
+
+    asked.length = 0;
+    const unaskable = { ...together(states, asked), histories: { eventsOfEvery: async () => { asked.push('histories'); throw new NoteIndexUnaskable('no such field'); } } };
+    /* RED WHEN: an indexer that will not take the question asked together leaves the vaults unread, or read as holding nothing. */
+    expect((await readVaultsOnChain(d, unaskable, [VAULT, OTHER])).map((r) => (r.read as { everCreated: readonly string[] }).everCreated)).toEqual([['f0'.repeat(32)], []]);
+    expect(asked.filter((a) => a.startsWith('histor'))).toEqual(['histories', `history of ${VAULT.slice(0, 4)}`, `history of ${OTHER.slice(0, 4)}`]);
+
+    asked.length = 0;
+    const unreadable = { ...together(states, asked), histories: { eventsOfEvery: async () => { asked.push('histories'); throw new NoteIndexUnreadable('query is too complex'); } } };
+    /* RED WHEN: a request asked together that fails (as one past the indexer's size limits does) stops the read, where each vault read alone answers. */
+    expect((await readVaultsOnChain(d, unreadable, [VAULT, OTHER])).map((r) => (r.read as { everCreated: readonly string[] }).everCreated)).toEqual([['f0'.repeat(32)], []]);
+    expect(asked.filter((a) => a.startsWith('histor'))).toEqual(['histories', `history of ${VAULT.slice(0, 4)}`, `history of ${OTHER.slice(0, 4)}`]);
+
+    const neither = { ...unreadable, transactions: { of: async () => { throw new NoteIndexUnreadable('the indexer could not be asked'); } } };
+    /* RED WHEN: a vault whose history cannot be read together or alone is taken as having made no coins. */
+    await expect(readVaultsOnChain(d, neither, [VAULT])).rejects.toThrow(NoteIndexUnreadable);
   });
 });

@@ -1,7 +1,8 @@
 /**
- * How this page talks to the service. Every call goes through `api`, or through `sendOnPage` where the caller reads the
- * answer's status itself, and each sends the person's sign-in only to this page's own origin and says who this tab was
- * prepared for, so the service can refuse a request whose sign-in has become somebody else's. An answer that is not a
+ * How this page talks to the service. Every call is one fetch (`pageFetch`), made through `api`, or through
+ * `serviceAnswered` where the caller reads the answer's status itself; each sends the person's sign-in only to this
+ * page's own origin and says who this tab was prepared for, so the service can refuse a request whose sign-in has
+ * become somebody else's, and a request that got no answer is `ServiceNotReached`. An answer that is not a
  * success comes back as an error a screen can tell apart: signed out, signed in as somebody else, could not check, no
  * such record, or refused. This file holds no sign-in of its own: the module that holds it hands it in once
  * (`theSignInIsHeldBy`), and this file asks it who is signed in and tells it when the service has ended the sign-in.
@@ -65,34 +66,56 @@ export class ServiceRefused extends Error {
   }
 }
 
-const apiOnce = async (path: string, opts?: RequestInit) => {
-  const who = signIn.person();
-  const r = await fetch(path, {
-    ...opts,
-    /* The sign-in cookie rides on this, and only to this page's own origin. */
-    credentials: 'same-origin',
-    headers: {
-      'content-type': 'application/json',
-      /* **WHO THIS TAB WAS PREPARED FOR.** The sign-in is the browser's, so a
-       * sign-in in another tab changes it under this one; the server refuses a
-       * request whose session is somebody else, rather than letting this tab's
-       * keys be written under them. */
-      ...(who ? { 'x-signed-in-as': who.id } : {}),
-      ...(opts?.headers ?? {}),
-    },
-  });
+/** A request's status and body, as one fetch of the service answered it; a body that is not JSON is `{}`. */
+interface PageAnswer { readonly status: number; readonly body: unknown }
+
+/**
+ * **THE PAGE'S ONE FETCH OF THE SERVICE**, which every send on this page is built on: to this product's own server only
+ * (a path under `/api/`; any other is refused, nothing sent), with the sign-in cookie, and saying which person this tab
+ * was prepared for (`who`), so a sign-in changed in another tab is refused rather than written under. A request that got
+ * no answer at all is `ServiceNotReached`, never an answer: the browser cannot tell whether what it carried arrived, so
+ * whoever sent it decides. It tells the sign-in nothing; any status comes back with its body.
+ */
+const pageFetch = async (path: string, init: RequestInit, who: string | null): Promise<PageAnswer> => {
+  if (!path.startsWith('/api/')) throw new Error('a request is sent to this product\'s own server and nowhere else');
+  let r: Response;
+  try {
+    r = await fetch(path, {
+      ...init,
+      /* The sign-in cookie rides on this, and only to this page's own origin. */
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        /* **WHO THIS TAB WAS PREPARED FOR.** The sign-in is the browser's, so a
+         * sign-in in another tab changes it under this one; the server refuses a
+         * request whose session is somebody else, rather than letting this tab's
+         * keys be written under them. */
+        ...(who ? { 'x-signed-in-as': who } : {}),
+        ...(init.headers ?? {}),
+      },
+    });
+  } catch (e) {
+    throw new ServiceNotReached(`the company's service could not be reached (${String((e as Error)?.message ?? e).replace(/\.\s*$/u, '')})`, false);
+  }
   const body = await r.json().catch(() => ({}));
-  if (r.status === 401) {
+  return { status: r.status, body };
+};
+
+const apiOnce = async (path: string, opts: RequestInit = {}) => {
+  const { status, body: answered } = await pageFetch(path, opts, signIn.person()?.id ?? null);
+  /* The service's answer, read as the body of a JSON response is: its fields are each caller's to check. */
+  const body: Awaited<ReturnType<Response['json']>> = answered;
+  if (status === 401) {
     signIn.lost('no-session');
     throw new AuthError(body?.error ?? 'not signed in');
   }
-  if (r.status === 409 && body?.code === 'another-person') {
+  if (status === 409 && body?.code === 'another-person') {
     signIn.lost('another-person');
     throw new AnotherPersonError(body.error);
   }
-  if (r.status === 503 && body?.code === 'could-not-check') throw new CouldNotCheckError(body?.error ?? 'the service could not check your sign-in');
-  if (r.status === 404) throw new NotOnTheService(body?.error ?? `request failed: ${r.status}`);
-  if (!r.ok) throw new ServiceRefused(body?.error ?? `request failed: ${r.status}`, typeof body === 'object' && body !== null ? body : {}, r.status);
+  if (status === 503 && body?.code === 'could-not-check') throw new CouldNotCheckError(body?.error ?? 'the service could not check your sign-in');
+  if (status === 404) throw new NotOnTheService(body?.error ?? `request failed: ${status}`);
+  if (status < 200 || status > 299) throw new ServiceRefused(body?.error ?? `request failed: ${status}`, typeof body === 'object' && body !== null ? body : {}, status);
   return body;
 };
 
@@ -108,36 +131,18 @@ export const api = (path: string, opts?: RequestInit & { read?: boolean }) => {
  */
 export const serviceCall = api;
 
-/** A request as `sendOnPage` sends it, and the status and body it was answered with. */
+/** A request as the quiet form sends it, and the status and body it was answered with. */
 export type PageSend = (
   path: string, init: { readonly method: 'GET' | 'PUT' | 'POST'; readonly body?: string; readonly signal?: AbortSignal },
-) => Promise<{ readonly status: number; readonly body: unknown }>;
+) => Promise<PageAnswer>;
 
 /**
- * **HOW THE PAGE SENDS ONE REQUEST WHOSE ANSWER IT READS ITSELF**: to its own origin only, with the sign-in cookie, and
- * saying which person this tab was prepared for (`signedInAs`), so a sign-in changed in another tab is refused rather
- * than written under. Any status comes back with its body, and nothing is told to the sign-in this tab holds. A request
- * that got no answer at all is `ServiceNotReached`, never an answer: the browser cannot tell whether what it carried
- * arrived, so whoever sent it decides.
+ * **THE QUIET FORM: ONE REQUEST WHOSE ANSWER THE CALLER READS ITSELF** (`pageFetch`), saying it was prepared for the
+ * person `signedInAs` names. Any status comes back with its body and nothing is told to the sign-in this tab holds, so a
+ * 401 signs nothing out; a read is not bounded or tried again; a request that got no answer is `ServiceNotReached`.
  */
-export const sendOnPage = (
-  signedInAs: () => string | null,
-  doFetch?: typeof fetch,
-): PageSend => async (path, init) => {
-  if (!path.startsWith('/api/')) throw new Error('a request is sent to this product\'s own server and nowhere else');
-  const who = signedInAs();
-  let r: Response;
-  try {
-    r = await (doFetch ?? fetch)(path, {
-      method: init.method,
-      ...(init.body === undefined ? {} : { body: init.body }),
-      ...(init.signal === undefined ? {} : { signal: init.signal }),
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', ...(who ? { 'x-signed-in-as': who } : {}) },
-    });
-  } catch (e) {
-    throw new ServiceNotReached(`the company's service could not be reached (${String((e as Error)?.message ?? e).replace(/\.\s*$/u, '')})`, false);
-  }
-  const body = await r.json().catch(() => ({}));
-  return { status: r.status, body };
-};
+export const serviceAnswered = (signedInAs: () => string | null): PageSend => (path, init) => pageFetch(path, {
+  method: init.method,
+  ...(init.body === undefined ? {} : { body: init.body }),
+  ...(init.signal === undefined ? {} : { signal: init.signal }),
+}, signedInAs());

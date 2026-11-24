@@ -406,6 +406,17 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     expect(order).toEqual(['keep', 'keep', 'prove', 'relay', 'accept-signer', 'keep']);
   });
 
+  it('a wallet whose seat the chain still holds is refused as already seated, whatever retirement of it the service serves, and its saved keys are left as they were', async () => {
+    const all = MidnightCommitments.allVaults().toLowerCase() as Hex;
+    const held = { signerId: 'sgn_old', signingSecret: '01'.repeat(32) as Hex, wrappingSecret: '02'.repeat(32) as Hex, blinding: '03'.repeat(32) as Hex, scope: all };
+    const heldLeaf = storedSignerLeaf(held, MidnightCommitments as never).toLowerCase();
+    const into = newSeen();
+    /* RED WHEN: a retirement the service serves for a seat the chain still holds sets that seat's keys aside, so a seated signer's wallet stops signing for it. */
+    const err = await run(anOffer(), { seats: [heldLeaf] }, { held: { accounts: { [COMPANY]: held } }, into, directory: retiredIn(heldLeaf) }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ words: { key: 'act.seat-invited.why.already-seated' } });
+    expect(into.kept).toEqual({ accounts: { [COMPANY]: held } });
+  });
+
   it('RED WHEN: a seat number whose pay-key wrap slot is occupied is taken, or the seat number is not kept', async () => {
     const o = anOffer();
     const { built, kept, rolesAsked } = await run(o, { slots: [deesSeat(0, o.invite.scope).slot] });

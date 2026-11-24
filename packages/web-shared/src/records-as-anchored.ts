@@ -68,14 +68,25 @@ export interface ReadHere {
 /** The head the account holds, as its history read here holds it: the head the last anchor call left, or the empty head. */
 export const headOn = (landed: readonly AnchorLanded[]): Hex => (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase() as Hex);
 
-/** What this device keeps once a header is checked: the head, every head before it from the first when it checked from there, and the heads before its start it found. */
+/**
+ * What this device keeps once a header is checked: the head, every head before it from the first when it checked from
+ * there, and the heads before its start it found. A head it had not checked, at or below its latest's seq, is where a
+ * recovery moved it back to: it carries on from there, its heads become those below that seq and then that head, and
+ * the write says the latest it gave up (`gaveUp`). A head it checked before, walked again from the first batch, leaves
+ * the latest where it was.
+ */
 export const keptAfter = (kept: CheckedHeads | null, c: CheckedHead, fromZero: boolean): CheckedHeads => {
-  const heads = kept?.heads.includes(c.head) ? kept.heads : [...(kept?.heads ?? []), c.head];
+  const checkedBefore = kept?.heads.includes(c.head) ?? false;
+  const gaveUp = kept !== null && !checkedBefore && c.seq <= kept.latest.seq ? kept.latest : undefined;
+  /* Heads stay in seq order from `base` on the chain's line: a recovery's head takes the place of the heads it gave up. */
+  const below = kept === null ? [] : gaveUp === undefined ? kept.heads : kept.heads.slice(0, Math.max(0, c.seq - (kept.base ?? 0)));
+  const heads = kept !== null && checkedBefore ? kept.heads : [...below, c.head];
   /* The heads checked last, whole, oldest first: a recovery resuming from one before the latest gives up what came after it. */
   const recent = [...(kept?.recent ?? []).filter((r) => r.seq < c.seq), c].slice(-RECENT_KEPT);
   return {
     ...(kept?.base === undefined ? {} : { base: kept.base }), ...(kept?.from === undefined ? {} : { from: kept.from }),
     ...(kept?.before === undefined ? {} : { before: kept.before }),
-    latest: kept !== null && kept.latest.seq > c.seq ? kept.latest : c, fromZero: fromZero ? c : (kept?.fromZero ?? null), heads, recent,
+    latest: kept !== null && kept.latest.seq > c.seq && checkedBefore ? kept.latest : c, fromZero: fromZero ? c : (kept?.fromZero ?? null), heads, recent,
+    ...(gaveUp === undefined ? {} : { gaveUp }),
   };
 };

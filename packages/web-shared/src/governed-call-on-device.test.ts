@@ -1327,6 +1327,15 @@ describe('A THRESHOLD CHANGE IS CHECKED BEFORE EVERY SEND, AND CARRIED OUT IN A 
     expect(short.log.filter((l) => /^(build|approve|carry)/u.test(l))).toEqual([]);
   });
 
+  it('a change at its bar that would leave a vault unable to pay is refused at the carry, and nothing is built or carried out', async () => {
+    const d = aGovernedDevice({ held: true, bar: 2, alreadyApproved: true, chain: () => ({ held: 'open', approvals: 2, raisedAt: 1 }) });
+    const doors: GovernanceDoors = { ...d.doors, approvers: async () => twoApprovers() };
+    /* RED WHEN: the check made before a change is carried out is not made, so a change that leaves a vault unable to pay is carried out. */
+    await expect(changeThresholdOnDevice(doors, { viewingKey: GOVERNED_KEY, newThreshold: 3, seated: 4, approveOnly: GOVERNED_ID, carryOnly: true }))
+      .rejects.toThrow(/unable to pay/u);
+    expect(d.log.filter((l) => /^(build|send|file|carry)/u.test(l))).toEqual([]);
+  });
+
   it('a vault lowered, or raised past the approvals a policy change needs, is carried out only at the seat bar', async () => {
     const VAULT = 'ab'.repeat(32);
     const lowered: GovernanceOnTheWire = { kind: 'vault-threshold', vault: VAULT, threshold: '1' };

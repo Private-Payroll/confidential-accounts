@@ -9,6 +9,8 @@
  * A source reads at most `READ_AT_ONCE` records in one ask, the most the service proves or reads in one request; the
  * company's view (`company-view.ts`) splits a longer ask into parts, so the source never splits one itself.
  */
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 import type { Hex } from '../../../src/core/crypto.js';
 import { manifestPaths, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
 import { PROVEN_AT_ONCE, type HeadersPage, type ProofsAsk, type ProofsGiven, type RecordName, type TreeHeader } from '../../../src/midnight/record-tree.js';
@@ -52,6 +54,50 @@ export const listedRecords = (kind: ListKind, answer: unknown): readonly { reado
   });
 };
 
+/**
+ * **WHAT A WRITE RESTS ON, OF AN ANSWER THAT CARRIES NO VERSION.** The view keeps these facts of each such answer it
+ * serves, and reads them again from the service before it writes: a step that built its write on them stops if
+ * another seat changed them meanwhile. Each is only what a write is built from and the service does not itself refuse
+ * on:
+ * - `handover` and `vendor-handover`: the inbox a person or vendor handed over, which an admission is built from;
+ * - `invites`: each invitation's kind, who it is for, its role, who made it and whether it was withdrawn, never when
+ *   it was accepted or who asked for a late seat, which move with no seat's act;
+ * - `account`: its roster (the newest filed, and the sealed one it carries), the signers waiting to be admitted, the
+ *   keys wrapped to its members, its key epoch, its count of signers and its members, which a roster, a vault's keys,
+ *   an admission and a deposit are built from and sealed to.
+ * Not compared, each for its reason: the people list (its rows are records, compared by their versions); proposals
+ * and runs (the contracts check every approval and payout on the chain); the vaults list (worked out from the chain on
+ * every read, so it moves with nothing changed; which vaults the account adopts is read from the chain with who holds
+ * it); the vault-key offers (each is signed by its seat and folded against the account's signers, which are compared).
+ */
+export type ServedFact = 'account' | 'invites' | 'handover' | 'vendor-handover';
+
+/** The list kinds whose answers are compared by their facts, and the fact each is. */
+export const LIST_FACT: Partial<Record<ListKind, ServedFact>> = { invites: 'invites' };
+
+/** `x` written the same way whatever order its fields came in. */
+const steady = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (v !== null && typeof v === 'object' && !Array.isArray(v)
+  ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : v)) ?? 'null';
+
+type Row = { readonly [field: string]: unknown } | null;
+const rowsOf = (answer: unknown): readonly Row[] => (Array.isArray(answer) ? answer as Row[] : []);
+
+/** The facts of `answer`, as `fact` names them, written so two reads of the same facts are equal. */
+export const servedFactsOf = (fact: ServedFact, answer: unknown): string => {
+  const a = (answer ?? null) as Row;
+  switch (fact) {
+    case 'handover': case 'vendor-handover': return steady(a?.['inbox'] ?? null);
+    case 'invites': return steady(rowsOf(answer).map((r) => [r?.['kind'], r?.['subjectId'] ?? null, r?.['name'] ?? null, r?.['email'] ?? null,
+      r?.['role'] ?? null, r?.['createdBy'] ?? null, r?.['createdByKey'] ?? null, r?.['keyEpoch'] ?? null, r?.['revokedAt'] ?? null])
+      .map((r) => steady(r)).sort());
+    case 'account': return steady({
+      roster: a?.['roster'] ?? null, sealedRoster: a?.['sealedRoster'] ?? null, keyEpoch: a?.['keyEpoch'] ?? null, signerCount: a?.['signerCount'] ?? null,
+      pendingSigners: rowsOf(a?.['pendingSigners']).map((s) => steady(s)).sort(), wrappedKeys: rowsOf(a?.['wrappedKeys']).map((k) => steady(k)).sort(),
+      memberUserIds: [...((a?.['memberUserIds'] as unknown[] | undefined) ?? [])].map((m) => String(m)).sort(),
+    });
+  }
+};
+
 /** What a step of a filed proposal does, as the proposal's own route names it. */
 export type ProposalAct = 'send' | 'approve' | 'retirement' | 'cancel' | 'carry' | 'charge' | 'closed';
 
@@ -63,6 +109,9 @@ export type VaultSend =
 /** A step of starting a vault, as its route names it. */
 export type VaultStartStep = 'account' | 'secret' | 'copy';
 
+/** The kinds the company records route files: a person and the roster are each filed by their own route, which this one refuses. */
+export type RecordRouteKind = Exclude<CompanyRecordKind, 'person' | 'roster'>;
+
 /**
  * A write to the company's records, named by what it writes. Each is sent exactly as the record's own route takes it,
  * and the service refuses it on its own facts when it lands (a version already taken, a filer it does not believe).
@@ -71,7 +120,7 @@ export type RecordWrite =
   | { readonly to: 'entries'; readonly entries: readonly ManifestEntry[] }
   | { readonly to: 'header'; readonly header: TreeHeader; readonly entries?: readonly ManifestEntry[] }
   | { readonly to: 'directory'; readonly filing: DirectoryFiling }
-  | { readonly to: 'record'; readonly kind: CompanyRecordKind; readonly id: string; readonly version: number; readonly body: unknown }
+  | { readonly to: 'record'; readonly kind: RecordRouteKind; readonly id: string; readonly version: number; readonly body: unknown }
   | { readonly to: 'vault-record'; readonly vault: string; readonly record: WireRecord; readonly version: number; readonly body: unknown }
   | { readonly to: 'roster'; readonly body: unknown }
   | { readonly to: 'vault-keys'; readonly body: unknown }
@@ -87,8 +136,8 @@ export type RecordWrite =
   | { readonly to: 'carried'; readonly id: string; readonly body: unknown }
   /** A call this device proved, sent to the chain through the service. */
   | { readonly to: 'proven'; readonly tx: string }
-  /** A call to a vault this device proved, sent to the chain through the vault's own route. */
-  | ({ readonly to: 'vault-send'; readonly tx: string } & VaultSend)
+  /** A transaction this device proved, of one or more calls to the company's vaults, sent through the vault's own route. */
+  | { readonly to: 'vault-send'; readonly tx: string; readonly calls: readonly VaultSend[] }
   /** An invitation filed: the signed filing, and for a payee the first version of their entry with it. */
   | { readonly to: 'invitation'; readonly body: unknown }
   /** A waiting signer's request withdrawn, signed by the seat that withdraws it. */
@@ -193,6 +242,14 @@ const filingsIn = (answer: unknown): DirectoryFiling[] => {
 
 const readPost = (body: unknown): RequestInit & { read: true } => ({ method: 'POST', body: JSON.stringify(body), read: true });
 
+/**
+ * The committee change's signatures given, or its update sent, at the change's own route: the one way both are sent,
+ * through a view's write and as a super admin's ask, the latter with the headers its signed request carries.
+ */
+const committeeChangeSent = (
+  call: ServiceCall, company: string, act: 'signatures' | 'send', body: unknown, headers?: Record<string, string>,
+): Promise<unknown> => call(accountPath(company, `/committee-change/${act}`), { method: 'POST', body: JSON.stringify(body), ...(headers === undefined ? {} : { headers }) });
+
 /** Sends one write to the route that takes it. */
 const written = (call: ServiceCall, company: string, w: RecordWrite): Promise<unknown> => {
   const send = (path: string, method: string, body: unknown) => call(path, { method, body: JSON.stringify(body) });
@@ -218,9 +275,13 @@ const written = (call: ServiceCall, company: string, w: RecordWrite): Promise<un
     case 'run': return send(accountPath(company, '/runs'), 'POST', w.body);
     case 'carried': return send(`/api/proposals/${encodeURIComponent(w.id)}/carried`, 'POST', w.body);
     case 'proven': return send(accountPath(company, '/proven'), 'POST', { tx: w.tx });
-    case 'committee-change': return send(accountPath(company, `/committee-change/${w.act}`), 'POST', w.body);
+    case 'committee-change': return committeeChangeSent(call, company, w.act, w.body);
     case 'vault-start': return send(accountPath(company, `/vaults/${encodeURIComponent(w.vault)}/start/${w.step}`), 'POST', w.body);
-    case 'vault-send': return send(w.act === 'deploy' ? accountPath(company, '/vaults') : accountPath(company, `/vaults/${encodeURIComponent(w.vault)}/${w.act}`), 'POST', { tx: w.tx });
+    case 'vault-send': {
+      const [c, ...more] = w.calls;
+      if (c === undefined || more.length > 0) return Promise.reject(Object.assign(new Error(`the service's vault routes file one call a transaction, and this one carries ${w.calls.length}, so nothing was sent.`), { nothingWasSent: true, thisSendNotSent: true }));
+      return send(c.act === 'deploy' ? accountPath(company, '/vaults') : accountPath(company, `/vaults/${encodeURIComponent(c.vault)}/${c.act}`), 'POST', { tx: w.tx });
+    }
   }
 };
 
@@ -284,7 +345,8 @@ export const serviceSource = (call: ServiceCall, company: string): RecordSource 
 /**
  * A change of the super admins, as a super admin's device asks the service for it, with the headers each ask carries
  * (a super admin by a link holds no view of the company): raised, joined, its kept signatures read, given more, and a
- * contract's update with enough signatures sent to the chain.
+ * contract's update with enough signatures sent to the chain; and the indexer the super admin's own wallet reads the
+ * company's chain through, the one read of the chain the change is raised and approved over.
  */
 export interface SuperAdminAsks {
   raise(body: unknown, headers: Record<string, string>): Promise<unknown>;
@@ -292,17 +354,20 @@ export interface SuperAdminAsks {
   kept(headers: Record<string, string>): Promise<unknown>;
   keep(body: unknown, headers: Record<string, string>): Promise<unknown>;
   send(update: unknown, headers: Record<string, string>): Promise<unknown>;
+  /** The indexer the person's own wallet names for the company at `where`, or null when it names none. */
+  indexer(where: { readonly company: CompanyLabel; readonly account: AccountAddress }): Promise<WalletIndexer | null>;
 }
 
-/** The super admins' change of company `company`, asked through `call`. */
-export const superAdminAsks = (call: ServiceCall, company: string): SuperAdminAsks => {
+/** The super admins' change of company `company`, asked through `call`, and the indexer asked of the person's wallet through `indexer`. */
+export const superAdminAsks = (call: ServiceCall, company: string, indexer: SuperAdminAsks['indexer']): SuperAdminAsks => {
   const post = (rest: string, body: unknown, headers: Record<string, string>) => call(accountPath(company, rest), { method: 'POST', body: JSON.stringify(body), headers });
   return Object.freeze<SuperAdminAsks>({
     raise: (body, headers) => post('/committee-change/raise', body, headers),
     join: (body, headers) => post('/committee-change/join', body, headers),
     kept: (headers) => call(accountPath(company, '/committee-change/signatures'), { headers }),
-    keep: (body, headers) => post('/committee-change/signatures', body, headers),
-    send: (update, headers) => post('/committee-change/send', update, headers),
+    keep: (body, headers) => committeeChangeSent(call, company, 'signatures', body, headers),
+    send: (update, headers) => committeeChangeSent(call, company, 'send', update, headers),
+    indexer,
   });
 };
 

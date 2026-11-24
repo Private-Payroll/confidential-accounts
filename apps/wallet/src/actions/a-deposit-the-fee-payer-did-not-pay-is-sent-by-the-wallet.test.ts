@@ -78,10 +78,10 @@ const ctxWith = (answer: { status: number; body: unknown }, yes: boolean | null,
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); },
     show: (w: unknown) => { shown.push(w); },
     /* The runner's door for a send this wallet makes itself; `refuseAt` names the check that finds the company changed. */
-    sendStraight: async (send: (door: unknown) => Promise<unknown>, into?: { readonly vault: string }) => {
+    sendStraight: async (send: (door: unknown) => Promise<unknown>, into: readonly { readonly vault: string }[] = []) => {
       const check = async () => {
         checked += 1;
-        did.push(`checked ${into?.vault === VAULT ? 'the vault' : 'no vault'}`);
+        did.push(`checked ${into[0]?.vault === VAULT ? 'the vault' : 'no vault'}`);
         if (checked === refuseAt) throw Object.assign(new Error('another signer changed the company'), { thisSendNotSent: true });
       };
       await check();

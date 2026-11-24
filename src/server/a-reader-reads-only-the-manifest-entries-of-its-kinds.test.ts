@@ -89,6 +89,13 @@ describe('A READER OF GRANTS AND ROSTER, ASKING THE COMPANY\'S MANIFEST', () => 
     expect(await pending('rhea')).toEqual(['grants']);
   });
 
+  it('is served, among the entries waiting since the company was founded, the directory and the founding records, as their proofs are', async () => {
+    const since = ((await as('rhea', 'GET', `/tree/pending?root=${EMPTY_ROOT}`)).body.entries ?? []).map((e) => e.kind);
+    /* RED WHEN: the entries waiting at the company's founding are served to a reader by the body's rule, so a reader whose grant does not read the state is not given the founding state its wallet judges the roster by. */
+    expect(since).toEqual(expect.arrayContaining([...ANCHORED.map((e) => e.kind), 'grants']));
+    expect(since).not.toContain('person');
+  });
+
   it('is refused proofs of a person record, or of every person record, and told what clears it', async () => {
     /* RED WHEN: a reader is proven a person record's leaf - its digest, version and filer - which its grant does not read. */
     const one = await proofs('rhea', [PERSON]);

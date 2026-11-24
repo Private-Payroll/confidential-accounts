@@ -5,11 +5,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * THE SEAT BAR IN THE ONE LIST OF COMPANIES. The wallet's read of the chain is stood in for by the figures it would give;
  * the rule that turns them into the seat bar and its reason is `whatAChangeCosts`'s own (`change-costs.test.ts`).
  */
-const chain = vi.hoisted(() => ({ asking: 0, mostAtOnce: 0, asked: [] as string[], approvals: 2, policyBar: null as number | null, vaultThresholds: [] as { vault: string; threshold: number }[], seats: ['a', 'b', 'c'], rows: [] as readonly object[] }));
+const chain = vi.hoisted(() => ({ asking: 0, mostAtOnce: 0, asked: [] as string[], accountsRead: [] as string[], approvals: 2, policyBar: null as number | null, vaultThresholds: [] as { vault: string; threshold: number }[], seats: ['a', 'b', 'c'], rows: [] as readonly object[] }));
 /* Each company's account as the service keeps it: the list's own row for it. */
 vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
   ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : chain.rows.find((r) => path === `/api/accounts/${(r as { id?: string }).id}`) ?? null),
+  api: async (path: string) => {
+    if (path.endsWith('/directory')) return { filings: [] };
+    const row = chain.rows.find((r) => path === `/api/accounts/${(r as { id?: string }).id}`);
+    if (row !== undefined) chain.accountsRead.push(path);
+    return row ?? null;
+  },
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -39,7 +44,7 @@ async function barOfTheList(rows: readonly object[] = [row]) {
   await session.whoIsSignedIn();
   return [...(await session.approvalsNeededFor('u1')).entries()];
 }
-afterEach(() => { chain.mostAtOnce = 0; chain.asked = []; vi.unstubAllGlobals(); chain.approvals = 2; chain.policyBar = null; chain.vaultThresholds = []; });
+afterEach(() => { chain.mostAtOnce = 0; chain.asked = []; chain.accountsRead = []; vi.unstubAllGlobals(); chain.approvals = 2; chain.policyBar = null; chain.vaultThresholds = []; });
 
 describe('the seat bar in the one list of companies', () => {
   /* RED WHEN: the list's figure is the account's approvals while the chain holds a higher policy bar, or the reason names the account or the policy bar when a vault's own bar is what sets it. */
@@ -68,6 +73,14 @@ describe('the seat bar in the one list of companies', () => {
     expect((await barOfTheList(rows)).map(([id]) => id)).toEqual(['c1', 'c2', 'c3']);
     expect(chain.mostAtOnce).toBe(1);
     expect(chain.asked).toEqual(rows.map((r) => r.contractAddress));
+  });
+
+  /* RED WHEN: each company's view reads the company's account again to find where it is on the chain, which its row in the list already names. */
+  it('reads no company\'s account: each view is opened where the list\'s row names the company on the chain', async () => {
+    const rows = ['c1', 'c2', 'c3'].map((id, i) => ({ ...row, id, contractAddress: `c${i}`.repeat(32) }));
+    expect((await barOfTheList(rows)).map(([id]) => id)).toEqual(['c1', 'c2', 'c3']);
+    expect(chain.asked).toEqual(rows.map((r) => r.contractAddress));
+    expect(chain.accountsRead).toEqual([]);
   });
 
   /* RED WHEN: a company whose read fails stops the companies after it from being read, or is given a figure. */

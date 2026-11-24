@@ -1,15 +1,15 @@
 /**
  * **WHAT THIS DEVICE KEEPS OF A COMPANY'S RECORD TREE, IN ITS OWN DATABASE**:
- * every head it checked, the last one, and the last one checked from the
- * company's first batch (`checked`); and headers - every header this device
+ * every head it checked on the chain's line, the last one, and the last one
+ * checked from the company's first batch (`checked`); and headers - every header this device
  * signed, with the entries its changes name and the older leaves its records'
  * chains need, and the last header it checked, with the same (`headers`).
  *
  * Kept in the browser's own database, never the service's, so the service can
  * neither serve it back older nor lose it: a device that kept a header the
  * service no longer gives files it again (`recordsHeldHere`). Each write is one
- * transaction, adding only what is new, so a write that fails leaves everything
- * kept before it as it was; and each head is a row of its own, so how many a
+ * transaction, writing only what changed, so a write that fails leaves everything
+ * kept before it as it was; and heads are kept a chunk to a row, so how many a
  * device keeps is bounded by the browser's database, not by one value's size.
  * A database this browser will not open keeps nothing: every read then checks
  * from the company's first header, which costs time and believes nothing it
@@ -34,8 +34,8 @@ import {
 const HEAD_HEX = /^[0-9a-f]{64}$/u;
 
 /**
- * **THE HEADS THIS DEVICE CHECKED OF A COMPANY'S RECORD TREE**: every one, the
- * last, the last checked from the company's first batch, the last few whole
+ * **THE HEADS THIS DEVICE CHECKED OF A COMPANY'S RECORD TREE**: every one on
+ * the chain's line, the last, the last checked from the company's first batch, the last few whole
  * (`recent`), where it started when not from the first batch, and the heads
  * it found before that start (`before`). Kept in this device's own storage,
  * never the service's, so the service cannot serve it back older.
@@ -44,7 +44,7 @@ export interface CheckedHeads {
   readonly latest: CheckedHead;
   /** The last head this device checked forward from the company's first batch; null until it has. */
   readonly fromZero: CheckedHead | null;
-  /** Every head this device checked, in seq order from `base`. */
+  /** Every head this device checked on the chain's line, in seq order from `base`: none a recovery gave up. */
   readonly heads: readonly Hex[];
   /** The seq of the first of `heads`: 0 from the company's first batch; the head this device started from otherwise. */
   readonly base?: number;
@@ -63,6 +63,8 @@ export interface CheckedHeads {
    * found none, which reads as every device did before any was kept.
    */
   readonly before?: readonly HeadsBeforeStart[];
+  /** In a write only, never kept or read back: the latest a recovery moved this device back from (`keptAfter`). */
+  readonly gaveUp?: CheckedHead;
 }
 
 /**
@@ -233,17 +235,22 @@ const withRuns = <T extends object>(h: T, before: KeptNow['before']): T => {
  * **WHAT A WRITE OF CHECKED HEADS LEAVES KEPT**, weighed against the store as it stands in the same write: never a start
  * in place of a check from the company's first batch (`'nothing'`), and for the same start never an older latest head
  * than the one kept, which another read on this device checked meanwhile - then only the heads before the start the
- * write found are added (`runs`). Otherwise the write is kept whole, with the heads before the start both kept for the
- * same start (`whole`).
+ * write found are added (`runs`) - unless a recovery moved the write back from that very head (`gaveUp`).
+ * Otherwise the write is kept whole, with the heads before the start both kept for the same start (`whole`); what
+ * it gave up is never kept.
  */
-const keptOver = (was: KeptNow | null, h: CheckedHeads):
+const keptOver = (was: KeptNow | null, given: CheckedHeads):
   'nothing' | { readonly runs: readonly HeadsBeforeStart[] | undefined } | { readonly whole: CheckedHeads } => {
+  const { gaveUp, ...h } = given;
   if (was === null) return { whole: h };
   const fromTheFirst = (x: Pick<CheckedHeads, 'base' | 'from'>) => x.from === undefined && (x.base ?? 0) === 0;
   if (fromTheFirst(was) && was.fromZero !== null && !fromTheFirst(h)) return 'nothing';
   if (startOf(was) !== startOf(h)) return { whole: h };
   const runs = runsMerged(was.before, h.before);
-  return was.latest.seq > h.latest.seq ? { runs } : { whole: withRuns(h, runs) };
+  const movedBack = gaveUp !== undefined && gaveUp.head === was.latest.head;
+  /* A write whose heads do not hold the kept latest came from a read that never checked it: an older one, or one begun before a recovery. */
+  const checkedIt = h.heads.includes(was.latest.head);
+  return !movedBack && (was.latest.seq > h.latest.seq || !checkedIt) ? { runs } : { whole: withRuns(h, runs) };
 };
 const isCheckedHead = (x: unknown): x is CheckedHead => {
   const c = x as Partial<CheckedHead> | null;
@@ -413,11 +420,13 @@ export const treeKeptHere = (factory?: IDBFactory): TreeKept => {
             const h = kept.whole;
             const count = Number.isSafeInteger(row?.count) ? row!.count as number : 0;
             /*
-             * Only the chunks holding heads not kept yet are written; every chunk before them is kept as it is - unless the
-             * heads now start from another seq (a check from the first batch in place of one from a later head), when all are.
+             * Only the chunks from the one holding the first head not kept yet are written, or from the one holding the
+             * last head where a recovery moved the heads back and that head took the place of one kept; every chunk before
+             * them is kept as it is - unless the heads now start from another seq (a check from the first batch in place of
+             * one from a later head), when all are. Rows past the heads' count are never read back.
              */
             const sameStart = (Number.isSafeInteger(row?.base) ? row!.base as number : 0) === (h.base ?? 0);
-            for (let i = sameStart ? Math.floor(Math.min(count, h.heads.length) / CHUNK) : 0; i * CHUNK < h.heads.length; i += 1) {
+            for (let i = sameStart ? Math.floor(Math.max(0, Math.min(count, h.heads.length - 1)) / CHUNK) : 0; i * CHUNK < h.heads.length; i += 1) {
               tx.objectStore(HEADS).put(h.heads.slice(i * CHUNK, (i + 1) * CHUNK), chunkKey(company, i));
             }
             tx.objectStore(LATEST).put({

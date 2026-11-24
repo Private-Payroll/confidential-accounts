@@ -31,6 +31,14 @@ import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, 
 
 
 /** An invitee's call taking an invited seat, as a wallet asks its worker for it: the chain's state as base64. */
+/** One vault and currency whose spending policy keys are asked, and with `policy` (and a run's `total`) what it commits to and needs. */
+export interface SpendingPolicyKeysAsked {
+  readonly vault: string; readonly asset: string; readonly assetBlinding: string; readonly policy?: PolicyOpeningOnTheWire; readonly total?: string;
+}
+
+/** One pair's keys as the worker made them, or why they could not be made: one pair's refusal is never another's. */
+export type SpendingPolicyKeysMade = { readonly keys: SpendingPolicyKeys } | { readonly refused: string };
+
 export interface InvitedSeatOnTheWire {
   readonly account: string;
   readonly proposal: string;
@@ -180,10 +188,8 @@ export type VaultAsk =
    * here from the record's secrets, and none of the secrets.
    */
   | { id: number; network: string; ask: 'one-off-opened'; rec: SealedCompanyRecord; key: string }
-  | {
-    id: number; network: string; ask: 'spending-policy-keys'; vault: string; asset: string; assetBlinding: string;
-    policy?: PolicyOpeningOnTheWire; total?: string;
-  }
+  /* The keys of every vault and currency asked, made in one message and answered in one, each pair on its own. */
+  | { id: number; network: string; ask: 'spending-policy-keys'; pairs: readonly SpendingPolicyKeysAsked[] }
   | {
     id: number; network: string; ask: 'governed-call'; account: string; order: GovernedCallOrder;
     material: SignerMaterial; chain: AccountCallChainOnTheWire; opened: OpenedRound;
@@ -307,7 +313,7 @@ export type VaultAnswer =
   | Answered<'proposal-identity', { identity: ProposalIdentity }>
   | Answered<'vouched-run-identity', { chainId: string | null }>
   | Answered<'company-wide', { value: string }>
-  | Answered<'spending-policy-keys', { keys: SpendingPolicyKeys }>
+  | Answered<'spending-policy-keys', { keys: readonly SpendingPolicyKeysMade[] }>
   | Answered<'policy-bar-key', { value: string }>
   | Answered<'address-claim-refusal', { refusal: string | null }>
   | Answered<'one-off-opened', { oneOff: OneOffOnTheWire }>

@@ -9,8 +9,17 @@ import {
 import { periodTotalOf, runChargeStandingOf } from './run-charge-builder.js';
 import { fromBase64 } from './base64-bytes.js';
 import type { VaultBuilderDeps } from './vault-builder.js';
-import type { VaultAnswer, VaultAsk } from './vault-worker-client.js';
+import type { SpendingPolicyKeysAsked, SpendingPolicyKeysMade, VaultAnswer, VaultAsk } from './vault-worker-client.js';
 import type { WorkerDeps } from './vault-worker-deps.js';
+
+/** One pair's keys by the account's own functions, or why they could not be made, so one pair's refusal is never another's. */
+const keysMadeOf = (d: WorkerDeps, pair: SpendingPolicyKeysAsked): SpendingPolicyKeysMade => {
+  try {
+    return { keys: spendingPolicyKeysOf(d, pair) };
+  } catch (e) {
+    return { refused: String((e as Error)?.message ?? e) };
+  }
+};
 
 /** The asks the account's own functions answer; any other ask is answered elsewhere, so this gives undefined. */
 export const accountReadsAnswered = async (d: WorkerDeps, _withNetwork: VaultBuilderDeps, ask: VaultAsk): Promise<VaultAnswer | undefined> => {
@@ -28,11 +37,7 @@ export const accountReadsAnswered = async (d: WorkerDeps, _withNetwork: VaultBui
       return { id: ask.id, ok: true, ask: 'policy-bar-key', value: Array.from(v, (b) => b.toString(16).padStart(2, '0')).join('') };
     }
     case 'spending-policy-keys':
-      return {
-        id: ask.id, ok: true, ask: 'spending-policy-keys',
-        keys: spendingPolicyKeysOf(d, { vault: ask.vault, asset: ask.asset, assetBlinding: ask.assetBlinding,
-          ...(ask.policy === undefined ? {} : { policy: ask.policy }), ...(ask.total === undefined ? {} : { total: ask.total }) }),
-      };
+      return { id: ask.id, ok: true, ask: 'spending-policy-keys', keys: ask.pairs.map((pair) => keysMadeOf(d, pair)) };
     case 'proposal-identity':
       return { id: ask.id, ok: true, ask: 'proposal-identity', identity: identityOfAChange(d, ask.change, ask.salt) };
     case 'vouched-run-identity':

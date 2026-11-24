@@ -9,6 +9,7 @@
  * the roster and its judge (`inOrder`). In a view each is built once, and forgotten with the filings.
  */
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
+import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 import type { Account } from '../../../src/core/types.js';
 import type { RecordsAsked } from '../../../src/midnight/records-held.js';
 import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
@@ -28,10 +29,14 @@ import {
 } from './vault-page-doors.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 
-/** A company's view as the judges read it: who holds the company is read as the person's own chain read gives it. */
-export type JudgeView = CompanyView<AccountHoldersRead>;
+/**
+ * Who holds the company as a page reads it: the holders the person's own wallet read off the chain, with the indexer it
+ * read them through, the one place the page reads the company's chain from. Null or absent when the wallet named none.
+ */
+export type HoldersOnPage = AccountHoldersRead & { readonly indexer?: WalletIndexer | null };
 
-/** What of who holds the company another signer's change moves: its seats, the approvals it needs, its adopted vaults. */
+/** A company's view as the judges read it: who holds the company is read as the person's own chain read gives it. */
+export type JudgeView = CompanyView<HoldersOnPage>;
 
 /** Everything a judge reads of one company. */
 export interface JudgeReads {

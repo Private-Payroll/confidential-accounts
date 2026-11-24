@@ -71,7 +71,7 @@ export function handOverFor(
         await ctx.sendStraight((door) => straightFromTheOwnWallet(() => own(ctx.held.identity, account), now, () => !ctx.signal.aborted, { over: false }, {
           ...(sponsor === undefined ? {} : { sponsor: doneAfterTheSend(sponsor, owed) }), ...(submit === undefined ? {} : { submit }),
           ownDustPaid: () => note('own-dust'), unreached: () => note('unreached'), handedOver: door.handedOver,
-        })(tx, call), undefined, { circuit: call.circuit, contract: call.contract });
+        })(tx, call), [], [{ circuit: call.circuit, contract: call.contract }]);
       } finally {
         /* Telling the sponsorship is its bookkeeping, not the send's: each is settled, so one that fails leaves the send as it went. */
         await Promise.allSettled(owed.map((done) => done()));

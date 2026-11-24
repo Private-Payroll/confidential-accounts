@@ -45,7 +45,8 @@ import type { VaultBuilderClient } from './vault-worker-client.js';
 import { kindAsked, namedHere, type DirectoryHere } from './vault-page-doors.js';
 import { openTheRoundHere } from './round-opened-here.js';
 import {
-  believedSigners, believedVersions, blindingHere, commitmentHere, keysHere, policiesOf, type SpendingPoliciesHere, type SpendingPolicyDoors,
+  believedSigners, believedVersions, blindingHere, commitmentHere, commitmentsWhenWanted, keysHere, policiesInForceHere, policiesOf,
+  type SpendingPoliciesHere, type SpendingPolicyDoors,
 } from './spending-policy-read-here.js';
 import { governOnDevice, type GovernanceDoors, type GovernedOutcome } from './company-change-on-device.js';
 
@@ -117,7 +118,7 @@ async function openingToRaise(
   const [versions, served, signers] = await Promise.all([
     believedVersions(doors, keys.policyKey), policies.versions(keys.policyKey), believedSigners(doors)]);
   const sealedTo = [...new Set(signers.map((x) => x.id.toLowerCase()))].sort().join(',');
-  const commitmentOf = commitmentHere(doors, vault, asset);
+  const commitmentOf = commitmentsWhenWanted(doors, versions, vault, asset);
   const sameHere: { rec: SealedCompanyRecord; secrets: SpendingPolicySecrets }[] = [];
   for (const rec of [...versions].sort((a, b) => b.version - a.version)) {
     let secrets: SpendingPolicySecrets;
@@ -184,7 +185,7 @@ export async function refusePolicyChangeHere(
   const policies = policiesOf(here.records);
   const onChain = (await policies.onChain([keys.policyKey])).get(keys.policyKey.toLowerCase()) ?? null;
   const versions = await believedVersions(here, keys.policyKey);
-  const commitmentOf = commitmentHere(here, vault, asset);
+  const commitmentOf = commitmentsWhenWanted(here, versions, vault, asset);
   let inForce: PolicyOpeningOnTheWire | null = null;
   if (onChain !== null) {
     try {
@@ -224,40 +225,22 @@ const policyBarFrom = (held: AccountGovernance): number => held.seatBar;
 
 /**
  * **EVERY SPENDING POLICY IN FORCE THAT THIS DEVICE OPENS, AND ITS HIGHEST
- * BAND**: for each policy the company's records name, the commitment the chain
- * holds under its key, read through the person's own wallet, and the believed
- * version whose opening makes that commitment. A policy the chain holds none for
- * is not in force. For a policy change, one no believed version opens is left
- * out, which can only make the count of a vault's approvers refuse more, never
- * less (`policyChangeRefusal`). With `strict`, for a change that takes approvers
+ * BAND**: for each policy the company's records name, the believed version
+ * whose opening makes the commitment the chain holds, found together for every
+ * policy (`policiesInForceHere`). A policy the chain holds none for is not in
+ * force. For a policy change, one no believed version opens is left out, which
+ * can only make the count of a vault's approvers refuse more, never less
+ * (`policyChangeRefusal`). With `strict`, for a change that takes approvers
  * away, such a policy is refused instead: leaving its band out could let the
- * change through.
+ * change through. A policy that could not be read refuses the count, with why.
  */
 export async function bandsInForceHere(here: SpendingPolicyDoors, o: { readonly strict?: boolean } = {}): Promise<readonly BandInForce[]> {
-  const policies = policiesOf(here.records);
   const ids = namedHere(await here.records.directory(kindAsked('company', SPENDING_POLICY_KIND)), 'company', SPENDING_POLICY_KIND);
-  const held = new Map<string, string | null>();
-  for (let i = 0; i < ids.length; i += MOST_ROLES_ASKED) {
-    for (const [k, v] of await policies.onChain(ids.slice(i, i + MOST_ROLES_ASKED))) held.set(k.toLowerCase(), v);
-  }
   const out: BandInForce[] = [];
-  for (const id of ids) {
-    const commitment = held.get(id.toLowerCase()) ?? null;
-    if (commitment === null) continue;
-    const before = out.length;
-    for (const rec of [...await believedVersions(here, id)].sort((a, b) => b.version - a.version)) {
-      let secrets: SpendingPolicySecrets;
-      try {
-        secrets = openSpendingPolicy(rec, policies.me).secrets;
-      } catch {
-        continue;
-      }
-      const made = await keysHere(here, secrets.vault, secrets.asset, secrets.opening);
-      if (made.policyKey.toLowerCase() !== id.toLowerCase() || String(made.commitment).toLowerCase() !== commitment.toLowerCase()) continue;
-      out.push({ vault: secrets.vault.toLowerCase(), band: highestBandOf(secrets.opening.terms) });
-      break;
-    }
-    if (o.strict === true && out.length === before) {
+  for (const policy of await policiesInForceHere(here, ids, { judged: false })) {
+    if (policy.state === 'refused') throw policy.why;
+    if (policy.state === 'in-force') out.push({ vault: policy.version.secrets.vault.toLowerCase(), band: highestBandOf(policy.version.secrets.opening.terms) });
+    else if (policy.state === 'opened-by-none' && o.strict === true) {
       throw new PolicyNotOpenedHere('This device cannot open a spending policy one of the company\'s vaults holds now, so it cannot '
         + 'count who approves that vault\'s runs at its bands once this change is carried out. A signer who may set spending '
         + 'policies and can read it re-seals it from their own device; then try again.');
@@ -399,8 +382,9 @@ async function proposedHere(
   if (found === null) throw new PolicyNotOpenedHere(`This proposal does not set a spending policy on ${named}, so it was not approved.`);
   let opening: PolicyOpeningOnTheWire;
   try {
-    opening = (await policyOpeningFor(await believedVersions(here, found.policyKey), policiesOf(here.records).me,
-      { vault: vault as Hex, asset: found.asset, commitment: g.commitment as Hex }, commitmentHere(here, vault, found.asset))).secrets.opening;
+    const versions = await believedVersions(here, found.policyKey);
+    opening = (await policyOpeningFor(versions, policiesOf(here.records).me,
+      { vault: vault as Hex, asset: found.asset, commitment: g.commitment as Hex }, commitmentsWhenWanted(here, versions, vault, found.asset))).secrets.opening;
   } catch (e) {
     if (!(e instanceof PolicyNotOpenedHere)) throw e;
     throw new PolicyNotOpenedHere('None of the company\'s records of this vault\'s spending policy opens the policy this proposal '

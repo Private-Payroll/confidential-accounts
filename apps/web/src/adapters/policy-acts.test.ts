@@ -17,6 +17,10 @@ const kr = vi.hoisted(() => ({
   named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0,
   seat: null as unknown, seatAsked: [] as unknown[][], reach: null as Record<string, unknown> | null,
   held: new Map<string, unknown>(), holders: null as unknown, holdersAsked: [] as Record<string, unknown>[], holdersFail: null as Error | null,
+  /* The doors the shared policy reader was handed, and every version of the company's signed state the service holds, as filed. */
+  doors: null as unknown, stateFiled: [] as unknown[],
+  /* Each set of pairs the shared reader was asked about at once, the keys door it was handed, and a failure of the whole read. */
+  pairs: [] as (readonly { vault: string; asset: string }[])[], keysOfEach: null as ((asked: unknown) => Promise<unknown>) | null, readFail: null as Error | null,
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('./filing-judge.js', async (real) => ({
@@ -31,7 +35,11 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
 }));
 vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
   ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : kr.named),
+  api: async (path: string) => {
+    if (path.endsWith('/directory')) return { filings: [] };
+    const state = /\/records\/state\/([^/]+)\/versions$/u.exec(path);
+    return state === null ? kr.named : { kind: 'state', id: decodeURIComponent(state[1]!), versions: kr.stateFiled };
+  },
 }));
 vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
@@ -50,10 +58,13 @@ vi.mock('vaults-web-shared/spending-policies-reach.js', () => ({
 }));
 vi.mock('vaults-web-shared/spending-policy-read-here.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/spending-policy-read-here.js')>()),
-  spendingPolicyHere: async (_doors: unknown, input: { vault: string; asset: string }) => {
-    const found = kr.held.get(input.asset);
-    if (found instanceof Error) throw found;
-    return found ?? { state: 'none' };
+  spendingPoliciesHere: async (doors: unknown, pairs: readonly { vault: string; asset: string }[], keysOfEach: (asked: unknown) => Promise<unknown>) => {
+    kr.doors = doors; kr.pairs.push(pairs); kr.keysOfEach = keysOfEach;
+    if (kr.readFail !== null) throw kr.readFail;
+    return pairs.map((input) => {
+      const found = kr.held.get(input.asset);
+      return found instanceof Error ? { status: 'rejected', reason: found } : { status: 'fulfilled', value: found ?? { state: 'none' } };
+    });
   },
 }));
 
@@ -73,7 +84,7 @@ const REGISTRY: AssetRegistry = {
 };
 const HERE = {
   company: 'label-1', account: ACCOUNT, companyKey: 'dd'.repeat(32), leaf: 'ee'.repeat(32), viewingKey: { epochs: {} },
-  builder: { spendingPolicyKeys: async () => ({}) }, directory: async () => ({}), records: () => ({}),
+  builder: { spendingPolicyKeys: async () => ({}), spendingPolicyKeysOfEach: async (asked: unknown) => ({ keysOfEachAsked: asked }) }, directory: async () => ({}), records: () => ({}),
 };
 const TERMS = { bands: [{ ceiling: 100n, approvals: 1n }, { ceiling: 1000n, approvals: 2n }, { ceiling: 5000n, approvals: 3n }, { ceiling: 99999n, approvals: 4n }], periodLimit: 20_000n, periodStart: 5n, periodLength: 604_800n };
 const HOLDERS = { approvals: 2, vaultThresholds: [], policyBar: 3, seatBar: 3, seats: ['s1', 's2', 's3', 's4'], committee: [], threshold: 1, adoptedVaults: [] };
@@ -83,6 +94,30 @@ const NEW_POLICY = {
   bands: [{ ceiling: '0.0001', approvals: 1 }, { ceiling: '0.001', approvals: 2 }, { ceiling: '0.005', approvals: 3 }, { ceiling: '0.099999', approvals: 4 }],
 };
 const EDITED = { periodStart: 5n };
+
+describe('the company\'s signed state a policy\'s keys are made from', () => {
+  /* RED WHEN: the state a policy's keys are made from is read and used unjudged, so a body no seat the directory names filed would make the keys. */
+  it('is believed only as the page\'s judge believes it: a body the judge refuses is not used', async () => {
+    const { signCompanyFiling, toCompanyWire } = await import('../../../../src/midnight/sealed-record-wire.js');
+    const { newSigningKeypair } = await import('../../../../src/core/crypto.js');
+    const company = 'acc_Company00001';
+    kr.stateFiled = [toCompanyWire(signCompanyFiling({
+      company, kind: 'state', id: 'st1', version: 1, keyEpoch: 0, sealed: { iv: '11'.repeat(12), tag: '22'.repeat(16), body: '33' }, wrapped: [],
+    } as never, newSigningKeypair().secret))];
+    const asked: unknown[] = [];
+    const judgeSaying = (why: string | null) => async (records: unknown) => { asked.push(records); return Object.assign(() => why, {}); };
+    const m = await load();
+    kr.holders = HOLDERS; kr.holdersFail = null; kr.held = new Map(); kr.named = { companyLabel: 'label-1', contractAddress: ACCOUNT };
+    kr.seat = { ...HERE, judge: judgeSaying('its filer was not seated') };
+    await m.readPolicies('u1', aViewOf(company), [VAULT], REGISTRY);
+    const state = (kr.doors as { records: { state: (id: string) => Promise<{ version: number } | null> } }).records.state;
+    await expect(state('st1')).rejects.toThrow(/not believed, because its filer was not seated/u);
+    expect(asked).toEqual([{ records: [{ store: 'company', kind: 'state', id: 'st1' }] }]);
+    kr.seat = { ...HERE, judge: judgeSaying(null) };
+    await m.readPolicies('u1', aViewOf(company), [VAULT], REGISTRY);
+    expect((await (kr.doors as { records: { state: (id: string) => Promise<{ version: number } | null> } }).records.state('st1'))?.version).toBe(1);
+  });
+});
 
 describe('reading the company\'s spending policies', () => {
   /* RED WHEN: a read of the policies opens a wallet window to release the company key itself, or reads on with no key released and shows a vault as having no policy. */
@@ -121,6 +156,30 @@ describe('reading the company\'s spending policies', () => {
     expect(await roles(['aa'])).toEqual({ roles: [{ key: 'aa', value: null }] });
     expect(kr.holdersAsked.filter((a) => 'roles' in a)).toEqual([{ company: 'label-1', account: ACCOUNT, roles: ['aa'] }]);
     expect(view.counts()['roles']).toBe(1);
+  });
+
+  /* RED WHEN: the page reads one vault and currency at a time, or hands the shared reader a keys door other than the worker's one ask for every pair. */
+  it('reads every vault and currency in one read, with the worker\'s keys of every pair asked at once', async () => {
+    const m = await load();
+    kr.seat = HERE; kr.holders = HOLDERS; kr.holdersFail = null; kr.readFail = null; kr.pairs = []; kr.named = { companyLabel: 'label-1', contractAddress: ACCOUNT };
+    kr.held = new Map<string, unknown>([[A2.code, new Error('not opened here')]]);
+    const OTHER = 'CD'.repeat(32);
+    const read = await m.readPolicies('u1', aViewOf('acc_Company00001'), [VAULT, OTHER], REGISTRY);
+    expect(kr.pairs).toEqual([[VAULT, OTHER.toLowerCase()].flatMap((vault) => [A1, A2, A3].map((a) => ({ vault, asset: a.code })))]);
+    expect(await kr.keysOfEach!(['asked'])).toEqual({ keysOfEachAsked: ['asked'] });
+    /* RED WHEN: a pair that could not be read is shown as another pair's standing, or one pair's failure is shown on the others. */
+    if (read.of !== m.POLICIES_READ.read) throw new Error('the policies were not read');
+    expect(read.held.map((h) => h.of)).toEqual(['none', 'unread', 'none', 'none', 'unread', 'none']);
+  });
+
+  /* RED WHEN: a failure of what every pair shares is shown as no policy, or refuses the whole page in place of showing each pair unread. */
+  it('shows every pair unread when the read every pair shares fails', async () => {
+    const m = await load();
+    kr.seat = HERE; kr.holders = HOLDERS; kr.holdersFail = null; kr.held = new Map(); kr.readFail = new Error('the worker did not answer');
+    const read = await m.readPolicies('u1', aViewOf('acc_Company00001'), [VAULT], REGISTRY);
+    kr.readFail = null;
+    if (read.of !== m.POLICIES_READ.read) throw new Error('the policies were not read');
+    expect(read.held.map((h) => h.of)).toEqual(['unread', 'unread', 'unread']);
   });
 
   /* RED WHEN: a wallet that cannot be asked who holds the company is shown as holders that were read, or the seated count is taken from anything but the seats the account holds now. */

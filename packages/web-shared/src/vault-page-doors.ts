@@ -944,6 +944,8 @@ export const judgeIn = (here: DirectoryHere): FilingJudge => Object.assign(
     withheld: (read: Pick<RecordRead, 'store' | 'kind' | 'id'>) => withheldRefusal(here, read),
     neverEntered: (read: Pick<RecordRead, 'store' | 'kind' | 'id'> & { readonly version: number }) =>
       askedFor(here.records, read) && neverEnteredIn(here.records, read).includes(read.version),
+    /* A version entered after the held read, or a newer one named and not given, may read otherwise over a fresh one. */
+    heldBehind: (why: string) => why === ANCHOR_REFUSAL['not-entered'] || why === ANCHOR_REFUSAL['newer-withheld'],
   },
 );
 

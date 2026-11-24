@@ -8,10 +8,14 @@
 import { describe, expect, it } from 'vitest';
 import { intentShapeOf } from 'midnight-identity/profile/request';
 import { vaultRecords, peopleRecords } from '../../../../src/server/a-company-of-two-seats.test-support.js';
-import { ADA, anchorDoorsOf, CO, store } from '../../../../src/server/a-company-whose-signers-change-on-the-chain.test-support.js';
+import { ADA, anchorDoorsOf, BO, CO, rolesOnTheChain, store, takenFromTheOwnWallet } from '../../../../src/server/a-company-whose-signers-change-on-the-chain.test-support.js';
+import { spendingPolicyKeysOf } from '../../../../packages/web-shared/src/governed-call-arguments.js';
+import { pureCircuits } from '../../../../contracts/managed/contract/index.js';
+import { assetIdHex, NIGHT } from '../../../../src/core/assets.js';
+import { newBlinding } from '../../../../src/core/crypto.js';
 import { anchorTheRecordsHere } from '../../../../packages/web-shared/src/records-anchored-here.js';
 import { throughAView } from '../../../../src/testing/anchor-doors-through-a-view.js';
-import { aCompanyOf, addressOfWallet, companyDoors, countedCalls, doorsInFlight, runIntent, type Company, type Counted, type IntentCount } from './company-harness.test-support.js';
+import { aCompanyOf, addressOfWallet, companyDoors, countedCalls, doorsInFlight, refuseWhatIsNotFiled, runIntent, type Company, type Counted, type IntentCount } from './company-harness.test-support.js';
 
 const company = aCompanyOf({ people: 3, vendors: 2, vaults: 2, proposals: 1 });
 const PROVES = { timeout: 120_000 };
@@ -36,11 +40,11 @@ const doorsOf = (holders: number, onChain: number, builder: number, indexer: num
  */
 const INVITE_AT_N = [
   { routes: 15, doors: doorsOf(1, 1, 1, 2) }, { routes: 12, doors: doorsOf(1, 1, 1, 1) },
-  { routes: 37, doors: doorsOf(4, 3, 5, 9) }, { routes: 36, doors: doorsOf(3, 3, 5, 4) },
+  { routes: 40, doors: doorsOf(4, 3, 5, 9) }, { routes: 38, doors: doorsOf(3, 3, 5, 4) },
 ];
 const INVITE_AT_2N = [
   { routes: 15, doors: doorsOf(1, 1, 1, 2) }, { routes: 12, doors: doorsOf(1, 1, 1, 1) },
-  { routes: 37, doors: doorsOf(4, 3, 5, 9) }, { routes: 36, doors: doorsOf(3, 3, 5, 4) },
+  { routes: 40, doors: doorsOf(4, 3, 5, 9) }, { routes: 38, doors: doorsOf(3, 3, 5, 4) },
 ];
 const invite = (person: string) => runIntent('invite', {
   name: 'invite', fields: { ...company.fields, kind: 'signer', personName: person, role: 'approver', address: addressOfWallet(company.wallet(person)) },
@@ -99,5 +103,48 @@ describe('A COMPANY OF A CHOSEN SIZE IS HELD BY THE SERVICE, AND EVERY CALL A WA
     expect(doorsInFlight()).toBe(0);
     /* RED WHEN: a read made after its step ended is in no count and fails nothing, so a pin passes while that read grows. */
     await expect(invite('eve')).rejects.toThrow('a door was asked while no step was open, so the ask is in no count: holders holders');
+  });
+
+  it('the list of runs is refused, as the service refuses it, when it holds a run no chain wrote beside one a chain did', async () => {
+    const runs = () => company.call(ADA.person)('GET', `/api/accounts/${CO}/runs`, undefined);
+    /* Two runs put in the store by hand, one marked as a chain's and one as no chain's: no action files a run no chain wrote. */
+    const run = (id: string, wiring: 'chain' | 'simulated') => ({
+      id, accountId: CO, period: id, status: 'draft', payslips: [], keyEpoch: 0, sealed: { iv: '', tag: '', body: '' }, wiring,
+    }) as Parameters<typeof store.putRun>[0];
+    store.putRun(run('2026-10', 'chain'));
+    /* RED WHEN: a list of runs a chain wrote is refused. */
+    expect((await runs()).status).toBe(200);
+    store.putRun(run('2026-11', 'simulated'));
+    const refused = await runs();
+    /* RED WHEN: a list holding a run no chain wrote beside one a chain did is answered, not refused with the service's code. */
+    expect({ status: refused.status, code: (refused.body as { code?: string }).code }).toEqual({ status: 409, code: 'records-from-more-than-one-ledger' });
+  });
+  it('a size whose records the company cannot file is refused, each by why, and the size just inside each bound is not', () => {
+    /* RED WHEN: a size the company cannot file as asked is let through, so a count runs on a company other than the one it names. */
+    expect(() => refuseWhatIsNotFiled({ people: 1, vaults: 1, runs: 1 })).toThrow('this company raises no run beside people only invited');
+    expect(() => refuseWhatIsNotFiled({ people: 0, vaults: 0, runs: 1 })).toThrow('a run or a one-off payment is paid from the company\'s first vault');
+    expect(() => refuseWhatIsNotFiled({ people: 0, vaults: 0, oneOffs: 1 })).toThrow('a run or a one-off payment is paid from the company\'s first vault');
+    expect(() => refuseWhatIsNotFiled({ people: 0, vaults: 1, runs: 1, payments: 2 })).toThrow('payments are the payments of runs raised');
+    expect(() => refuseWhatIsNotFiled({ people: 0, vaults: 2, policies: 2 })).toThrow('a spending policy is set for each vault after the first');
+    /* RED WHEN: a size the company can file is refused: every bound above is met here with nothing to spare. */
+    expect(() => refuseWhatIsNotFiled({ people: 0, vaults: 2, runs: 1, payments: 1, oneOffs: 1, policies: 1 })).not.toThrow();
+    expect(() => refuseWhatIsNotFiled({ people: 3, vaults: 0 })).not.toThrow();
+  });
+
+  it('the chain refuses a spending policy set with a commitment other than the one its policy makes, and sets the one it makes', async () => {
+    const proposal = 'c1'.repeat(32);
+    const send = (signer: string, order: Record<string, unknown>) => takenFromTheOwnWallet(Buffer.from(JSON.stringify({ signer, order })).toString('base64'));
+    await send(ADA.seat, { circuit: 'propose', proposal, governance: { kind: 'set-spending-policy' } });
+    await send(BO.seat, { circuit: 'approve', proposal });
+    const terms = { bands: [{ ceiling: '10', approvals: '1' }, { ceiling: '20', approvals: '1' }, { ceiling: '30', approvals: '1' }, { ceiling: '40', approvals: '1' }], periodLimit: '100', periodStart: '0', periodLength: '60' };
+    const asked = { vault: 'c2'.repeat(32), asset: assetIdHex(NIGHT), assetBlinding: 'c3'.repeat(32), policy: { terms, blinding: newBlinding() } };
+    const keys = spendingPolicyKeysOf({ accountPure: pureCircuits as never }, asked as never);
+    const other = spendingPolicyKeysOf({ accountPure: pureCircuits as never }, { ...asked, policy: { terms, blinding: newBlinding() } } as never);
+    /* RED WHEN: the chain sets a policy whose commitment is not the one its policy makes, so a wrong commitment sent passes every count. */
+    await expect(send(BO.seat, { circuit: 'setPolicy', proposal, ...asked, commitment: other.commitment })).rejects.toThrow('the commitment is not the one the policy makes');
+    expect(rolesOnTheChain([keys.policyKey, keys.onKey]).map((r) => r.value)).toEqual([null, null]);
+    /* RED WHEN: the chain refuses the commitment the policy makes, so the refusal above is not of the commitment. */
+    await send(BO.seat, { circuit: 'setPolicy', proposal, ...asked, commitment: keys.commitment });
+    expect(rolesOnTheChain([keys.policyKey, keys.onKey]).map((r) => r.value)).toEqual([keys.commitment!.toLowerCase(), '01']);
   });
 });

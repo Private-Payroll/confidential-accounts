@@ -22,6 +22,8 @@ import {
 import { sha256 } from '@noble/hashes/sha2.js';
 import { fromHex as bytesOfHex, toHex as hexOfBytes, utf8 } from '../core/crypto.js';
 import { EMPTY_HEAD } from './record-manifest.js';
+import { keptAfter } from '../../packages/web-shared/src/records-as-anchored.js';
+import { checkedHeadsInMemory, type CheckedHeads } from '../../packages/web-shared/src/tree-kept-here.js';
 
 const COMPANY = 'acct_tree';
 const A = newSigningKeypair();
@@ -631,6 +633,69 @@ describe('CHECKED FORWARD FROM A HEAD, A PAGE AT A TIME', () => {
     expect(r.reached.head).toBe(atR);
     /* RED WHEN: the batches a recovery gives up go back unsaid: the device says the quorum gave them up. */
     expect(r.recovered).toEqual({ resumedFrom: c.checkedAt(1), gaveUpTo: 2 });
+  });
+  /* This device checked three batches, then a recovery from the second, then a second recovery from that one: every head on that path is one it checked. */
+  const twoRecoveries = () => {
+    const { c, heads } = built(3);
+    const r1 = recoveryFrom(c.checkedAt(1), heads[2]!, []);
+    const at1 = headOf(heads[2]!, treeBatchOf(r1));
+    const after1 = checkedAfter(r1, at1);
+    const r2 = recoveryFrom(after1, at1, [], '6b'.repeat(32));
+    const at2 = headOf(at1, treeBatchOf(r2));
+    const earlier = (h: Hex) => [c.checkedAt(0), c.checkedAt(1), after1].find((x) => x.head === h);
+    return { c, heads, r1, at1, after1, r2, at2, from: checkedAfter(r2, at2), earlier };
+  };
+  it('A DEVICE THAT CHECKED PAST AN OLDER RECOVERY AND LOOKS BACK KEEPS ITS PLACE: A HEAD IT CHECKED BEFORE IS NOT A NEW ONE', async () => {
+    const t = twoRecoveries();
+    /* The quorum recovers again from where this device stands; only this device keeps that header, so the service gives none past it. */
+    const r3 = recoveryFrom(t.from, t.at2, [], '7c'.repeat(32));
+    const at3 = headOf(t.at2, treeBatchOf(r3));
+    const pages = async (seq: number) => ({ headers: [...t.c.headers, t.r1, t.r2].filter((h) => h.seq > seq), entries: [...t.c.entries.values()], leaves: [...t.c.byHash.values()] });
+    const { run, kept } = forward(t.c, [...t.heads, t.at1, t.at2, at3], { from: t.from, chainHead: at3, headersAfter: pages, earlier: t.earlier, earliestSeq: 0 });
+    const r = await run;
+    /* RED WHEN: looking back, the older recovery's head is taken as one the chain moved to, and the device rewinds before it. */
+    expect(r).toEqual({ reached: t.from, stop: { stop: 'not-given', seq: t.from.seq + 1, what: 'its header' } });
+    expect(kept).toEqual([]);
+  });
+  it('A RECOVERY RESUMING FROM AN OLDER RECOVERY\'S HEAD GIVES UP ONLY WHAT THIS DEVICE CHECKED AFTER IT', async () => {
+    const t = twoRecoveries();
+    /* The quorum recovers from the first recovery's head, past the second, which its devices could not check. */
+    const r3 = recoveryFrom(t.after1, t.at2, [], '7c'.repeat(32));
+    const at3 = headOf(t.at2, treeBatchOf(r3));
+    const pages = async (seq: number) => ({ headers: [...t.c.headers, t.r1, t.r2, r3].filter((h) => h.seq > seq), entries: [...t.c.entries.values()], leaves: [...t.c.byHash.values()] });
+    const { run, kept } = forward(t.c, [...t.heads, t.at1, t.at2, at3], { from: t.from, chainHead: at3, headersAfter: pages, earlier: t.earlier, earliestSeq: 0 });
+    const r = await run;
+    expect(r.stop).toBeNull();
+    expect(r.reached.head).toBe(at3);
+    /* RED WHEN: the path to the head on chain runs back through the older recovery's head, so batches still the company's are said given up and checked again. */
+    expect(r.recovered).toEqual({ resumedFrom: t.after1, gaveUpTo: t.from.seq });
+    expect(kept.map((k) => k.head)).toEqual([at3]);
+  });
+  it('A DEVICE A RECOVERY MOVED BACK PAST TWO BATCHES IT CHECKED KEEPS THE RECOVERY\'S HEAD, AND READS ON PAST IT ONCE THE CHAIN MOVES ON', async () => {
+    const { c, heads } = built(4);
+    /* This device checked all four, keeping each as the held read does; the quorum recovers from the second, giving up the third and the fourth. */
+    const rec = recoveryFrom(c.checkedAt(1), heads[3]!, []);
+    const atR = headOf(heads[3]!, treeBatchOf(rec));
+    /* Then the chain moves on past the recovery. */
+    const next = recoveryFrom(checkedAfter(rec, atR), atR, [], '6b'.repeat(32));
+    const atN = headOf(atR, treeBatchOf(next));
+    const store = checkedHeadsInMemory();
+    let kept: CheckedHeads | null = null;
+    for (let i = 0; i < 4; i += 1) { kept = keptAfter(kept, c.checkedAt(i), i === 0); await store.write(COMPANY, kept); }
+    const read = async (given: readonly TreeHeader[], chainHead: Hex) => {
+      const k = (await store.read(COMPANY))!;
+      let now: CheckedHeads = k;
+      const pages = async (seq: number) => ({ headers: [...c.headers, ...given].filter((h) => h.seq > seq), entries: [...c.entries.values()], leaves: [...c.byHash.values()] });
+      return forward(c, [...heads, atR, atN], {
+        from: k.latest, chainHead, headersAfter: pages, earlier: (h) => k.recent!.find((x) => x.head === h), earliestSeq: k.recent![0]!.seq,
+        keep: async (x) => { now = keptAfter(now, x, false); await store.write(COMPANY, now); },
+      }).run;
+    };
+    expect((await read([rec], atR)).recovered).toEqual({ resumedFrom: c.checkedAt(1), gaveUpTo: 3 });
+    /* RED WHEN: what this device keeps stays on a head the recovery gave up, so every read follows the recovery again. */
+    expect((await store.read(COMPANY))!.latest.head).toBe(atR);
+    /* RED WHEN: once the chain moves past the recovery, the device stops for good at a batch it can never be given. */
+    expect(await read([rec, next], atN)).toMatchObject({ reached: { head: atN }, stop: null });
   });
   it('nothing anchored is the empty head reached at once, asking nothing', async () => {
     /* RED WHEN: a device at the head on chain asks the service for headers. */

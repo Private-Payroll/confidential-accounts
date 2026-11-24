@@ -123,8 +123,10 @@ describe('where a company stands, from the shape of the service\'s answer', () =
     const { state, opened } = await load();
     kr.answers['/api/accounts/c1'] = THE_COMPANY;
     const { AnotherPersonError, AuthError } = await import('vaults-web-shared/service-transport.js');
+    const { ServiceNotReached } = await import('vaults-web-shared/hand-over.js');
     const cases: [unknown, string][] = [
       [new TypeError('fetch failed'), 'unreachable'],
+      [new ServiceNotReached('the company\'s service could not be reached (no answer)', false), 'unreachable'],
       [new Error('the chain could not be read'), 'unreadable'],
       [new AuthError('not signed in'), 'not-signed-in'],
       [new AnotherPersonError('someone else'), 'another-person'],

@@ -5,10 +5,12 @@
  * the wallet's asks and the chain, builder and indexer reads are counted too; and a first opening on a device new to
  * the company is counted apart from the openings after it. One screen is counted at two sizes of the same company,
  * and what it reads is pinned: the same at both sizes, each route once for the opening and the wallet asked once. The
- * Vaults screen is counted at both sizes too, and must read the same at each.
+ * Vaults screen and the home page are counted at both sizes too, and must read the same at each: every vault's tile on
+ * the home page says what its vault holds, and the tiles' money is read in the same reads on four vaults as on two.
  */
 import { describe, expect, it } from 'vitest';
 import { aCompanyOf, openScreen, pageRouteOf, type ScreenCount } from './company-harness.test-support.js';
+import { ENGLISH } from '../english.test-support.js';
 
 const company = aCompanyOf({ people: 3, vendors: 2, vaults: 2, proposals: 1 });
 const OPENINGS = { timeout: 170_000 };
@@ -26,6 +28,8 @@ const peopleScreenOpened = async (): Promise<ScreenCount> => {
 };
 
 const R = '/api/accounts/:record';
+/* The reads a vault's tile makes for its money: its vault records, their newest versions and proofs, and its state on the chain. */
+const TILE_READS = [`POST ${R}/vault-records/read`, `POST ${R}/manifest/newest`, `POST ${R}/manifest/tree/proofs`, 'indexer vaultOnChain', 'indexer vaultsOnChain'];
 /*
  * What the People screen reads, measured on this company at three people, two vendors, two vaults and one open
  * proposal, and again at twice of each: every route once for the opening (the newest versions and the records read by
@@ -45,10 +49,13 @@ const PEOPLE = {
   },
 };
 /*
- * The other screen counted, opened twice at each size, the second opening counted: the Vaults screen, as far as the
- * company's own read. This company's vaults are on its chain and not in the service's list, so no vault's tile is drawn.
+ * The other screens counted, opened twice at each size, the second opening counted: the Vaults screen, and the home
+ * page, whose set-up steps read the company's creation, the person's wallet with it, apart from the page's view. Each
+ * draws a tile for every vault the company adopted, with what the vault holds.
  */
-const SCREENS = ['vaults'] as const;
+const SCREENS = ['vaults', 'home'] as const;
+/* How often each screen asks the person's wallet who holds the company in one opening. */
+const HOLDERS_ASKED: Readonly<Record<(typeof SCREENS)[number], number>> = { vaults: 1, home: 2 };
 const opened = async (id: (typeof SCREENS)[number]): Promise<ScreenCount> => {
   await openScreen(company, FOUNDER, id);
   return openScreen(company, FOUNDER, id);
@@ -57,6 +64,7 @@ const opened = async (id: (typeof SCREENS)[number]): Promise<ScreenCount> => {
 describe('A SCREEN OPENED ON A COMPANY OF A CHOSEN SIZE HAS EVERY READ IT MAKES COUNTED', OPENINGS, () => {
   let atN: ScreenCount;
   const others = new Map<string, ScreenCount>();
+  const grown = new Map<string, ScreenCount>();
 
   it('a call is named by the route an action declares for it, or by its path with each record written as an id', () => {
     /* RED WHEN: a call to a declared route is named by its path, so the same read of two records counts as two routes. */
@@ -99,11 +107,23 @@ describe('A SCREEN OPENED ON A COMPANY OF A CHOSEN SIZE HAS EVERY READ IT MAKES 
     expect(shows(at2N, people(6))).toEqual([]);
     /* RED WHEN: any route, wallet ask or chain, builder or indexer read of the People screen grows with the people, vendors, vaults or proposals. */
     expect(readsOf(at2N)).toEqual(PEOPLE);
+    /* Every screen is counted at twice the size first, so a screen that reads more does not leave the next uncounted. */
+    for (const id of SCREENS) grown.set(id, await opened(id));
     for (const id of SCREENS) {
+      const at2N = grown.get(id)!;
       /* RED WHEN: a read of this screen grows with the company's records: one more request, wallet ask or door read at twice the size. */
-      expect({ screen: id, ...readsOf(await opened(id)) }).toEqual({ screen: id, ...readsOf(others.get(id)!) });
-      /* RED WHEN: the screen asks the person's wallet who holds the company more than once in one opening. */
-      expect(others.get(id)!.wallet).toEqual({ holders: 1 });
+      expect({ screen: id, ...readsOf(at2N) }).toEqual({ screen: id, ...readsOf(others.get(id)!) });
+      /* RED WHEN: the screen asks the person's wallet who holds the company more often in one opening than it is pinned to. */
+      expect(others.get(id)!.wallet).toEqual({ holders: HOLDERS_ASKED[id] });
     }
+  });
+
+  it('the home page reads every vault tile\'s money in the reads of one opening, on four vaults as on two', () => {
+    const tileReads = (c: ScreenCount) => Object.fromEntries(TILE_READS.map((read) => [read, c.routes[read] ?? c.asks[read] ?? 0]));
+    const told = (c: ScreenCount) => c.text.split(ENGLISH['vaults.money.none']!).length - 1;
+    /* RED WHEN: a tile does not say what its vault holds once its money is read: this company's vaults hold none of the tokens shown. */
+    expect([told(others.get('home')!), told(grown.get('home')!)]).toEqual([2, 4]);
+    /* RED WHEN: a vault's tile reads its own money apart from the others': its records, their newest versions and proofs, or its state on the chain, so the home page reads more with more vaults. */
+    expect(tileReads(grown.get('home')!)).toEqual(tileReads(others.get('home')!));
   });
 });

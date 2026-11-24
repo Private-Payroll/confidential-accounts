@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { InvitationRefused, writtenOrRefused } from './invitation-on-device.js';
 import { takenOrThrown } from './records-source.js';
-import { writesOver } from '../../../src/testing/writes-over-a-send.js';
+import { NOTHING_FILED, writesOver } from '../../../src/testing/writes-over-a-send.js';
+import type { RoutesKept } from '../../../src/testing/service-routes-in-memory.js';
 
 /** The company's writes over a service that answers every call with `answer`, keeping the paths it was sent. */
-const over = (answer: { status: number; body: unknown }) => {
+const over = (answer: { status: number; body: unknown }, kept: RoutesKept = NOTHING_FILED) => {
   const paths: string[] = [];
-  return { paths, writes: writesOver(async (path) => { paths.push(path); return answer; }) };
+  return { paths, writes: writesOver(async (path) => { paths.push(path); return answer; }, kept) };
 };
 
 describe('A WRITE OF THE COMPANY\'S THE SERVICE REFUSES IS REFUSED AS AN INVITATION\'S SEND WAS', () => {
@@ -48,5 +49,14 @@ describe('A WRITE OF THE COMPANY\'S THE SERVICE REFUSES IS REFUSED AS AN INVITAT
       '/api/accounts/acc_1/vendors/vnd_1/admit', '/api/accounts/acc_1/self-payee', '/api/accounts/acc_1/signers/sgn_1/withdraw',
       '/api/accounts/acc_1/fee', '/api/accounts/acc_1/fee/done',
     ]);
+  });
+
+  it('reaches the writer as a refusal when the service in memory has not been told what its directory holds', async () => {
+    const { paths, writes } = over({ status: 201, body: {} }, { newest: 'none-entered' });
+    const refused = await writes('acc_1', { to: 'fee', body: {} }).catch((x: unknown) => x);
+    /* RED WHEN: a write over a service in memory that was not told what its directory holds is sent anyway, or its directory is read as empty. */
+    expect(refused).toBeInstanceOf(Error);
+    expect((refused as Error).message).toMatch(/answers no directory/u);
+    expect(paths).toEqual([]);
   });
 });

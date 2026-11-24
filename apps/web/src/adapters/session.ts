@@ -237,7 +237,8 @@ interface ListedRead {
 const listedReads = new Map<string, { done: boolean; read: Promise<ListedRead> }>();
 
 /**
- * A listed company read through one view of its own, opened for this read and ended when it is done: its roster
+ * A listed company read through one view of its own, opened for this read at the place on the chain its row names (so
+ * the view reads no account to find it) and ended when it is done: its roster
  * opened without asking the wallet for a key, and who holds it, so the person's wallet is asked about the company
  * once for both. The list's names and its seat bars share a read that is still on its way; `afresh` reads again over
  * one that is done (the names, read again after the person opens their keys).
@@ -246,6 +247,7 @@ async function listedRead(row: unknown, id: string, afresh: boolean): Promise<Li
   const kept = listedReads.get(id);
   if (kept !== undefined && !(afresh && kept.done)) return kept.read;
   const { openedQuietly, readThroughAViewOf } = await import('./filing-judge.js');
+  /* The row already names where the company is on the chain, so its view reads no account to find it. */
   const mine = { done: false, read: readThroughAViewOf(id, async (view): Promise<ListedRead> => {
     let opened: ListedRead['opened'] = null;
     let whyNot: unknown = null;
@@ -253,7 +255,7 @@ async function listedRead(row: unknown, id: string, afresh: boolean): Promise<Li
     let holders: ListedRead['holders'] = null;
     try { holders = await view.holders(); } catch { /* a company the wallet cannot read, or with no account on the chain yet, has no holders read */ }
     return { opened, whyNot, holders };
-  }) };
+  }, row) };
   listedReads.set(id, mine);
   const over = (): void => { mine.done = true; };
   void mine.read.then(over, over);

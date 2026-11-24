@@ -175,7 +175,9 @@ export async function checkedForwardHere(w: ForwardFrom, from: CheckedHead) {
   if (forward.stop?.stop === 'not-given' && doors.headers !== undefined) {
     const keptAt = await doors.headers.at(company, forward.stop.seq);
     for (const k of keptAt) {
-      try { await doors.tree.fileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE)); } catch { /* the service would not keep it: the check says */ }
+      /* A repair: through the view it is sent without the check and never ends it; refused, the check says so. */
+      if (doors.tree.refileHeader !== undefined) await doors.tree.refileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE));
+      else try { await doors.tree.fileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE)); } catch { /* the service would not keep it: the check says */ }
     }
     if (keptAt.length > 0) forward = await forwardFrom(forward.reached);
   }

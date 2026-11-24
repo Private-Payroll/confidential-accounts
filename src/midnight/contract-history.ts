@@ -29,6 +29,7 @@ export interface ContractHistoryEntry {
    * The contract's state as the indexer holds it for this step, as its bytes:
    * the state after the whole block the step is in, the same for every step of
    * this contract in that block. Steps of transactions that failed are listed too.
+   * Two calls of one transaction, even to one circuit, are two steps.
    */
   readonly state: Uint8Array;
   /** The block the step's transaction is in: its height, and the time its author set for it, in milliseconds. */
@@ -105,6 +106,19 @@ export function indexerContractHistory(
             step.short('a step whose block has no height or time');
             return;
           }
+          /*
+           * At a ledger hard fork the indexer serves a contract's latest action
+           * again, with its own transaction and entry point but its state
+           * translated and dated at the fork block. It is not a step the chain
+           * took, so it is not listed: counted, it would be a second anchor call
+           * where there was one. Its state is the same state in the new
+           * encoding, so the steps of that transaction carry it from then on,
+           * and a reader of the state now reads one the new ledger decodes. A
+           * step's own state is dated at its own block.
+           */
+          const dated = action?.stateAt?.height;
+          if (typeof dated !== 'number' || !Number.isSafeInteger(dated) || dated < 0) { step.short('a step whose state is not dated at a block'); return; }
+          const reEmitted = dated > height;
           const named = action?.entryPoint;
           const entryPoint = typeof named === 'string' ? named : '';
           if (kind === 'call' && entryPoint === '') { step.short('a call whose entry point is not named'); return; }
@@ -112,7 +126,10 @@ export function indexerContractHistory(
           const raw = typeof served === 'string' ? bare(served) : '';
           if (kind === 'call' && (raw === '' || !HEX.test(raw))) { step.short('a call whose transaction\'s bytes are not hex'); return; }
           const succeeded = action?.transaction?.transactionResult?.status === 'SUCCESS';
-          step.seen.push({
+          if (reEmitted) {
+            const translated = fromHex(state);
+            step.seen.forEach((s, i) => { if (s.transaction === hash) step.seen[i] = { ...s, state: translated }; });
+          } else step.seen.push({
             kind, transaction: hash, state: fromHex(state), block: { height, at }, ...(kind === 'call' ? { entryPoint, raw: fromHex(raw) } : {}), succeeded,
           });
           /*
@@ -131,7 +148,7 @@ export function indexerContractHistory(
 }
 
 /** What the history asks the indexer for on each action. */
-const HISTORY_FIELDS = '{ __typename state transaction { hash raw block { height timestamp } '
+const HISTORY_FIELDS = '{ __typename state stateAt { height } transaction { hash raw block { height timestamp } '
   + '... on RegularTransaction { transactionResult { status } } } ... on ContractCall { entryPoint } }';
 
 /** How a contract's history words each refusal. */

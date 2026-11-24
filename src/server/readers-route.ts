@@ -13,8 +13,9 @@
  *
  * The member gate admits those readers on the reads their grant needs and on nothing else (`READER_ROUTES`): a
  * record, a run or a proposal only of a kind its grant reads; every route that writes, and every read that hands
- * names or emails in plain, stays the members'. On the manifest's reads a reader is refused a name of another kind and
- * served the entries waiting without those of other kinds (`aReaderMay`, `readerKindsOf`).
+ * names or emails in plain, stays the members'. One rule (`aReaderMay`) answers every read of a record: the single read
+ * and the lists of bodies, and the manifest's proofs, where a reader is refused a name of another kind and served the
+ * entries waiting without those of other kinds (`readerKindsOf`).
  */
 import express from 'express';
 import type { SealedAccount } from '../core/types.js';
@@ -63,17 +64,17 @@ export const readersOf = (account: AccountWithReaders | null | undefined): reado
 
 /**
  * The reads a reader's device makes to read what its grant names, and nothing else: the account record, the company's
- * sealed records of a kind its grant reads (the kind is the path's first group; a list of them, read in one POST, is
- * held to the grant's kinds entry by entry by its own route), its sealed runs and proposals when its grant reads them, its
+ * sealed records of a kind its grant reads (the kind and the id are the path's first two groups; a list of them, read in one
+ * POST, is held to the grant's kinds entry by entry by its own route), its sealed runs and proposals when its grant reads them, its
  * directory, and the manifest's reads that prove a version anchored (two of them POSTs that read). Never the
  * invitations, the people, a vault's records or any route that hands names or emails in plain.
  */
-const READER_ROUTES: readonly { readonly method: string; readonly path: RegExp; readonly kind?: CompanyRecordKind }[] = [
+const READER_ROUTES: readonly { readonly method: string; readonly path: RegExp; readonly store?: 'run' | 'proposal' }[] = [
   { method: 'GET', path: /^\/api\/accounts\/[^/]+$/u },
-  { method: 'GET', path: /^\/api\/accounts\/[^/]+\/records\/([^/]+)\/[^/]+(?:\/versions|\/[0-9]+)?$/u },
+  { method: 'GET', path: /^\/api\/accounts\/[^/]+\/records\/([^/]+)\/([^/]+)(?:\/versions|\/[0-9]+)?$/u },
   { method: 'POST', path: /^\/api\/accounts\/[^/]+\/records\/read$/u },
-  { method: 'GET', path: /^\/api\/accounts\/[^/]+\/runs$/u, kind: 'run' },
-  { method: 'GET', path: /^\/api\/accounts\/[^/]+\/proposals$/u, kind: 'proposal' },
+  { method: 'GET', path: /^\/api\/accounts\/[^/]+\/runs$/u, store: 'run' },
+  { method: 'GET', path: /^\/api\/accounts\/[^/]+\/proposals$/u, store: 'proposal' },
   { method: 'GET', path: /^\/api\/accounts\/[^/]+\/directory$/u },
   { method: 'POST', path: /^\/api\/accounts\/[^/]+\/manifest\/newest$/u },
   { method: 'POST', path: /^\/api\/accounts\/[^/]+\/manifest\/tree\/proofs$/u },
@@ -83,7 +84,7 @@ const READER_ROUTES: readonly { readonly method: string; readonly path: RegExp; 
 /**
  * Whether a request is one of the reads this reader may make, judged on the path it was routed by: where the router it
  * reached is mounted, then the path under it. The query is never part of that path, so nothing is read from it. A read
- * of a record, a run or a proposal passes only when the kind it reads is one the reader's kept kinds name.
+ * of a record, a run or a proposal passes only when the one rule (`aReaderMay`) serves its body to the reader's kept kinds.
  */
 const aReadersRead = (req: express.Request, kinds: readonly string[]): boolean => {
   const path = req.baseUrl + req.path;
@@ -91,8 +92,8 @@ const aReadersRead = (req: express.Request, kinds: readonly string[]): boolean =
     if (r.method !== req.method) return false;
     const m = r.path.exec(path);
     if (m === null) return false;
-    const kind = r.kind ?? m[1];
-    return kind === undefined || kinds.includes(kind);
+    const kind = r.store ?? m[1];
+    return kind === undefined || aReaderMay(kinds, { store: r.store ?? 'company', kind, id: m[2] ?? '' }, 'body');
   });
 };
 
@@ -115,14 +116,17 @@ export const readerKindsOf = (res: express.Response): readonly string[] | null =
 const PROVEN_BY_EVERY_READER: ReadonlySet<string> = new Set([DIRECTORY, ...FOUNDING_RECORDS].map(recordKeyOf));
 
 /**
- * **WHETHER A READER WHOSE GRANT READS THESE KINDS MAY BE SERVED THIS MANIFEST NAME**: an entry, a record asked, or a
- * whole kind asked (its id empty). The company's directory and the records it was founded with pass by exact name,
- * because a reader's wallet proves them to judge the roster; a company record, a run or a proposal passes when its kind
- * is one the grant reads; a vault record never does, since no read of a reader fetches one.
+ * **WHETHER A READER WHOSE GRANT READS THESE KINDS MAY BE SERVED THIS RECORD**, the one rule every read a reader makes
+ * asks: an entry, a record asked, or a whole kind asked (its id empty), and whether what is asked is its `proof` (its
+ * entry in the manifest) or its `body`. The proof of the company's directory and of the records it was founded with
+ * passes by exact name, because a reader's wallet proves them to judge the roster; a body never passes by name. A
+ * company record, a run or a proposal passes, as a proof or a body, when its kind is one the grant reads; a vault
+ * record never does, since no read of a reader fetches one.
  */
 type ManifestName = Pick<ManifestEntryBody, 'store' | 'kind' | 'id'>;
-export const aReaderMay = (kinds: readonly string[], r: ManifestName): boolean => {
-  if (r.store === 'directory' || PROVEN_BY_EVERY_READER.has(recordKeyOf(r))) return true;
+export type ReaderAsks = 'proof' | 'body';
+export const aReaderMay = (kinds: readonly string[], r: ManifestName, asks: ReaderAsks): boolean => {
+  if (asks === 'proof' && (r.store === 'directory' || PROVEN_BY_EVERY_READER.has(recordKeyOf(r)))) return true;
   return r.store !== 'vault' && (r.store === 'company' || r.kind === r.store) && kinds.includes(r.kind);
 };
 
@@ -135,16 +139,16 @@ const KINDS_A_GRANT_CAN_READ: readonly string[] = kindsAReaderFetches([...new Se
  * member is never refused here.
  */
 export const readerAskedBeyondItsKinds = (
-  res: express.Response, asked: readonly (Omit<ManifestName, 'id'> & { readonly id?: string })[],
+  res: express.Response, asked: readonly (Omit<ManifestName, 'id'> & { readonly id?: string })[], asks: ReaderAsks,
 ): boolean => {
   const kinds = readerKindsOf(res);
-  const beyond = kinds === null ? undefined : asked.find((r) => !aReaderMay(kinds, { ...r, id: r.id ?? '' }));
+  const beyond = kinds === null ? undefined : asked.find((r) => !aReaderMay(kinds, { ...r, id: r.id ?? '' }, asks));
   if (beyond === undefined) return false;
   res.status(403).json({
     refused: 'not-a-kind-read',
     error: `a reader of this company is served only records of the kinds its grant reads, and this asks for ${beyond.store} records `
       + `of kind ${beyond.kind}. Nothing was read. Ask only for the kinds the grant names`
-      + (aReaderMay(KINDS_A_GRANT_CAN_READ, { ...beyond, id: beyond.id ?? '' })
+      + (aReaderMay(KINDS_A_GRANT_CAN_READ, { ...beyond, id: beyond.id ?? '' }, asks)
         ? ', or the company\'s signers grant a purpose that reads this kind, from their wallets.' : '.'),
   });
   return true;

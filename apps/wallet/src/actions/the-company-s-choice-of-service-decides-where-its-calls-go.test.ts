@@ -666,13 +666,16 @@ describe('A SPONSORED SEND IS TOLD DONE ONCE THE RUNNER HAS TAKEN THE SEND\'S OW
     views.movesWhoHolds([{ circuit: CALL.circuit, contract: CALL.contract }], (h) => ({ ...h, approvals: h.approvals + 1 }));
     let handedOver = 0;
     /* The runner's door, as run.ts holds it: the gate first and again when asked, the send's move taken once handed over. */
-    const sendStraight = async <T>(send: (door: { ready(): Promise<void>; handedOver(): void }) => Promise<T>, into?: { readonly vault: string }, call?: { readonly circuit: string; readonly contract: string }): Promise<T> => {
-      await views.check(into);
+    const sendStraight = async <T>(
+      send: (door: { ready(): Promise<void>; handedOver(): void }) => Promise<T>, into: readonly { readonly vault: string }[] = [],
+      calls: readonly { readonly circuit: string; readonly contract: string }[] = [],
+    ): Promise<T> => {
+      await views.check(into, calls);
       let handed = false;
       try {
-        return await send({ ready: () => views.check(into), handedOver: () => { handed = true; handedOver += 1; } });
+        return await send({ ready: () => views.check(into, calls), handedOver: () => { handed = true; handedOver += 1; } });
       } finally {
-        if (handed) views.sent(call); else views.notSent(call);
+        if (handed) views.sent(calls); else views.notSent(calls);
       }
     };
     const log: unknown[] = [];

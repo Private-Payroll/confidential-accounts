@@ -23,8 +23,8 @@ export interface ViewDoors<H> {
   readonly holders: () => Promise<H>;
   /** Every head the account's history shows, and who holds the account now. */
   readonly onChain: () => Promise<AnchorsOnChain>;
-  /** The builder's reads: the head each step leaves. */
-  readonly builder: Pick<VaultBuilderClient, 'anchorHeads'>;
+  /** The builder's reads: the head each step leaves, and, where the opener gives it, the company's vaults on the chain. */
+  readonly builder: Pick<VaultBuilderClient, 'anchorHeads'> & Partial<Pick<VaultBuilderClient, 'vaultsOnChain'>>;
   /**
    * The device's own stores - the heads it checked, the headers it signed or checked last, the directory changes it
    * keeps - shared by every read and anchor through the view; absent, the view keeps them in memory while it lives.
@@ -89,7 +89,10 @@ export const countedDoors = <H>(doors: ViewDoors<H>, tally: Tally): ViewDoors<H>
     holders: once(freshHolders),
     freshHolders,
     onChain: () => { tally.add('onChain'); return doors.onChain(); },
-    builder: { anchorHeads: (ask: Parameters<VaultBuilderClient['anchorHeads']>[0]) => { tally.add('anchorHeads'); return doors.builder.anchorHeads(ask); } },
+    builder: {
+      anchorHeads: (ask: Parameters<VaultBuilderClient['anchorHeads']>[0]) => { tally.add('anchorHeads'); return doors.builder.anchorHeads(ask); },
+      ...(doors.builder.vaultsOnChain === undefined ? {} : { vaultsOnChain: (ask: Parameters<VaultBuilderClient['vaultsOnChain']>[0]) => doors.builder.vaultsOnChain!(ask) }),
+    },
     roles: (asked: readonly string[]): Promise<RolesRead> => {
       if (doors.roles === undefined) return Promise.reject(new Error('this read of the company was given no way to read its roles on the chain.'));
       tally.add('roles');
