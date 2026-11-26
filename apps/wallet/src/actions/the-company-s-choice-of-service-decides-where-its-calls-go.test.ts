@@ -68,9 +68,11 @@ const unread = (why: RegExp) => ({ unread: expect.stringMatching(why) });
 const anAct = (fields: Record<string, string>, name = 'approve-proposal', shown: unknown[] = []) => ({
   intent: { name, fields }, held: { identity: {} as never, account: 0 }, signal: new AbortController().signal,
   show: (words: unknown) => { shown.push(words); },
+  /* The person says yes when their own DUST is offered for a fee. */
+  confirmFee: async () => true,
   /* The runner's door for a call this wallet sends itself, with no read of the company to check here. */
   sendStraight: viewsOfTheStep(async () => { throw new Error('a hand-over reads nothing of the company here'); }).sendStraight,
-}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show' | 'sendStraight'>;
+}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show' | 'sendStraight' | 'confirmFee'>;
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64');
 const intentOf = (actions: readonly unknown[]) =>
   ({ actions, guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined });
@@ -380,9 +382,10 @@ describe('WHERE EACH CALL GOES UNDER EACH CHOICE', () => {
         ...aChain(log).ownWallet(),
         facade: async () => ({
           ...(await aChain(log).ownWallet().facade() as object),
+          estimateTransactionFee: async () => 1n,
           balanceUnboundTransaction: async (call: unknown) => {
             log.push('own DUST');
-            return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, { ...intentOf([]), dustActions: { spends: [1], registrations: [] } }]]) } };
+            return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, { ...intentOf([]), dustActions: { spends: [{ vFee: 1n }], registrations: [] } }]]) } };
           },
           signRecipe: async (r: unknown) => r, finalizeRecipe: async (r: unknown) => r,
         }) as never,

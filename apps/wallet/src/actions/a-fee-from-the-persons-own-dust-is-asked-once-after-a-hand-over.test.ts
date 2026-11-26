@@ -62,6 +62,42 @@ describe('the fee question comes after a hand-over, once', () => {
     expect(answers).toEqual([false, false]);
   });
 
+  it('the person\'s answer holds for every later fee of the action no larger than the one shown: one yes pays each, one no sends none', async () => {
+    for (const said of [true, false]) {
+      let asks = 0;
+      const answers: boolean[] = [];
+      await ranWith(async (c) => {
+        await c.relay('AAAA');
+        for (const fee of [5n, 5n, 3n]) answers.push(await c.confirmFee!(LINES, fee));
+      }, async () => { asks += 1; return said; });
+      /* RED WHEN: a multi-call action asks the fee question again for a fee no larger, or a yes stops paying from the second call on. */
+      expect(asks, String(said)).toBe(1);
+      expect(answers).toEqual([said, said, said]);
+    }
+  });
+
+  it('a later fee larger than the one a yes was given for is asked again; a no still holds', async () => {
+    const asked: Array<bigint | undefined> = [];
+    const answers: boolean[] = [];
+    let n = 0;
+    await ranWith(async (c) => {
+      await c.relay('AAAA');
+      for (const fee of [5n, 9n, 9n, undefined]) answers.push(await c.confirmFee!(LINES, fee));
+    }, async () => { n += 1; asked.push(n === 1 ? 5n : n === 2 ? 9n : undefined); return n < 3; });
+    /* RED WHEN: a yes given for one fee pays a larger one never shown, or a fee not named is paid unasked. */
+    expect(asked).toEqual([5n, 9n, undefined]);
+    expect(answers).toEqual([true, true, true, false]);
+    let noAsks = 0;
+    const noAnswers: boolean[] = [];
+    await ranWith(async (c) => {
+      await c.relay('AAAA');
+      for (const fee of [5n, 9n]) noAnswers.push(await c.confirmFee!(LINES, fee));
+    }, async () => { noAsks += 1; return false; });
+    /* RED WHEN: a no is asked again for a larger fee. */
+    expect(noAsks).toBe(1);
+    expect(noAnswers).toEqual([false, false]);
+  });
+
   it('a window that cannot ask answers no', async () => {
     const answers: boolean[] = [];
     await ranWith(async (c) => { answers.push(await c.confirmFee!(LINES)); });

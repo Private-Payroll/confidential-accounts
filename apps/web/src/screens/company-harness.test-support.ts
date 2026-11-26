@@ -51,9 +51,8 @@ export type CompanyHeld = Readonly<Record<'people' | 'vendors' | 'vaults' | 'pro
 /** The company a screen is opened on, as the wallet's harness makes it: what the counting here reads of it. */
 export interface CompanyOpened {
   readonly wallet: (person: string) => {
-    readonly kept: Keyring; readonly identity: unknown; readonly secret: unknown;
-    /** What the wallet holds of each company it knows, by company: where it came from and whether it created it. */
-    readonly pins: Map<string, unknown>;
+    /** The keys the wallet keeps, its pin of each company it knows among them. */
+    kept: Keyring; readonly identity: unknown; readonly secret: unknown;
   };
   readonly seats: () => readonly { readonly person: string }[];
   readonly vaults: () => readonly string[];

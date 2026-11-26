@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { KEYS_DIR, LEDGER_CIRCUITS, LEDGER_DECLARED, REPO_ROOT, BUCKET, TRUSTED_SETUP, declaredRefusal, droppedRefusal, ledgerFoldersOf, ledgerSourceOf, WALLET_DIR, accountFilesOf, keysFolderOrRefuse, pruneOrRefuse, pruneStale, staleKeysOf, vendorAccountKeys, wroteLine } from './vendor-keys.mjs';
-import { ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, VAULT_CIRCUITS_THE_WALLET_DEPLOYS } from '../src/chain/account-circuits.js';
-import { ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER } from '../src/chain/key-material.js';
+import { KEYS_DIR, LEDGER_CIRCUITS, LEDGER_DECLARED, REPO_ROOT, BUCKET, TRUSTED_SETUP, declaredRefusal, droppedRefusal, ledgerFoldersOf, ledgerSourceOf, WALLET_DIR, accountFilesOf, keysFolderOrRefuse, pruneOrRefuse, pruneStale, staleKeysOf, vendorAccountKeys, vendorRegistryKeys, wroteLine } from './vendor-keys.mjs';
+import { ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, REGISTRY_CIRCUITS_THE_WALLET_PROVES, VAULT_CIRCUITS_THE_WALLET_DEPLOYS } from '../src/chain/account-circuits.js';
+import { ACCOUNT_KEYS_FOLDER, REGISTRY_KEYS_FOLDER, VAULT_KEYS_FOLDER } from '../src/chain/key-material.js';
 
 /*
  * The script that puts the proving keys where the wallet serves them. Its
@@ -119,6 +119,42 @@ describe('the vault\'s circuits are copied from the vault\'s own compile, whole 
     const artefacts: Record<string, { bytes: number; sha256: string }> = {};
     const out = quiet();
     expect(vendorAccountKeys({ repoRoot: c.root, keysDir: c.keysDir, circuits: ['deposit'], folder: 'vault', expectedVk: { deposit: sha('another') }, artefacts, log: out.log, compiled: 'managed-vault', verifierOnly: true })).toBe(1);
+    expect(artefacts).toEqual({});
+  });
+});
+
+describe('the private registry\'s write is copied from the registry\'s own compile', () => {
+  const aRegistryCompile = (compiled = true) => {
+    const root = mkdtempSync(join(tmpdir(), 'vendor-registry-'));
+    mkdirSync(join(root, 'contracts/managed-registry/keys'), { recursive: true });
+    mkdirSync(join(root, 'contracts/managed-registry/zkir'), { recursive: true });
+    writeFileSync(join(root, 'contracts/managed-registry/keys/put.prover'), 'put prover');
+    writeFileSync(join(root, 'contracts/managed-registry/keys/put.verifier'), 'put verifier');
+    writeFileSync(join(root, 'contracts/managed-registry/zkir/put.bzkir'), 'put circuit');
+    if (compiled) {
+      mkdirSync(join(root, 'contracts/managed-registry/contract'), { recursive: true });
+      writeFileSync(join(root, 'contracts/managed-registry/contract/index.js'), `export const expectedVk = { put: '${sha('put verifier')}' };\n`);
+    }
+    return { root, keysDir: join(root, 'served') };
+  };
+  it('copies each circuit the wallet proves whole, under the registry\'s folder, checked against the registry\'s compile', async () => {
+    // RED WHEN: the registry's keys are read from another compile's folder, or not copied under the folder the wallet serves them from
+    const c = aRegistryCompile();
+    const artefacts: Record<string, { bytes: number; sha256: string }> = {};
+    const out = quiet();
+    const got = await vendorRegistryKeys({ repoRoot: c.root, keysDir: c.keysDir, circuits: REGISTRY_CIRCUITS_THE_WALLET_PROVES, folder: REGISTRY_KEYS_FOLDER, artefacts, log: out.log });
+    expect(got).toEqual({ refused: 0, walked: true, expected: ['registry/put.prover', 'registry/put.verifier', 'registry/put.bzkir'] });
+    expect(Object.keys(artefacts).sort()).toEqual(['registry/put.bzkir', 'registry/put.prover', 'registry/put.verifier']);
+    expect(readFileSync(join(c.keysDir, 'registry/put.prover'), 'utf8')).toBe('put prover');
+  });
+  it('refuses by name, and copies nothing, when the registry has not been compiled', async () => {
+    // RED WHEN: a missing registry compile is passed over in silence, so the wallet ships with no key for its write
+    const c = aRegistryCompile(false);
+    const artefacts: Record<string, { bytes: number; sha256: string }> = {};
+    const out = quiet();
+    const got = await vendorRegistryKeys({ repoRoot: c.root, keysDir: c.keysDir, circuits: ['put'], folder: REGISTRY_KEYS_FOLDER, artefacts, log: out.log });
+    expect(got).toEqual({ refused: 1, walked: false, expected: [] });
+    expect(out.lines.join('\n')).toMatch(/no compiled registry at contracts\/managed-registry/u);
     expect(artefacts).toEqual({});
   });
 });

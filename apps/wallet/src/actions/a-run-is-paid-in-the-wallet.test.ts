@@ -7,6 +7,7 @@ import { PUBLIC_PAYMENT_SAYS } from '../../../../src/core/movement.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **AN APPROVED PAYROLL RUN IS PAID IN THE WALLET, IN ONE WINDOW, FROM ITS OWN READS, THROUGH THE ONE PAYMENT PATH.**
@@ -78,6 +79,8 @@ const secret = newSecret();
 const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const VAULT = 'de'.repeat(32);
 const NOW_MS = 1_800_000_000_000;
 const NOW = NOW_MS / 1000;
@@ -122,7 +125,7 @@ const ctxWith = (i: ActIntent) => {
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a run is paid through its calls, never a bare relay'); },
     call: async () => ({ status: 200, body: {} }),
-    tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
+    tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: PINNED_ONLY,
   }) as unknown as StepContext;
   return { ctx, told };
 };

@@ -17,6 +17,7 @@ import type { Committee } from '../../../src/midnight/vault-committee.js';
 import { buildVaultBornHeld, type VaultBuilderDeps } from './vault-builder.js';
 import { checkedAccountKeys } from './vault-worker-entry.js';
 import { vaultAsDeployed } from './vault-as-deployed.js';
+import { keyFileAround } from '../../../src/testing/an-operation-holding.js';
 
 /*
  * A vault, built on the device held by the company's committee from its first
@@ -72,6 +73,16 @@ describe.skipIf(!KEYS)('A VAULT READ AS IT WAS BORN [needs contracts/managed-vau
   it('THE DEVICE\'S OWN BUILD IS READ AS BORN HELD BY THE COMMITTEE IT WAS BUILT FOR', async () => {
     /* RED WHEN: the device's builder holds the vault by anything but the committee it was given, or writes anything into it. */
     expect(await vaultAsDeployed(reader(), ask(), chain())).toBeNull();
+  });
+
+  it('A DEPLOY ONE OF WHOSE CIRCUITS HIDES A SECOND KEY IN ITS OTHER SLOT IS REFUSED, AND THE CIRCUIT IS NAMED', async () => {
+    const state = L.ContractState.deserialize((deployStateOf(born.proven) as L.ContractState).serialize());
+    const op = state.operation('payout')!;
+    op.verifierKey = keyFileAround('a key nobody compiled', 'older');
+    state.setOperation('payout', op);
+    const hidden = { deployState: async () => state, contractState: async () => null };
+    /* RED WHEN: the deploy's circuits are judged by the one key the ledger's own reading shows. */
+    expect(await vaultAsDeployed(reader(), ask(), hidden as never)).toMatch(/its 'payout' circuit is not the one this service's build compiled/);
   });
 
   it('A DEPLOY HELD BY OTHER KEYS, OR READ AGAINST ANOTHER COMMITTEE, ACCOUNT OR THRESHOLD, IS REFUSED', async () => {

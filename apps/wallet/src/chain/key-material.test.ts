@@ -3,9 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER, idbArtefactCache, makePinnedKeyMaterialProvider, recordKeyAsk, recordingKeyMaterial, sha256Hex,
+  ACCOUNT_KEYS_FOLDER, REGISTRY_KEYS_FOLDER, VAULT_KEYS_FOLDER, idbArtefactCache, makePinnedKeyMaterialProvider, recordKeyAsk, recordingKeyMaterial, sha256Hex,
 } from './key-material.js';
 import type { ArtefactCache, KeyAskRecord, KeyMaterialAsk } from './key-material.js';
+import {
+  ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, REGISTRY_CIRCUITS_THE_WALLET_PROVES, VAULT_CIRCUITS_THE_WALLET_DEPLOYS,
+} from './account-circuits.js';
 
 /*
  * KEY MATERIAL FROM OUR OWN ORIGIN, HASH-PINNED. What these
@@ -284,7 +287,7 @@ describe('a company account circuit is served by the location the contract names
     const origin = await fakeOrigin(files);
     const provider = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache(), accountCircuits: ['propose'], compiledVerifierKeys: await compiledFrom(files) });
     await expect(provider.lookupKey(await locationOf('clearRun', files[`${ACCOUNT_KEYS_FOLDER}/clearRun.verifier`]!)))
-      .rejects.toThrow(/"clearRun" is not a circuit of the company account or the vault this wallet proves/u);
+      .rejects.toThrow(/"clearRun" is not a circuit of the company account, the vault or the registry this wallet proves/u);
     await expect(provider.accountVerifierKey('clearRun')).rejects.toThrow(/not a circuit of the company account/u);
     const transfer = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache() });
     await expect(transfer.lookupKey(await locationOf('propose', files[`${ACCOUNT_KEYS_FOLDER}/propose.verifier`]!)))
@@ -414,7 +417,7 @@ describe('a vault circuit the wallet proves is served by the vault\'s location, 
     });
     // RED WHEN: the wallet proves any circuit of the vault, not only the ones it builds
     await expect(provider.lookupKey(await locationOf('deposit', files[`${VAULT_KEYS_FOLDER}/deposit.verifier`]!)))
-      .rejects.toThrow(/not a circuit of the company account or the vault this wallet proves/u);
+      .rejects.toThrow(/not a circuit of the company account, the vault or the registry this wallet proves/u);
     // RED WHEN: a vault verifier key the wallet does not hold for any circuit is served
     await expect(provider.vaultVerifierKey('payout')).rejects.toThrow(/not a circuit of the vault this wallet builds/u);
     // RED WHEN: a proof asks for the vault circuit with another verifier key and is served the wallet's
@@ -467,13 +470,13 @@ describe('the account circuit a vault circuit the wallet proves calls is served 
     });
     // RED WHEN: the account's approval is served to any wallet that proves a vault circuit, not only one that proves the circuit calling it
     await expect(withoutCaller.lookupKey(await locationOf('approveVaultChange', files[`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]!)))
-      .rejects.toThrow(/"approveVaultChange" is not a circuit of the company account or the vault this wallet proves/u);
+      .rejects.toThrow(/"approveVaultChange" is not a circuit of the company account, the vault or the registry this wallet proves/u);
     const provider = makePinnedKeyMaterialProvider({
       fetchFn: origin.fetchFn, cache: mapCache(), vaultCircuits: ['setNonceSecret', 'writeSecretCopy', 'deposit'], compiledVerifierKeys: compiled,
     });
     // RED WHEN: the wallet serves a key for an account circuit only a vault payment calls, which no circuit it proves makes
     await expect(provider.lookupKey(await locationOf('recordPaymentFromVault', files[`${ACCOUNT_KEYS_FOLDER}/recordPaymentFromVault.verifier`]!)))
-      .rejects.toThrow(/"recordPaymentFromVault" is not a circuit of the company account or the vault this wallet proves/u);
+      .rejects.toThrow(/"recordPaymentFromVault" is not a circuit of the company account, the vault or the registry this wallet proves/u);
     // RED WHEN: the wallet builds a call of its own to the account's approval, which only a vault's circuit may make
     await expect(provider.accountVerifierKey('approveVaultChange')).rejects.toThrow(/not a circuit of the company account this wallet proves/u);
     expect(origin.fetched.filter((u) => u.includes('recordPaymentFromVault') || u.includes('approveVaultChange'))).toEqual([]);
@@ -488,5 +491,53 @@ describe('the account circuit a vault circuit the wallet proves calls is served 
     });
     await expect(provider.lookupKey(await locationOf('approveVaultChange', files[`${ACCOUNT_KEYS_FOLDER}/approveVaultChange.verifier`]!)))
       .rejects.toThrow(/this build's company account was compiled with .* different compiles/u);
+  });
+});
+
+const registryFiles = (): Record<string, Uint8Array> => ({
+  [`${REGISTRY_KEYS_FOLDER}/put.prover`]: bytesOf('the registry write prover key'),
+  [`${REGISTRY_KEYS_FOLDER}/put.verifier`]: bytesOf('the registry write verifier key'),
+  [`${REGISTRY_KEYS_FOLDER}/put.bzkir`]: bytesOf('the registry write circuit'),
+});
+
+describe('the private registry\'s write is served from the registry\'s own pinned files, from its own compile', () => {
+  it('serves the write\'s proving files and its verifier key, by the location the registry names', async () => {
+    const files = registryFiles();
+    const origin = await fakeOrigin(files);
+    const provider = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), registryCircuits: ['put'],
+      compiledRegistryVerifierKeys: { put: await sha256Hex(files[`${REGISTRY_KEYS_FOLDER}/put.verifier`]!) },
+    });
+    // RED WHEN: the wallet cannot prove a registry write from the keys vendored for it
+    const material = await provider.lookupKey(await locationOf('put', files[`${REGISTRY_KEYS_FOLDER}/put.verifier`]!));
+    expect(new TextDecoder().decode(material?.proverKey)).toBe('the registry write prover key');
+    expect(new TextDecoder().decode(await provider.registryVerifierKey('put'))).toBe('the registry write verifier key');
+  });
+
+  it('refuses the write to a wallet that does not name it, and a key from another compile than this build\'s registry', async () => {
+    const files = registryFiles();
+    const origin = await fakeOrigin(files);
+    const unnamed = makePinnedKeyMaterialProvider({ fetchFn: origin.fetchFn, cache: mapCache() });
+    // RED WHEN: a registry key is served to a provider made for something else
+    await expect(unnamed.lookupKey(await locationOf('put', files[`${REGISTRY_KEYS_FOLDER}/put.verifier`]!)))
+      .rejects.toThrow(/"put" is not a circuit of the company account, the vault or the registry this wallet proves/u);
+    await expect(unnamed.registryVerifierKey('put')).rejects.toThrow(/not a circuit of the registry this wallet writes to/u);
+    const another = makePinnedKeyMaterialProvider({
+      fetchFn: origin.fetchFn, cache: mapCache(), registryCircuits: ['put'], compiledRegistryVerifierKeys: { put: 'ab'.repeat(32) },
+    });
+    // RED WHEN: a registry key from another compile than this build's registry is served for a proof or a write
+    await expect(another.lookupKey(await locationOf('put', files[`${REGISTRY_KEYS_FOLDER}/put.verifier`]!)))
+      .rejects.toThrow(/this build's registry was compiled with .* different compiles/u);
+    await expect(another.registryVerifierKey('put')).rejects.toThrow(/different compiles/u);
+  });
+});
+
+describe('a circuit name the wallet serves keys for belongs to one contract only', () => {
+  it('the account\'s, the vault\'s and the registry\'s circuits share no name', () => {
+    /* RED WHEN: a circuit name appears in two contracts' sets, so a proof for one contract is served the other's keys,
+     * because the folder a key is served from is chosen by the circuit's name. */
+    const sets = [ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR, VAULT_CIRCUITS_THE_WALLET_DEPLOYS, REGISTRY_CIRCUITS_THE_WALLET_PROVES];
+    const names = sets.flatMap((set) => [...new Set(set)]);
+    expect(names.filter((n, i) => names.indexOf(n) !== i)).toEqual([]);
   });
 });

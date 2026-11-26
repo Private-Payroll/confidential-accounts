@@ -151,7 +151,7 @@ describe('networks', () => {
   });
 
   it('every network we know produces an address that reads back', () => {
-    for (const n of ['undeployed', 'preview', 'preprod', 'qanet', 'stagenet', 'testnet'] as const) {
+    for (const n of ['undeployed', 'preview', 'preprod', 'qanet', 'stagenet'] as const) {
       const a = payeeAddressFromKeys({ coinPublicKey: COIN, encryptionPublicKey: ENC }, n);
       expect(a.network).toBe(n);
       expect(payeeAddress(a.bech32, n).encryptionPublicKey).toBe(ENC);

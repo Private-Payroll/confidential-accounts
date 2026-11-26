@@ -279,10 +279,9 @@ export async function makeSignerCodeHere(
  * device kept from the invitation it accepted (or a re-issue of it) and the
  * one the proposal that seated them carries, the first whose seat the account
  * holds now, as the person's own wallet read it (`onTheChain`); the kept one
- * when neither is. The wallet keeps the company's account only on a seat of it
- * (`whyTheInvitationDoesNotNameIt`), so an inviter who has left is passed over
- * for one who has not, and a person added from a code, who kept none, is
- * handed the seat that raised their proposal.
+ * when neither is. An inviter who has left is passed over for one who has
+ * not, and a person added from a code, who kept none, is handed the seat that
+ * raised their proposal.
  */
 export const inviterForTheWallet = (
   kept: Inviter | undefined, carried: Inviter | null, onTheChain: readonly string[],

@@ -287,6 +287,8 @@ export const ACT_INTENTS = Object.freeze({
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/seats-named' }),
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-signer' }),
       Object.freeze({ method: 'GET' as const, path: '/api/accounts/:record/directory' }),
+      /* The fee of the seat's entry in the private registry, paid by our service and handed back. */
+      FEE_SPONSORED, FEE_SPONSORED_DONE,
     ]),
   }),
   /*

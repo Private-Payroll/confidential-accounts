@@ -206,6 +206,11 @@ export const WHY = {
   mayBeSent: 'may-be-sent',
   filedNotEntered: 'filed-not-entered',
   offerNotRead: 'offer-not-read',
+  noPin: 'no-pin',
+  labelClash: 'label-clash',
+  registryUnread: 'registry-unread',
+  pinnedElsewhere: 'pinned-elsewhere',
+  seatNotYours: 'seat-not-yours',
   stopped: 'stopped',
   other: 'other',
 } as const;

@@ -5,6 +5,8 @@ import { intentShapeOf, routeOf } from 'midnight-identity/profile/request';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
 import { firstReadsAnswered, NO_VIEW_OPENED, viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **CREATING A VAULT IN THE WALLET BELIEVES NOTHING THE PAGE SAYS UNTIL ITS OWN READS AGREE.** Every service answer
@@ -50,8 +52,9 @@ const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const LEAF = 'aa'.repeat(32);
+/* The founding seat this wallet's words make for the company. */
 const SEAT = {
-  signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32),
+  signerId: 's1', signingSecret: Buffer.from(seatKeysFor(identity, LABEL, 0).signingSecret).toString('hex'), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32),
 };
 const why = (key: string, values?: Readonly<Record<string, string | number>>) => ({ key, ...(values === undefined ? {} : { values }) });
 const intent = (fields: Record<string, string> = {}): ActIntent =>
@@ -59,7 +62,7 @@ const intent = (fields: Record<string, string> = {}): ActIntent =>
 
 const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown> } = {}) => {
   const calls: string[] = [];
-  let keys = { accounts: { acc_1: SEAT }, counter: 1 } as Record<string, unknown>;
+  let keys = { ...pinnedIn({ accounts: { acc_1: SEAT } }, LABEL, ACCOUNT), counter: 1 } as Record<string, unknown>;
   const call = async (method: string, path: string) => {
     calls.push(`${method} ${path}`);
     const a = over.answers?.[`${method} ${path}`];
@@ -67,7 +70,7 @@ const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown
   };
   const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-    held: { identity, secret, wallet: { drewTheLabel: () => true, pinnedFor: () => ({ account: ACCOUNT, created: true }), pin: async () => {} } },
+    held: { identity, secret, wallet: { drewTheLabel: () => true } },
     at: { step: 1, steps: 3 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a vault is created through calls, never a bare relay'); },
     call: firstReadsAnswered(call),
@@ -262,8 +265,8 @@ describe('the window lists, before the passkey, how many seats the vault\'s secr
     const named = await action.shown(intent({ title: 'Payroll', about: 'For the monthly run' }));
     // RED WHEN: the description the wallet signs into the vault's name filing is not shown before the passkey, as the page's
     expect(named.find((l) => l.key === 'act.create-vault.shown.about')).toEqual({ key: 'act.create-vault.shown.about', values: { about: 'For the monthly run' }, from: 'page' });
-    // RED WHEN: the account a joiner's wallet may keep for good is not shown before the passkey
-    expect(named.some((l) => l.key === 'act.create-vault.shown.pin' && l.from === 'page')).toBe(true);
+    // RED WHEN: the window still says it may keep the page's account as the company's: no action but the seating pins one
+    expect(named.some((l) => l.key === 'act.create-vault.shown.pin')).toBe(false);
     const unread = await createVaultAction({ chain: () => chainWith({ key: 'x' }) as never, builder: () => builder, now: () => 1 } as never).shown(intent());
     // RED WHEN: the line saying the wallet could not read the account is marked as something the wallet read
     expect(unread.some((l) => l.key === 'act.create-vault.shown.sealed-to-unread' && l.from === 'action')).toBe(true);

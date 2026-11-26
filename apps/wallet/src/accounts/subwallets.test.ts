@@ -105,7 +105,7 @@ describe('the derivation parameter — 2.1', () => {
         expect(key).toHaveLength(32);
         seen.add(hex(key));
       }
-      addresses.add(addressFor(keys.zswap, 'testnet').bech32);
+      addresses.add(addressFor(keys.zswap, 'preprod').bech32);
     }
     expect(seen.size).toBe(WALLET_ACCOUNTS.length * 3);
     expect(addresses.size).toBe(WALLET_ACCOUNTS.length);
@@ -191,22 +191,22 @@ describe('an address and its owner are one value', () => {
    * exactly where the difference matters. */
 
   it('an unnamed slot owns as itself — the slot IS the name', () => {
-    expect(ownedAddressFor(ours, 0, {}, 'testnet').owner).toBe('Main wallet');
-    expect(ownedAddressFor(ours, 2, {}, 'testnet').owner).toBe('Subwallet 1');
-    expect(ownedAddressFor(ours, 11, {}, 'testnet').owner).toBe('Subwallet 10');
+    expect(ownedAddressFor(ours, 0, {}, 'preprod').owner).toBe('Main wallet');
+    expect(ownedAddressFor(ours, 2, {}, 'preprod').owner).toBe('Subwallet 1');
+    expect(ownedAddressFor(ours, 11, {}, 'preprod').owner).toBe('Subwallet 10');
   });
 
   it('a personal name never travels without its slot', () => {
     const names = { '2': 'Savings', '3': 'Savings', '0': 'Everything' };
-    expect(ownedAddressFor(ours, 2, names, 'testnet').owner).toBe('Savings (subwallet 1)');
-    expect(ownedAddressFor(ours, 3, names, 'testnet').owner).toBe('Savings (subwallet 2)');
-    expect(ownedAddressFor(ours, 0, names, 'testnet').owner).toBe('Everything (main wallet)');
+    expect(ownedAddressFor(ours, 2, names, 'preprod').owner).toBe('Savings (subwallet 1)');
+    expect(ownedAddressFor(ours, 3, names, 'preprod').owner).toBe('Savings (subwallet 2)');
+    expect(ownedAddressFor(ours, 0, names, 'preprod').owner).toBe('Everything (main wallet)');
   });
 
   it('two wallets wearing one name still produce two distinguishable owners and two addresses', () => {
     const names = { '2': 'Savings', '3': 'Savings' };
-    const a = ownedAddressFor(ours, 2, names, 'testnet');
-    const b = ownedAddressFor(ours, 3, names, 'testnet');
+    const a = ownedAddressFor(ours, 2, names, 'preprod');
+    const b = ownedAddressFor(ours, 3, names, 'preprod');
     expect(a.owner).not.toBe(b.owner);
     expect(a.address.bech32).not.toBe(b.address.bech32);
   });
@@ -215,22 +215,22 @@ describe('an address and its owner are one value', () => {
     /* Somebody names subwallet 2 "Subwallet 1". The genuine Subwallet 1 owns
      * as "Subwallet 1"; the impostor owns as "Subwallet 1 (subwallet 2)" —
      * the lie is printed next to the truth. */
-    expect(ownedAddressFor(ours, 3, { '3': 'Subwallet 1' }, 'testnet').owner)
+    expect(ownedAddressFor(ours, 3, { '3': 'Subwallet 1' }, 'preprod').owner)
       .toBe('Subwallet 1 (subwallet 2)');
   });
 
   it('refuses the reserved account and any slot the picker does not offer', () => {
-    expect(() => ownedAddressFor(ours, 1, {}, 'testnet')).toThrow(/authority/);
+    expect(() => ownedAddressFor(ours, 1, {}, 'preprod')).toThrow(/authority/);
     /* moneyAt would happily derive account 12; the interface must not show
      * an address its own picker cannot reach — §2.3 from the other side. */
-    expect(() => ownedAddressFor(ours, 12, {}, 'testnet')).toThrow(/not a wallet/);
-    expect(() => ownedAddressFor(ours, -1, {}, 'testnet')).toThrow(/not a wallet/);
+    expect(() => ownedAddressFor(ours, 12, {}, 'preprod')).toThrow(/not a wallet/);
+    expect(() => ownedAddressFor(ours, -1, {}, 'preprod')).toThrow(/not a wallet/);
   });
 
   it('cannot be forged apart from its constructor', () => {
     // @ts-expect-error the brand is module-private: no literal can be an OwnedAddress
     const forged: OwnedAddress = {
-      address: ownedAddressFor(ours, 0, {}, 'testnet').address,
+      address: ownedAddressFor(ours, 0, {}, 'preprod').address,
       account: 2, name: 'x', slot: 'subwallet 1', owner: 'x',
     };
     /* Used so the compiler keeps the assertion above. */

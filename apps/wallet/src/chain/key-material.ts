@@ -32,11 +32,11 @@ import LEDGER_KEYS from './ledger-keys.json' with { type: 'json' };
  * Nothing is held in memory between asks: each ask hands out its own copy and
  * keeps none, so a proving key leaves memory with the proof that used it.
  *
- * A company account's or a vault's circuit is asked for by the location the
- * contract SDK gives it (`contract:<address>/<circuit>?vk=<hash of its
+ * A company account's, a vault's or the private registry's circuit is asked
+ * for by the location the contract SDK gives it (`contract:<address>/<circuit>?vk=<hash of its
  * verifier key>`). It is served only for a circuit the caller names as one
- * this wallet proves, from the files the vendoring copied under `account/` or
- * `vault/`, and only when the verifier key served hashes both to the key this
+ * this wallet proves, from the files the vendoring copied under `account/`,
+ * `vault/` or `registry/`, and only when the verifier key served hashes both to the key this
  * build compiled for that contract and to the `vk` the location carries. A
  * vault circuit the wallet only deploys is served its verifier key alone. An
  * account circuit that a vault circuit the caller names calls inside the same
@@ -153,6 +153,10 @@ export interface PinnedKeyMaterialOptions {
   readonly vaultVerifiers?: readonly string[];
   /** The hash of each vault circuit's verifier key as this build compiled the vault, checked as the account's are. */
   readonly compiledVaultVerifierKeys?: Readonly<Record<string, string>>;
+  /** The private registry's circuits this provider may serve, by name. None unless named. */
+  readonly registryCircuits?: readonly string[];
+  /** The hash of each registry circuit's verifier key as this build compiled the registry, checked as the account's are. */
+  readonly compiledRegistryVerifierKeys?: Readonly<Record<string, string>>;
   /** Told each time verified bytes could not be kept on this device, with the
    * file and the browser's reason. Proving goes on: the bytes are verified,
    * only the next action downloads them again. */
@@ -169,6 +173,8 @@ export interface PinnedKeyMaterial extends KeyMaterialProvider {
   accountVerifierKey(circuit: string): Promise<Uint8Array>;
   /** The verifier key of one of the vault's circuits this provider serves, pinned and checked against this build's vault. */
   vaultVerifierKey(circuit: string): Promise<Uint8Array>;
+  /** The verifier key of one of the registry's circuits this provider serves, pinned and checked against this build's registry. */
+  registryVerifierKey(circuit: string): Promise<Uint8Array>;
 }
 
 /** The folder under `/keys/` the account circuits' files are vendored into. */
@@ -176,6 +182,9 @@ export const ACCOUNT_KEYS_FOLDER = 'account';
 
 /** The folder under `/keys/` the vault circuits' files are vendored into. */
 export const VAULT_KEYS_FOLDER = 'vault';
+
+/** The folder under `/keys/` the private registry's circuit files are vendored into. */
+export const REGISTRY_KEYS_FOLDER = 'registry';
 
 /**
  * **WHETHER THIS WALLET HOLDS THE KEY A MERGE IS PROVED WITH**, read from the manifest of keys it serves itself: the
@@ -222,6 +231,7 @@ export function makePinnedKeyMaterialProvider(
   const calledByTheVault = new Set([...vaultCircuits].flatMap((c) => (
     Object.hasOwn(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, c) ? ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c]! : [])));
   const compiledVault = options.compiledVaultVerifierKeys ?? {};
+  const registryCircuits = new Set(options.registryCircuits ?? []);
 
   /** Refuses an account verifier key that is not the one this build compiled. */
   const thisBuildsIn = (of: Readonly<Record<string, string>>, contract: string) => async (circuit: string, verifierKey: Uint8Array): Promise<void> => {
@@ -235,6 +245,7 @@ export function makePinnedKeyMaterialProvider(
   };
   const thisBuilds = thisBuildsIn(compiled, 'company account');
   const thisBuildsVault = thisBuildsIn(compiledVault, 'vault');
+  const thisBuildsRegistry = thisBuildsIn(options.compiledRegistryVerifierKeys ?? {}, 'registry');
 
   let manifestPromise: Promise<KeyManifest> | null = null;
   const manifest = (): Promise<KeyManifest> => {
@@ -286,7 +297,7 @@ export function makePinnedKeyMaterialProvider(
   const artefact = async (path: string, wanted: string): Promise<Uint8Array> => {
     const pins = await manifest();
     const pin = pins.artefacts[path];
-    const remedy = path.startsWith(`${ACCOUNT_KEYS_FOLDER}/`) || path.startsWith(`${VAULT_KEYS_FOLDER}/`)
+    const remedy = [ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER, REGISTRY_KEYS_FOLDER].some((f) => path.startsWith(`${f}/`))
       ? '`npm run compact` then `npm run vendor-keys:account`' : '`npm run vendor-keys`';
     if (!pin) {
       throw new KeyMaterialError(`"${path}" is not in the vendored key material — `
@@ -351,13 +362,15 @@ export function makePinnedKeyMaterialProvider(
       if (located === undefined) return undefined;
       const ofTheAccount = accountCircuits.has(located.circuitId) || calledByTheVault.has(located.circuitId);
       const ofTheVault = !ofTheAccount && vaultCircuits.has(located.circuitId);
-      if (!ofTheAccount && !ofTheVault) {
+      const ofTheRegistry = !ofTheAccount && !ofTheVault && registryCircuits.has(located.circuitId);
+      if (!ofTheAccount && !ofTheVault && !ofTheRegistry) {
         throw new KeyMaterialError(`REFUSING TO PROVE: "${located.circuitId}" is not a circuit of the company `
-          + 'account or the vault this wallet proves, so no key is served for it and nothing was proved.');
+          + 'account, the vault or the registry this wallet proves, so no key is served for it and nothing was proved.');
       }
-      const folder = ofTheVault ? VAULT_KEYS_FOLDER : ACCOUNT_KEYS_FOLDER;
+      const [folder, thisBuildsIt] = ofTheVault ? [VAULT_KEYS_FOLDER, thisBuildsVault]
+        : ofTheRegistry ? [REGISTRY_KEYS_FOLDER, thisBuildsRegistry] : [ACCOUNT_KEYS_FOLDER, thisBuilds];
       const material = await circuitFiles(`${folder}/${located.circuitId}`, keyLocation);
-      await (ofTheVault ? thisBuildsVault : thisBuilds)(located.circuitId, material.verifierKey);
+      await thisBuildsIt(located.circuitId, material.verifierKey);
       const served = await sha256Hex(material.verifierKey);
       if (served !== located.verifierKeyHash) {
         throw new KeyMaterialError(`REFUSING TO PROVE: the call asks for "${located.circuitId}" with the verifier `
@@ -383,6 +396,14 @@ export function makePinnedKeyMaterialProvider(
       }
       const key = await artefact(`${VAULT_KEYS_FOLDER}/${circuit}.verifier`, `build the vault's ${circuit}`);
       await thisBuildsVault(circuit, key);
+      return key;
+    },
+    registryVerifierKey: async (circuit: string) => {
+      if (!registryCircuits.has(circuit)) {
+        throw new KeyMaterialError(`"${circuit}" is not a circuit of the registry this wallet writes to, so no key for it is served.`);
+      }
+      const key = await artefact(`${REGISTRY_KEYS_FOLDER}/${circuit}.verifier`, `build the registry's ${circuit}`);
+      await thisBuildsRegistry(circuit, key);
       return key;
     },
   };

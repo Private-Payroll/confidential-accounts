@@ -2,7 +2,7 @@ import type { ActIntentName } from 'midnight-identity/profile/request';
 import type { CreationLedger } from 'midnight-identity/profile/creation-sign';
 import type { ActionDefinition } from './definition.js';
 import { finishCompanyAction } from './finish-company.js';
-import { accountBuilding } from '../chain/account-builder-client.js';
+import { accountBuilding, type AccountBuilding } from '../chain/account-builder-client.js';
 import { liveCreationChain } from '../chain/creation-chain.js';
 import { liveConstruction } from '../chain/account-as-constructed.js';
 import { builtAccountKeys, builtVerifierKeys } from '../chain/this-builds-account-keys.js';
@@ -87,8 +87,13 @@ const ownWallet = (identity: Identity, account: number) => ({ ...ownWalletFrom(l
 /** The indexer this wallet reads the chain through. */
 const WALLET_INDEXER = Object.freeze({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
 
-/** The chain every action reads, with the person's own wallet for a call the act sends straight to it. */
-const companyChain = (): CompanyChain => Object.freeze({ ...liveCompanyChain(WALLET_INDEXER), ownWallet });
+/**
+ * The chain every action reads, with the person's own wallet for a call the act sends straight to it, and what the
+ * person's entry in the private registry is written with.
+ */
+const companyChain = (): CompanyChain => Object.freeze({
+  ...liveCompanyChain(WALLET_INDEXER), ownWallet, registryEntry: { network: NETWORK, build: entryBuilding },
+});
 
 /** What the vault actions read the chain with, build in, and keep a new vault's secret in: this wallet's own. */
 const VAULTS = Object.freeze({
@@ -146,10 +151,15 @@ export const SPENDING_DOORS = Object.freeze({ ownWallet, chain: companyChain, ba
  * wallet does not build while an action a page may name has no definition
  * here. An ask naming an action with none is refused before anything is shown.
  */
+/* The account builder a person's entry in the private registry is built with: started only when one is written. */
+let entryBuilder: AccountBuilding | null = null;
+const entryBuilding = (): AccountBuilding => (entryBuilder ??= accountBuilding());
+
 export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Object.freeze({
   'finish-company': finishCompanyAction(given('finish-company', {
     build: accountBuilding(),
     chain: SPENDING_DOORS.creation,
+    ownWallet,
     ledger: async () => (await import('@midnightntwrk/ledger-v9')) as unknown as CreationLedger,
     construction: liveConstruction,
     built: builtAccountKeys,
@@ -174,7 +184,7 @@ export const ACTIONS: { readonly [K in ActIntentName]: ActionDefinition } = Obje
   'claim-by-address': claimByAddressAction(given('claim-by-address', { network: NETWORK })),
   'join-by-code': joinByCodeAction(given('join-by-code', { network: NETWORK })),
   'seat-invited': seatInvitedAction(given('seat-invited', {
-    chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK,
+    chain: VAULTS.chain, builder: VAULTS.builder, network: NETWORK, accountBuilder: entryBuilding,
     commitments: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments as never,
     payKeyWrapKeyOf: async () => ((await import('../../../../contracts/managed/contract/index.js')) as unknown as {
       pureCircuits: { payKeyWrapKeyOf(account: Uint8Array, sk: Uint8Array, part: bigint): Uint8Array };

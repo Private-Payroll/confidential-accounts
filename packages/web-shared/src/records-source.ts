@@ -501,6 +501,18 @@ export const creationSource = (call: AnsweredCall): CreationSource => Object.fre
   payKeyProposal: (company, body) => call('POST', accountPath(company, '/creation/pay-key/proposal'), JSON.stringify(body)),
 });
 
+/** The fee our service pays for one call a device proved, and that call's booking told done, for the company named. */
+export interface FeeSource {
+  fee(company: string, body: unknown): Promise<Answered>;
+  feeDone(company: string, body: unknown): Promise<Answered>;
+}
+
+/** The fee routes asked through `call`. */
+export const feeSource = (call: AnsweredCall): FeeSource => Object.freeze<FeeSource>({
+  fee: (company, body) => call('POST', accountPath(company, '/fee'), JSON.stringify(body)),
+  feeDone: (company, body) => call('POST', accountPath(company, '/fee/done'), JSON.stringify(body)),
+});
+
 const sameCompany = (source: RecordSource, accountId: string): void => {
   if (accountId !== source.company) {
     throw new Error(`this company's records were asked about another company (${accountId}); nothing was read or written.`);

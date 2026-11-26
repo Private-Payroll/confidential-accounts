@@ -1,38 +1,29 @@
 /**
  * WHAT A DEPLOY REPORT OWES, AND THE ONE THING IT MUST NEVER SAY.
  *
- * The account's deploy script established what a deploy report is for, and this
- * module is the part of it a SECOND deploy needed: the phase clock, the node's
- * own words kept verbatim, the size block, and a timeout that turns silence
- * into an error. Those were written out inside that script when it was the only
- * deploy there was.
+ * The pieces every door that sends a transaction prints its report with: the
+ * phase clock, the node's own words kept verbatim, an error walked to its
+ * cause, and a timeout that turns silence into an error.
  *
- * **AND ONE THING THAT IS NEW HERE RATHER THAN LIFTED: THE SCREEN GUARD.**
+ * AND THE SCREEN GUARD. A shielded output addressed to a vault without a
+ * `deposit` call is money on chain that nobody can ever spend: `deposit` does
+ * `receiveShielded` and `notes.insert` in one transaction, a plain send does
+ * the first only, and `payout` then refuses because the note is not in the
+ * pool. No contract can refuse such an output. So the whole defence is that the
+ * address is never shown, because a person who has used any other chain will
+ * paste an address into a wallet without asking.
  *
- *
- * A shielded output addressed to a vault, without a `deposit` call, is money on
- * chain that nobody can ever spend — `deposit` does `receiveShielded` AND
- * `notes.insert` in one transaction (`contracts/src/Vault.compact`), a plain
- * send does the first only, and `payout` then refuses because the note is not
- * in the pool. **No contract can refuse such an output.** So the whole defence
- * is that the address is never shown, and a person who has used any other chain
- * will paste an address into a wallet without asking.
- *
- * "Be careful not to print it" is not a defence — it is a promise, kept by
- * whoever edits the file next. `createScreen` makes it a refusal: every line
- * this report prints goes through one function that REFUSES a line carrying a
+ * `createScreen` makes that a refusal rather than a promise: every line a
+ * report prints goes through one function that REFUSES a line carrying a
  * forbidden value, or any window of it long enough to be worth having. A
  * truncated address is still an address to somebody who can find the rest, and
- * it looks exactly like a thing to paste.
- *
- * The guard throws rather than redacting, deliberately. A redacted line is a
- * line somebody wrote intending to show something, silently altered; a refusal
- * is a defect found at the moment it is written. This runs in an instrument,
- * where the cost of stopping is one run.
+ * it looks exactly like a thing to paste. It throws rather than redacting: a
+ * redacted line is a line somebody wrote intending to show something, silently
+ * altered, and a door that stops costs one run.
  */
 
 /* ------------------------------------------------------------------ *
- * C236: the screen guard
+ * the screen guard
  * ------------------------------------------------------------------ */
 
 /**
@@ -48,7 +39,7 @@ export const SECRET_WINDOW = 8;
 export class WouldHaveShownASecret extends Error {
   constructor(readonly what: string, line: string) {
     super(
-      `refusing to print a line carrying ${what}. C236: a plain send to a vault's address is ` +
+      `refusing to print a line carrying ${what}. A plain send to a vault's address is ` +
       'money on chain that nobody can spend, permanently, and no contract can refuse it — so ' +
       'the address is never shown, and neither is any part of it long enough to be worth ' +
       'having. A vault is named to people by its NAME. If this line genuinely needs to say ' +
@@ -137,10 +128,9 @@ export function phaseClock(say: (line?: string) => void) {
 /**
  * Runs a promise, or gives up on it out loud.
  *
- * **A `try/catch` cannot save you from a promise that never settles**, and that
- * is not hypothetical: a deploy sat silent for seven minutes inside
- * `estimateRegistration` after the node websocket closed cleanly. A wrong
- * answer is recoverable and a slow answer is annoying; silence is the one
+ * **A `try/catch` cannot save you from a promise that never settles**: a call
+ * can wait forever once the node's websocket has closed cleanly under it. A
+ * wrong answer is recoverable and a slow answer is annoying; silence is the one
  * outcome nobody can act on, and these scripts run with no console to inspect.
  */
 export async function withTimeout<T>(what: string, ms: number, p: Promise<T>): Promise<T> {
@@ -199,8 +189,8 @@ export function describeError(
 /**
  * Every line the node's RPC layer printed that carries a rejection, kept whole.
  *
- * `R1b`: *"on refusal: the node's error IN FULL, with its numeric code,
- * unabridged and unparaphrased."* The exception cannot supply it — it is
+ * A refusal is reported with the node's error in full, with its numeric code,
+ * unabridged. The exception cannot supply it: it is
  * `SubmissionError: Transaction submission error` and carries neither the code
  * nor the node's words. The code arrives on the console, from Polkadot's RPC
  * layer, and is discarded the moment it scrolls. So it is captured here.

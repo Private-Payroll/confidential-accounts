@@ -45,7 +45,9 @@
  * (setting a new vault's first secret, writing each signer's copy of it, and
  * a private deposit) from contracts/managed-vault, and the verifier key alone of every other
  * vault circuit, which a vault's deploy installs; each checked against the
- * compiled vault's own keys the same way.
+ * compiled vault's own keys the same way. And it copies the private registry's
+ * write, which the wallet proves itself, from contracts/managed-registry, checked
+ * against the compiled registry's own keys.
  * `npm run compact` and `npm run compact:vault -- --full` build the files;
  * `npm run vendor-keys:account` copies them.
  *
@@ -64,8 +66,9 @@
  *   --k        vendor only these parameter sizes (default: all, 2p10-2p18 -
  *              a send needs one k, and the probe measures which; trim after).
  *   --account  copy the company account's circuits from contracts/managed,
- *              and the vault's from contracts/managed-vault, instead of
- *              downloading the network's; nothing is downloaded.
+ *              the vault's from contracts/managed-vault and the registry's from
+ *              contracts/managed-registry, instead of downloading the network's;
+ *              nothing is downloaded.
  *   --prune    with --account: move the key files and drop the pins of circuits the compile
  *              no longer builds into _to_delete/ (nothing is deleted). Without it such a
  *              file or pin is refused by name.
@@ -191,6 +194,25 @@ export const accountFilesOf = (circuits, folder, compiled = 'managed', verifierO
   { served: `${folder}/${circuit}.verifier`, built: path.join('contracts', compiled, 'keys', `${circuit}.verifier`), circuit },
   ...(verifierOnly ? [] : [{ served: `${folder}/${circuit}.bzkir`, built: path.join('contracts', compiled, 'zkir', `${circuit}.bzkir`), circuit }]),
 ]);
+
+/**
+ * Copies the private registry's circuits the wallet proves from the registry's own compile, each checked
+ * against the verifier keys that compile expects. With no compiled registry it refuses by name and
+ * copies nothing. Returns how many circuits were refused, whether the registry's folder was walked, and
+ * every path it serves.
+ */
+export async function vendorRegistryKeys({ repoRoot, keysDir, circuits, folder, artefacts, repin = false, log = console.log }) {
+  const compiled = path.join(repoRoot, 'contracts', 'managed-registry', 'contract', 'index.js');
+  if (!existsSync(compiled)) {
+    log('  !! REFUSED the registry\'s keys: there is no compiled registry at contracts/managed-registry.');
+    log('     `npm run compact` builds it with its keys. The keys above are still pinned.');
+    return { refused: 1, walked: false, expected: [] };
+  }
+  const { expectedVk } = await import(pathToFileURL(compiled).href);
+  log(`  The private registry's circuits this wallet proves (${circuits.length}), copied from contracts/managed-registry:`);
+  const refused = vendorAccountKeys({ repoRoot, keysDir, circuits, folder, expectedVk, artefacts, repin, log, compiled: 'managed-registry' });
+  return { refused, walked: true, expected: accountFilesOf(circuits, folder, 'managed-registry').map((f) => f.served) };
+}
 
 /**
  * COPY AND PIN THE ACCOUNT'S CIRCUITS. Reads each file from the compile under
@@ -457,6 +479,13 @@ if (isMain) {
       refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: vaultProved, folder: vaultFolder, expectedVk: vaultVk, artefacts, repin, compiled: 'managed-vault' });
       refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: verifiersOnly, folder: vaultFolder, expectedVk: vaultVk, artefacts, repin, compiled: 'managed-vault', verifierOnly: true });
     }
+    const { REGISTRY_CIRCUITS_THE_WALLET_PROVES: registryProved } = await import(
+      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href);
+    const { REGISTRY_KEYS_FOLDER: registryFolder } = await import(pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href);
+    const registry = await vendorRegistryKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: registryProved, folder: registryFolder, artefacts, repin });
+    refused += registry.refused;
+    if (registry.walked) walked.push(registryFolder);
+    expected.push(...registry.expected);
     refused += pruneOrRefuse({ keysDir: KEYS_DIR, artefacts, folders: walked, expected, prune, graveyard: path.join(REPO_ROOT, '_to_delete'), stamp: new Date().toISOString().slice(0, 10) });
   } else {
     console.log('  Circuit key material (prover, verifier, IR per circuit):');
@@ -488,7 +517,7 @@ if (isMain) {
     version: 9,
     generatedAt: existing?.generatedAt && !repin ? existing.generatedAt : new Date().toISOString(),
     lastVendoredAt: new Date().toISOString(),
-    sources: { ...existing?.sources, ...(accountOnly ? { account: 'contracts/managed', vault: 'contracts/managed-vault' } : { circuits: [BUCKET, SRS], parameters: [BUCKET, SRS] }) },
+    sources: { ...existing?.sources, ...(accountOnly ? { account: 'contracts/managed', vault: 'contracts/managed-vault', registry: 'contracts/managed-registry' } : { circuits: [BUCKET, SRS], parameters: [BUCKET, SRS] }) },
     artefacts,
   };
   writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);

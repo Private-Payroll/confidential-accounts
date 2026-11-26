@@ -40,11 +40,22 @@ export declare function vendorAccountKeys(input: {
   artefacts: Record<string, { bytes: number; sha256: string }>;
   repin?: boolean;
   log?: (line: string) => void;
-  /** The folder under contracts/ the compile wrote: `managed` (the default) or `managed-vault`. */
+  /** The folder under contracts/ the compile wrote: `managed` (the default), `managed-vault` or `managed-registry`. */
   compiled?: string;
   /** Copy the verifier key alone. */
   verifierOnly?: boolean;
 }): number;
+
+/** Copies the registry's proved circuits from its own compile, or refuses by name when it is not compiled. */
+export declare function vendorRegistryKeys(input: {
+  repoRoot: string;
+  keysDir: string;
+  circuits: readonly string[];
+  folder: string;
+  artefacts: Record<string, { bytes: number; sha256: string }>;
+  repin?: boolean;
+  log?: (line: string) => void;
+}): Promise<{ refused: number; walked: boolean; expected: string[] }>;
 
 /** The served paths under `folders` that a pin or a file on disk holds but `expected` (every path the run walked) does not. */
 export declare function staleKeysOf(input: {

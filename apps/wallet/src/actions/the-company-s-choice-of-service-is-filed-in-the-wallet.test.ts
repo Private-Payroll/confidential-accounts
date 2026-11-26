@@ -14,6 +14,7 @@ import {
 } from '../../../../src/midnight/sealed-record-wire.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **THE COMPANY'S CHOICE OF SERVICE IS FILED FROM THE WALLET, ONE WINDOW, ONE PASSKEY, AND READ BACK AS EVERY ACT READS
@@ -56,6 +57,8 @@ const { companyServiceHere } = await import('./company-service-read.js');
 const COMPANY = 'acc_choice';
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
 const OWN: CompanyService = { service: 'own', at: 'https://relay.example.com' };
 const NONE: CompanyService = { service: 'none' };
@@ -174,7 +177,7 @@ const ctxOf = (i: ActIntent) => {
     relay: async () => { throw new Error('a choice of service relays nothing'); },
     call: async () => ({ status: 404, body: {} }),
     tell: (x: Record<string, unknown>) => { told.push(x); },
-    keyring: null,
+    keyring: PINNED_ONLY,
   }) as unknown as StepContext;
   return { ctx, told };
 };

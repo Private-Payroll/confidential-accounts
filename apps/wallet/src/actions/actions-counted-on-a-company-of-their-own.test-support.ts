@@ -14,6 +14,7 @@ import { aCompanyOf, runIntent, runUpkeep, type Company, type IntentCount } from
 import { ON_THEIR_OWN_ACTION_PINS, ON_THEIR_OWN_CARRIED_PINS } from './action-count-pins.test-support.js';
 import { countedAtBothSizes } from './action-counts.test-support.js';
 import { runsOfThisCountFile } from './actions-each-count-file-runs.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /** The actions counted here, each on a company of its own. */
 export const COUNTED_ALONE: readonly string[] = ['recovery', 'create-vault', 'retire-vault', 'one-off-payment', 'grant-read'];
@@ -54,7 +55,8 @@ const recovered = async (company: Company): Promise<IntentCount> => {
 
 /* The founding seat's wallet holds the company as the one it created, as the wallet that created the company does. */
 const heldAsCreated = (company: Company): void => {
-  company.wallet(ADA.person).pins.set(company.fields.company, { account: company.fields.account, created: true, from: 'created' });
+  const ada = company.wallet(ADA.person);
+  ada.kept = pinnedIn(ada.kept, company.fields.company, company.fields.account, 'created');
 };
 
 /*

@@ -2,7 +2,7 @@ import {
   buildAnchorCall, buildGovernedCall, buildRecoverAnchorCall,
   type AnchorPlacement, type GovernedCallDeps, type GovernedCallOrder, type OpenedRound, type SignerMaterial,
 } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
+import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES, REGISTRY_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
 import { makePinnedKeyMaterialProvider, type PinnedKeyMaterialOptions } from './key-material.js';
 import { builderProving, keptProvers, type ProofEvent } from './proving.js';
 import { describeFailure } from '../lib/failure-text.js';
@@ -10,7 +10,9 @@ import { buildAccountDeploy, creationCarriedAgain, finishedCreation } from '../.
 import { zkConfigOver, byCircuitName, runtimeVersionOf, verifierOnlySource } from '../../../../packages/web-shared/src/zk-config.js';
 import type { ContractCalls } from '../../../../packages/web-shared/src/contract-call-built.js';
 import { accountTreeOf, contractPieces } from './contract-pieces.js';
+import { registryPutBuilt, registryValuesAt, type RegistryParts } from './registry-put-built.js';
 import ACCOUNT_MANIFEST from '../../../../contracts/managed/compiler/contract-manifest.json' with { type: 'json' };
+import REGISTRY_MANIFEST from '../../../../contracts/managed-registry/compiler/contract-manifest.json' with { type: 'json' };
 
 /**
  * THE WALLET'S ACCOUNT BUILDER: a signer's call to the company account, built
@@ -19,7 +21,9 @@ import ACCOUNT_MANIFEST from '../../../../contracts/managed/compiler/contract-ma
  * a spending policy and anchors the company's records, and it reads where the
  * pay-record key stands. It also builds a new company's account: its deploy,
  * its second step with the founding key's signature in it, and both carried
- * again when they ran out before they landed; none of those has a proof.
+ * again when they ran out before they landed; none of those has a proof. And it
+ * builds the one write to a private registry, and reads what a registry holds
+ * at a person's tags.
  *
  * Everything a call is built from arrives with the ask: the account's state and
  * the chain's parameters as the wallet read them, the proposal as the company's
@@ -81,7 +85,14 @@ export type AccountBuilderAsk =
     /** The verifier key of each circuit the second step inserts, base64, as this wallet was built with them. */
     readonly verifiers: ReadonlyArray<readonly [string, string]>;
   }
-  | { readonly id: number; readonly ask: 'creation-again'; readonly network: string; readonly deploy: string; readonly insert: string; readonly now?: number };
+  | { readonly id: number; readonly ask: 'creation-again'; readonly network: string; readonly deploy: string; readonly insert: string; readonly now?: number }
+  /** One write to a private registry: `value` (base64) at `tag` (hex), built on the registry's state and the chain's parameters (base64). */
+  | {
+    readonly id: number; readonly ask: 'registry-put'; readonly network: string; readonly registry: string; readonly tag: string; readonly value: string;
+    readonly chain: { readonly registryState: string; readonly parameters: string };
+  }
+  /** What a private registry, in its state (base64), holds at each tag (hex). */
+  | { readonly id: number; readonly ask: 'registry-values'; readonly registryState: string; readonly tags: readonly string[] };
 
 /** Where the company's pay-record key stands, read from the account's state. */
 export interface PayKeyStandingAnswered {
@@ -105,6 +116,9 @@ export type AccountBuilderAnswer =
   | { readonly id: number; readonly ok: true; readonly ask: 'account-deploy'; readonly account: string; readonly tx: string }
   | { readonly id: number; readonly ok: true; readonly ask: 'finished-creation'; readonly tx: string }
   | { readonly id: number; readonly ok: true; readonly ask: 'creation-again'; readonly account: string; readonly deploy: string; readonly insert: string }
+  | { readonly id: number; readonly ok: true; readonly ask: 'registry-put'; readonly tx: string }
+  /** Each tag's value, base64, in the order asked, or null for a tag the registry does not hold. */
+  | { readonly id: number; readonly ok: true; readonly ask: 'registry-values'; readonly values: readonly (string | null)[] }
   | { readonly id: number; readonly ok: false; readonly error: string; readonly name?: string };
 
 /** What the builder tells the thread that started it while it works. */
@@ -123,11 +137,15 @@ const toBase64 = (bytes: Uint8Array): string => {
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(binary);
 };
+const bytesOfHex = (hex: string): Uint8Array => {
+  if (!HEX64.test(hex)) throw new Error('a registry tag is thirty-two bytes of hex, and this is not one, so nothing was built.');
+  return Uint8Array.from(hex.match(/../gu)!, (x) => Number.parseInt(x, 16));
+};
 const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 const HEX64 = /^[0-9a-f]{64}$/iu;
 
 /** What the account builder loads once: everything a build needs but the network, which each ask names. */
-export type AccountBuildingDeps = Omit<GovernedCallDeps, 'network' | 'contracts'> & { readonly contracts: ContractCalls };
+export type AccountBuildingDeps = Omit<GovernedCallDeps, 'network' | 'contracts'> & { readonly contracts: ContractCalls; readonly registry: RegistryParts };
 
 export interface AccountBuilderOptions {
   /** Where the wallet's own key material is read from, and who is told when it is not kept. */
@@ -150,11 +168,13 @@ export const accountBuilderDeps = (options: AccountBuilderOptions = {}): (() => 
   let loaded: Promise<AccountBuildingDeps> | null = null;
   return () => {
     loaded ??= (async () => {
-      const { ledger, runtime, compactJs, account, accountWitnesses, contracts } = await contractPieces();
+      const { ledger, runtime, compactJs, account, accountWitnesses, registry, contracts } = await contractPieces();
       const keyMaterial = makePinnedKeyMaterialProvider({
         ...options.keyMaterial,
         accountCircuits: ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
         compiledVerifierKeys: (account as unknown as { expectedVk: Readonly<Record<string, string>> }).expectedVk,
+        registryCircuits: REGISTRY_CIRCUITS_THE_WALLET_PROVES,
+        compiledRegistryVerifierKeys: registry.expectedVk,
       });
       const prove = builderProving(keyMaterial, {
         ...(options.provers === undefined ? {} : { provers: options.provers }),
@@ -172,6 +192,13 @@ export const accountBuilderDeps = (options: AccountBuilderOptions = {}): (() => 
           runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')),
         accountPure: (account as any).pureCircuits,
         accountLedger: (account as any).ledger,
+        registry: {
+          compiled: CompiledContract.make('PrivateRegistry', registry.Contract).pipe(CompiledContract.withVacantWitnesses),
+          zkConfig: zkConfigOver(verifierOnlySource((c) => keyMaterial.registryVerifierKey(c), 'the private registry'), byCircuitName,
+            runtimeVersionOf(REGISTRY_MANIFEST, 'the private registry')),
+          ledger: registry.ledger,
+          contractState: runtime.ContractState,
+        },
         prove,
       } as AccountBuildingDeps;
     })();
@@ -254,6 +281,10 @@ export const answerAccountAsk = async (
   try {
     const loaded = await deps();
     if (ask.ask === 'pay-key-standing') return await payKeyStandingAnswer(loaded, ask);
+    if (ask.ask === 'registry-values') {
+      const values = registryValuesAt(loaded.registry, fromBase64(ask.registryState), ask.tags.map(bytesOfHex));
+      return { id: ask.id, ok: true, ask: 'registry-values', values: values.map((v) => (v === null ? null : toBase64(v))) };
+    }
     /* The network travels with each ask into what it builds; the builder holds no network of its own. */
     const d = { ...loaded, network: ask.network };
     switch (ask.ask) {
@@ -289,6 +320,13 @@ export const answerAccountAsk = async (
           account: ask.account, keys: verifiersOf(ask.verifiers).keys, signature: ask.signature,
         });
         return { id: ask.id, ok: true, ask: 'finished-creation', tx: toBase64(built.proven) };
+      }
+      case 'registry-put': {
+        const tx = await registryPutBuilt(d, {
+          registry: ask.registry, tag: bytesOfHex(ask.tag), value: fromBase64(ask.value),
+          state: fromBase64(ask.chain.registryState), parameters: fromBase64(ask.chain.parameters),
+        });
+        return { id: ask.id, ok: true, ask: 'registry-put', tx: toBase64(tx) };
       }
       case 'creation-again': {
         const again = await creationCarriedAgain({ ledger: d.ledger, prove: d.prove, network: ask.network, now: clockOf(ask.now) } as never, {

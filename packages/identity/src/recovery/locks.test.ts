@@ -113,7 +113,7 @@ describe('the recovery key that gets published', () => {
      * can be paid to it — and pasting an address where a recovery key belongs
      * is refused by name rather than producing a piece nobody can open.
      */
-    const address = addressFor(me.money.zswap, 'testnet');
+    const address = addressFor(me.money.zswap, 'preprod');
     expect(recoveryKeyOf(me)).not.toContain('mn_shield');
     refuses(() => lockPiece(new Uint8Array(43), address.bech32, MINE), 'not-a-recovery-key');
     expect(recoveryKeyOf(me)).not.toBe(toBase64Url(me.money.zswap));

@@ -8,6 +8,7 @@ import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testin
 import { payeeFor, unshieldedPayeeFor } from '../../../../src/testing/payees.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **A ONE-OFF PAYMENT IS MADE IN THE WALLET, IN ONE WINDOW, FROM ITS OWN READS.** The steps it takes and the shared
@@ -88,6 +89,8 @@ const secret = newSecret();
 const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const VAULT = 'de'.repeat(32);
 const CHAIN_ID = 'ab'.repeat(32);
 const NET = 'undeployed' as const;
@@ -116,7 +119,7 @@ const ctxWith = (i: ActIntent = intent()) => {
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 6 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a one-off payment is sent through its calls, never a bare relay'); },
     call: async (method: string, path: string) => { calls.push(`${method} ${path}`); return { status: 200, body: {} }; },
-    tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
+    tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: PINNED_ONLY,
   }) as unknown as StepContext;
   return { ctx, calls, told };
 };

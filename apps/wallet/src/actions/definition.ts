@@ -5,7 +5,7 @@ import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-relea
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { HeldKeyring } from '../keyring/held-keyring.js';
 import type { StepViews, StraightDoor, ViewFor } from './step-views.js';
-import type { CreationSource, InvitationSource } from '../../../../packages/web-shared/src/records-source.js';
+import type { CreationSource, FeeSource, InvitationSource } from '../../../../packages/web-shared/src/records-source.js';
 
 /**
  * WHAT ONE ACTION IS, FOR THE WALLET THAT RUNS IT.
@@ -39,23 +39,20 @@ export interface ShownLine extends Words {
 export interface Held {
   readonly identity: Identity;
   readonly secret: Secret;
-  /** This wallet's own record of the companies it started and the accounts it pinned, when the screen running the action has it. */
+  /** This wallet's own record of the labels it drew for companies, when the screen running the action has it. */
   readonly wallet?: WalletRecord;
   /** The account the person chose in the window, which an action that pays pays from; absent when the screen gives none. */
   readonly account?: number;
 }
 
 /**
- * THIS WALLET'S OWN RECORD OF A COMPANY, as the action reads and adds to it: whether it drew the company's label
- * itself, and the account it pinned as that company's. Kept in this wallet's own storage, never read from the page.
+ * THIS WALLET'S OWN RECORD OF A COMPANY, as the action reads it: whether it drew the company's label itself. Kept in
+ * this wallet's own storage, never read from the page. The account a company is pinned to is kept in the person's
+ * saved keys and read and written only through `company-pin.ts`.
  */
 export interface WalletRecord {
-  /** Whether this wallet drew `label` for a new company and has pinned no account for it yet. */
+  /** Whether this wallet released a key for `label` before the company had any account: it drew the label. */
   drewTheLabel(label: string): boolean;
-  /** The account this wallet pinned for `label`, and whether it pinned it as a company it created; null for none. */
-  pinnedFor(label: string): { readonly account: string; readonly created: boolean } | null;
-  /** Pin `account` as the company `label` this wallet created. Throws, pinning nothing, for a second account. */
-  pin(label: string, account: string, from?: 'created' | 'invited'): Promise<void>;
 }
 
 /**
@@ -202,12 +199,21 @@ export interface StepContext {
    */
   confirm(lines: readonly Words[]): Promise<void>;
   /**
-   * Asks the person, in this window, whether this wallet pays a network fee from their own DUST, showing the fee, and
-   * resolves true only when they press its button. The one question that may come after a hand-over, asked at most
-   * once in an action; a second ask, or a window that cannot ask, resolves false. Throws `ActionStopped` when the action
-   * is stopped or runs out of time while it waits. Absent where no window runs the action: nothing is paid.
+   * Asks the person, in this window, whether this wallet pays a network fee from their own DUST, showing the fee
+   * (`fee`, in SPECKs), and resolves true only when they press its button. The one question that may come after a
+   * hand-over: a no holds for the rest of the action, and a yes pays every later fee no larger than `fee`; a larger
+   * one is asked again. A window that cannot ask resolves false. Throws `ActionStopped` when the action is stopped or
+   * runs out of time while it waits. Absent where no window runs the action: nothing is paid.
    */
-  confirmFee?(lines: readonly Words[]): Promise<boolean>;
+  confirmFee?(lines: readonly Words[], fee?: bigint): Promise<boolean>;
+  /** The fee routes of our service, through the page, for a call whose fee alone it is asked to pay. Absent in a run with no page. */
+  readonly fees?: FeeSource;
+  /**
+   * Names the write of this person's entry in the network's private registry as owed: the run calls `write` once,
+   * after the action's last step has passed and before its end is answered, within a time limit. Whatever the write
+   * does, throws or takes, never changes how the action ends. A later call replaces an earlier one.
+   */
+  registryEntryOwed?(write: (context: StepContext) => Promise<void>): void;
   /** The person's saved keys, or null when the ask carried none. */
   readonly keyring: ActKeyring | null;
 }

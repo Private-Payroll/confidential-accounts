@@ -6,25 +6,27 @@ import {
   compiledVaultLedgerShape, assertVaultLedgerIsThisBuilds, VaultLedgerShapeMismatch,
   type LedgerShape,
 } from './vault-ledger-shape.js';
+import { newestFacts, versionsInForce } from '../../contracts/test/frozen-facts.js';
 
 /**
  * **THREE VAULTS DEPLOYED FROM THREE BUILDS, REBUILT HERE WITHOUT A NETWORK.**
  *
- * The shapes below were read off the live chain on 13 Sep, through this build's
+ * The three older shapes below were read off the live chain through this build's
  * own reader, and every state this file compares is assembled out of the slots
  * this build's OWN contract constructor produces - so a control that fails
  * because the contract changed is a control that has noticed the contract
- * changed, which is its job.
+ * changed, which is its job. This build's own shape and field names are the
+ * newest released version's, taken from the record of frozen facts, and are
+ * held to every released version still in force.
  *
- *   the contract this build compiled  15 slots   cell,map,map,cell,map,cell,map x8,cell
+ *   the newest released vault         15 slots   cell,map,map,cell,map,cell,map x8,cell
  *   a vault deployed 28 Aug            3 slots   cell,map,cell
  *   a vault deployed 29 Aug            4 slots   cell,map,map,cell
  *   a vault deployed  9 Sep            5 slots   cell,map,map,cell,map
  */
-const THIS_BUILD = [
-  'cell', 'map', 'map', 'cell', 'map', 'cell', 'map', 'map', 'map', 'map', 'map', 'map', 'map', 'map', 'cell',
-] as const;
-const THIS_BUILDS_FIELDS = ['account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment', 'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4', 'reserved5', 'reserved6', 'retired'];
+const RELEASED_VAULT = newestFacts().vault;
+const THIS_BUILD = RELEASED_VAULT.slots;
+const THIS_BUILDS_FIELDS = RELEASED_VAULT.fields.map((f) => f.name);
 
 const MEASURED_ON_CHAIN = {
   deployedAug28: ['cell', 'map', 'cell'],
@@ -164,6 +166,11 @@ describe('§2 the shape of a state, read off the state', () => {
     expect(compiled.slots).toEqual([...THIS_BUILD]);
     /* RED WHEN the field names are not read off the contract, in declaration order. */
     expect(fields).toEqual(THIS_BUILDS_FIELDS);
+    /* RED WHEN this build's vault is not laid out as every released vault still in force: one client reads all of them. */
+    for (const [version, facts] of versionsInForce()) {
+      expect(compiled.slots, `version ${version}`).toEqual([...facts.vault.slots]);
+      expect(fields, `version ${version}`).toEqual(facts.vault.fields.map((f) => f.name));
+    }
     for (const name of ['deployedAug28', 'deployedAug29', 'deployedSep9'] as const) {
       expect(compiled.slots, name).not.toEqual([...MEASURED_ON_CHAIN[name]]);
     }

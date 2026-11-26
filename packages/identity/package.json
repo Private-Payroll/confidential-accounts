@@ -96,6 +96,10 @@
       "types": "./lib/profile/committee-key.d.ts",
       "default": "./lib/profile/committee-key.js"
     },
+    "./profile/private-registry": {
+      "types": "./lib/profile/private-registry.d.ts",
+      "default": "./lib/profile/private-registry.js"
+    },
     "./profile/seat-keys": {
       "types": "./lib/profile/seat-keys.d.ts",
       "default": "./lib/profile/seat-keys.js"
@@ -127,6 +131,10 @@
     "./wallet/address-shape": {
       "types": "./lib/wallet/address-shape.d.ts",
       "default": "./lib/wallet/address-shape.js"
+    },
+    "./wallet/released-versions": {
+      "types": "./lib/wallet/released-versions.d.ts",
+      "default": "./lib/wallet/released-versions.js"
     }
   },
   "files": [

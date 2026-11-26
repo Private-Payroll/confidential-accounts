@@ -20,7 +20,7 @@
  */
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import { readAccountAddress, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
@@ -39,6 +39,7 @@ import {
 import type { CompanyChain } from './company-reach.js';
 import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type Held, type ShownLine, type StepContext, type Words } from './definition.js';
 import { ActionStopped } from './run.js';
+import { companyReachHead, seatOfThePin } from './company-reach-head.js';
 
 export {
   moreThanTheFeeRefusal, notOneCallRefusal, ownWalletFrom, type OwnWalletDoors, type OwnWalletFacade,
@@ -77,27 +78,34 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(
 
 /**
  * **THE COMPANY AND THIS SEAT, FROM THE CHAIN AND THE SAVED KEYS ONLY**: the
- * seat the saved keys hold for the company is one the account holds on the
- * chain now. Refused, with words, otherwise. Nothing is asked of the service.
+ * label is pinned to the page's account (`companyReachHead`), the seat the saved
+ * keys hold for the company is one this wallet's words make for it, and the
+ * account holds it on the chain now. Refused, with words, otherwise. Nothing is
+ * asked of the service.
  */
 async function chainOnlyReachFor(ctx: StepContext, reach: RecoveryReach): Promise<ChainOnlyReach> {
   const refuse = (key: string): never => { throw new StepRefused(why(key)); };
-  const accountId = ctx.intent.fields['record'] ?? refuse('not-a-company');
-  const label = readCompanyLabel(ctx.intent.fields['company']) ?? refuse('not-a-company');
-  const account = readAccountAddress(ctx.intent.fields['account']) ?? refuse('not-a-company');
-  if (ctx.keyring === null) return refuse('no-saved-keys');
-  const seat = ctx.keyring.open().read().accounts[accountId] ?? refuse('no-seat');
-  const scope = typeof seat.scope === 'string' && HEX64.test(seat.scope) ? seat.scope as Hex : refuse('no-seat');
   const chain = reach.chain();
   const builder = reach.builder();
-  const holders = async (): Promise<AccountHoldersRead> => {
+  const read = async (label: CompanyLabel, account: AccountAddress): Promise<AccountHoldersRead> => {
     const now = await chain.holders(account, label);
     if ('key' in now) throw new StepRefused(now);
     return now;
   };
+  const head = await companyReachHead(ctx, refuse, {
+    seats: async (l, a) => (await read(l, a)).seats,
+    leafOf: async (p) => (await builder.ownSeat({ signingSecret: p.signingSecret, blinding: p.blinding, scope: p.scope })).toLowerCase(),
+    chain,
+  });
+  const { accountId, label, account } = head;
+  const seat = head.keyring.open().read().accounts[accountId] ?? refuse('no-seat');
+  const scope = typeof seat.scope === 'string' && HEX64.test(seat.scope) ? seat.scope as Hex : refuse('no-seat');
+  const holders = (): Promise<AccountHoldersRead> => read(label, account);
+  const held = await holders();
+  await seatOfThePin(ctx.held.identity, head, { ...seat, scope }, refuse);
   const material: SignerMaterial = signerMaterialOf({ ...seat, scope });
   const leaf = (await builder.ownSeat(material)).toLowerCase();
-  if (!(await holders()).seats.some((s) => s.toLowerCase() === leaf)) refuse('seat-not-held');
+  if (!held.seats.some((s) => s.toLowerCase() === leaf)) refuse('seat-not-held');
   return { accountId, label, account, material, holders, builder, chain };
 }
 
@@ -143,8 +151,9 @@ function doorsFor(ctx: StepContext, r: ChainOnlyReach, reach: RecoveryReach, cir
           if (account === undefined) throw new StepRefused(why('no-account'));
           const own = reach.ownWallet(ctx.held.identity, account);
           try {
+            /* The person chose their own wallet for this in the window, which is their yes to its fee. */
             await sentFromTheOwnWallet(own, tx, { kind: 'account-call', contract: r.account, circuit }, reach.now, () => !ctx.signal.aborted, handed, {
-              handedOver: () => ctx.sentByTheWallet?.(),
+              handedOver: () => ctx.sentByTheWallet?.(), ownWalletChosen: true,
             });
           } finally {
             await own.stop?.().catch(() => undefined);

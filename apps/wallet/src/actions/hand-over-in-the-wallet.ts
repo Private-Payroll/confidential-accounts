@@ -12,7 +12,8 @@ import { provenOnTheChainAlready, straightFromTheOwnWallet, type FeeAndSubmit } 
 import { toTheCompanysService } from '../chain/sent-to-the-companys-service.js';
 import type { ServiceRead } from './company-service-read.js';
 import type { CompanyChain } from './company-reach.js';
-import type { StepContext } from './definition.js';
+import type { StepContext, Words } from './definition.js';
+import { dustFromSpecks, exactSpecks } from '../chain/amount.js';
 import { fellBackLine, type FellBack } from './fall-back-line.js';
 
 /** `sponsor`, its telling that this wallet is done with a call kept in `owed` for after the send, not made inside it. */
@@ -46,9 +47,10 @@ const doneAfterTheSend = (sponsor: NonNullable<FeeAndSubmit['sponsor']>, owed: (
  * a call the chain shows after our service gave no answer is told too (`ctx.seenOnTheChain`).
  */
 export function handOverFor(
-  ctx: Pick<StepContext, 'held' | 'signal'> & Pick<StepContext, 'sendStraight'> & Partial<Pick<StepContext, 'show' | 'seenOnTheChain'>>, chain: Pick<CompanyChain, 'ownWallet' | 'ownServiceSend'>,
+  ctx: Pick<StepContext, 'held' | 'signal'> & Pick<StepContext, 'sendStraight'> & Partial<Pick<StepContext, 'show' | 'seenOnTheChain' | 'confirmFee'>>,
+  chain: Pick<CompanyChain, 'ownWallet' | 'ownServiceSend'>,
   service: ServiceRead = { choice: OUR_SERVICE }, now: () => number = Date.now,
-  sponsor?: FeeAndSubmit['sponsor'],
+  sponsor?: FeeAndSubmit['sponsor'], ownWalletChosen = false,
 ): HandOver {
   const account = ctx.held.account;
   const own = chain.ownWallet;
@@ -70,7 +72,8 @@ export function handOverFor(
         /* Through the runner's door: the step's read of the company is checked before the call leaves this wallet. */
         await ctx.sendStraight((door) => straightFromTheOwnWallet(() => own(ctx.held.identity, account), now, () => !ctx.signal.aborted, { over: false }, {
           ...(sponsor === undefined ? {} : { sponsor: doneAfterTheSend(sponsor, owed) }), ...(submit === undefined ? {} : { submit }),
-          ownDustPaid: () => note('own-dust'), unreached: () => note('unreached'), handedOver: door.handedOver,
+          ownDustPaid: () => note('own-dust'), unreached: () => note('unreached'), handedOver: door.handedOver, ownWalletChosen,
+          offer: (fee, sponsorSaid) => ownFeeConfirmed(ctx, ownFeeOfferLines(fee, sponsorSaid), door.ready, fee),
         })(tx, call), [], [{ circuit: call.circuit, contract: call.contract }]);
       } finally {
         /* Telling the sponsorship is its bookkeeping, not the send's: each is settled, so one that fails leaves the send as it went. */
@@ -117,6 +120,25 @@ export function handOverFor(
  * it back finished, with the way to tell it this wallet is done with that call. Absent when the act's own route
  * list does not carry that route, so asking it never stops the window.
  */
+/**
+ * **THE PERSON ASKED IN THE ACTION'S WINDOW WHETHER THEIR OWN DUST PAYS A FEE**, shown `lines` and the fee `fee`. On their yes the
+ * company is read again (`ready`) before anything leaves, since the answer may come minutes after it was read.
+ */
+export const ownFeeConfirmed = async (
+  ctx: Partial<Pick<StepContext, 'confirmFee'>>, lines: readonly Words[], ready: () => Promise<void>, fee?: bigint,
+): Promise<boolean> => {
+  if ((await ctx.confirmFee?.(lines, fee)) !== true) return false;
+  /* The fee confirmed, maybe minutes after the company was read: it is read again before the call leaves. */
+  await ready();
+  return true;
+};
+
+/** What the person is shown when their own DUST is offered for a call's fee: what the sponsorship said, if it refused, and the fee. */
+export const ownFeeOfferLines = (fee: bigint, sponsorSaid: string | null): readonly Words[] => [
+  ...(sponsorSaid === null ? [] : [{ key: 'act.fee.sponsor-said', values: { says: sponsorSaid } }]),
+  { key: 'act.fee.own-offer', values: { fee: dustFromSpecks(fee), specks: exactSpecks(fee) } },
+];
+
 export const sponsorFor = (
   intent: Pick<StepContext['intent'], 'name'>, write: (w: RecordWrite) => Promise<unknown>,
 ): FeeAndSubmit['sponsor'] => {

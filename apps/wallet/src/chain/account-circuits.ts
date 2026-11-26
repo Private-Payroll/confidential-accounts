@@ -3,6 +3,7 @@ import {
   ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS,
   VAULT_CIRCUITS, type VaultCircuit,
 } from '../../../../src/midnight/vault-contract.js';
+import REGISTRY_INFO from '../../../../contracts/managed-registry/compiler/contract-info.json' with { type: 'json' };
 
 /**
  * THE COMPANY ACCOUNT'S CIRCUITS THIS WALLET PROVES ITSELF: every circuit a
@@ -77,3 +78,11 @@ export const ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR: readonly string[] = Obj
  * vault's own list names them, because a vault's deploy installs them all.
  */
 export const VAULT_CIRCUITS_THE_WALLET_DEPLOYS: readonly string[] = Object.freeze([...VAULT_CIRCUITS]);
+
+/**
+ * THE PRIVATE REGISTRY'S CIRCUITS THIS WALLET PROVES: every proving circuit of the compiled registry,
+ * which is its one write, recording the person's sealed entry for a company they hold a seat in, so
+ * their seed alone finds it again. Read from the compile, so the list cannot drift from the contract.
+ */
+export const REGISTRY_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze(
+  REGISTRY_INFO.circuits.filter((c) => c.proof).map((c) => c.name));

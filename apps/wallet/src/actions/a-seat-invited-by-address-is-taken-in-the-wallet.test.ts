@@ -8,6 +8,7 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { signDirectoryEntry } from 'midnight-identity/profile/records-key';
 import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
+import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { fromHex, newSigningKeypair, sign, signingPublicKeyOf, toHex, type Hex } from '../../../../src/core/crypto.js';
 import { directoryChangeMessage, type DirectoryChange } from '../../../../src/midnight/seat-directory.js';
@@ -30,6 +31,8 @@ import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 import { viewsOfTheStep, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
+import { ActionStopped } from './run.js';
 
 /* A signer invited by address takes the seat from their own wallet: it opens the offer with the link's token, checks
  * the address is its own, proves the seat with its own seat and the address's coin key, and asks to be admitted. The
@@ -100,8 +103,10 @@ interface Seen {
   relayed: Array<Record<string, unknown>>; asked: Array<Record<string, unknown>>; built: InvitedSeatOnTheWire[];
   order: string[]; rolesAsked: string[][]; kept: any; namedAsked: Array<Record<string, unknown>>;
   moves: Array<{ seat: boolean; chain: boolean; left: { seats: readonly string[]; approvals: number } }>;
+  /* What the step asked the person to confirm, each time it asked. */
+  confirmed: unknown[];
 }
-const newSeen = (): Seen => ({ relayed: [], asked: [], built: [], order: [], rolesAsked: [], kept: { accounts: {} }, namedAsked: [], moves: [] });
+const newSeen = (): Seen => ({ relayed: [], asked: [], built: [], order: [], rolesAsked: [], kept: { accounts: {} }, namedAsked: [], moves: [], confirmed: [] });
 interface Opts {
   held?: any; keyring?: false; acceptAnswers?: Array<{ status: number; body: unknown }>; into?: Seen;
   /* The service has closed the offer and answers 410: as used (true), or as the reason named. */
@@ -114,6 +119,12 @@ interface Opts {
   action?: ReturnType<typeof seatInvitedAction>;
   /* The sign-in the page names: Dee's unless a case gives another, or none. */
   person?: string | null;
+  /* The account this wallet's saved keys pin the company's label to; none unless a case gives one. */
+  pinned?: string;
+  /* The person presses Stop at the company's fingerprint, rather than Confirm. */
+  differs?: boolean;
+  /* Where the registry entry the steps name owed is put, when a case asks. */
+  owed?: unknown[];
 }
 
 /* The person's own wallet: reads the proven seat as the one call to `seatInvited`, pays its fee in DUST, hands it to the network and loses the answer. */
@@ -127,8 +138,9 @@ const ownWalletLosingItsAnswer = () => ({
     dust: { state: { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
     state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
     adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
+    estimateTransactionFee: async () => 1n,
     balanceUnboundTransaction: async (call: unknown) => ({
-      baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, anIntent([], { spends: [1], registrations: [] })]]) },
+      baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, anIntent([], { spends: [{ vFee: 1n }], registrations: [] })]]) },
     }),
     signRecipe: async (r: unknown) => r, finalizeRecipe: async (r: unknown) => r,
     submitTransaction: async () => { now().seen.order.push('own wallet sent'); throw new Error('the node dropped the connection'); },
@@ -146,6 +158,8 @@ const reachNow = () => ({
   network: NET,
   commitments: async () => MidnightCommitments as never,
   payKeyWrapKeyOf: async () => pureCircuits.payKeyWrapKeyOf,
+  /* Asked for nothing here: the registry write the steps name owed is the run's, after them. */
+  accountBuilder: () => { throw new Error('the registry entry is written by the run, after the steps'); },
   chain: () => ({
     holders: async () => ({ seats: now().chain.seats ?? [], founding: now().chain.founding ?? 'f0'.repeat(32), foundingCommittee: now().chain.foundingCommittee ?? [], seatBar: now().chain.seatBar ?? 1 }) as never,
     ...(now().chain.noRoles === true ? {} : {
@@ -175,12 +189,15 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
   const seen = opts.into ?? newSeen();
   const { relayed, asked, order } = seen;
   if (opts.held !== undefined) seen.kept = opts.held;
+  if (opts.pinned !== undefined) seen.kept = pinnedIn(seen.kept, LABEL, opts.pinned);
   live = { o, chain, seen };
   const answers = [...(opts.acceptAnswers ?? [])];
   const ctx = stepOverItsCall({
     intent: { name: 'seat-invited', fields: { company: LABEL, account: ACCOUNT, record: COMPANY, token: o.token } } as unknown as ActIntent,
     asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: opts.person === undefined ? 'dee' : opts.person,
-    held: { identity: dee, secret: newSecret(), account: 0 }, at: { step: 1, steps: 2 }, signal: new AbortController().signal,
+    held: { identity: dee, secret: newSecret(), account: 0 },
+    at: { step: 1, steps: 2 }, signal: new AbortController().signal,
+    ...(opts.owed === undefined ? {} : { registryEntryOwed: (write: unknown) => { opts.owed!.push(write); } }),
     relay: async () => { throw new Error('a seat is relayed through its invitation'); },
     call: async (method: string, path: string, body?: string) => {
       if (method === 'GET' && path === `/api/accounts/${COMPANY}/directory`) {
@@ -207,6 +224,14 @@ const run = async (o: ReturnType<typeof anOffer>, chain: ChainNow = {}, opts: Op
       return answers.shift() ?? { status: 201, body: { id: 'sgn_dee' } };
     },
     tell: () => {},
+    /* The person compares the company's fingerprint: Confirm, unless a case has them press Stop. */
+    confirm: async (lines: readonly unknown[]) => {
+      order.push('confirm');
+      seen.confirmed.push(lines);
+      if (opts.differs === true) throw new ActionStopped('stopped');
+    },
+    /* The person says yes when their own DUST is offered for a fee. */
+    confirmFee: async () => true,
     /* What the step said its send moves: whether it names this invitation's seat, through the service or straight to the chain, and the holders it leaves. */
     movesWhoHolds: (sends: readonly object[], move: (h: { seats: readonly string[]; approvals: number }) => { seats: readonly string[]; approvals: number }) => {
       const invitation = invitationIdOf(o.token);
@@ -236,6 +261,50 @@ const retiredIn = (leaf: string): unknown[] => {
 };
 
 describe('a seat invited by address is taken in the wallet, by the wallet that holds the address', () => {
+  it('names the seat\'s registry entry owed once it is saved, only while the company is pinned to the page\'s account and the chain seats it', async () => {
+    const leaf = String((await run(anOffer())).asked[0]!.leaf);
+    const owedWith = async (pinned: string | undefined, seats: readonly string[]): Promise<number> => {
+      const owed: unknown[] = [];
+      const seen = newSeen();
+      /* The chain seats the seat only once it is taken: before, this wallet would be refused as already seated. */
+      const chain = { get seats() { return seen.order.includes('accept-signer') ? [...seats] : []; } };
+      await run(anOffer(), chain, { owed, into: seen, ...(pinned === undefined ? {} : { pinned }) });
+      return owed.length;
+    };
+    /* RED WHEN: a saved seat pinned to this account and seated on the chain owes no entry. */
+    expect(await owedWith(ACCOUNT, [leaf])).toBe(1);
+    /* RED WHEN: the joiner's seat, confirmed and seated, is not pinned when it is saved, so its entry is never owed. */
+    expect(await owedWith(undefined, [leaf])).toBe(1);
+    /* RED WHEN: a label pinned to another account is seated at all. */
+    await expect(owedWith('f0'.repeat(32), [leaf])).rejects.toMatchObject({ words: { key: 'act.seat-invited.why.pinned-elsewhere' } });
+    /* RED WHEN: an entry is owed, or the company pinned, for a seat the chain does not hold. */
+    expect(await owedWith(ACCOUNT, [])).toBe(0);
+    expect(await owedWith(undefined, [])).toBe(0);
+  });
+
+  it('asks the person to compare the company\'s fingerprint before it keeps a seat, keeps it confirmed, and keeps nothing on a Stop', async () => {
+    const o = anOffer();
+    const yes = await run(o);
+    /* RED WHEN: the step keeps a seat without the person comparing the company's fingerprint, or shows another company's. */
+    expect(yes.confirmed).toEqual([[
+      { key: 'act.seat-invited.confirm.fingerprint', values: { fingerprint: companyFingerprint(LABEL, ACCOUNT as never) } },
+      { key: 'act.seat-invited.confirm.differs' },
+    ]]);
+    /* RED WHEN: the seat is kept without the person's It matches, so it could be pinned for an account they never compared. */
+    expect((Object.values(yes.kept.pendingSeats) as any[])[0].joining.confirmed).toBe(true);
+    const no = newSeen();
+    /* RED WHEN: a Stop at the fingerprint still keeps, proves or sends anything. */
+    await expect(run(o, {}, { into: no, differs: true })).rejects.toBeInstanceOf(ActionStopped);
+    expect([no.order, no.kept, no.built]).toEqual([['confirm'], { accounts: {} }, []]);
+  });
+
+  it('refuses a label this wallet pinned to another account before it derives, reads or keeps anything', async () => {
+    const seen = newSeen();
+    /* RED WHEN: the seating derives a seat for, reads, or seals an opening to a second account under a label this wallet pinned. */
+    await expect(run(anOffer(), {}, { into: seen, pinned: 'f0'.repeat(32) })).rejects.toMatchObject({ words: { key: 'act.seat-invited.why.pinned-elsewhere' } });
+    expect([seen.order, seen.built, seen.rolesAsked, seen.namedAsked]).toEqual([[], [], [], []]);
+  });
+
   it('with no sign-in named by the page, nothing is kept, proved or sent, and no seat is taken', async () => {
     const seen = newSeen();
     /* RED WHEN: the seat is taken on the network, and the threshold maybe raised, for a request every device would refuse. */
@@ -272,8 +341,8 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     expect(JSON.stringify(asked)).not.toContain(b.invite.coinSecretKey);
     /* RED WHEN: the seat taken is not kept in the saved keys, under the request the company filed. */
     expect(kept.accounts[COMPANY]).toMatchObject({ signerId: 'sgn_dee', signingSecret: toHex(own.signingSecret), scope: o.invite.scope, seat: 0, rights: rightsOfRole('approver') });
-    /* RED WHEN: the seat is kept only after its proof is relayed, or only after the one-shot request to be admitted. */
-    expect(order).toEqual(['keep', 'prove', 'relay', 'accept-signer', 'keep']);
+    /* RED WHEN: the seat is kept only after its proof is relayed, or only after the one-shot request to be admitted, or before the person confirmed the company's fingerprint. */
+    expect(order).toEqual(['confirm', 'keep', 'prove', 'relay', 'accept-signer', 'keep']);
     const pending = Object.values(kept.pendingSeats ?? {}) as any[];
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ accountId: COMPANY, signingSecret: toHex(own.signingSecret), scope: o.invite.scope, rights: rightsOfRole('approver'), seat: 0, invited: { terms: { proposal: o.proposal } } });
@@ -334,7 +403,7 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     expect(err).toBeInstanceOf(StepRefused);
     expect(err).toMatchObject({ words: { key: 'act.seat-invited.why.taken-by-another' } });
     /* The seat was kept before the second look at the history; nothing was proved, relayed or asked for after it. */
-    expect(into.order).toEqual(['keep']);
+    expect(into.order).toEqual(['confirm', 'keep']);
   });
 
   it('RED WHEN: an offer for another company, label or account than the link names, or one that has expired, is opened, and a seat is kept for it', async () => {
@@ -403,7 +472,7 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     /* RED WHEN: the removed seat's keys are written over or dropped. */
     expect(kept.formerSeats).toEqual({ [signingPublicKeyOf(removed.signingSecret).toLowerCase()]: { ...removed, accountId: COMPANY } });
     /* The removed seat is set aside before anything of the new seat is kept or proved. */
-    expect(order).toEqual(['keep', 'keep', 'prove', 'relay', 'accept-signer', 'keep']);
+    expect(order).toEqual(['confirm', 'keep', 'keep', 'prove', 'relay', 'accept-signer', 'keep']);
   });
 
   it('a wallet whose seat the chain still holds is refused as already seated, whatever retirement of it the service serves, and its saved keys are left as they were', async () => {
@@ -455,12 +524,29 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
     const own = deesSeat(0, o.invite.scope);
     /* The service filed the request and then failed: the act ends waiting for admission, with the seat kept. */
     const failed = await run(o, {}, { acceptAnswers: [{ status: 500, body: { error: 'the service failed' } }] });
-    expect(failed.order).toEqual(['keep', 'prove', 'relay', 'accept-signer']);
+    expect(failed.order).toEqual(['confirm', 'keep', 'prove', 'relay', 'accept-signer']);
     expect(failed.kept.accounts[COMPANY]).toBeUndefined();
     expect(Object.values(failed.kept.pendingSeats)).toEqual([expect.objectContaining({ accountId: COMPANY, signingSecret: own.signingSecret, seat: 0 })]);
     /* The invitation reads used: the request was taken. The act ends waiting too, and keeps nothing else. */
     const used = await run(o, { seats: [own.leaf], took: own.leaf }, { held: failed.kept, acceptAnswers: [{ status: 410, body: { refused: 'used', error: 'already accepted' } }] });
-    expect(used.kept).toEqual(failed.kept);
+    const { pins: usedPins, ...usedKept } = used.kept;
+    expect(usedKept).toEqual(failed.kept);
+    /* RED WHEN: a seat the chain holds, ending waiting for admission, leaves the company unpinned to the account the person confirmed. */
+    expect(usedPins[LABEL]).toMatchObject({ account: ACCOUNT, from: 'invited' });
+    /* RED WHEN: a seat kept before the person confirmed the company's fingerprint is pinned when it lands. */
+    const unconfirmed = structuredClone(failed.kept);
+    for (const p of Object.values(unconfirmed.pendingSeats) as any[]) delete p.joining.confirmed;
+    const neverAsked = await run(o, { seats: [own.leaf], took: own.leaf }, { held: unconfirmed, acceptAnswers: [{ status: 201, body: { id: 'sgn_dee' } }] });
+    expect(neverAsked.kept.accounts[COMPANY]).toBeDefined();
+    expect(neverAsked.kept.pins).toBeUndefined();
+    /* A seat kept under the same key, confirmed for another account under this label (a look-alike's, or the real one's). */
+    const confirmedElsewhere = structuredClone(failed.kept);
+    for (const p of Object.values(confirmedElsewhere.pendingSeats) as any[]) p.joining.account = 'f1'.repeat(32);
+    const elsewhereSeated = await run(o, { seats: [own.leaf], took: own.leaf }, { held: confirmedElsewhere, acceptAnswers: [{ status: 201, body: { id: 'sgn_dee' } }] });
+    /* RED WHEN: a seating on this account skips the fingerprint question because a seat under the same key was confirmed for another account. */
+    expect(elsewhereSeated.order[0]).toBe('confirm');
+    /* RED WHEN: a seat confirmed for one account is pinned on a reading of another account's seats. */
+    expect(elsewhereSeated.kept.pins).toBeUndefined();
     /* A refusal that is not either still refuses, with its words. */
     const refused = await run(o, { seats: [own.leaf], took: own.leaf }, { held: failed.kept, acceptAnswers: [{ status: 403, body: { refused: 'not-accepted', error: 'not this link' } }] }).catch((e: unknown) => e);
     expect(refused).toMatchObject({ words: { key: 'act.seat-invited.why.not-asked' } });
@@ -468,7 +554,14 @@ describe('a seat invited by address is taken in the wallet, by the wallet that h
      * gives back the id it gave, and the seat is kept under it. */
     const again = await run(o, { seats: [own.leaf], took: own.leaf }, { offerGone: true, held: failed.kept, acceptAnswers: [{ status: 201, body: { id: 'sgn_dee' } }] });
     expect(again.built).toEqual([]);
-    expect(again.order).toEqual(['accept-signer', 'keep']);
+    /* The seat is kept under the id given, then the company is pinned to the account the person confirmed. */
+    expect(again.order).toEqual(['accept-signer', 'keep', 'keep']);
+    expect(again.kept.pins[LABEL]).toMatchObject({ account: ACCOUNT, from: 'invited' });
+    /* RED WHEN: a step taken up again with the seat already saved, and its pin not yet kept, ends without pinning it. */
+    const { pins: _kept, ...savedUnpinned } = again.kept;
+    const takenUpAgain = await run(o, { seats: [own.leaf], took: own.leaf }, { offerGone: true, held: savedUnpinned });
+    expect(takenUpAgain.asked).toEqual([]);
+    expect(takenUpAgain.kept.pins[LABEL]).toMatchObject({ account: ACCOUNT, from: 'invited' });
     const waiting = openFromInbox<PendingSignerPayload>(again.asked[0]!.waiting as never, COMPANY, KEY);
     expect(waiting).toMatchObject({ name: 'dee', role: 'approver', signingPublicKey: signingPublicKeyOf(own.signingSecret).toLowerCase() });
     expect(again.asked[0]!.acceptance).toBe(acceptanceProofOf(o.token));

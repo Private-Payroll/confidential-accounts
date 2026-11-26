@@ -69,6 +69,7 @@ import { companyVaultRoutes, vaultState, type CompanyVaultDeps } from './company
 import { NONE_COUNTS } from './committee-signatures-kept.js';
 import { SUPER_ADMIN_HEADER, superAdminHeaderFor, superAdminRequestBytes } from '../midnight/super-admin-request.js';
 import type { VaultKey } from '../core/vault-keys.js';
+import { keyFileAround, operationHolding } from '../testing/an-operation-holding.js';
 
 /*
  * The company-vault routes' own refusals, with the chain and the fee payer
@@ -141,7 +142,7 @@ let finishedShape: unknown;
  * `a-signers-keys-are-the-rosters.test.ts`.
  */
 let roster: Map<string, { committeeKey: VaultKey; recordsKey: string }>;
-const vkOf = (c: string) => new TextEncoder().encode(`vk:${c}`);
+const vkOf = (c: string) => keyFileAround(`vk:${c}`);
 const aDeploy = () => ({
   intents: new Map([[1, { actions: [{
     address: VAULT,
@@ -149,7 +150,7 @@ const aDeploy = () => ({
       /* Born held: the company's committee, at its threshold, from the first transaction. */
       maintenanceAuthority: { committee: [key(1), key(2)], threshold: 2, counter: 0n },
       operations: () => CIRCUITS,
-      operation: (c: string) => ({ verifierKey: vkOf(c) }),
+      operation: (c: string) => operationHolding(vkOf(c)),
     },
   }] }]]),
 });
@@ -172,10 +173,9 @@ beforeEach(async () => {
   });
   sent = [];
   authority = { committee: [key(9)], threshold: 1, counter: 0n };
-  circuitKeys = vkOf;
+  circuitKeys = accountKeys = vkOf;
   /* By default the account is already the committee's, so a test about a vault is about the vault. */
   accountAuthority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
-  accountKeys = vkOf;
   accountUnreachable = false;
   vaultReads = 0;
   vaultReadFails = () => false;
@@ -241,14 +241,14 @@ beforeEach(async () => {
           if (accountUnreachable) throw new Error('the indexer did not answer');
           return {
             maintenanceAuthority: accountAuthority, serialize: () => new Uint8Array([8]),
-            operations: () => ACCOUNT_CIRCUITS, operation: (c: string) => ({ verifierKey: accountKeys(c) }),
+            operations: () => ACCOUNT_CIRCUITS, operation: (c: string) => operationHolding(accountKeys(c)),
           };
         }
         vaultReads += 1;
         if (vaultReadFails(vaultReads)) throw new Error('the indexer did not answer');
         return {
           maintenanceAuthority: authority, serialize: () => new Uint8Array([7]),
-          operations: () => CIRCUITS, operation: (c: string) => ({ verifierKey: circuitKeys(c) }),
+          operations: () => CIRCUITS, operation: (c: string) => operationHolding(circuitKeys(c)),
           ...(vaultBalance === undefined ? {} : { balance: vaultBalance }),
         };
       },
@@ -453,7 +453,7 @@ describe('A VAULT\'S ROUTES', () => {
     store.putCompanyVault({ accountId: 'acc_1', vault: VAULT, deployedAt: '', deployRef: 'r', intended: { committee: [key(1), key(2)], threshold: 2 }, bornHeld: true });
     authority = { committee: [key(1), key(2)], threshold: 2, counter: 1n };
     /* The key it was created with swapped one circuit in the handover itself. */
-    circuitKeys = (c) => (c === 'payout' ? new TextEncoder().encode('vk:someone else') : vkOf(c));
+    circuitKeys = (c) => (c === 'payout' ? keyFileAround('vk:someone else') : vkOf(c));
     const refused = await call(`/api/accounts/acc_1/vaults/${VAULT}/deposit`, 'ada', 'POST', { tx: 'AAAA' });
     expect(refused).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(refused.body.error).toMatch(/'payout' circuit is not the one this service's build compiled/);
@@ -641,7 +641,7 @@ describe('NO VAULT UNTIL THE COMPANY\'S ACCOUNT IS FINISHED', () => {
     await give('ada', 1); await give('bo', 2);
     deployShape = true;
     /* RED WHEN: a vault is made for an account whose second step has not landed, so it does not run this build's circuits yet. */
-    accountKeys = (c) => (c === 'recordPaymentFromVault' ? new TextEncoder().encode('vk:not-yet') : vkOf(c));
+    accountKeys = (c) => (c === 'recordPaymentFromVault' ? keyFileAround('vk:not-yet') : vkOf(c));
     const early = await call('/api/accounts/acc_1/vaults', 'ada', 'POST', { tx: 'AAAA' });
     expect(early).toMatchObject({ status: 409, body: { nothingWasSent: true } });
     expect(early.body.error).toMatch(/not finished being created yet/);
@@ -692,7 +692,7 @@ describe('THE COMPANY ACCOUNT STANDS BEHIND EVERY VAULT', () => {
     expect((await deposit()).status).toBe(200);
     sent.length = 0;
     /* RED WHEN: the account's circuits stop being compared. */
-    accountKeys = (c) => (c === 'recordPaymentFromVault' ? new TextEncoder().encode('vk:drain') : vkOf(c));
+    accountKeys = (c) => (c === 'recordPaymentFromVault' ? keyFileAround('vk:drain') : vkOf(c));
     expect((await deposit()).body.error).toMatch(/'recordPaymentFromVault' circuit is not the one this service's build compiled/);
     expect((await call('/api/accounts/acc_1/vaults', 'ada')).body.rows[0].state).toBe('account-not-fundable');
     accountKeys = vkOf;
@@ -849,7 +849,7 @@ describe('A PRIVATE PAYMENT OUT OF A VAULT', () => {
     store.putCompanyVault({ ...record, bornHeld: undefined });
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
     store.putCompanyVault(record);
-    circuitKeys = (c) => (c === 'payout' ? new Uint8Array([1]) : vkOf(c));
+    circuitKeys = (c) => (c === 'payout' ? keyFileAround(new Uint8Array([1])) : vkOf(c));
     expect((await call(`/api/accounts/acc_1/vaults/${VAULT}/payout`, 'ada', 'POST', { tx: PAYOUT_TX })).status).toBe(409);
     circuitKeys = vkOf;
     pinnedNow = hex(0xc1);

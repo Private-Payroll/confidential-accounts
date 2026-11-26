@@ -56,6 +56,11 @@ function useWhySays(): Record<InviteWhy, string> {
     [WHY.mayBeSent]: t('invite.why.may-be-sent'),
     [WHY.filedNotEntered]: t('invite.why.filed-not-entered'),
     [WHY.offerNotRead]: t('invite.why.offer-not-read'),
+    [WHY.noPin]: t('invite.why.no-pin'),
+    [WHY.labelClash]: t('invite.why.label-clash'),
+    [WHY.registryUnread]: t('invite.why.registry-unread'),
+    [WHY.pinnedElsewhere]: t('invite.why.pinned-elsewhere'),
+    [WHY.seatNotYours]: t('invite.why.seat-not-yours'),
     [WHY.stopped]: t('invite.why.stopped'),
     [WHY.other]: t('invite.why.other'),
   };

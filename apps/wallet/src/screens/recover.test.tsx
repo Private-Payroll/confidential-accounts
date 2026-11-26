@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
  * RECOVERY, END TO END — a machine that never had the account gets it back
  * from REAL pieces of a REAL split, through the real screen. The only mocks
  * are the passkey ceremony (no authenticator in a runner); the split, the
- * session, the rebuild, the seal and the derivation are all the library's.
+ * recovery in progress, the rebuild, the seal and the derivation are all the library's.
  */
 
 vi.mock('midnight-identity/browser', () => ({
@@ -32,6 +32,7 @@ import type { PieceSet } from 'midnight-identity/recovery/pieces';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
 import { SessionProvider, useSession } from '../session.js';
 import { Recover } from './recover.js';
+import type { RegistryFinder } from '../chain/private-registry-on-chain.js';
 import {
   allPasskeys, arrivalOf, creationOf, loadSecret, loadSecuredSetup, savePasskey, saveSecret,
   saveSecuredSetup, securedSetupOnRecord,
@@ -79,10 +80,15 @@ function Probe(): ReactNode {
   );
 }
 
+/* The find a finished recovery runs, here asked of no chain: each identity it was asked for is kept. */
+const findsAsked: unknown[] = [];
+const find: RegistryFinder = async (identity) => { findsAsked.push(identity); return { of: 'no-registries', network: 'preprod' }; };
+
 const mount = (): void => {
+  findsAsked.length = 0;
   render(
     <SessionProvider>
-      <Recover />
+      <Recover find={find} />
       <Probe />
     </SessionProvider>,
   );
@@ -140,6 +146,9 @@ describe('recovery on a machine that never had the account', () => {
      * including the ceremony's own outcome as its own fact. */
     expect(screen.getByText(/The account is back\./)).toBeTruthy();
     expect(screen.getByText(/A new passkey opens it here\./)).toBeTruthy();
+    /* RED WHEN: a recovery that opened the wallet does not look for the companies its own entries name, once. */
+    expect(await screen.findByText(/lists no registry to find your companies in/)).toBeTruthy();
+    expect(findsAsked).toHaveLength(1);
 
     /* §7.15: the landing WROTE the secured record — fingerprint from the
      * rebuilt secret, threshold off the pieces, holders as the person named
@@ -191,7 +200,7 @@ describe('recovery on a machine that never had the account', () => {
   });
 
   it('tells the person whose last piece is elsewhere to carry the CARDS — §7.15(a)', () => {
-    /* The session is never serialised, so the only way to finish on
+    /* A recovery in progress is never serialised, so the only way to finish on
      * another machine is to gather there. Before this sentence, the only
      * thing saying so was a reload that ate the work. */
     mount();
@@ -272,7 +281,7 @@ describe('recovery on a machine that never had the account', () => {
     expect(screen.getByText('This recovery was stopped.')).toBeTruthy();
     expect(screen.getByText(/pieces it had gathered were\s+dropped/)).toBeTruthy();
     /* Second half: the sentence is checked against the PROVIDER, not
-     * against itself — the session the provider holds carries no pieces.
+     * against itself — the recovery the provider holds carries no pieces.
      * Replacing the `cancelRecovery` call with an inline state flip that
      * keeps the bytes turns this red. */
     expect(screen.getByTestId('gathered-count').textContent).toBe('0');
@@ -300,6 +309,8 @@ describe('recovery on a machine that never had the account', () => {
      * here, the failure in its own words, and the doorway named. */
     expect(screen.getByText(/one step left/)).toBeTruthy();
     expect(screen.queryByText(/A new passkey opens it here/)).toBeNull();
+    /* RED WHEN: the companies are looked for before this machine can open the wallet. */
+    expect(findsAsked).toEqual([]);
     expect(screen.getByText(/it was cancelled, or it timed out\./)).toBeTruthy();
     expect(screen.getByText(/Make a new passkey for this wallet/)).toBeTruthy();
   });
@@ -325,7 +336,7 @@ describe('recovery on a machine that never had the account', () => {
     expect(allPasskeys(ORIGINAL_SLOT)).toEqual([]);
   });
 
-  it('a landing that cannot store says so, and the session is NOT spent', async () => {
+  it('a landing that cannot store says so, and the recovery is NOT spent', async () => {
     /* Recovery shared the pairing hole: `completeRecovery` was announced
      * before `saveSecret`, so a browser that could not store showed
      * "rebuilt and sealed" over nothing, and a retry met "this recovery is

@@ -10,6 +10,7 @@ import type { PageAskPays, UnboundTransactionLike } from '../chain/balance-for-p
 import { nightFromStars } from '../chain/amount.js';
 import type { Consent } from '../framing.js';
 import type { CompanyCheck } from './company-on-chain.js';
+import { BuildStamp } from './build-stamp.js';
 
 /** One figure, in words a person reads. NIGHT is named; any other token is shown by its identifier. */
 export const NIGHT_TOKEN = '0'.repeat(64);
@@ -66,6 +67,7 @@ function WhereTheMoneyGoes({ request, check, publicly }: {
       />
       <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
       <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
+      <BuildStamp address={request.vault} contract="vault" />
       <p className="m-0 text-sm text-muted-foreground" data-vault-check>{VAULT_CHECK}</p>
     </Section>
   );

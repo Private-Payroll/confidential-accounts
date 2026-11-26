@@ -31,9 +31,11 @@ const APPROVE = { kind: 'account-call', contract: ACCOUNT, circuit: 'approve' } 
 const anAct = (shown: unknown[]) => ({
   intent: { name: 'approve-proposal', fields: {} }, held: { identity: {} as never, account: 0 }, signal: new AbortController().signal,
   show: (words: unknown) => { shown.push(words); },
+  /* The person says yes when their own DUST is offered for a fee. */
+  confirmFee: async () => true,
   /* The runner's door for a call this wallet sends itself, with no read of the company to check here. */
   sendStraight: viewsOfTheStep(async () => { throw new Error('a hand-over reads nothing of the company here'); }).sendStraight,
-}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show' | 'sendStraight'>;
+}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'show' | 'sendStraight' | 'confirmFee'>;
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64');
 const CALL = b64({ circuit: 'approve', to: ACCOUNT });
 const intentOf = (actions: readonly unknown[]) =>
@@ -88,10 +90,11 @@ const aChain = (log: unknown[], w: World = {}) => {
         dust: { state: { subscribe: (s: { next: (x: unknown) => void }) => { s.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
         state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
         adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
+        estimateTransactionFee: async () => 1n,
         balanceUnboundTransaction: async (call: unknown) => {
           if (w.ownDust !== true) throw new Error('no fee is paid from this wallet');
           log.push('own DUST');
-          return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, { ...intentOf([]), dustActions: { spends: [1], registrations: [] } }]]) } };
+          return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[2, { ...intentOf([]), dustActions: { spends: [{ vFee: 1n }], registrations: [] } }]]) } };
         },
         signRecipe: async (r: unknown) => r,
         finalizeRecipe: async (r: { baseTransaction: unknown }) => ({ ...(r.baseTransaction as object), identifiers: () => [`id:${ACCOUNT}:approve`], serialize: () => Buffer.from(CALL, 'base64') }),

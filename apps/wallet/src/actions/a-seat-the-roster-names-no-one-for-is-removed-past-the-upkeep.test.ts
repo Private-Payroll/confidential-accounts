@@ -4,6 +4,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { StepContext } from './definition.js';
 import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **THE REMOVAL OF A SEAT THE COMPANY'S ROSTER NAMES NO ONE FOR GOES PAST THE UPKEEP AND THE DEVICE'S OWN COUNT.** While
@@ -47,6 +48,8 @@ const { UNREAD_SEAT_NAME } = await import('./roster-for-a-removal.js');
 
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const SEATS = ['a1', 'a2', 'a3', 'a4'].map((x) => x.repeat(32));
 const UNREAD = SEATS[3]!;
 const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
@@ -97,7 +100,7 @@ const ctxOf = (i: ActIntent) => {
     tell: (x: Record<string, unknown>) => { told.push(x); },
     show: () => {},
     confirm: async (lines: unknown) => { confirmed.push(lines); },
-    keyring: null,
+    keyring: PINNED_ONLY,
   }) as unknown as StepContext;
   return { ctx, told, confirmed };
 };

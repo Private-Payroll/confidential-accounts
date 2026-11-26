@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { of } from 'rxjs';
 import { DefaultForkSchedule } from '@midnightntwrk/wallet-sdk';
 import { callOf, viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **A PRIVATE DEPOSIT IS MADE WHOLE IN THE WALLET, AND NOTHING THE PAGE ANSWERS CAN MAKE IT LOSE TRACK OF ONE IT
@@ -36,6 +37,8 @@ const secret = newSecret();
 const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const VAULT = 'de'.repeat(32);
 const TOKEN = '9b'.repeat(32);
 const LEAF = 'aa'.repeat(32);
@@ -77,7 +80,7 @@ const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, { statu
   const told: Record<string, unknown> = {};
   const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-    held: { identity, secret, account: 0, wallet: { drewTheLabel: () => true, pinnedFor: () => null, pin: async () => {} } },
+    held: { identity, secret, account: 0, wallet: { drewTheLabel: () => true } },
     at: { step: 2, steps: 2 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a deposit is sent through its call, never a bare relay'); },
     call: async (method: string, path: string) => {
@@ -85,7 +88,7 @@ const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, { statu
       return over.answers?.[`${method} ${path}`] ?? { status: 404, body: { error: 'none' } };
     },
     tell: (o: Record<string, unknown>) => { Object.assign(told, o); },
-    keyring: null,
+    keyring: PINNED_ONLY,
     ...over,
   }) as unknown as StepContext;
   return { ctx, calls, told };
@@ -135,7 +138,7 @@ describe('the window lists everything the deposit pays and files before the pass
 
   it('refuses before anything is read an amount of nothing, or a wallet with no account chosen', async () => {
     const action = privateDepositAction({ chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never });
-    const held = { identity, secret, account: 0, wallet: { drewTheLabel: () => true, pinnedFor: () => null, pin: async () => {} } };
+    const held = { identity, secret, account: 0, wallet: { drewTheLabel: () => true } };
     expect(await action.check(intent(), held as never)).toBeNull();
     /* RED WHEN: a deposit of nothing is built and paid. */
     expect((await action.check(intent({ amount: '0' }), held as never))?.key).toBe('act.private-deposit.why.nothing');

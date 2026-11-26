@@ -112,11 +112,12 @@ describe('THE GRANT-READ ACT', () => {
   it('asks for that Confirm in its first step, before the upkeep or the filing hands anything over', async () => {
     const rhea = grantEntryOf({ recipient: KEY, person: 'rhea', role: 'limited' });
     const asked: (readonly Words[])[] = [];
+    const asking = ask({ code: writeJoinCode(signJoinCode(identityFromSecret(new Uint8Array(32).fill(8)), CO, 'rhea', { kind: 'reader', readerKey: 'cd'.repeat(32) })), role: 'limited' });
     const steps = grantReadAction({
       chain: unreachedAtAll, builder: unreachedAtAll,
       reachFor: async () => ({ stepView: NO_VIEW_OPENED }) as unknown as CompanyReach, inForceFor: async () => [rhea],
-    }).steps(ask({ code: writeJoinCode(signJoinCode(identityFromSecret(new Uint8Array(32).fill(8)), CO, 'rhea', { kind: 'reader', readerKey: 'cd'.repeat(32) })), role: 'limited' }));
-    await steps[0]!.run({ confirm: async (lines: readonly Words[]) => { asked.push(lines); } } as unknown as StepContext);
+    }).steps(asking);
+    await steps[0]!.run({ intent: asking, keyring: null, confirm: async (lines: readonly Words[]) => { asked.push(lines); } } as unknown as StepContext);
     /* RED WHEN: the act signs a give that replaces a reader in force without the person confirming whom it replaces. */
     expect(asked.map((l) => l[0]!.key)).toEqual(['act.grant-read.confirm.replaces']);
   });

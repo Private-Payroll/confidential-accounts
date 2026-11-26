@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseAsk, RequestError, type CreationRequest } from './request.js';
-import { drewTheLabelFor, emptyProfile, pinCompanyAccount, pinnedAccountOf, recordRelease } from './model.js';
+import { drewTheLabelFor, emptyProfile, recordRelease } from './model.js';
 import { CREATION_SIGNATURE_SCHEMA, readCreationSignature } from './creation-sign.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
 
@@ -63,26 +63,20 @@ describe('AN ASK TO FINISH CREATING A COMPANY\'S ACCOUNT', () => {
   });
 });
 
-describe('THE ACCOUNT THIS WALLET PINS FOR A COMPANY IT CREATED', () => {
+describe('A LABEL THIS WALLET DREW FOR A COMPANY IT CREATES', () => {
   const drawn = recordRelease(emptyProfile(NOW), {
     at: NOW, nonce: 'n1', recipient: { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, company: COMPANY, account: null,
   } as never, NOW);
 
-  it('IS SIGNED FOR ONLY WHEN THIS WALLET DREW THE LABEL AND HAS PINNED NOTHING FOR IT', () => {
-    /* RED WHEN: a creation is signed for a label this wallet never drew, or for one already finished. */
+  it('IS ONE WHOSE KEY WAS RELEASED BEFORE THE COMPANY HAD AN ACCOUNT', () => {
+    /* RED WHEN: a creation is signed for a label this wallet never drew. */
     expect(drewTheLabelFor(emptyProfile(NOW), COMPANY)).toBe(false);
     expect(drewTheLabelFor(drawn, COMPANY)).toBe(true);
-    const pinned = pinCompanyAccount(drawn, { company: COMPANY, account: ACCOUNT, from: 'created', at: NOW }, NOW);
-    expect(pinnedAccountOf(pinned, COMPANY)).toBe(ACCOUNT);
-    expect(drewTheLabelFor(pinned, COMPANY)).toBe(false);
-  });
-
-  it('IS PINNED ONCE: THE SAME AGAIN CHANGES NOTHING, A SECOND ACCOUNT IS REFUSED', () => {
-    const pinned = pinCompanyAccount(drawn, { company: COMPANY, account: ACCOUNT, from: 'created', at: NOW }, NOW);
-    expect(pinCompanyAccount(pinned, { company: COMPANY, account: ACCOUNT, from: 'created', at: NOW + 1 }, NOW + 1)).toBe(pinned);
-    /* RED WHEN: a later press moves a label's pin to another account. */
-    expect(() => pinCompanyAccount(pinned, { company: COMPANY, account: 'c1'.repeat(32) as AccountAddress, from: 'created', at: NOW }, NOW))
-      .toThrow('already pinned another account for this company');
+    /* RED WHEN: a key released for a company's account counts as drawing its label. */
+    const forAnAccount = recordRelease(emptyProfile(NOW), {
+      at: NOW, nonce: 'n2', recipient: { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, company: COMPANY, account: ACCOUNT,
+    } as never, NOW);
+    expect(drewTheLabelFor(forAnAccount, COMPANY)).toBe(false);
   });
 });
 

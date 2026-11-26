@@ -11,7 +11,7 @@ import { unlockKeyFor } from './unlock.js';
 import type { UnlockRequest } from './request.js';
 import {
   DIRECTORY_ENTRY_STATEMENT_TAG, HOLDERS_ANSWER_SCHEMA, RECORDS_KEY_ANSWER_SCHEMA, RECORDS_KEY_STATEMENT_TAG, RecordsKeyRefused,
-  INVITATION_REFUSAL, directoryEntrySignedBy, directoryEntryStatementBytes, whyTheInvitationDoesNotNameIt, holdersAnswerFor, readHoldersAnswer, readRecordsKeyAnswer, recordsKeyAnswerFor,
+  directoryEntrySignedBy, directoryEntryStatementBytes, holdersAnswerFor, readHoldersAnswer, readRecordsKeyAnswer, recordsKeyAnswerFor,
   recordsKeySignedBy, recordsKeyStatementBytes, recordsPublicKeyOf, seatBlinding, signDirectoryEntry, signRecordsKey, walletKeyProvedBy,
   SEAT_BLINDING_DOMAIN, type LeafOf, type SeatOpening,
 } from './records-key.js';
@@ -169,52 +169,18 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     expect(answer.entry?.account).toBe(ACCOUNT);
   });
 
-  it('A WALLET THAT KEPT NO ACCOUNT SIGNS NOTHING; THE INVITATION IS ONLY READ, AND EACH WAY IT CAN BE WRONG IS SAID', () => {
+  it('A WALLET THAT KEPT NO ACCOUNT SIGNS NOTHING, WHATEVER INVITATION THE PAGE HANDS OVER, WHICH IS ONLY READ', () => {
     /* The inviting signer: their wallet key, the entry their wallet signed and their own seat's opening, as the invitation carries them. */
     const inviterKey = committeeKeyFor(somebodyElse, CO) as { tag: 'schnorr'; value: string };
     const { seat: INVITER_SEAT, opening } = seatMadeFor(inviterKey, '7a'.repeat(32));
     const entry = signDirectoryEntry(somebodyElse, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT);
     const invitedBy = { committeeKey: inviterKey, statement: entry, opening };
-    /* The inviter is no super admin: the committee holds only this person's key. */
     const onChain = { committee: seats.committee, threshold: 1, seats: [...seats.seats, INVITER_SEAT] };
-    /* An invitation that checks out still sets nothing: the person's fingerprint confirmation does, on the screen. */
-    /* RED WHEN: an inviter whose wallet key is not on the committee is refused. */
-    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), onChain, leafOf)).toBeNull();
     /* RED WHEN: a wallet with no account kept signs for an account the page named, with or without an invitation. */
-    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, null, leafOf)).toThrow(/Compare the company's fingerprint/);
-    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW, undefined, null, leafOf)).toThrow(INVITATION_REFUSAL['no-invitation']);
+    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, null)).toThrow(/has not kept an account for this company/);
+    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW, undefined, null)).toThrow(/has not kept an account for this company/);
     const signed = recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, ACCOUNT);
     expect(recordsKeySignedBy(CO, ACCOUNT, signed.committeeKey, signed.statement)).toBe(true);
-    /* Mal's key is on the committee; her wallet signs an entry for the inviter's seat. */
-    const malKey = committeeKeyFor(identityFromSecret(new Uint8Array(32).fill(12)), CO) as { tag: 'schnorr'; value: string };
-    const byMal = {
-      committeeKey: malKey, opening,
-      statement: signDirectoryEntry(identityFromSecret(new Uint8Array(32).fill(12)), CO, ACCOUNT, new Uint8Array(32).fill(13), '2b'.repeat(32), INVITER_SEAT),
-    };
-    const malOnIt = { ...onChain, committee: [...seats.committee, malKey] };
-    for (const [why, bent, chain, code] of [
-      ['an entry for another account', { ...invitedBy, statement: signDirectoryEntry(somebodyElse, CO, 'a8'.repeat(32) as AccountAddress, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT) }, onChain, 'other-account'],
-      ['an entry signed by a key it does not name', { ...invitedBy, committeeKey: committeeKeyFor(me, CO) as { tag: 'schnorr'; value: string } }, onChain, 'not-signed'],
-      ['an inviter whose seat is not on the account', invitedBy, { ...onChain, seats: seats.seats }, 'inviter-not-on-account'],
-      /* RED WHEN: a key on the committee but not the one the inviter's seat was made for is accepted. */
-      ['a key on the committee that the seat was not made for', byMal, malOnIt, 'not-the-inviters-seat'],
-      ['an opening that names the other key but still makes the inviter\'s seat', { ...byMal, opening: { ...opening, walletKey: malKey } }, malOnIt, 'not-the-inviters-seat'],
-      ['an opening of another leaf', { ...invitedBy, opening: seatMadeFor(inviterKey, '7b'.repeat(32)).opening }, onChain, 'not-the-inviters-seat'],
-    ] as const) {
-      /* RED WHEN: the named invitation is read as naming the account, so the screen offers to keep it. */
-      expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy: bent }), chain as never, leafOf), why).toBe(code);
-      /* RED WHEN: what the person is told is anything but the sentence for that defect, which says what to do. */
-      expect(() => recordsKeyAnswerFor(me, ask({ invitedBy: bent }), chain as never, NOW, undefined, null, leafOf), why).toThrow(INVITATION_REFUSAL[code]);
-    }
-    /* RED WHEN: with no leaf worked out, the inviter's opening is believed. */
-    expect(whyTheInvitationDoesNotNameIt(ask({ invitedBy }), onChain, null)).toBe('not-the-inviters-seat');
-    for (const code of ['other-account', 'not-signed', 'not-the-inviters-seat'] as const) {
-      /* RED WHEN: a refusal that opening the invitation again cannot repair does not say to ask the inviter for a new invitation. */
-      expect(INVITATION_REFUSAL[code]).toMatch(/ask the person who invited you for a new invitation, and compare the company's fingerprint with them/i);
-      expect(INVITATION_REFUSAL[code]).not.toMatch(/open this again/i);
-    }
-    /* RED WHEN: an inviter whose seat may only be on the chain a minute later is not told to wait and open it again. */
-    expect(INVITATION_REFUSAL['inviter-not-on-account']).toMatch(/wait a minute and open this again/i);
     /* RED WHEN: an invitation is read anywhere but on a records-key ask, or a malformed one is taken. */
     expect(() => ask({ invitedBy: { ...invitedBy, statement: { ...entry, signature: 'zz' } } })).toThrow(/is not a signer's committee key/);
     /* RED WHEN: an invitation without the inviter's own opening, or with one of another shape, is read. */

@@ -30,12 +30,14 @@ export const contractPieces = async () => {
     import('../../../../src/midnight/providers.js'),
     import('../../../../src/midnight/contract-modules.js'),
   ]);
+  const registry = await import('../../../../contracts/managed-registry/contract/index.js');
   return {
     ledger,
     runtime,
     compactJs,
     account,
     accountWitnesses,
+    registry,
     contracts: contractCallsOf({
       contracts, types, ledger, ContractState: runtime.ContractState, settingsFor: providers.transactionSettingsFor,
       accountModuleFor: modules.accountModuleFor,

@@ -382,7 +382,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     // CONTRACT_ARTIFACTS — drop a pair and there is simply less to iterate.
     // The table's contents are pinned by the `toEqual` on triples below, and
     // its length is pinned here against a literal, independently of the loop.
-    expect(CONTRACT_ARTIFACTS).toHaveLength(2);
+    expect(CONTRACT_ARTIFACTS).toHaveLength(3);
     const tree = makeRealTree();
     try {
       expect(() => assertArtifactsFresh(tree)).not.toThrow();
@@ -413,7 +413,12 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       [
         'contracts/src/Vault.compact',
         'contracts/managed-vault/contract/index.js',
-        'npm run compact:vault',
+        'npm run compact:fast',
+      ],
+      [
+        'contracts/src/PrivateRegistry.compact',
+        'contracts/managed-registry/contract/index.js',
+        'npm run compact:fast',
       ],
     ]);
   });

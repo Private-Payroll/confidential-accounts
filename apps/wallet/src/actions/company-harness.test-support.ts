@@ -66,6 +66,7 @@ import type { SealedRun } from '../../../../src/core/types.js';
 import { rebuildDoorsIn, upkeepSteps } from './upkeep.js';
 import { stepOverItsCall } from './step-views.test-support.js';
 import { carriedNotAsHeld, recordsCarried } from './records-carried.test-support.js';
+import { madeByTheWords, pinnedIn } from './seats-the-words-make.test-support.js';
 
 /** Vaults whose state the indexer cannot give: an ask of the builder that names one fails, as one undecodable vault fails its ask. */
 export const VAULTS_UNREADABLE = new Set<string>();
@@ -75,6 +76,12 @@ const doubles = vi.hoisted(() => ({ chain: null as unknown, builder: null as unk
 vi.mock('../chain/company-chain.js', () => ({ liveCompanyChain: () => doubles.chain }));
 vi.mock('../chain/vault-builder-client.js', () => ({ walletVaultBuilder: () => doubles.builder }));
 vi.mock('../chain/balance-doors.js', () => ({ liveBalanceDoors: () => (doubles.ownWallet as () => unknown)() }));
+/* Each seated wallet's words make the company's seat it holds. */
+vi.mock('midnight-identity/profile/seat-keys', async (real) => {
+  const { seatKeysAsSeated } = await import('./seats-the-words-make.test-support.js');
+  const { committeeKeyFor: keyFor } = await import('midnight-identity/profile/committee-key');
+  return seatKeysAsSeated(await real<typeof import('midnight-identity/profile/seat-keys')>(), keyFor as never);
+});
 /*
  * A seat of this company signed its directory entry for a records key made from a fixed secret, not from its wallet's
  * own key for the company; so the key a seat's wallet holds for the company is the one its entry attests, and the
@@ -146,13 +153,12 @@ export interface CompanySize {
   readonly anchoredBatches?: number;
 }
 
-/** One person's wallet: who they are, the keys it keeps for the company, and the company it has pinned. */
+/** One person's wallet: who they are, and the keys it keeps for the company, the company's pin among them. */
 export interface Wallet {
   readonly person: string;
   readonly identity: Identity;
   readonly secret: Uint8Array;
   kept: Keyring;
-  readonly pins: Map<string, { account: string; created: boolean; from?: 'created' | 'invited' }>;
 }
 
 /** The door a chain, builder or indexer read came through. */
@@ -312,17 +318,25 @@ const countedDoors = <T extends object>(over: () => T): T => {
 
 const walletWith = (person: string, fill: number, kept: Keyring = { accounts: {} }): Wallet => {
   const secret = new Uint8Array(32).fill(fill);
-  return { person, identity: identityFromSecret(secret as never), secret, kept, pins: new Map() };
+  return { person, identity: identityFromSecret(secret as never), secret, kept };
 };
 const wrappingSecretOf = (s: Seat): Hex => toHex(new Uint8Array(32).fill(s.n + 40)) as Hex;
-const seatedWallet = (s: Seat): Wallet => walletWith(s.person, s.n, {
-  accounts: {
-    [CO]: {
-      signerId: `sgn_${s.person}`, signingSecret: s.signingSecret as Hex, wrappingSecret: wrappingSecretOf(s),
-      blinding: s.opening.blinding as Hex, scope: s.opening.scope as Hex, opening: s.opening as never,
+/*
+ * A seat of the company in its signer's wallet: the seat their words make for the company (`madeByTheWords`), kept in
+ * their saved keys with the company pinned to its account, as the founding seat's creation or a seat taken pins it.
+ */
+const seatedWallet = (s: Seat): Wallet => {
+  const w = walletWith(s.person, s.n, pinnedIn({
+    accounts: {
+      [CO]: {
+        signerId: `sgn_${s.person}`, signingSecret: s.signingSecret as Hex, wrappingSecret: wrappingSecretOf(s),
+        blinding: s.opening.blinding as Hex, scope: s.opening.scope as Hex, opening: s.opening as never,
+      },
     },
-  },
-});
+  }, LABEL, ADDRESS, s === ADA ? 'created' : 'invited'));
+  madeByTheWords(w.identity, LABEL, s.signingSecret);
+  return w;
+};
 const coinKeyOf = (w: Wallet): Hex => String(checkShieldedAddress(addressFor(w.identity.moneyAt(0).zswap, NETWORK as never).bech32, NETWORK as never).coinPublicKey).toLowerCase() as Hex;
 const coinSecretOf = (w: Wallet): Hex => {
   const raw = ZswapSecretKeys.fromSeed(w.identity.moneyAt(0).zswap).coinSecretKey.yesIKnowTheSecurityImplicationsOfThis_serialize();
@@ -433,11 +447,7 @@ const contextFor = (w: Wallet, intent: ActIntent, at: { step: number; steps: num
     intent, asker: { origin: ORIGIN, name: 'Payroll', rdns: 'example.payroll' }, person: w.person,
     held: {
       identity: w.identity, secret: w.secret as never, account: 0,
-      wallet: {
-        drewTheLabel: () => false,
-        pinnedFor: (label: string) => w.pins.get(label) ?? null,
-        pin: async (label: string, account: string, from?: 'created' | 'invited') => { w.pins.set(label, { account, created: false, from }); },
-      },
+      wallet: { drewTheLabel: () => false },
     },
     at: at as never, signal: new AbortController().signal,
     relay: async () => { throw new Error('an action of this company sends through its calls, never a bare relay'); },

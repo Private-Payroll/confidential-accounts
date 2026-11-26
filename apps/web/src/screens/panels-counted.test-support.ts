@@ -6,6 +6,7 @@
  */
 import { createElement, type ReactElement } from 'react';
 import { fireEvent } from '@testing-library/react';
+import { withPin } from 'vaults-web-shared/keyring-blob.js';
 import { openPanel, openScreen, openScreenAnd, servedAs, type CompanyHeld, type CompanyOpened, type Served, type ScreenCount, type Step } from './company-harness.test-support.js';
 import { buttonNamed, joined, opensOnTheRoot, pressesThenSees, rootOf, seesTheRoot } from './panel-steps.test-support.js';
 import { Deposit } from '../actions/deposit.js';
@@ -90,7 +91,8 @@ export const inItsScreenOn = (company: CompanyOpened): Readonly<Record<string, I
     press: [
       async () => {
         /* The founding seat's wallet holds the company as the one it created, as the wallet that created the company does. */
-        company.wallet(founderOf(company)).pins.set(company.fields.company, { account: company.fields.account, created: true, from: 'created' });
+        const founder = company.wallet(founderOf(company));
+        founder.kept = withPin(founder.kept, company.fields.company, company.fields.account, 'created', '2026-01-01T00:00:00.000Z');
         fireEvent.change(await untilShown(() => document.querySelector<HTMLElement>('[data-field="vault-name"]'), 'the vault name', 30_000), { target: { value: 'Operations' } });
       },
       async () => { fireEvent.click(await untilShown(() => document.querySelector<HTMLElement>('[data-action="create-vault-now"]:not([disabled])'), 'create the vault', 30_000)); },

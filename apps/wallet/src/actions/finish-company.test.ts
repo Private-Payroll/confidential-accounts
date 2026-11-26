@@ -24,7 +24,8 @@ import { canonical, newSigningKeypair, seal, signingPublicKeyOf, toHex, unwrapKe
 import { payKeyProposalIn, proposalFilingRefusal, raiseByOf, signProposalFiling } from '../../../../src/core/proposal-filing.js';
 import { openStateRecord } from '../../../../src/core/founding-state.js';
 import { foundTheCompanyHere } from '../../../../src/core/company-founding.js';
-import { withCreation, withNewSeat, type Keyring, type SavedCreation } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { withCreation, withNewSeat, type Keyring, type PinFrom, type SavedCreation } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 import { accountBuilding, type AccountBuilding, type BuilderWorkerLike } from '../chain/account-builder-client.js';
 import { accountBuilderDeps, startAccountBuilder } from '../chain/account-builder.js';
 import type { PayKeyStandingAnswered } from '../chain/account-builder.js';
@@ -89,6 +90,8 @@ const standingOf = (over: {
 const world = (opts: {
   keys: Keyring; standings?: PayKeyStandingAnswered[]; finished?: boolean[]; held?: boolean | boolean[];
   record?: Partial<WalletRecord>;
+  /** The pin the saved keys hold for the company's label: by default its account, as the company this wallet created; null for none. */
+  pin?: { readonly account: string; readonly from: PinFrom } | null;
   /** How far the chain's clock is ahead of this device's. */
   skew?: number;
   /** Each transaction's time to live; one not named lives the full thirty minutes from now. */
@@ -108,8 +111,9 @@ const world = (opts: {
   const shown: unknown[] = [];
   let h = 0;
   const asks: Array<Record<string, unknown>> = [];
-  const pinned: string[] = [];
-  let keys = opts.keys;
+  const pin = opts.pin === undefined ? { account: ACCOUNT, from: 'created' as const } : opts.pin;
+  const labelKept = Object.values(opts.keys.creations ?? {})[0]?.label;
+  let keys = pin === null || labelKept === undefined ? opts.keys : pinnedIn(opts.keys, labelKept, pin.account, pin.from);
   let s = 0;
   let f = 0;
   const standings = opts.standings ?? [standingOf()];
@@ -142,12 +146,7 @@ const world = (opts: {
     now: () => Date.now(),
     timeToLive: async (tx) => opts.ttl?.[tx] ?? Date.now() + (opts.skew ?? 0) + 30 * 60_000,
   };
-  const record: WalletRecord = {
-    drewTheLabel: () => false,
-    pinnedFor: () => ({ account: ACCOUNT, created: true }),
-    pin: async (_l, a) => { pinned.push(a); },
-    ...opts.record,
-  };
+  const record: WalletRecord = { drewTheLabel: () => false, ...opts.record };
   const call: AnsweredCall = async (method, path, body) => {
     events.push(`call ${method} ${path}`);
     calls.push({ method, path, body: body === undefined ? undefined : JSON.parse(body) });
@@ -178,7 +177,7 @@ const world = (opts: {
       },
     },
   });
-  return { reach, ctx, relays, calls, asks, pinned, keysNow: () => keys, record, events, shown };
+  return { reach, ctx, relays, calls, asks, keysNow: () => keys, record, events, shown };
 };
 
 const intentFor = (label: string): ActIntent => ({ name: 'finish-company', fields: { company: label } } as ActIntent);
@@ -432,11 +431,32 @@ describe('FINISHING A COMPANY IN THE WALLET', () => {
   });
 
   /* RED WHEN: a company this wallet did not start, or whose account it did not pin as one it created, is finished from a page's ask. */
+  it('names the founding seat\'s registry entry owed once the account is seen finished and pinned to it, and never otherwise', async () => {
+    const label = drawCompanyLabel();
+    const named = async (over: { pin?: { readonly account: string; readonly from: PinFrom }; finished?: boolean[]; mark?: boolean }) => {
+      const { keys, creation } = await keptFor(label);
+      const seat = keys.accounts[creation.accountId]!;
+      const leaf = (await foundingSeatOf(identity, label)).leaf;
+      const k = over.mark === true ? { ...keys, accounts: { ...keys.accounts, [creation.accountId]: { ...seat, registry: { leaf, written: true as const } } } } : keys;
+      const w = world({ keys: k, finished: over.finished ?? [true], ...(over.pin === undefined ? {} : { pin: over.pin }) });
+      const owed: unknown[] = [];
+      const steps = finishCompanyAction(w.reach).steps(intentFor(label));
+      await steps[1]!.run({ ...w.ctx(2), registryEntryOwed: (write) => { owed.push(write); } }).catch(() => undefined);
+      return owed.length;
+    };
+    /* RED WHEN: a finished company pinned to this account owes no entry, or owes it twice. */
+    expect(await named({})).toBe(1);
+    /* RED WHEN: an entry is owed for an account other than the one this label is pinned to. */
+    expect(await named({ pin: { account: 'f0'.repeat(32), from: 'created' } })).toBe(0);
+    /* RED WHEN: an entry already found written is owed again. */
+    expect(await named({ mark: true })).toBe(0);
+  });
+
   it('refuses, before anything is built, a label this wallet did not draw or pin as a company it created', async () => {
     const label = drawCompanyLabel();
     const { keys } = await keptFor(label);
-    for (const record of [{ pinnedFor: () => null, drewTheLabel: () => false }, { pinnedFor: () => ({ account: ACCOUNT, created: false }) }]) {
-      const w = world({ keys, record });
+    for (const over of [{ pin: null, record: { drewTheLabel: () => false } }, { pin: { account: ACCOUNT, from: 'invited' as const } }]) {
+      const w = world({ keys, ...over });
       const action = finishCompanyAction(w.reach);
       expect(await action.check(intentFor(label), w.ctx(1).held)).toEqual({ key: 'act.finish-company.why.not-drawn-here' });
       await expect(action.steps(intentFor(label))[0]!.run(w.ctx(1))).rejects.toBeInstanceOf(StepRefused);
@@ -623,7 +643,7 @@ describe.skipIf(!ON_DISK)('THE ACCOUNT BUILT AND SIGNED IN THE WALLET [needs con
     const { keys, creation } = await keptFor(label, { deploy: null, signed: null, recorded: false });
     const w = world({
       keys, held: false, builds: realBuilds(opts), ...(opts.keepRefuses === true ? { keepRefuses: true } : {}),
-      record: { pinnedFor: () => null, drewTheLabel: (l) => l === label },
+      pin: null, record: { drewTheLabel: (l) => l === label },
     });
     const expected = (accountModule as unknown as { expectedVk: Record<string, string> }).expectedVk;
     Object.assign(w.reach, {
@@ -666,14 +686,15 @@ describe.skipIf(!ON_DISK)('THE ACCOUNT BUILT AND SIGNED IN THE WALLET [needs con
     expect(w.relays).toHaveLength(1);
     const [{ tx, label: what }] = w.relays as [{ tx: string; label: RelayLabel }];
     expect(what.what).toBe('creation');
-    /* RED WHEN: either is handed over before it is kept, so a stop in between leaves a creation the wallet cannot carry on. */
-    expect(w.events).toEqual(['keep', `relay creation ${tx}`, 'keep']);
+    /* RED WHEN: either is handed over before it is kept, or before the account is pinned, so a stop in between leaves a creation the wallet cannot carry on. */
+    expect(w.events).toEqual(['keep', 'keep', `relay creation ${tx}`, 'keep']);
     const kept = w.keysNow().creations?.[creation.accountId];
     expect(kept).toMatchObject({ deploy: { tx }, signed: { tx: what.also }, recorded: true });
     /* RED WHEN: the second step is signed with anything but the company's committee key over what this wallet built: the ledger refuses it. */
     const state = applied([tx, what.also!]);
     expect(state.index(kept!.deploy!.account)).toBeTruthy();
-    expect(w.pinned).toEqual([kept!.deploy!.account]);
+    /* RED WHEN: the account read off the deploy this wallet signed is not pinned as the company it created. */
+    expect(w.keysNow().pins?.[label]).toMatchObject({ account: kept!.deploy!.account, from: 'created' });
   }, 120_000);
 
   /*

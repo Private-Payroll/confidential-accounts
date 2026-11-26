@@ -1,0 +1,26 @@
+pragma language_version 0.28.0;
+import CompactStandardLibrary;
+
+/*
+ * THE PRIVATE REGISTRY. A write-once map from a tag to a sealed entry, so a
+ * person who holds only their seed can find again the companies they hold a
+ * seat in. Each tag and each entry is drawn and sealed on the person's own
+ * device; the chain sees random bytes and keeps them. Nothing here can be
+ * changed or removed once written: a tag already present is refused, and the
+ * contract is deployed with no one able to replace its rules.
+ */
+
+/* Every entry ever written, by its tag. */
+export ledger entries: Map<Bytes<32>, Bytes<288>>;
+
+/*
+ * Writes one sealed entry at one tag. Refuses the all-zero tag, which is the
+ * value an unset tag would carry, and refuses a tag that already holds an
+ * entry, so no one can overwrite what another person wrote.
+ */
+export circuit put(tag: Bytes<32>, entry: Bytes<288>): [] {
+  const at = disclose(tag);
+  assert(at != default<Bytes<32>>, "the registry takes no entry at the all-zero tag");
+  assert(!entries.member(at), "the registry already holds an entry at this tag");
+  entries.insert(at, disclose(entry));
+}

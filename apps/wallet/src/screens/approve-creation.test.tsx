@@ -27,7 +27,7 @@ import { keysOnDisk, ACCOUNT_KEYS } from '../../../../contracts/test/keys-on-dis
 import { Approve } from './approve.js';
 import { secretFromWords } from 'midnight-identity/keys/derivation';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
-import { emptyProfile, pinnedAccountOf, recordRelease } from 'midnight-identity/profile/model';
+import { emptyProfile, recordRelease } from 'midnight-identity/profile/model';
 import { load, save } from 'midnight-identity/profile/store';
 import { CREATION_SIGNATURE_SCHEMA } from 'midnight-identity/profile/creation-sign';
 import { watchedStore } from '../testing/settled-store.js';
@@ -292,7 +292,8 @@ describe.skipIf(!ON_DISK)('THE APPROVAL SURFACE NO LONGER SIGNS A DEPLOY A PAGE 
       expect(container.querySelector('[data-creation-refused]')).toBeNull();
       const kept = await load(port, identity);
       if (kept.of !== 'profile') throw new Error(`the wallet's record did not open: ${kept.of}`);
-      expect(pinnedAccountOf(kept.profile, LABEL)).toBeNull();
+      /* RED WHEN: the wallet's own record carries a pin: the account a company is pinned to lives only in the saved keys. */
+      expect('pinned' in kept.profile).toBe(false);
       expect(opener.sent.filter((m) => (m.message as { schema?: string }).schema === CREATION_SIGNATURE_SCHEMA)).toEqual([]);
       cleanup();
     }

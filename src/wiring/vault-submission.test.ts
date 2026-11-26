@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { keysOnDisk, VAULT_KEYS } from '../../contracts/test/keys-on-disk.js';
+import { keyFileAround } from '../testing/an-operation-holding.js';
 import * as L from '@midnightntwrk/ledger-v9';
 import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
@@ -154,6 +155,17 @@ describe.skipIf(!KEYS_ON_DISK)('what the fee payer pays for on a vault [needs co
       const k = new Uint8Array(swapped.get('payout')!); k[k.length - 1] = (k[k.length - 1] ?? 0) ^ 1;
       swapped.set('payout', k);
       expect(refusalOf(readVaultDeploy(deploy, { ...expectations(), verifierKeys: swapped })))
+        .toMatch(/its 'payout' circuit is not the one this service's build compiled/);
+    });
+
+    it('REFUSES A CIRCUIT THAT HIDES A SECOND KEY IN ITS OTHER SLOT, AND NAMES IT', () => {
+      const d = deploy.intents.values().next().value.actions[0];
+      const state = L.ContractState.deserialize(d.initialState.serialize()) as any;
+      const op = state.operation('payout');
+      op.verifierKey = keyFileAround('a key nobody compiled', 'older');
+      state.setOperation('payout', op);
+      /* RED WHEN: the service pays for a vault whose circuits are judged by the one key the ledger's own reading shows. */
+      expect(refusalOf(readVaultDeploy(oneIntent([{ address: d.address, initialState: state }]), expectations())))
         .toMatch(/its 'payout' circuit is not the one this service's build compiled/);
     });
 

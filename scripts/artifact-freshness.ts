@@ -1,6 +1,6 @@
 /**
  * THE SUITE REFUSES TO RUN AGAINST AN ARTIFACT OLDER THAN THE SOURCE IT WAS
- * BUILT FROM, for the whole suite and both contracts.
+ * BUILT FROM, for the whole suite and every contract.
  *
  * The whole-suite run already made this call for the account contract: a
  * stale compile is worse than no compile, because a test run against the wrong
@@ -58,7 +58,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { codeHash } from './contract-version.mjs';
-import { CONTRACTS, contractSources } from './contract-sources.mjs';
+import { CONTRACT_TABLE, contractSources } from './contract-sources.mjs';
 import { dirname, isAbsolute, join } from 'node:path';
 
 /**
@@ -67,8 +67,8 @@ import { dirname, isAbsolute, join } from 'node:path';
  *
  * THE DOOR IS NAMED AS A COMMAND THIS REPOSITORY DEFINES, not as a file on one
  * machine: a refusal that names a file a stranger's copy does not contain is
- * not a refusal anybody can act on. `package.json` carries both commands, and a
- * test below holds them to being there.
+ * not a refusal anybody can act on. `package.json` carries the command, and a
+ * test below holds it to being there.
  */
 export type ArtifactPair = {
   /**
@@ -83,29 +83,18 @@ export type ArtifactPair = {
 };
 
 /**
- * BOTH CONTRACTS, AND THE VAULT IS NOT AN AFTERTHOUGHT HERE.
+ * EVERY CONTRACT IN THE TABLE, NOT ONLY THE ONE A TEST HAPPENS TO LOAD.
  *
- * The whole-suite run's own recompile guards `ConfidentialAccount.compact` alone, and
- * `package.json`'s `pretest` runs `compact:fast`, which is
- * `./scripts/compile-contract.sh` — the ACCOUNT only. So nothing in this
- * repository has ever checked the vault's artifact against the vault's source,
- * and `contracts/managed-vault/contract/index.js:2` imports the account's
- * generated module through the `contracts/Acct` symlink, which means loading
- * the vault artifact loads the account artifact too. A vault-only check would
- * be as wrong as the account-only one.
+ * Each pair is read off `CONTRACT_TABLE` in `scripts/contract-sources.mjs`, so a contract added there is
+ * checked here with no second list. The vault's generated module imports the account's through the
+ * `contracts/Acct` link, so loading the vault loads the account too, and a check of one alone would
+ * pass a stale other. `npm run compact:fast` compiles every contract in the table, so it is the one door.
  */
-export const CONTRACT_ARTIFACTS: readonly ArtifactPair[] = [
-  {
-    source: CONTRACTS.account,
-    artifact: 'contracts/managed/contract/index.js',
-    door: 'npm run compact:fast',
-  },
-  {
-    source: CONTRACTS.vault,
-    artifact: 'contracts/managed-vault/contract/index.js',
-    door: 'npm run compact:vault',
-  },
-];
+export const CONTRACT_ARTIFACTS: readonly ArtifactPair[] = Object.values(CONTRACT_TABLE).map((c) => ({
+  source: c.source,
+  artifact: `${c.compiled}/contract/index.js`,
+  door: 'npm run compact:fast',
+}));
 
 export type RefusalKind =
   /** The source, or a file it brings in, changed after the artifact. The tests would report on code that is not the code. */

@@ -93,6 +93,7 @@ import {
   aCompanyOfTwoSeats, acmeChain, acmeDirectoryDeps, acmeReads, ACME_STATE, seatsTakenByInvitation, ADA, ADDRESS, apiAs, BO, chains, CO, KEY, LABEL, peopleRecords, seatBoAs, seatOf, sendAs, store,
   type Seat,
 } from './a-company-of-two-seats.test-support.js';
+import { keyFileAround, operationHolding } from '../testing/an-operation-holding.js';
 import { viewOver, viewOpenedEachTime, foundingRecordsOver, storeReachOver } from '../testing/writes-over-a-send.js';
 
 /* Bo holds an admin's seat here, as his invitation gave it. */
@@ -314,14 +315,14 @@ const deployed = new Map<string, { readonly account: string; readonly committee:
 /** What each deployed vault's ledger holds for its start: the commitment to its secret, and its sealed copies and their root by key. */
 const vaultLedgers = new Map<string, { nonceCommitment: Uint8Array; readonly copies: Map<string, Uint8Array> }>();
 /* A circuit's verifying key, as both the service's build and the vaults it deploys hold it. */
-const verifierKeyOf = (circuit: string): Uint8Array => new TextEncoder().encode(`vk:${circuit}`);
+const verifierKeyOf = (circuit: string): Uint8Array => keyFileAround(`vk:${circuit}`);
 /* The account's own circuits, as the service's build and the account on the test's chain hold them. */
 const ACCOUNT_CIRCUITS = ['adopt', 'approve', 'propose'];
 const keysOf = (circuits: readonly string[]): ReadonlyMap<string, Uint8Array> => new Map(circuits.map((c) => [c, verifierKeyOf(c)]));
 /* A contract's state as the service reads it: who holds it, its circuits with their keys, and for a vault the account it is pinned to. */
 const stateHeldBy = (committee: readonly CommitteeKey[], threshold: number, counter: bigint, circuits: readonly string[], ledger?: { account: string }) => ({
   maintenanceAuthority: { committee: committee.map((k) => ({ tag: k.tag, value: k.value })), threshold, counter },
-  operations: () => [...circuits], operation: (c: string) => ({ verifierKey: verifierKeyOf(c) }), serialize: () => new Uint8Array([1]),
+  operations: () => [...circuits], operation: (c: string) => operationHolding(verifierKeyOf(c)), serialize: () => new Uint8Array([1]),
   ...(ledger === undefined ? {} : { ledger }),
 });
 interface DeployOnTheWire { readonly vault: string; readonly account: string; readonly committee: readonly CommitteeKey[]; readonly threshold: number }

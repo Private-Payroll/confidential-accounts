@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
@@ -24,6 +24,14 @@ import { moreThanTheFeeRefusal, notOneCallRefusal, recoveryAction, type Recovery
 import { intentOf, ownWalletOver, type Over } from './own-wallet-double.test-support.js';
 import * as ledger from '@midnightntwrk/ledger-v9';
 import { stepOverItsCall } from './step-views.test-support.js';
+import { madeByTheWords, pinnedIn } from './seats-the-words-make.test-support.js';
+
+/* Each signer's wallet's words make the seat it holds on the company. */
+vi.mock('midnight-identity/profile/seat-keys', async (real) => {
+  const { seatKeysAsSeated } = await import('./seats-the-words-make.test-support.js');
+  const { committeeKeyFor } = await import('midnight-identity/profile/committee-key');
+  return seatKeysAsSeated(await real<typeof import('midnight-identity/profile/seat-keys')>(), committeeKeyFor as never);
+});
 
 /*
  * **A RECOVERY OF THE COMPANY'S RECORDS IS RAISED, APPROVED AND CARRIED OUT FROM EACH SIGNER'S OWN WALLET.** The
@@ -154,15 +162,18 @@ const aWallet = async (c: Awaited<ReturnType<typeof aCompany>>, chain: ReturnTyp
   };
   const ctxOf = (intent: ActIntent) => {
     const told: Record<string, string | number> = {};
+    /* The signer's own wallet, whose words make the seat it signs with. */
+    const identity = identityFromSecret(newSecret());
+    madeByTheWords(identity, LABEL, who.secret);
     const ctx = stepOverItsCall({
       intent, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-      held: { identity: identityFromSecret(newSecret()), account: 0 }, at: { step: 1, steps: 3 }, signal: new AbortController().signal,
+      held: { identity, account: 0 }, at: { step: 1, steps: 3 }, signal: new AbortController().signal,
       relay: async () => { log.push('relay asked'); throw new Error('a recovery relays nothing through the page'); },
       call: async () => { log.push('call asked'); throw new Error('a recovery asks the service nothing'); },
       tell: (x: Record<string, string | number>) => { Object.assign(told, x); },
       show: () => {},
       sentByTheWallet: () => { log.push('act told of a send'); },
-      keyring: { open: () => ({ read: () => ({ accounts: { [COMPANY]: { signerId: 's', signingSecret: who.secret, blinding: who.blinding, scope: SCOPE, wrappingSecret: '02'.repeat(32) } } }) }), keep: async () => {} },
+      keyring: { open: () => ({ read: () => pinnedIn({ accounts: { [COMPANY]: { signerId: 's', signingSecret: who.secret, blinding: who.blinding, scope: SCOPE, wrappingSecret: '02'.repeat(32) } } }, LABEL, ACCOUNT) }), keep: async () => {} },
     }) as unknown as StepContext;
     return { ctx, told };
   };

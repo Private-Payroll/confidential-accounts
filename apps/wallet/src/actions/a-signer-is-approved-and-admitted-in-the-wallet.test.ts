@@ -8,6 +8,7 @@ import { SeatKeyNotFromTheInvitee } from '../../../../src/core/seat-invite-proof
 import { StepRefused, type StepContext } from './definition.js';
 import { InvitationOutrun } from '../../../../packages/web-shared/src/company-change-on-device.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { handedInFor, marksInMemory, pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **A SIGNER INVITED BY ADDRESS IS APPROVED, AND THEN ADMITTED, FROM ANOTHER SEAT'S WALLET, ONE WINDOW EACH.** What the
@@ -143,6 +144,7 @@ const refusalOf = async (p: Promise<unknown>): Promise<{ key: string; code: stri
   return { key: (e as StepRefused).words.key, code: (e as StepRefused).code };
 };
 /* Runs the act whole, as the wallet runs it for the page, and gives back the lines it writes to the page's report and its end. */
+const REQUESTER = { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' };
 const ranWhole = async (def: ReturnType<typeof approveProposalAction>, i: ActIntent) => {
   const lines: string[] = [];
   const ended: unknown[] = [];
@@ -151,9 +153,10 @@ const ranWhole = async (def: ReturnType<typeof approveProposalAction>, i: ActInt
     request: {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
       purpose: 'A test.', nonce: 'n1', expiresAt: Date.now() + 20 * 60_000, hearsProgress: true, intent: i,
+      person: 'usr_a', keyring: handedInFor(identity, REQUESTER, 'usr_a', pinnedIn({ accounts: {} }, i.fields['company']!, i.fields['account']!)),
     } as never,
     channel: { step: () => true, relay: async () => 'relayed', answer: (a: unknown) => { ended.push(a); return true; } } as never,
-    held: { identity, secret, account: 0 } as never, stop: new AbortController().signal, log: (line) => { lines.push(line); },
+    held: { identity, secret, account: 0 } as never, stop: new AbortController().signal, log: (line) => { lines.push(line); }, marks: marksInMemory(),
   });
   return { lines, ended };
 };

@@ -13,7 +13,8 @@
         "indexerWs": "ws://localhost:8088/api/v4/graphql/ws",
         "faucet": null,
         "projectToken": null
-      }
+      },
+      "registries": []
     },
     "preview": {
       "id": "preview",
@@ -27,7 +28,8 @@
         "indexerWs": "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
         "faucet": "https://faucet.preview.midnight.network/api/drips",
         "projectToken": null
-      }
+      },
+      "registries": []
     },
     "preprod": {
       "id": "preprod",
@@ -44,7 +46,8 @@
           "setting": "BLOCKFROST_PREPROD_PROJECT_ID",
           "parameter": "project_id"
         }
-      }
+      },
+      "registries": ["b8c116a83eebc0c8c761e1777a1302263350c11052e4e570cb6fd7728eb59a12"]
     },
     "qanet": {
       "id": "qanet",
@@ -58,7 +61,8 @@
         "indexerWs": "wss://indexer.qanet.midnight.network/api/v4/graphql/ws",
         "faucet": "https://faucet.qanet.midnight.network/api/drips",
         "projectToken": null
-      }
+      },
+      "registries": []
     },
     "stagenet": {
       "id": "stagenet",
@@ -72,14 +76,16 @@
         "indexerWs": "wss://indexer.stagenet.shielded.tools/api/v4/graphql/ws",
         "faucet": "https://faucet.stagenet.shielded.tools",
         "projectToken": null
-      }
+      },
+      "registries": []
     },
     "mainnet": {
       "id": "mainnet",
       "kind": "real",
       "label": "Midnight",
       "testToken": null,
-      "endpoints": null
+      "endpoints": null,
+      "registries": []
     }
   }
 }
