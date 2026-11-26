@@ -60,6 +60,9 @@ dist/
 # Compact build output. Regenerate with `npm run compact`.
 contracts/managed/
 contracts/managed-vault/
+contracts/managed-registry/
+# keys a quick compile sets aside while it runs (scripts/compile-contracts.sh)
+contracts/.keys-kept-*
 # The symlink `compile-vault.sh` makes so the vault's generated caller can find
 # the account's generated module at the path it imports. Build output pointing
 # at build output.
@@ -292,9 +295,8 @@ PUBLIC-REPO-TAKE-LIST.txt
 
 
 # ── WORKING DOCUMENTS AT THE ROOT ──────────────────────────────────────────
-# AUDIT-FABLE.md's own line 3 says it is gitignored; until this rewrite it was
-# not. HANDOVER.md says "Not on GitHub" inside itself. XXkUxM9m is zero bytes
-# with a random name, referenced by nothing.
+# Notes kept beside the code while it is worked on, and one empty file with a
+# random name that nothing refers to. None of them is the software.
 AUDIT-FABLE.md
 BACKLOG.md
 CLAUDE.md
@@ -306,11 +308,9 @@ pi4a-cut.mjs
 
 
 # ── docs/ - NOTHING UNDER docs/ IS IN THE INDEX ────────────────────────────
-# The round documents, the board, the build order, the backlog, the register,
-# the build log, the corrections and the audit scopes are HOW WE WORK, not
-# what the software is. Several are controller-only under the working rules
-# and are edited while a session is running in this same tree, which is a
-# second, independent reason they are not in the index.
+# The planning and working notes kept under docs/ describe how the work is
+# done, not what the software is, and several are edited while other work runs
+# in this same folder, which is a second reason they are not in the index.
 docs/ROUND-*.md
 docs/HANDOFF-*.md
 docs/HOLD-*.md
@@ -325,10 +325,8 @@ docs/round-index.md
 
 docs/BOARD.md
 docs/BUILD-ORDER.md
-# The same board rendered for reading. Written by the controller in the same turn
-# as the .md above, so the two cannot drift. Controller-only, exactly like its
-# source, and it ships for the same reason that one does not: it is the plan and
-# the plan is not the product.
+# The same plan rendered for reading, written with the .md above so the two
+# cannot drift. It is not the product, so it is not in the index.
 docs/BUILD-ORDER.html
 docs/BUILD-ORDER-WHY.md
 docs/NEXT.md
@@ -391,18 +389,15 @@ docs/vaults.md
 #
 # THE RULE BELOW EXCLUDES THE CONTENTS AND NOT THE DIRECTORY, AND THAT IS THE
 # WHOLE POINT. Written `docs/design/`, git never descends into the directory and
-# a `!` line under it does nothing at all - the take list and this file would
-# then contradict each other, which is what was caught on 12 Sep with
-# docs/design/edges.json and on 13 Sep with packages/identity/lib/wallet/network.js.
+# a `!` line under it does nothing at all, so the take list and this file would
+# contradict each other.
 #
-# docs/handoff/ is six documents written for an internal successor — "You are
-# picking up a system that moves other people's salaries" — that CITE
-# DOCUMENTS WHICH DO NOT SHIP: docs/midnight/, docs/scope-identity.md,
-# BACKLOG.md. A reader following them reaches nothing. identity-brief.md
-# describes the OTHER repository and shipped by default.
+# The folder after it holds orientation notes for people working here that
+# cite documents which do not ship, so a reader following them reaches nothing.
 #
 # BOTH ARE KEPT ON DISK BECAUSE BOTH ARE USED HERE: the generated design
-# output is the working copy of a derived description, and docs/handoff/ is the map a person reads.
+# output is the working copy of a derived description, and the notes are the
+# map a person reads.
 docs/design/*
 !docs/design/the-account-contract.md
 !docs/design/the-vault-contract.md

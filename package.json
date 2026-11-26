@@ -9,7 +9,7 @@
     "api": "tsx src/server/index.ts",
     "dev": "ALLOW_SIMULATED_COMPANY_ADDRESS=1 VITE_ALLOW_LOCALHOST_ORIGIN=1 APP_ORIGIN=http://localhost:5173 WALLET_ORIGIN=http://localhost:5180 VITE_WALLET_ORIGIN=http://localhost:5180 VITE_DEV_ERROR_SINK=1 ALLOW_WEB_CONSOLE_SINK=1 tsx scripts/serve.ts",
     "compact": "./scripts/compile-contract.sh --full",
-    "compact:fast": "./scripts/compile-contract.sh",
+    "compact:fast": "./scripts/compile-contracts.sh",
   "compact:vault": "./scripts/compile-vault.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
