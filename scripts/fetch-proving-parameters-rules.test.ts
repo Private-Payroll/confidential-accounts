@@ -88,9 +88,10 @@ describe('the fetch is part of the keys check, ahead of the tests that need it',
 
   /* RED WHEN: CI's keys job does not fetch the parameters before its tests, or the step can be skipped or can fail unseen. */
   it('the keys job runs the fetch as a plain step between the vault build and the tests', () => {
-    const lines = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').split('\n');
+    const lines = readFileSync(join(ROOT, '.github/workflows/keys.yml'), 'utf8').split('\n');
     const keys = lines.findIndex((l) => /^ {2}keys:/.test(l));
-    const end = lines.findIndex((l, i) => i > keys && /^ {2}\S/.test(l));
+    const after = lines.findIndex((l, i) => i > keys && /^ {2}\S/.test(l));
+    const end = after === -1 ? lines.length : after;
     const job = lines.slice(keys, end);
     const build = job.findIndex((l) => l.includes('npm run compact:vault -- --full'));
     const fetchAt = job.findIndex((l) => l.includes('npx tsx scripts/fetch-proving-parameters.ts'));

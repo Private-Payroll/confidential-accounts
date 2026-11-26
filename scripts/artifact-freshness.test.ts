@@ -477,22 +477,39 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
    */
 
   /** A step, read far enough to answer whether it runs and what it runs. */
-  type WorkflowStep = { readonly run: string | null; readonly conditional: boolean; readonly tolerated: boolean };
-  /** A job, in the order its steps are written. */
-  type WorkflowJob = { readonly id: string; readonly conditional: boolean; readonly steps: readonly WorkflowStep[] };
+  type WorkflowStep = {
+    readonly run: string | null; readonly conditional: boolean; readonly tolerated: boolean; readonly env: Readonly<Record<string, string>>;
+  };
+  /** A named group of a job's matrix: its one-line description and the files it runs. */
+  type WorkflowGroup = { readonly group: string; readonly about: string; readonly files: readonly string[] };
+  /** A job, in the order its steps are written. A step running `${{ matrix.files }}` reads as running every group's files. */
+  type WorkflowJob = {
+    readonly id: string; readonly conditional: boolean; readonly tolerated: boolean;
+    readonly steps: readonly WorkflowStep[]; readonly groups: readonly WorkflowGroup[];
+  };
 
   const parseWorkflow = (text: string): WorkflowJob[] => {
     const lines = text.split('\n');
     const jobsAt = lines.findIndex((l) => l === 'jobs:');
     if (jobsAt === -1) throw new Error('this is not a workflow: it has no `jobs:` block');
     const jobs: WorkflowJob[] = [];
-    let job: { id: string; conditional: boolean; steps: WorkflowStep[] } | null = null;
-    let step: { run: string | null; conditional: boolean; tolerated: boolean } | null = null;
+    let job: {
+      id: string; conditional: boolean; tolerated: boolean; steps: WorkflowStep[]; groups: { group: string; about: string; files: string[] }[];
+    } | null = null;
+    let step: { run: string | null; conditional: boolean; tolerated: boolean; env: Record<string, string> } | null = null;
+    let inEnv = false;
     let inSteps = false;
     let block: { indent: number; parts: string[] } | null = null;
 
     const closeStep = () => { if (job && step) job.steps.push({ ...step, run: block ? block.parts.join(' ').trim() : step.run }); step = null; block = null; };
-    const closeJob = () => { closeStep(); if (job) jobs.push({ ...job, steps: job.steps }); job = null; inSteps = false; };
+    const closeJob = () => {
+      closeStep();
+      if (job) {
+        const all = job.groups.flatMap((g) => g.files).join(' ');
+        jobs.push({ ...job, steps: job.steps.map((st) => ({ ...st, run: st.run === null ? null : st.run.replace('${{ matrix.files }}', all) })) });
+      }
+      job = null; inSteps = false;
+    };
 
     for (const raw of lines.slice(jobsAt + 1)) {
       const line = raw.replace(/\s+$/, '');
@@ -503,17 +520,27 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       if (block) block = null;
       if (body.startsWith('#')) continue;
 
-      if (indent === 2 && /^[A-Za-z0-9_-]+:$/.test(body)) { closeJob(); job = { id: body.slice(0, -1), conditional: false, steps: [] }; continue; }
+      if (indent === 2 && /^[A-Za-z0-9_-]+:$/.test(body)) { closeJob(); job = { id: body.slice(0, -1), conditional: false, tolerated: false, steps: [], groups: [] }; continue; }
       if (!job) continue;
       if (indent === 4 && body === 'steps:') { inSteps = true; continue; }
       if (indent === 4 && body.startsWith('if:')) { job.conditional = true; continue; }
+      if (indent === 4 && body.startsWith('continue-on-error:')) { job.tolerated = !/false\s*$/.test(body); continue; }
+      // The matrix's named groups: `- group:` opens one, and its `about:` and `files:` follow it.
+      if (!inSteps && indent === 10 && body.startsWith('- group:')) { job.groups.push({ group: body.slice(8).trim(), about: '', files: [] }); continue; }
+      const open = job.groups[job.groups.length - 1];
+      if (!inSteps && indent === 12 && open !== undefined && body.startsWith('about:')) { open.about = body.slice(6).trim(); continue; }
+      if (!inSteps && indent === 12 && open !== undefined && body.startsWith('files:')) { open.files = body.slice(6).trim().split(/\s+/).filter(Boolean); continue; }
       if (!inSteps) continue;
       if (indent === 6 && body.startsWith('- ')) {
         closeStep();
-        step = { run: null, conditional: false, tolerated: false };
+        step = { run: null, conditional: false, tolerated: false, env: {} };
+        inEnv = false;
       }
       if (!step) continue;
+      if (inEnv && indent === 10) { const [k, ...v] = body.split(':'); step.env[k!.trim()] = v.join(':').trim().replace(/^'|'$/g, ''); continue; }
+      inEnv = false;
       const field = body.replace(/^- /, '');
+      if (indent === 8 && field === 'env:') { inEnv = true; continue; }
       if (field.startsWith('run:')) {
         const rest = field.slice(4).trim();
         if (rest === '|' || rest === '>') block = { indent, parts: [] };
@@ -526,6 +553,92 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     closeJob();
     if (jobs.length === 0) throw new Error('this workflow declares no jobs, so nothing below would mean anything');
     return jobs;
+  };
+
+  /** What starts the workflow: the pull-request paths (null when every change does), whether it ignores paths, and a nightly run. */
+  type Triggers = {
+    readonly pullRequest: boolean; readonly paths: readonly string[] | null; readonly ignores: boolean; readonly nightly: boolean;
+    readonly types: string; readonly narrowed: boolean; readonly byHand: boolean;
+  };
+
+  const parseTriggers = (text: string): Triggers => {
+    const lines = text.split('\n');
+    const at = lines.findIndex((l) => l === 'on:');
+    if (at === -1) throw new Error('this workflow has no `on:` block, so when it runs cannot be read');
+    let event = ''; let key = '';
+    let pullRequest = false; let paths: string[] | null = null; let ignores = false; let nightly = false;
+    let types = ''; let narrowed = false; let byHand = false;
+    for (const raw of lines.slice(at + 1)) {
+      const line = raw.replace(/\s+$/, '');
+      if (line === '' || line.trim().startsWith('#')) continue;
+      if (!line.startsWith(' ')) break;
+      const indent = line.length - line.trimStart().length;
+      const body = line.trim();
+      if (indent === 2) {
+        event = body.replace(/:.*$/, ''); key = '';
+        if (event === 'pull_request') pullRequest = true;
+        if (event === 'workflow_dispatch') byHand = true;
+        continue;
+      }
+      if (indent === 4 && !body.startsWith('- ')) {
+        key = body.replace(/:.*$/, '');
+        if (event === 'pull_request' && key === 'paths') paths = [];
+        if (event === 'pull_request' && key === 'paths-ignore') ignores = true;
+        if (event === 'pull_request' && key === 'types') types = body.replace(/^types:\s*/, '');
+        if (event === 'pull_request' && /^branches/.test(key)) narrowed = true;
+        continue;
+      }
+      // Every night: a fixed minute and hour, every day of every month.
+      if (event === 'schedule' && /^- cron: '\d{1,2} \d{1,2} \* \* \*'$/.test(body)) nightly = true;
+      if (event === 'pull_request' && key === 'paths' && indent === 6 && body.startsWith('- ')) paths?.push(body.slice(2).trim().replace(/^'|'$/g, ''));
+    }
+    return { pullRequest, paths, ignores, nightly, types, narrowed, byHand };
+  };
+
+  /** A path filter as GitHub reads one: `**` crosses folders, `*` does not. */
+  const pathMatches = (glob: string, path: string): boolean =>
+    new RegExp(`^${glob.split('**').map((part) => part.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*')}$`).test(path);
+
+  /*
+   * THE KEYS RUN WHEN THEY CAN BREAK, AND ONLY THEN: on a pull request
+   * that changes a file the key tests load (its paths), every night on main, and when the
+   * workflow itself changes. So each file that gates on the keys, the contracts' source, the
+   * package versions, the lockfile and the workflow must each start it.
+   */
+  const MUST_START = ['contracts/src/Vault.compact', 'package.json', 'package-lock.json', '.github/workflows/keys.yml'];
+  /*
+   * THE PATHS, PINNED WHOLE. They were read off the graph of what the key tests load (their imports, the programs and
+   * configuration that run them, and what those read), which a test here cannot rebuild; so the list is held here
+   * exactly, and a path taken out or narrowed is refused rather than trusted.
+   */
+  const KEY_PATHS = [
+    'contracts/**', 'src/**', 'packages/**', 'apps/wallet/**', 'apps/web/**',
+    'scripts/compile-contract.sh', 'scripts/compile-contracts.sh', 'scripts/compile-vault.sh', 'scripts/contract-sources.mjs',
+    'scripts/contract-version.mjs', 'scripts/fetch-proving-parameters.ts', 'scripts/fetch-proving-parameters-rules.ts',
+    'scripts/artifact-freshness.ts', 'scripts/artifact-freshness.globalSetup.ts', 'scripts/identity-lib-fresh.ts',
+    'scripts/identity-lib-fresh.globalSetup.ts', 'scripts/ledger-limit.ts', 'scripts/ledger-limit.globalSetup.ts',
+    'scripts/dispatch-ceiling.ts', 'scripts/reconcile-vault-pool-rules.ts', 'scripts/browser-graph.ts', 'scripts/serve-rules.ts',
+    'scripts/find-compactc.sh', 'package.json', 'package-lock.json', '.npmrc', '.nvmrc', 'tsconfig.json', 'vitest.config.ts',
+    '.github/workflows/keys.yml', '.github/actions/build/**', '.github/checks/fetch-compiler.mjs', '.github/checks/toolchain.mjs',
+  ];
+  const triggerProblem = (workflow: string, gated: readonly string[]): string | null => {
+    const t = parseTriggers(workflow);
+    if (!t.nightly) return 'the keys run on no night: the workflow has no schedule';
+    if (!t.pullRequest) return 'the keys never run on a pull request';
+    if (!t.byHand) return 'the keys cannot be run by hand: the workflow has no workflow_dispatch';
+    if (t.narrowed) return 'the keys run only on pull requests into some branches';
+    if (!['opened', 'synchronize', 'reopened'].every((x) => t.types.includes(x))) return `the keys do not run on every push to a pull request (types ${t.types})`;
+    if (t.ignores) return 'the keys skip paths by paths-ignore, which nothing here reads as a change that cannot break them';
+    if (t.paths === null) return null;
+    if (t.paths.length === 0) return 'the keys run on no change at all: the pull request paths are empty';
+    const missing = KEY_PATHS.filter((g) => !t.paths!.includes(g));
+    if (missing.length > 0) return `a change to ${missing.join(', ')} can break a key test and no longer starts the keys`;
+    const extra = t.paths.filter((g) => !KEY_PATHS.includes(g));
+    if (extra.length > 0) return `the paths hold ${extra.join(', ')}, which the list read off the graph does not: add it there, or take it out`;
+    for (const f of [...gated, ...MUST_START]) {
+      if (!t.paths.some((g) => pathMatches(g, f))) return `${f} can break a key test and no change to it starts the keys`;
+    }
+    return null;
   };
 
   /*
@@ -590,6 +703,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
   ): string | null => {
     if (gated.length === 0) return 'nothing in the tree gates on the verifier keys, so this rule is checking nothing';
     const jobs = parseWorkflow(workflow);
+    const starts = triggerProblem(workflow, gated);
+    if (starts !== null) return starts;
 
     // `npm run compact` is the full build. The fast one leaves no keys and is
     // the whole reason anything is gated. Matched as a whole command so that
@@ -599,6 +714,13 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     if (carrying.length !== 1) return `${carrying.length} jobs build the proving keys; there must be exactly one`;
     const job = carrying[0]!;
     if (job.conditional) return `the ${job.id} job is conditional, so it need never run`;
+    if (job.tolerated) return `the ${job.id} job tolerates its own failure`;
+    // EACH GROUP FILE IS A FILE OF THIS TREE, WRITTEN AS THE TREE WRITES IT, or the test it meant runs in no group.
+    for (const g of job.groups) {
+      for (const f of g.files) {
+        if (f !== f.replace(/^\.\//, '') || !existsSync(join(ROOT, f))) return `the ${g.group} group of ${job.id} names ${f}, which is no file of this tree`;
+      }
+    }
 
     const at = job.steps.findIndex(builds);
     const build = job.steps[at]!;
@@ -610,7 +732,8 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     const after = job.steps.slice(at + 1);
     const reads = after.filter((s) => s.run !== null && /(^|&&\s*)(npx )?vitest run(\s|$)/.test(s.run));
     if (reads.length === 0) return `nothing in ${job.id} runs the suite after the keys are built`;
-    for (const missing of gated.filter((f) => !reads.some((s) => (s.run as string).includes(f)))) {
+    const runs = (s: WorkflowStep, f: string): boolean => (s.run as string).split(/\s+/).includes(f);
+    for (const missing of gated.filter((f) => !reads.some((s) => runs(s, f)))) {
       return `${missing} gates on the keys and is run by no step after they are built`;
     }
     // THE VAULT'S KEYS ARE NOT THE ACCOUNT'S, and the account's full build does
@@ -623,7 +746,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       if (job.steps[v]!.conditional) return `the step that builds the vault's keys in ${job.id} is conditional, so it need never run`;
       if (job.steps[v]!.tolerated) return `the step that builds the vault's keys in ${job.id} tolerates its own failure`;
       const afterVault = job.steps.slice(v + 1).filter((s) => reads.includes(s));
-      for (const missing of vaultGated.filter((f) => !afterVault.some((s) => (s.run as string).includes(f)))) {
+      for (const missing of vaultGated.filter((f) => !afterVault.some((s) => runs(s, f)))) {
         return `${missing} reads the vault's keys and is run by no step after they are built`;
       }
     }
@@ -637,19 +760,33 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       if (job.steps[c]!.conditional) return `the step that copies the account's keys into the wallet in ${job.id} is conditional, so it need never run`;
       if (job.steps[c]!.tolerated) return `the step that copies the account's keys into the wallet in ${job.id} tolerates its own failure`;
       const afterCopy = after.slice(c - at).filter((s) => reads.includes(s));
-      for (const missing of walletAccountGated.filter((f) => !afterCopy.some((s) => (s.run as string).includes(f)))) {
+      for (const missing of walletAccountGated.filter((f) => !afterCopy.some((s) => runs(s, f)))) {
         return `${missing} proves with the account's keys in the wallet and is run by no step after they are copied there`;
+      }
+    }
+    // EVERY FILE IN EXACTLY ONE NAMED GROUP, each group with its one-line description.
+    const seen = new Map<string, string>();
+    for (const g of job.groups) {
+      if (g.about === '') return `the ${g.group} group of ${job.id} has no one-line description`;
+      if (g.files.length === 0) return `the ${g.group} group of ${job.id} runs no files`;
+      for (const f of g.files) {
+        if (seen.has(f)) return `${f} is in two groups of ${job.id}, ${seen.get(f)} and ${g.group}`;
+        seen.set(f, g.group);
       }
     }
     for (const s of reads) {
       if (s.conditional) return `a step in ${job.id} that reads the keys is conditional, so it need never run`;
       if (s.tolerated) return `a step in ${job.id} that reads the keys tolerates its own failure`;
       if (/--passWithNoTests/.test(s.run as string)) return `a step in ${job.id} passes when it collects nothing`;
+      if (/\|\|/.test(s.run as string)) return `a step in ${job.id} that reads the keys carries ||, so its failure need not count`;
+      const flags = (s.run as string).split(/\s+/).filter((w) => w.startsWith('-'));
+      if (flags.length > 0) return `a step in ${job.id} that reads the keys filters its run with ${flags.join(' ')}`;
+      if (s.env.KEYS_MUST_BE_BUILT !== '1') return `a step in ${job.id} that reads the keys does not set KEYS_MUST_BE_BUILT, so a missing key stands down green`;
     }
     return null;
   };
 
-  const WORKFLOW = () => readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  const WORKFLOW = () => readFileSync(join(ROOT, '.github/workflows/keys.yml'), 'utf8');
 
   it('THE ASSERTIONS THAT NEED PROVING KEYS ARE STILL MADE SOMEWHERE, or this goes red', () => {
     const gated = gatedOnKeys();
@@ -816,17 +953,17 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('the build step tolerates its own failure',
       real.replace(/\n(\s+)run: npm run compact\n/, '\n$1continue-on-error: true\n$1run: npm run compact\n'), /tolerates/);
     refuses('the whole job is made conditional',
-      real.replace(/\n    name: keys\n/, '\n    name: keys\n    if: false\n'), /job is conditional/);
+      real.replace(/\n    name: keys \(/, '\n    if: false\n    name: keys ('), /job is conditional/);
     refuses('the runner is replaced by something that only prints',
-      real.replace(/- run: npx vitest run src\/midnight/, '- run: echo npx vitest run src/midnight'), /runs the suite after/);
+      real.replace('- run: npx vitest run ${{ matrix.files }}', '- run: echo npx vitest run ${{ matrix.files }}'), /runs the suite after/);
     // WRITTEN TO MATCH THE FILE WHEREVER IT SITS ON THE LINE, not to match a
     // line with exactly two files on it. The first version anchored on the
     // newline after the second name, so adding a THIRD file to that job stopped
     // the mutation applying at all and this control quietly proved nothing -
     // measured 13 Sep, when the third file was added.
     refuses('one of the files is dropped from the run and named in a comment',
-      real.replace(/(- run: npx vitest run [^\n]*?) (src\/midnight\/deferred-set\.test\.ts)([^\n]*)\n/,
-        '$1$3\n      # also $2\n'), /deferred-set\.test\.ts gates on the keys/);
+      real.replace(/(files: [^\n]*?) (src\/midnight\/deferred-set\.test\.ts)([^\n]*)\n/,
+        '$1$3\n            # also $2\n'), /deferred-set\.test\.ts gates on the keys/);
     refuses('the run passes when it collects nothing',
       real.replace(/- run: npx vitest run /, '- run: npx vitest run --passWithNoTests '), /collects nothing/);
     refuses('THE CHEAP ONE: the keys are built AFTER the tests that read them',
@@ -845,7 +982,7 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
     refuses('the vault\'s build is only the fast one',
       real.replace(/run: npm run compact:vault -- --full\n/, 'run: npm run compact:vault\n'), /nothing in keys builds the vault's keys/);
     refuses('a file that reads the vault\'s keys is dropped from the run',
-      real.replace(/(- run: npx vitest run [^\n]*?) (src\/wiring\/vault-submission\.test\.ts)([^\n]*)\n/, '$1$3\n'),
+      real.replace('src/wiring/vault-submission.test.ts ', ''),
       /vault-submission\.test\.ts gates on the keys/);
 
     refuses('the account\'s keys are never copied into the wallet',
@@ -858,8 +995,53 @@ describe('the guard is WIRED IN, and is pointed at the artifacts the tests impor
       real.replace(/\n(\s+)run: npm run vendor-keys:account\n/, '\n$1continue-on-error: true\n$1run: npm run vendor-keys:account\n'),
       /copies the account's keys into the wallet .* tolerates/);
     refuses('a file that proves with the account\'s keys in the wallet is dropped from the run',
-      real.replace(/(- run: npx vitest run [^\n]*?) (apps\/wallet\/src\/chain\/the-wallet-proves-the-pay-key\.test\.ts)([^\n]*)\n/, '$1$3\n'),
+      real.replace(/(group: wallet-pay-key\n[^\n]*\n\s+files: )[^\n]*\n/, '$1\n'),
       /the-wallet-proves-the-pay-key\.test\.ts gates on the keys/);
+
+    // THE NAMED GROUPS: every file in exactly one, each described.
+    refuses('a file is put in a second group',
+      real.replace(/(group: wallet-pay-key\n[^\n]*\n\s+files: )/, '$1contracts/test/vault-split.test.ts '), /vault-split\.test\.ts is in two groups/);
+    refuses('a group loses its one-line description',
+      real.replace(/(\n {10}- group: payroll\n) {12}about: [^\n]*\n/, '$1'), /payroll group of keys has no one-line description/);
+    // THE KEYS RUN WHEN THEY CAN BREAK: a change that can break a key test starts them, and so does every night.
+    refuses('the paths leave out a folder key tests live in',
+      real.replace("      - 'packages/**'\n", ''), /packages\/\*\* can break a key test/);
+    refuses('the paths leave out the lockfile',
+      real.replace("      - 'package-lock.json'\n", ''), /package-lock\.json can break a key test/);
+    refuses('the paths leave out the workflow itself',
+      real.replace("      - '.github/workflows/keys.yml'\n", ''), /keys\.yml can break a key test/);
+    refuses('the nightly run is taken away',
+      real.replace(/  schedule:\n(?:    #[^\n]*\n)?    - cron: [^\n]*\n/, ''), /no night/);
+    refuses('a change is skipped by paths-ignore',
+      real.replace('    paths:\n', "    paths-ignore: ['docs/**']\n    paths:\n"), /paths-ignore/);
+    refuses('the paths name nothing',
+      real.replace(/    paths:\n(?:      #[^\n]*\n|      - [^\n]*\n)+/, '    paths:\n'), /no change at all/);
+
+    // THE WHOLE-JOB AND RUN-LINE TOLERANCES, AND THE FLAGS THAT NARROW A RUN.
+    refuses('the whole job tolerates its own failure',
+      real.replace(/\n    name: keys \(/, '\n    continue-on-error: true\n    name: keys ('), /keys job tolerates its own failure/);
+    refuses('the run line swallows its failure',
+      real.replace('- run: npx vitest run ${{ matrix.files }}', '- run: npx vitest run ${{ matrix.files }} || true'), /carries \|\|/);
+    refuses('the run is filtered to some tests',
+      real.replace('- run: npx vitest run ${{ matrix.files }}', '- run: npx vitest run -t nothing ${{ matrix.files }}'), /filters its run with -t/);
+    refuses('the run no longer says the keys must be built',
+      real.replace("          KEYS_MUST_BE_BUILT: '1'\n", "          KEYS_MUST_BE_BUILT: ''\n"), /KEYS_MUST_BE_BUILT/);
+    refuses('a group names a file the tree does not hold, so the test it meant runs nowhere',
+      real.replace('apps/wallet/src/screens/approve-creation.test.tsx', 'apps/wallet/src/screens/approve-creation.test.ts'), /approve-creation\.test\.ts|approve-creation\.test\.tsx/);
+    refuses('a group names a file written another way, which the run would take twice',
+      real.replace(/(group: wallet-pay-key\n[^\n]*\n\s+files: )/, '$1./contracts/test/vault-split.test.ts '), /no file of this tree/);
+    refuses('a folder is narrowed',
+      real.replace("      - 'src/**'\n", "      - 'src/**/*.ts'\n"), /src\/\*\* can break a key test/);
+    refuses('a path is excluded by negation',
+      real.replace("      - 'src/**'\n", "      - 'src/**'\n      - '!src/core/**'\n"), /!src\/core\/\*\*/);
+    refuses('pull requests into most branches are left out',
+      real.replace('    paths:\n', '    branches: [nowhere]\n    paths:\n'), /some branches/);
+    refuses('a push to a pull request no longer starts the keys',
+      real.replace(/types: \[[^\]]*\]/, 'types: [closed]'), /every push to a pull request/);
+    refuses('the night never comes',
+      real.replace(/- cron: '[^']*'/, "- cron: '0 0 31 2 *'"), /no night/);
+    refuses('the keys can no longer be run by hand',
+      real.replace(/  # by hand[^\n]*\n  workflow_dispatch:\n/, ''), /by hand/);
 
     // AND A SHAPE IT CANNOT READ IS A REFUSAL RATHER THAN A PASS.
     expect(() => keysCoverageProblem('name: check\non: push\n', gated)).toThrow(/no `jobs:` block/);
