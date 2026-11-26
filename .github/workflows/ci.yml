@@ -101,28 +101,6 @@ jobs:
       - uses: ./.github/actions/build
       - run: ${{ matrix.run }}
 
-  test:
-    name: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
-        # Nothing in this workflow pushes anything, so the token this action
-        # would otherwise leave in the working copy has no use except to
-        # something that should not have it.
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/build
-      # The runner rather than the manifest's `test` script, which compiles and
-      # typechecks first. Both have already happened above, as marks of their
-      # own, and doing them again here would hide them behind this one.
-      # Chromium, for the test that starts the web application's workers in a
-      # browser (apps/web/src/dev-server.test.ts); without it that test stands
-      # down, and the suite would pass without ever having started them.
-      - run: npx playwright install chromium
-      - run: npx vitest run
-
   keys:
     # THE ASSERTIONS THAT READ A VERIFIER KEY, WHICH THE JOB ABOVE SKIPS.
     #
@@ -136,8 +114,14 @@ jobs:
     # disagree with the contract" are different lines on the page. What it
     # covers is the check that a deployed entry point still carries the key this
     # build produces, which is the one an operator cannot make for themselves.
+    # IN THREE PARTS, ON THREE MACHINES AT ONCE: each builds the keys for
+    # itself and proves a third of the files below, every file in one part.
     name: keys
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     # The wallet proves two of the account's calls for real here, and one proof of
     # a full-size account circuit takes minutes on one thread.
     timeout-minutes: 45
@@ -170,9 +154,38 @@ jobs:
       # copied from the builds above into its own folder and pinned there.
       - name: copy the company account's and the vault's keys into the wallet
         run: npm run vendor-keys:account
-      - run: npx vitest run src/midnight/a-contracts-maintenance-authority-is-read-planned-and-refused.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts src/server/proving-parameters.test.ts packages/web-shared/src/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-spending-policy-is-set-from-a-device.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-run-is-raised-approved-and-paid-on-the-signers-devices.test.ts contracts/test/the-record-anchor-from-the-page.test.ts contracts/test/a-recovery-is-carried-out-on-the-chain.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts contracts/test/a-payment-needs-a-vaults-receipt.test.ts src/midnight/a-company-is-created-in-two-steps.test.ts contracts/test/a-company-born-held-from-the-browser.test.ts src/server/account-creation.test.ts packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts apps/wallet/src/chain/this-builds-account-keys.test.ts apps/wallet/src/screens/approve-creation.test.tsx contracts/test/keys-on-disk.test.ts contracts/test/the-compiled-keys-are-the-keys-on-disk.test.ts packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts packages/web-shared/src/vault-on-chain-here.test.ts packages/web-shared/src/vault-worker-client.test.ts apps/wallet/src/chain/creation-screen-in-a-browser.test.ts apps/wallet/src/chain/the-wallet-proves-the-pay-key.test.ts apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts apps/wallet/src/actions/finish-company.test.ts apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts apps/wallet/src/chain/a-signer-invited-by-address-is-seated-from-the-wallet.test.ts apps/wallet/src/chain/a-company-account-is-read-at-one-block.test.ts contracts/test/vault-recovery.test.ts contracts/test/vault-registry.test.ts contracts/test/vault-split.test.ts contracts/test/vault-threshold-recovery.test.ts contracts/test/vault-unshielded.test.ts src/midnight/vault-coin-nonces.test.ts contracts/test/a-deposit-made-on-the-device.test.ts contracts/test/a-company-before-its-second-step-lands.test.ts contracts/test/a-vault-rebuilt-with-us-gone.test.ts contracts/test/a-vaults-secret-is-replaced-by-a-signer-who-did-not-raise-it.test.ts contracts/test/the-new-vault.test.ts contracts/test/transcript.test.ts contracts/test/vault-batch-and-merge.test.ts contracts/test/vault-client.test.ts contracts/test/vault-payout.test.ts apps/wallet/src/chain/account-circuits.test.ts
+      - run: npx vitest run src/midnight/a-contracts-maintenance-authority-is-read-planned-and-refused.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts src/wiring/vault-submission.test.ts src/server/proving-parameters.test.ts packages/web-shared/src/a-deposit-built-on-the-device.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-spending-policy-is-set-from-a-device.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-run-is-raised-approved-and-paid-on-the-signers-devices.test.ts contracts/test/the-record-anchor-from-the-page.test.ts contracts/test/a-recovery-is-carried-out-on-the-chain.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts contracts/test/a-payment-needs-a-vaults-receipt.test.ts src/midnight/a-company-is-created-in-two-steps.test.ts contracts/test/a-company-born-held-from-the-browser.test.ts src/server/account-creation.test.ts packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts apps/wallet/src/chain/this-builds-account-keys.test.ts apps/wallet/src/screens/approve-creation.test.tsx contracts/test/keys-on-disk.test.ts contracts/test/the-compiled-keys-are-the-keys-on-disk.test.ts packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts packages/web-shared/src/vault-on-chain-here.test.ts packages/web-shared/src/vault-worker-client.test.ts apps/wallet/src/chain/creation-screen-in-a-browser.test.ts apps/wallet/src/chain/the-wallet-proves-the-pay-key.test.ts apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts apps/wallet/src/actions/finish-company.test.ts apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts apps/wallet/src/chain/a-signer-invited-by-address-is-seated-from-the-wallet.test.ts apps/wallet/src/chain/a-company-account-is-read-at-one-block.test.ts contracts/test/vault-recovery.test.ts contracts/test/vault-registry.test.ts contracts/test/vault-split.test.ts contracts/test/vault-threshold-recovery.test.ts contracts/test/vault-unshielded.test.ts src/midnight/vault-coin-nonces.test.ts contracts/test/a-deposit-made-on-the-device.test.ts contracts/test/a-company-before-its-second-step-lands.test.ts contracts/test/a-vault-rebuilt-with-us-gone.test.ts contracts/test/a-vaults-secret-is-replaced-by-a-signer-who-did-not-raise-it.test.ts contracts/test/the-new-vault.test.ts contracts/test/transcript.test.ts contracts/test/vault-batch-and-merge.test.ts contracts/test/vault-client.test.ts contracts/test/vault-payout.test.ts apps/wallet/src/chain/account-circuits.test.ts apps/wallet/the-newest-released-version-is-this-build.test.ts --shard=${{matrix.shard}}/3
         env:
           KEYS_MUST_BE_BUILT: '1'
+
+  test:
+    # THE SUITE IN FOUR PARTS, ON FOUR MACHINES AT ONCE. On one machine it
+    # outgrew the time limit. Vitest splits the suite itself, every test in
+    # exactly one part, and the mark is green only when all four parts are.
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
+        # Nothing in this workflow pushes anything, so the token this action
+        # would otherwise leave in the working copy has no use except to
+        # something that should not have it.
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+      # The runner rather than the manifest's `test` script, which compiles and
+      # typechecks first. Both have already happened above, as marks of their
+      # own, and doing them again here would hide them behind this one.
+      # Chromium, for the test that starts the web application's workers in a
+      # browser (apps/web/src/dev-server.test.ts); without it that test stands
+      # down, and the suite would pass without ever having started them.
+      - run: npx playwright install chromium
+      - run: npx vitest run --shard=${{matrix.shard}}/4
 
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.

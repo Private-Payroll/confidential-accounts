@@ -3,7 +3,9 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { StepContext } from './definition.js';
+import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
 import { stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **A COMPANY IS READ ONCE FOR EACH STEP, THROUGH THAT STEP'S OWN VIEW, AND NEVER KEPT INTO THE NEXT.** An action
@@ -29,8 +31,9 @@ const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const LEAF = 'aa'.repeat(32);
+/* The founding seat this wallet's words make for the company, with the company pinned to its account. */
 const SEAT = {
-  signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32),
+  signerId: 's1', signingSecret: Buffer.from(seatKeysFor(identity, LABEL, 0).signingSecret).toString('hex'), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32),
 };
 const SEALED = { id: 'acc_1', companyLabel: LABEL, contractAddress: ACCOUNT, wrappedKeys: [] };
 const why = (key: string) => ({ key });
@@ -63,7 +66,7 @@ const world = () => {
       relay: async () => {},
       call,
       tell: () => {},
-      keyring: { open: () => ({ read: () => ({ accounts: { acc_1: SEAT } }) }) as never, keep: async () => {} },
+      keyring: { open: () => ({ read: () => pinnedIn({ accounts: { acc_1: SEAT } }, LABEL, ACCOUNT) }) as never, keep: async () => {} },
     }) as unknown as StepContext;
   };
   return { seen, reads: () => reads, chain, builder, at };

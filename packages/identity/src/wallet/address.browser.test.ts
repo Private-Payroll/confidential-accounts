@@ -38,7 +38,7 @@ describe('the address, in a runtime that has no Buffer', () => {
     expect(again.money.zswap).toHaveLength(32);
 
     /* And the address cannot be produced at all. */
-    expect(() => addressFor(again.money.zswap, 'testnet')).toThrow(/Buffer/u);
+    expect(() => addressFor(again.money.zswap, 'preprod')).toThrow(/Buffer/u);
   });
 
   it('works again once `midnight-identity/browser` has been imported', async () => {
@@ -46,8 +46,8 @@ describe('the address, in a runtime that has no Buffer', () => {
     const { ensureBuffer } = await import('../browser/buffer.js');
     ensureBuffer();
 
-    const address = addressFor(who.money.zswap, 'testnet');
-    expect(address.bech32).toMatch(/^mn_shield-addr_testnet1/u);
+    const address = addressFor(who.money.zswap, 'preprod');
+    expect(address.bech32).toMatch(/^mn_shield-addr_preprod1/u);
     expect(address.coinPublicKey).toMatch(/^[0-9a-f]{64}$/u);
   });
 

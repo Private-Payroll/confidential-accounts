@@ -6,10 +6,10 @@ import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.j
 import { keyringMarksFor, openHeldKeyring, SavedKeysRefused, type HeldKeyring, type KeyringMarks } from '../keyring/held-keyring.js';
 import { keysAtTheEnd, readKeysAtTheEnd } from './keys-at-the-end.js';
 import { checkedChannel, SecretWouldCross } from '../keyring/nothing-secret-crosses.js';
-import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type Words } from './definition.js';
+import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type StepContext, type Words } from './definition.js';
 import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
 import { CompanyChangedMeanwhile } from '../../../../packages/web-shared/src/company-view-probe.js';
-import { creationSource, invitationSource, type AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
+import { creationSource, feeSource, invitationSource, type AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
 import {
   answeredNothingSent, gateRefusal, serviceCallOver, StepViews, type MovingSend, type StraightDoor,
 } from './step-views.js';
@@ -55,6 +55,8 @@ export const DEADLINE_MARGIN_MS = 30_000;
 export const HEARTBEAT_MS = 30_000;
 /** How long the wallet waits for the page to say what it did with one transaction. */
 export const RELAY_PATIENCE_MS = 3 * 60_000;
+/** The longest the registry write owed after an action's steps may take before the action's end is answered. */
+export const REGISTRY_WRITE_MS = 3 * 60_000;
 
 /**
  * **WHERE THE ACTION'S OWN LINES GO WHEN ITS CALLER NAMES NOWHERE:** the console, as a warning, only in a development
@@ -434,17 +436,34 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     log(`step ${current} of ${total}: confirmed in the window`);
   };
   /*
-   * The one question asked after a hand-over: whether this wallet pays a network fee from the person's own DUST. Asked
-   * at most once in an action; a window that cannot ask, or a second ask, answers no, and nothing is paid.
+   * The one question asked after a hand-over: whether this wallet pays a network fee from the person's own DUST, `fee`
+   * being the fee shown. The person's answer holds for the rest of the action: a no answers every later ask no, and a
+   * yes pays each later fee no larger than the one it was given for, each still worked out and held to the fee alone.
+   * A larger fee, or one not named, is asked again. A Stop, or a window that cannot ask, answers no and nothing is
+   * paid; an ask while another is open answers no.
    */
-  let feeAsked = false;
-  const confirmFee = async (lines: readonly Words[]): Promise<boolean> => {
+  let feeAnswer: { readonly yes: boolean; readonly fee: bigint | undefined } | undefined;
+  const confirmFee = async (lines: readonly Words[], fee?: bigint): Promise<boolean> => {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
-    if (feeAsked || run.confirm === undefined) return false;
-    feeAsked = true;
+    if (run.confirm === undefined) return false;
+    if (feeAnswer !== undefined) {
+      if (!feeAnswer.yes) return false;
+      if (fee !== undefined && feeAnswer.fee !== undefined && fee <= feeAnswer.fee) return true;
+    }
+    feeAnswer = { yes: false, fee };
     const yes = await askedInTheWindow(lines, 'fee');
+    feeAnswer = { yes, fee };
     log(`step ${current} of ${total}: the fee ${yes ? 'confirmed' : 'declined'} in the window`);
+    return yes;
+  };
+  /* The fee of the registry write after the steps, asked on its own: no earlier answer of the action covers it. */
+  const confirmItsOwnFee = async (lines: readonly Words[]): Promise<boolean> => {
+    if (latched !== null) throw new ActionStopped(latched);
+    if (closed || run.stop.aborted) throw new ActionStopped('stopped');
+    if (run.confirm === undefined) return false;
+    const yes = await askedInTheWindow(lines, 'fee');
+    log(`the registry write's fee ${yes ? 'confirmed' : 'declined'} in the window`);
     return yes;
   };
 
@@ -557,9 +576,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     return null;
   };
 
-  let beat: ReturnType<typeof setInterval> | undefined;
-  try {
-    const steps = definition.steps(request.intent);
+  /* Before the first step: the steps counted, Stop and the deadline read, and the action's own check run. Null lets the first step run. */
+  const beforeTheSteps = async (steps: ReturnType<ActionDefinition['steps']>): Promise<RunEnded | null> => {
     total = Math.max(1, Math.min(steps.length, MOST_ACT_STEPS));
     if (steps.length === 0 || steps.length > MOST_ACT_STEPS) return finish('too-many', 1);
     if (run.stop.aborted) return finish('stopped', 1);
@@ -576,6 +594,50 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       says = found;
       return finish('check-failed', 1);
     }
+    return null;
+  };
+
+  /* The registry write a step named owed (`registryEntryOwed`), the last one named. */
+  let owedWrite: ((context: StepContext) => Promise<void>) | null = null;
+  /* What a step, or the registry write after the steps, is handed: the action's doors at `at`, through its own views. */
+  const contextAt = (at: StepAt, stepViews: StepViews, feeOfItsOwn = false): StepContext => {
+    const answeredAt: AnsweredCall = (method, path, body) => callInTurn(at, method, path, body);
+    return {
+      intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
+      tell, show, confirm, confirmFee: feeOfItsOwn ? confirmItsOwnFee : confirmFee, sentByTheWallet, seenOnTheChain, releaseReadKeys,
+      viewFor: stepViews.viewFor, sendStraight, movesWhoHolds: stepViews.movesWhoHolds,
+      invitations: invitationSource(answeredAt), creation: creationSource(answeredAt), fees: feeSource(answeredAt),
+      registryEntryOwed: (write) => { owedWrite = write; },
+    };
+  };
+  /*
+   * **THE REGISTRY WRITE A STEP NAMED OWED, ONCE EVERY STEP HAS PASSED**, before the end is answered: the window is
+   * told where the action stands first, and the write runs through a context of its own for at most
+   * `REGISTRY_WRITE_MS`, or until Stop or the deadline. What it throws, a no, Stop or the time limit is logged; none
+   * changes how the action ends, and what was not written stays owed for the next time.
+   */
+  const owedAfterTheSteps = async (outside: Promise<ActStop>): Promise<void> => {
+    const write = owedWrite;
+    if (write === null || latched !== null || closed || run.stop.aborted || now() >= deadline) return;
+    watch();
+    const at: StepAt = { step: total, steps: total };
+    const stepViews = (views = new StepViews(callsAt(at)));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const limit = new Promise<string>((resolve) => {
+      timer = setTimeout(() => resolve('its time ran out'), Math.max(0, Math.min(REGISTRY_WRITE_MS, deadline - now())));
+    });
+    const said = await Promise.race([
+      write(contextAt(at, stepViews, true)).then(() => null, (e: unknown) => `it threw: ${thrown(e)}`),
+      limit, outside.then((why) => `the action was cut short (${why})`),
+    ]).finally(() => { clearTimeout(timer); stepViews.end(); });
+    if (said !== null) log(`the registry entry owed was not written, and stays owed: ${said}`);
+  };
+
+  let beat: ReturnType<typeof setInterval> | undefined;
+  try {
+    const steps = definition.steps(request.intent);
+    const early = await beforeTheSteps(steps);
+    if (early !== null) return early;
 
     beat = setInterval(() => { channel.step({ step: current, steps: total }); }, HEARTBEAT_MS);
 
@@ -600,14 +662,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       log(`step ${current} of ${total} started: ${step.title.key}`);
       stepSettled = false;
       const stepViews = (views = new StepViews(callsAt(at)));
-      const answeredAt: AnsweredCall = (method, path, body) => callInTurn(at, method, path, body);
       const ran: Promise<Raced> = Promise.resolve()
-        .then(() => step.run({
-          intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-          tell, show, confirm, confirmFee, sentByTheWallet, seenOnTheChain, releaseReadKeys,
-          viewFor: stepViews.viewFor, sendStraight, movesWhoHolds: stepViews.movesWhoHolds,
-          invitations: invitationSource(answeredAt), creation: creationSource(answeredAt),
-        }))
+        .then(() => step.run(contextAt(at, stepViews)))
         .then(() => ({ of: 'ran' as const }), (error: unknown) => {
           log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);
           return { of: 'failed' as const, error };
@@ -618,6 +674,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const over = await afterTheStep(raced);
       if (over !== null) return over;
     }
+    await owedAfterTheSteps(outside);
     return finish(null, total);
   } catch (e) {
     log(`threw at step ${current} of ${total}: ${thrown(e)}`);

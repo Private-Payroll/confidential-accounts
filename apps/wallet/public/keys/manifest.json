@@ -1,7 +1,7 @@
 {
   "version": 9,
   "generatedAt": "2026-11-22T02:21:14.260Z",
-  "lastVendoredAt": "2026-11-22T05:05:52.532Z",
+  "lastVendoredAt": "2026-11-24T16:55:42.682Z",
   "sources": {
     "circuits": [
       "https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com",
@@ -12,7 +12,8 @@
       "https://srs.midnight.network"
     ],
     "account": "contracts/managed",
-    "vault": "contracts/managed-vault"
+    "vault": "contracts/managed-vault",
+    "registry": "contracts/managed-registry"
   },
   "artefacts": {
     "zswap/9/spend.prover": {
@@ -402,6 +403,18 @@
     "vault/retire.bzkir": {
       "bytes": 2037,
       "sha256": "4ff8492dfef56d0500d7d658030b51c4a7a0a3a031f3b72d20b2845770ed53db"
+    },
+    "registry/put.prover": {
+      "bytes": 888342,
+      "sha256": "6c612ae6d311c60ecaddb950f7bc283ead30b4bf69ef47802f70718fcf004e62"
+    },
+    "registry/put.verifier": {
+      "bytes": 1353,
+      "sha256": "d6f38bc381e79f5854d9058f01a30cb1e816dbdc1208878843c6df633d7fcd75"
+    },
+    "registry/put.bzkir": {
+      "bytes": 838,
+      "sha256": "d1d28e50db8db4001e6b7184a0e9fd3adcbef7c64d1326707a372f4cca085375"
     }
   }
 }

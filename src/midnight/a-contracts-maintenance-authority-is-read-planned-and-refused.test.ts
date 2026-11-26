@@ -947,9 +947,15 @@ describe('reading a state that cannot be read: never `agree`, and never a partia
     const { operationsFromContractState, compareVerifierKeys } = await import('./ledger.js');
     expect(operationsFromContractState(null, 'a').state).toBe('unreadable');
     expect(operationsFromContractState({}, 'a').state).toBe('unreadable');
+    /* `a` is whole: its one key in the newer slot, and the operation's bytes that hold it. */
+    const enc = new TextEncoder();
+    const key = Uint8Array.from([...enc.encode('midnight:verifier-key[v7]:'), 1 << 2, 1]);
+    const bytes = Uint8Array.from([...enc.encode('midnight:contract-operation[v6]:'), 0, 1, 1 << 2, 1, 0]);
+    const whole = { verifierKey: key, serialize: () => bytes };
+    expect(operationsFromContractState({ operations: () => ['a'], operation: () => whole }, 'addr').state).toBe('read');
     const halfRead = operationsFromContractState({
       operations: () => ['a', 'b'],
-      operation: (n: unknown) => (n === 'a' ? { verifierKey: new Uint8Array([1]) } : {}),
+      operation: (n: unknown) => (n === 'a' ? whole : {}),
     }, 'addr');
     expect(halfRead.state).toBe('unreadable');
     expect(halfRead.state === 'unreadable' && halfRead.why).toMatch(/"b" carries no readable/);
@@ -995,21 +1001,17 @@ describe('the verifier-key half of the builder refuses what the keys themselves 
     expect(c.why).toMatch(/NOTHING may be concluded/);
   });
 
-  it('says in AGREE\'s own words that it saw only the latest version of each key', async () => {
-    /* In the ledger's own types, a ContractOperation holds keys "potentially for
-     * different versions of the proving system" and "Only the latest available
-     * version is exposed to this API". A sentence wider than what was looked at is
-     * the silent-success shape. */
+  it('says in AGREE\'s own words that it compared both key slots of each entry point', async () => {
+    /* An operation keeps a key per proving system and the ledger checks each proof against the slot of its own
+     * version, so an agreement over one slot would be a sentence wider than what was looked at. */
     const { compareVerifierKeys } = await import('./ledger.js');
     const bytes = new Uint8Array([1, 2, 3]);
     const c = compareVerifierKeys(
-      { state: 'read', address: 'a', operations: [{ name: 'adopt', verifierKey: bytes }] },
+      { state: 'read', address: 'a', operations: [{ name: 'adopt', verifierKey: bytes, slots: [{ slot: 'v3', key: bytes }] }] },
       new Map([['adopt', bytes]]));
     expect(c.verdict).toBe('agree');
-    expect(c.why).toMatch(/LATEST VERSION OF EACH/);
-    /* The message names the reason: the only version the ledger exposes.
-     * RED WHEN: the sentence stops saying it is the ledger that exposes only the latest. */
-    expect(c.why).toMatch(/the only version the ledger exposes/);
+    /* RED WHEN: the agreement stops saying it covers both slots the ledger keeps. */
+    expect(c.why).toMatch(/in BOTH key slots the ledger keeps for each/);
   });
 });
 

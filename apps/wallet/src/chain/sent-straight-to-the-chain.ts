@@ -17,6 +17,7 @@ import type {
 } from '@midnightntwrk/wallet-sdk';
 import { ourServiceTookNothing, serviceNotReached, type ChainCall } from '../../../../packages/web-shared/src/hand-over.js';
 import { isVaultCallKind, movesNothing, vaultCallRefusal } from '../../../../src/wiring/vault-call-checks.js';
+import { registryPutRefusal } from '../../../../src/wiring/registry-call-checks.js';
 import {
   base64FromBytes, bytesFromBase64, untilItHasReadTheChain, whyThePaymentFailed, type BalanceDoors, type LedgerForBalancing,
 } from './balance-for-page.js';
@@ -27,7 +28,8 @@ import { carriedBy, NOT_ON_THIS_WALLETS_LEDGER, readOnThisWalletsLedger } from '
  * SDK's own types so the type checker holds every call to the facade's real signature.
  */
 export type OwnWalletFacade = Pick<WalletFacade,
-  'dust' | 'state' | 'adoptTransaction' | 'balanceUnboundTransaction' | 'signRecipe' | 'finalizeRecipe' | 'submitTransaction' | 'revert'>;
+  'dust' | 'state' | 'adoptTransaction' | 'balanceUnboundTransaction' | 'estimateTransactionFee' | 'signRecipe' | 'finalizeRecipe'
+  | 'submitTransaction' | 'revert'>;
 
 /** What paying a call's fee asks of this wallet. */
 export interface OwnWalletDoors {
@@ -261,9 +263,10 @@ export function onlyTheFeeAddedRefusal(call: unknown, back: unknown): string | n
 /**
  * How a call's fee is paid and where it goes, beside the person's own wallet: our fee sponsorship, which hands the
  * call back finished with only its fee added (absent when this act cannot ask it); whoever submits the finished
- * call, written out as base64 (absent, the person's own wallet hands it to the network); and what to tell when the
- * person's own DUST paid because sponsorship was down or could not be reached, and when whoever submits could not
- * be reached and the wallet handed the call to the network itself. The sponsorship answers the finished call and,
+ * call, written out as base64 (absent, the person's own wallet hands it to the network); the person's own choice to
+ * pay from their own wallet, which leaves the sponsorship unasked; the offer that asks the person before their own
+ * DUST pays; and what to tell when the person's own DUST paid instead of the sponsorship, and when whoever submits
+ * could not be reached and the wallet handed the call to the network itself. The sponsorship answers the finished call and,
  * when it holds a turn for it, how to tell it this wallet is done with that call. `handedOver` is told the moment
  * the call leaves this wallet, once per call, so the action can count a send the page never saw.
  */
@@ -273,7 +276,24 @@ export interface FeeAndSubmit {
   readonly ownDustPaid?: () => void;
   readonly unreached?: () => void;
   readonly handedOver?: () => void;
+  /** The person chose to pay this call's fee from their own wallet: the sponsorship is never asked, and the choice is their yes. */
+  readonly ownWalletChosen?: boolean;
+  /**
+   * Asks the person, with the fee worked out, whether their own DUST pays it; `sponsorSaid` is the sponsorship's
+   * refusal in its words, or null when it was down, unreached or not asked. Their yes is the only way their DUST pays
+   * without their own choice: absent, nothing is paid from it and nothing is sent.
+   */
+  readonly offer?: (fee: bigint, sponsorSaid: string | null) => Promise<boolean>;
 }
+
+/**
+ * Whether the sponsorship refused the call itself, by its own checks (`callRefused`), not only the payment: a call
+ * that must not go is never offered another way to pay for it.
+ */
+const theCallWasRefused = (e: unknown): boolean => {
+  const x = e as { callRefused?: unknown; body?: { callRefused?: unknown } | null } | null;
+  return x?.callRefused === true || x?.body?.callRefused === true;
+};
 
 /** A send the wallet refused before handing anything to the network: nothing was paid and nothing was sent. */
 export class FeeRefused extends Error {
@@ -397,14 +417,17 @@ export async function paidFromOwnDust<F extends PayingFacade, H, R extends Balan
 
 /**
  * **ONE CALL, ITS FEE ONLY PAID, AND HANDED OVER**: the proven call read and held
- * to `notWhatIsSentRefusal`. With `way.sponsor`, the sponsorship is asked first;
+ * to `notWhatIsSentRefusal`. With `way.sponsor`, and unless the person chose
+ * their own wallet (`way.ownWalletChosen`), the sponsorship is asked first;
  * what it hands back is held to `onlyTheFeeAddedRefusal` and refused whole if it
  * fails, never paid again from the person's DUST, and the sponsorship is told
- * the wallet is done with it whether it was sent or not. A refusal from the
- * sponsorship is the answer, in its words; only when the sponsorship is down
- * (`ourServiceTookNothing`), could not be reached (`serviceNotReached`: it never
- * submits, so nothing of the call is out), or there is none, is the fee paid
- * from the wallet's own DUST by `paidFromOwnDust`: held to what
+ * the wallet is done with it whether it was sent or not. A refusal of the call
+ * itself by the sponsorship's checks is final. When the sponsorship refuses
+ * only to pay, is down (`ourServiceTookNothing`), could not be reached
+ * (`serviceNotReached`: it never submits, so nothing of the call is out), or
+ * there is none, the fee is paid from the wallet's own DUST by
+ * `paidFromOwnDust` only on the person's own choice or their yes to
+ * `way.offer`, shown the fee and what the sponsorship said: held to what
  * `moreThanTheFeeRefusal` allows, signed and finished. The finished call goes to
  * `way.submit`, or from the wallet to the network; a `way.submit` that could not
  * be reached is gone around by `submittedOrStraight`. Anything that fails before the
@@ -430,14 +453,16 @@ export async function sentFromTheOwnWallet(
   }
   const notOne = notWhatIsSentRefusal(call, expected);
   if (notOne !== null) throw new FeeRefused(`the call is not the one this step sends: ${notOne}. This wallet paid nothing and sent nothing`);
-  if (way.sponsor !== undefined) {
+  let sponsorSaid: string | null = null;
+  if (way.sponsor !== undefined && way.ownWalletChosen !== true) {
     let back: { readonly tx: string; readonly done?: () => Promise<void> } | null;
     try {
       back = await way.sponsor(tx, expected);
     } catch (e) {
-      if (!ourServiceTookNothing(e) && !serviceNotReached(e)) {
-        throw new FeeRefused(`fee sponsorship refused this call (${said(e)}), so nothing was paid or sent. What it says is what resolves it`);
+      if (theCallWasRefused(e)) {
+        throw new FeeRefused(`fee sponsorship refused this call itself (${said(e)}), so nothing was paid or sent. What it says is what resolves it`);
       }
+      if (!ourServiceTookNothing(e) && !serviceNotReached(e)) sponsorSaid = said(e);
       back = null;
     }
     if (back !== null) {
@@ -449,14 +474,22 @@ export async function sentFromTheOwnWallet(
       return;
     }
   }
+  if (way.ownWalletChosen !== true && way.offer === undefined) {
+    throw new FeeRefused(`${sponsorSaid === null ? '' : `fee sponsorship refused this call (${sponsorSaid}), and `}`
+      + 'nobody could be asked whether to pay the fee from their own DUST, so nothing was paid or sent');
+  }
+  const offer = way.offer;
   /* Told only once the call has gone, so the window never says the person's DUST paid for a call it did not send. */
-  const ownDust = way.sponsor !== undefined;
+  const ownDust = way.sponsor !== undefined && way.ownWalletChosen !== true;
   await paidFromOwnDust<OwnWalletFacade, UnboundTx, UnboundTransactionRecipe, void>({
     facade: () => o.facade(), signSegment: () => o.signSegment(), stillWanted, handed, handedOver: () => way.handedOver?.(),
     refused: (_why, message) => new FeeRefused(message),
     adopt: (facade) => facade.adoptTransaction(bytesFromBase64(tx), 'Unbound'),
     adoptedAs: A_CALL,
     ttl: () => new Date(now() + FEE_TTL_MS),
+    ...(offer === undefined ? {} : {
+      confirm: { estimate: (facade, handle, ttl) => facade.estimateTransactionFee(handle, { ttl }), asked: (fee) => offer(fee, sponsorSaid) },
+    }),
     balance: (facade, handle, options) => facade.balanceUnboundTransaction(handle, options),
     giveBack: (facade, recipe) => facade.revert(recipe),
     names: { signed: 'the call', sent: 'call' },
@@ -576,14 +609,15 @@ function owesMoreThanItsFee(tx: unknown): string | null {
 
 /**
  * Why the proven call is not what `expected` says is sent, or null when it is: one call to the company's account
- * moving nothing (`notOneCallRefusal`), or the same check the service holds a vault's call to before it relays it
- * (`vaultCallRefusal`, one table for both), so the chain path sends nothing the service's shape checks would refuse.
+ * moving nothing (`notOneCallRefusal`), one `put` to a private registry (`registryPutRefusal`, the fee route's own
+ * check), or the same check the service holds a vault's call to before it relays it (`vaultCallRefusal`, one table for both), so the chain path sends nothing the service's shape checks would refuse.
  * A call that moves no coin is also held to owing nothing but its fee. A payout, a merge and a public payout move only
  * the vault's own coins: the wallet still adds DUST alone, held to `moreThanTheFeeRefusal`, so none of the person's own
  * money goes in.
  */
 export function notWhatIsSentRefusal(tx: unknown, expected: ChainCall): string | null {
   if (expected.kind === 'account-call') return notOneCallRefusal(tx, expected.contract, expected.circuit);
+  if (expected.kind === 'registry-put') return registryPutRefusal(tx, expected.contract) ?? owesMoreThanItsFee(tx);
   if (!isVaultCallKind(expected.kind)) return 'it is not a kind of call this wallet sends';
   const refused = vaultCallRefusal(expected.kind, tx, { vault: expected.contract, account: expected.account });
   return refused ?? (movesNothing(expected.kind) ? owesMoreThanItsFee(tx) : null);

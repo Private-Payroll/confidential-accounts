@@ -3,8 +3,6 @@
  * Each passes the screen's channel, consent and wallet choice on.
  */
 import type { ReactNode } from 'react';
-import { pinCompanyAccount, pinnedAccountOf } from 'midnight-identity/profile/model';
-import { save } from 'midnight-identity/profile/store';
 import type { Ask } from 'midnight-identity/profile/request';
 import { ApproveBalance } from './approve-balance.js';
 import { recordAsk } from '../lib/ask-record.js';
@@ -92,7 +90,8 @@ export function committeeView(v: AskedScreen<Extract<Ask, { kind: 'committee' }>
 }
 
 export function recordsKeyView(v: AskedScreen<Extract<Ask, { kind: 'records-key' }>>): ReactNode {
-  const { identity, port, readLabel, setChannelState, channel, profile, setProfile, request, consent, atOnce, readable, whoIsAsking } = v;
+  const { identity, readLabel, setChannelState, channel, request, consent, atOnce, readable, whoIsAsking } = v;
+  /* The account a company is pinned to is kept in the saved keys, which this ask does not carry: none is handed in, so nothing is signed. */
   return (
     <ApproveRecordsKey
       request={request}
@@ -103,20 +102,6 @@ export function recordsKeyView(v: AskedScreen<Extract<Ask, { kind: 'records-key'
       onDecline={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
       readLabel={readLabel}
       answerAtOnce={atOnce && readable}
-      pinned={profile === null ? null : pinnedAccountOf(profile, request.company)}
-      onPin={async (account, at) => {
-        if (profile === null) throw new Error('This wallet\'s record is not open, so nothing has been signed.');
-        /* Called only by the person's press confirming the company's fingerprint matches the one their inviter gave
-         * them, here or in the locked wallet's window: the account is kept as the company's once, and nothing is
-         * signed until it has been. */
-        const next = pinCompanyAccount(profile, { company: request.company, account, from: 'invited', at }, at);
-        try {
-          await save(port, identity, next);
-        } catch {
-          throw new Error('This wallet could not keep the company\'s account, so nothing has been signed. Try again.');
-        }
-        setProfile(next);
-      }}
     />
   );
 }

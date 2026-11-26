@@ -3,16 +3,19 @@ import type { ReactNode } from 'react';
 import { progress } from 'midnight-identity';
 import { hrefOf } from '../routes.js';
 import { useSession } from '../session.js';
+import type { Session } from '../session.js';
+import type { RegistryFinder } from '../chain/private-registry-on-chain.js';
+import { CompaniesFoundAgain, liveFind } from './companies-found-again.js';
 import { ErrorNote, Moon, StatusNote, WalletNameField } from '../components/ui.js';
 
 /**
- * RECOVERY — a resumable session with states, never a function call (§7.11).
- * The session lives in the provider, so leaving this screen and coming back
+ * RECOVERY — a resumable process with states, never a function call (§7.11).
+ * The recovery in progress lives in the provider, so leaving this screen and coming back
  * loses nothing; a RELOAD loses the gathered pieces on purpose, because a
- * gathering session holds threshold-many pieces — the whole secret — and
+ * recovery in progress holds threshold-many pieces — the whole secret — and
  * writing that anywhere unsealed is forbidden (`SECURITY.md`). The
  * screen says so rather than letting a person find out — and says the other
- * half too (§7.15): the session cannot travel, so if the last piece is on
+ * half too (§7.15): a recovery in progress cannot travel, so if the last piece is on
  * another machine, the CARDS go there.
  *
  * The threshold comes off the pieces themselves and they are held to agreeing
@@ -42,101 +45,24 @@ import { ErrorNote, Moon, StatusNote, WalletNameField } from '../components/ui.j
  * adding a second copy of it, and it replaces that wallet's passkey —
  * both true, neither destructive, and a person who is not told will read the
  * unchanged wallet count as a failure.
+ *
+ * ONCE THE RECOVERED WALLET IS OPEN HERE, it lists the companies its own registry
+ * entries name and the chain bears out (`CompaniesFoundAgain`), read from the
+ * chain alone. It keeps nothing: this screen holds no saved keys, so the first
+ * action for a company found keeps its account then.
  */
-export function Recover(): ReactNode {
+export function Recover({ find = liveFind }: { readonly find?: RegistryFinder } = {}): ReactNode {
   const {
     recovery, offerRecoveryPiece, withdrawRecoveryPiece, finishRecovery, abandonRecovery,
     resetRecovery, busy, error, phase, wallets,
   } = useSession();
-  const [text, setText] = useState('');
-  const [holder, setHolder] = useState('');
   const [replacedNote, setReplacedNote] = useState<string | null>(null);
-  /* A WALLET COMING BACK, WHICH IS NOT THE SAME QUESTION AS A NEW ONE.
-   * The person may or may not remember what they called it, and this browser
-   * usually has never heard of it; so the field is offered empty, and leaving
-   * it empty KEEPS whatever this browser already holds for this very secret
-   * (fingerprint-checked in `session.tsx`) rather than erasing it. */
-  const [walletName, setWalletName] = useState('');
 
   const state = recovery === null ? null : progress(recovery);
 
-  if (state && state.state === 'completed') {
-    /* The rebuild and the gate are two different facts, and this
-     * screen says each as its own. The rebuild is done — that is what
-     * `completed` means. Whether THIS MACHINE can open the account is the
-     * ceremony's outcome, read off the phase, never assumed from the
-     * rebuild. */
-    const opened = phase.name === 'unlocked';
-    return (
-      <div className="hero">
-        <Moon large />
-        <h1>
-          {opened && <><span className="ok" aria-hidden="true">✓</span>{' '}</>}
-          The account is back{opened ? '.' : ' — one step left.'}
-        </h1>
-        <p className="lede">
-          Rebuilt from {recovery?.usedCount} pieces and sealed on this machine. The
-          pieces themselves stay wherever they are — this changed nothing about them.
-        </p>
-        {opened ? (
-          <p className="muted">A new passkey opens it here.</p>
-        ) : (
-          <>
-            <p className="warn-text small">
-              The passkey for this machine was <strong>not</strong> made — that step
-              did not finish:
-            </p>
-            <ErrorNote message={error} />
-            <p className="muted small">
-              The account itself is safely sealed here. The wallet screen offers
-              &ldquo;Make a new passkey for this wallet&rdquo; — that finishes the job.
-            </p>
-          </>
-        )}
-        <p>
-          <a href={hrefOf('home')}>
-            <button type="button" className="primary">Go to your wallet</button>
-          </a>
-        </p>
-      </div>
-    );
-  }
+  if (state && state.state === 'completed') return <RecoveryFinished recovery={recovery} phase={phase} error={error} find={find} />;
 
-  if (state && state.state === 'cancelled') {
-    return (
-      <>
-        <h1>This recovery was stopped.</h1>
-        <p className="lede">
-          {recovery?.cancelledBecause ?? 'Cancelled.'} The pieces it had gathered were
-          dropped — a cancelled recovery keeps nothing (that is the rule, not an
-          accident). The pieces themselves are untouched, wherever they live.
-        </p>
-        <button type="button" onClick={resetRecovery}>Start a new recovery</button>
-        <p style={{ marginTop: '1.25rem' }}><a href={hrefOf('home')}>← Back</a></p>
-      </>
-    );
-  }
-
-  const add = (): void => {
-    const result = offerRecoveryPiece(text, holder);
-    if (!result.ok) return;
-    setText('');
-    setHolder('');
-    /* A replacement is said out loud — the count not moving would
-     * otherwise be the only clue that a piece was swapped rather than added. */
-    setReplacedNote(result.replaced === null
-      ? null
-      : `That replaced the piece already entered from “${result.replaced}” — `
-        + 'two pieces from one place count once.');
-  };
-
-  /* WHAT THIS BROWSER ALREADY HOLDS, to be named rather than warned
-   * about. The list comes from the session, which reads the records; the name
-   * of each is `walletNameOnRecord` scoped to its compartment, which is the
-   * unchecked reader `storage.ts` documents for exactly this — talking ABOUT
-   * a wallet whose secret is sealed. A wallet with no name falls back to a
-   * phrase, never to silence. */
-  const already = wallets.map((wallet, i) => wallet.name ?? `an unnamed wallet (${i + 1})`);
+  if (state && state.state === 'cancelled') return <RecoveryStopped recovery={recovery} resetRecovery={resetRecovery} />;
 
   return (
     <>
@@ -155,41 +81,7 @@ export function Recover(): ReactNode {
         gather them on it — this half-finished recovery cannot travel.
       </p>
 
-      <section className="card">
-        <h2>Add a piece</h2>
-        <textarea
-          rows={3}
-          autoComplete="off"
-          spellCheck={false}
-          aria-label="The piece's letters, from its card"
-          placeholder="the piece's letters, exactly as its card shows them — spaces don't matter"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-        />
-        <input
-          type="text"
-          aria-label="Where this piece came from"
-          placeholder="where it came from — e.g. “my Google Drive”, “the safe”"
-          value={holder}
-          onChange={(event) => setHolder(event.target.value)}
-          style={{ marginTop: '0.5rem', width: '100%' }}
-        />
-        <div style={{ marginTop: '0.75rem' }}>
-          <button
-            type="button"
-            className="primary"
-            disabled={text.trim() === '' || busy !== null}
-            onClick={add}
-          >
-            Add this piece
-          </button>
-        </div>
-        {replacedNote !== null && (
-          <p className="muted small" style={{ marginTop: '0.6rem', marginBottom: 0 }}>
-            {replacedNote}
-          </p>
-        )}
-      </section>
+      <PieceEntry offerRecoveryPiece={offerRecoveryPiece} busy={busy} replacedNote={replacedNote} setReplacedNote={setReplacedNote} />
 
       {state && recovery && (
         <section className="card" aria-label="Recovery progress">
@@ -213,60 +105,7 @@ export function Recover(): ReactNode {
             ))}
           </div>
           {state.state === 'ready' && (
-            <div style={{ marginTop: '0.75rem' }}>
-              {/* Above every finish button, because all of them run the
-                * ceremony that fixes the new passkey's label for good. */}
-              <WalletNameField
-                label="What you call this wallet (optional)"
-                value={walletName}
-                onChange={setWalletName}
-                hint={(
-                  <>
-                    Optional. Names are not part of the pieces, so a recovered wallet
-                    arrives without one; what you type here goes on the passkey this
-                    machine is about to make, and a passkey&rsquo;s label can never be
-                    changed afterwards. Left empty, a name this browser already holds
-                    for this same wallet is kept.
-                  </>
-                )}
-              />
-              <button
-                type="button"
-                className="primary big"
-                disabled={busy !== null}
-                onClick={() => { void finishRecovery(walletName); }}
-              >
-                Put the account back on this machine
-              </button>
-              {already.length === 0 ? (
-                <p className="faint small" style={{ marginTop: '0.5rem' }}>
-                  Nothing is stored in this browser, so nothing is replaced. A new
-                  passkey is made for this machine as part of finishing.
-                </p>
-              ) : (
-                <>
-                  {/* SAID BEFORE THE CEREMONY, AND IT IS NOW GOOD NEWS.
-                    * The two warning paragraphs and the confirm that stood
-                    * here refused a destruction that can no longer happen. */}
-                  <p className="small" style={{ marginTop: '0.5rem' }}>
-                    <strong>
-                      This browser already holds {already.length === 1
-                        ? 'one wallet' : `${already.length} wallets`}: {already.join(', ')}.
-                    </strong>{' '}
-                    The recovered account is added <em>beside</em> {already.length === 1
-                      ? 'it' : 'them'}. Nothing stored here is replaced and nothing here
-                    is lost — this browser holds several wallets and opens one at a time,
-                    and after finishing the recovered one is the one that is open.
-                  </p>
-                  <p className="faint small">
-                    If these pieces belong to a wallet this browser already holds,
-                    finishing re-seals that same wallet rather than adding a second copy
-                    of it — and the passkey made here replaces the one it had. A new
-                    passkey is made for this machine either way.
-                  </p>
-                </>
-              )}
-            </div>
+            <FinishHere busy={busy} finishRecovery={finishRecovery} wallets={wallets} />
           )}
           <p style={{ marginTop: '0.9rem', marginBottom: 0 }}>
             <button type="button" className="quiet" onClick={abandonRecovery}>
@@ -282,5 +121,202 @@ export function Recover(): ReactNode {
         <a href={hrefOf('home')}>← Back</a>
       </p>
     </>
+  );
+}
+
+/** The recovery done: the account rebuilt, and whether this machine's passkey opens it. */
+function RecoveryFinished({ recovery, phase, error, find }: Pick<Session, 'recovery' | 'phase' | 'error'> & { readonly find: RegistryFinder }): ReactNode {
+  /* The rebuild and the gate are two different facts, and this
+   * screen says each as its own. The rebuild is done — that is what
+   * `completed` means. Whether THIS MACHINE can open the account is the
+   * ceremony's outcome, read off the phase, never assumed from the
+   * rebuild. */
+  const opened = phase.name === 'unlocked';
+  return (
+    <div className="hero">
+      <Moon large />
+      <h1>
+        {opened && <><span className="ok" aria-hidden="true">✓</span>{' '}</>}
+        The account is back{opened ? '.' : ' — one step left.'}
+      </h1>
+      <p className="lede">
+        Rebuilt from {recovery?.usedCount} pieces and sealed on this machine. The
+        pieces themselves stay wherever they are — this changed nothing about them.
+      </p>
+      {phase.name === 'unlocked' ? (
+        <>
+          <p className="muted">A new passkey opens it here.</p>
+          <CompaniesFoundAgain identity={phase.identity} find={find} />
+        </>
+      ) : (
+        <>
+          <p className="warn-text small">
+            The passkey for this machine was <strong>not</strong> made — that step
+            did not finish:
+          </p>
+          <ErrorNote message={error} />
+          <p className="muted small">
+            The account itself is safely sealed here. The wallet screen offers
+            &ldquo;Make a new passkey for this wallet&rdquo; — that finishes the job.
+          </p>
+        </>
+      )}
+      <p>
+        <a href={hrefOf('home')}>
+          <button type="button" className="primary">Go to your wallet</button>
+        </a>
+      </p>
+    </div>
+  );
+}
+
+/** The recovery stopped: the gathered pieces are dropped, and a new one can start. */
+function RecoveryStopped({ recovery, resetRecovery }: Pick<Session, 'recovery' | 'resetRecovery'>): ReactNode {
+  return (
+    <>
+      <h1>This recovery was stopped.</h1>
+      <p className="lede">
+        {recovery?.cancelledBecause ?? 'Cancelled.'} The pieces it had gathered were
+        dropped — a cancelled recovery keeps nothing (that is the rule, not an
+        accident). The pieces themselves are untouched, wherever they live.
+      </p>
+      <button type="button" onClick={resetRecovery}>Start a new recovery</button>
+      <p style={{ marginTop: '1.25rem' }}><a href={hrefOf('home')}>← Back</a></p>
+    </>
+  );
+}
+
+/** The card a piece is entered on, from its letters and where it came from. */
+function PieceEntry({ offerRecoveryPiece, busy, replacedNote, setReplacedNote }: Pick<Session, 'offerRecoveryPiece' | 'busy'> & {
+  readonly replacedNote: string | null;
+  readonly setReplacedNote: (note: string | null) => void;
+}): ReactNode {
+  const [text, setText] = useState('');
+  const [holder, setHolder] = useState('');
+
+  const add = (): void => {
+    const result = offerRecoveryPiece(text, holder);
+    if (!result.ok) return;
+    setText('');
+    setHolder('');
+    /* A replacement is said out loud — the count not moving would
+     * otherwise be the only clue that a piece was swapped rather than added. */
+    setReplacedNote(result.replaced === null
+      ? null
+      : `That replaced the piece already entered from “${result.replaced}” — `
+        + 'two pieces from one place count once.');
+  };
+
+  return (
+    <section className="card">
+      <h2>Add a piece</h2>
+      <textarea
+        rows={3}
+        autoComplete="off"
+        spellCheck={false}
+        aria-label="The piece's letters, from its card"
+        placeholder="the piece's letters, exactly as its card shows them — spaces don't matter"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <input
+        type="text"
+        aria-label="Where this piece came from"
+        placeholder="where it came from — e.g. “my Google Drive”, “the safe”"
+        value={holder}
+        onChange={(event) => setHolder(event.target.value)}
+        style={{ marginTop: '0.5rem', width: '100%' }}
+      />
+      <div style={{ marginTop: '0.75rem' }}>
+        <button
+          type="button"
+          className="primary"
+          disabled={text.trim() === '' || busy !== null}
+          onClick={add}
+        >
+          Add this piece
+        </button>
+      </div>
+      {replacedNote !== null && (
+        <p className="muted small" style={{ marginTop: '0.6rem', marginBottom: 0 }}>
+          {replacedNote}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Once enough pieces are in: the wallet's name, the finish, and what this browser already holds beside it. */
+function FinishHere({ busy, finishRecovery, wallets }: Pick<Session, 'busy' | 'finishRecovery' | 'wallets'>): ReactNode {
+  /* A WALLET COMING BACK, WHICH IS NOT THE SAME QUESTION AS A NEW ONE.
+   * The person may or may not remember what they called it, and this browser
+   * usually has never heard of it; so the field is offered empty, and leaving
+   * it empty KEEPS whatever this browser already holds for this very secret
+   * (fingerprint-checked in `session.tsx`) rather than erasing it. */
+  const [walletName, setWalletName] = useState('');
+
+  /* WHAT THIS BROWSER ALREADY HOLDS, to be named rather than warned
+   * about. The list comes from the provider, which reads the records; the name
+   * of each is `walletNameOnRecord` scoped to its compartment, which is the
+   * unchecked reader `storage.ts` documents for exactly this — talking ABOUT
+   * a wallet whose secret is sealed. A wallet with no name falls back to a
+   * phrase, never to silence. */
+  const already = wallets.map((wallet, i) => wallet.name ?? `an unnamed wallet (${i + 1})`);
+
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      {/* Above every finish button, because all of them run the
+        * ceremony that fixes the new passkey's label for good. */}
+      <WalletNameField
+        label="What you call this wallet (optional)"
+        value={walletName}
+        onChange={setWalletName}
+        hint={(
+          <>
+            Optional. Names are not part of the pieces, so a recovered wallet
+            arrives without one; what you type here goes on the passkey this
+            machine is about to make, and a passkey&rsquo;s label can never be
+            changed afterwards. Left empty, a name this browser already holds
+            for this same wallet is kept.
+          </>
+        )}
+      />
+      <button
+        type="button"
+        className="primary big"
+        disabled={busy !== null}
+        onClick={() => { void finishRecovery(walletName); }}
+      >
+        Put the account back on this machine
+      </button>
+      {already.length === 0 ? (
+        <p className="faint small" style={{ marginTop: '0.5rem' }}>
+          Nothing is stored in this browser, so nothing is replaced. A new
+          passkey is made for this machine as part of finishing.
+        </p>
+      ) : (
+        <>
+          {/* SAID BEFORE THE CEREMONY, AND IT IS NOW GOOD NEWS.
+            * The two warning paragraphs and the confirm that stood
+            * here refused a destruction that can no longer happen. */}
+          <p className="small" style={{ marginTop: '0.5rem' }}>
+            <strong>
+              This browser already holds {already.length === 1
+                ? 'one wallet' : `${already.length} wallets`}: {already.join(', ')}.
+            </strong>{' '}
+            The recovered account is added <em>beside</em> {already.length === 1
+              ? 'it' : 'them'}. Nothing stored here is replaced and nothing here
+            is lost — this browser holds several wallets and opens one at a time,
+            and after finishing the recovered one is the one that is open.
+          </p>
+          <p className="faint small">
+            If these pieces belong to a wallet this browser already holds,
+            finishing re-seals that same wallet rather than adding a second copy
+            of it — and the passkey made here replaces the one it had. A new
+            passkey is made for this machine either way.
+          </p>
+        </>
+      )}
+    </div>
   );
 }

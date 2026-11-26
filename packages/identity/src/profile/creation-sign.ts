@@ -6,7 +6,7 @@ import { readAccountAddress, readCompanyLabel } from './company-label.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
 import type { CommitteeKeyOnTheWire, CreationRequest } from './request.js';
 import {
-  buildCreationInsert, compareVerifierKeys, operationsFromContractState,
+  buildCreationInsert, operationOfKeyFile, operationsFromContractState, verifierKeysMatch,
   type CreationInsertPrimitives, type OnChainOperation,
 } from './contract-keys.js';
 
@@ -24,7 +24,8 @@ import {
  * unsent deploy: its address, worked out by the ledger from the deploy itself;
  * that it is held by this wallet's own key and nothing else, at a threshold of
  * one, never changed; that it carries the label this wallet drew; and that it
- * runs exactly this build's first circuits. From the keys the page names: that
+ * runs exactly this build's first circuits, each holding this build's key and
+ * no other in either of its two key slots. From the keys the page names: that
  * they are exactly this build's other circuits. Only then does it build the one
  * update that inserts those keys into that address and nothing else, and sign
  * it. The address is what the person's wallet pins as the company's account.
@@ -123,14 +124,18 @@ function theOneDeploy(L: CreationLedger, deploy: string): DeployAction {
   return action;
 }
 
-/** A key set compared over digests: the same verdicts `compareVerifierKeys` gives over bytes. */
+/**
+ * A key set compared over digests by the one key matcher: every circuit holds
+ * this build's key and nothing else, in either of its two key slots.
+ */
 function keysAreThisBuilds(
   operations: readonly OnChainOperation[], expected: ReadonlyMap<string, Uint8Array>, digest: (b: Uint8Array) => Uint8Array,
   address: string, what: string,
 ): void {
-  const verdict = compareVerifierKeys(
-    { state: 'read', address, operations: operations.map((o) => ({ name: o.name, verifierKey: digest(o.verifierKey) })) },
-    expected,
+  const verdict = verifierKeysMatch(
+    { state: 'read', address, operations: [...operations] },
+    new Map([...expected].map(([circuit, d]) => [circuit, [d]])),
+    digest,
   );
   if (verdict.verdict !== 'agree') refuse(`${what} are not this build's: ${verdict.why}`);
 }
@@ -167,7 +172,9 @@ export function creationShown(
   const deployed = operationsFromContractState(action.initialState, account);
   if (deployed.state !== 'read') return refuse(`The circuits the deploy runs cannot be read: ${deployed.why}`);
   keysAreThisBuilds(deployed.operations, build.first, digest, account, 'The circuits the deploy runs');
-  const inserted = request.insert.map((k) => ({ name: k.circuit, verifierKey: base64.decode(k.key) }));
+  const asked = request.insert.map((k) => operationOfKeyFile(k.circuit, base64.decode(k.key)));
+  const inserted = asked.filter((o): o is OnChainOperation => o !== null);
+  if (inserted.length !== asked.length) refuse('A key the page asks to add is not a compiled verifier key of a version the ledger takes.');
   keysAreThisBuilds(inserted, build.second, digest, account, 'The keys the page asks to add');
   return Object.freeze({
     company: request.company,

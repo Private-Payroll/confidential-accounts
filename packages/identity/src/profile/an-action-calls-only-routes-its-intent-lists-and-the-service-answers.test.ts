@@ -164,7 +164,7 @@ const creationAsk = (name: string): Promise<string> => routeOfAsk(`creationSourc
 
 /* Every ask an action makes over the step's call, by its name: a call written there, or a named ask the runner handed it (an invitation's call to take a seat names the send to the gate, and asks nothing). */
 /* Every form an action asks through: the call itself, a named ask, a record source or its call adapter, and the invitation asks handed on whole. */
-const ASKS = /\bctx\.(?:call\b|invitations\.(?!seatCall\b)\w+\(|creation\.\w+\()|\bserviceSource\(|\bserviceCallOver\(|\bctx\.invitations\b(?!\.)/gu;
+const ASKS = /\bctx\.(?:call\b|invitations\.(?!seatCall\b)\w+\(|creation\.\w+\()|\bserviceSource\(|\bserviceCallOver\(|\bctx\.invitations\b(?!\.)|(?<!function )\bregistryWriteThrough\(/gu;
 
 /* A file that hands `ctx.invitations` on whole names here the function it hands them to, so its asks are read in that function. */
 const HANDED_ON_TO: Readonly<Record<string, { readonly file: string; readonly fn: string }>> = {
@@ -317,9 +317,12 @@ const askedIn = async (code: string, file: string): Promise<{ readonly literal: 
   const handedOnForms = (code.match(/\bctx\.invitations\b(?!\.)/gu) ?? []).length;
   const handedOn = handedOnForms > 0 ? await handedOnRoutes(file, code) : [];
   const sourceForms = (code.match(/\bserviceSource\(|\bserviceCallOver\(/gu) ?? []).length;
+  /* A registry entry written through the one fee path asks our sponsorship for its fee, and tells it done. */
+  const feeForms = (code.match(/(?<!function )\bregistryWriteThrough\(/gu) ?? []).length;
+  const fees = feeForms > 0 ? ['POST /api/accounts/:/fee', 'POST /api/accounts/:/fee/done'] : [];
   return {
-    literal, all: [...literal, ...await Promise.all([...invited, ...created]), ...handedOn],
-    forms: literal.length + invited.length + created.length + handedOnForms + sourceForms,
+    literal, all: [...literal, ...await Promise.all([...invited, ...created]), ...handedOn, ...fees],
+    forms: literal.length + invited.length + created.length + handedOnForms + sourceForms + feeForms,
   };
 };
 
@@ -340,6 +343,18 @@ describe('an action asks the service only for the routes its intent lists', () =
     }
   });
   const NAMED_IN_THE_ACTION = ['claim-by-address', 'join-by-code', 'seat-invited', 'finish-company'];
+  /*
+   * The head every reach of a company runs asks in its own file for what any reaching action may owe, so its asks are
+   * held to the list of every intent whose action reaches a company, each intent's action read from the wallet's registry.
+   */
+  const REACH_HEAD = 'company-reach-head.ts';
+  const reachingIntents = (): string[] => {
+    const registry = sources.get('registry.ts') ?? '';
+    const fileOfAction = new Map([...registry.matchAll(/import \{([^}]*)\} from '\.\/([a-z-]+)\.js'/gu)]
+      .flatMap((m) => m[1]!.split(',').map((n) => [n.trim(), `${m[2]!}.ts`] as const)));
+    return [...registry.matchAll(/^ {2}'([a-z-]+)': (\w+)\(given\(/gmu)]
+      .filter((m) => /\b(?:companyReachFor|keptReach)\(/u.test(sources.get(fileOfAction.get(m[2]!) ?? '') ?? '')).map((m) => m[1]!);
+  };
   /* The action a file's asks are made for: its own name, or, for a proposal kind's file, the action that runs the kind. */
   const KIND_OF: Readonly<Record<string, string>> = { 'pay-key-kind': 'approve-proposal' };
   const actionOf = (file: string): string => KIND_OF[file.replace(/\.tsx?$/u, '')] ?? file.replace(/\.tsx?$/u, '');
@@ -387,9 +402,12 @@ describe('an action asks the service only for the routes its intent lists', () =
   });
 
   it('every other action that asks through a named ask in its own file asks only for routes its intent lists', () => {
-    /* RED WHEN: an action asks the service, through a named ask, for a route its intent's list does not name. */
+    /* RED WHEN: an action asks the service, through a named ask, for a route its intent's list does not name, or the head of the reach asks one the list of an intent reaching through it does not name. */
+    const reaching = reachingIntents();
+    expect(reaching.length, 'no intent is read as reaching a company through the head').toBeGreaterThan(NAMED_IN_THE_ACTION.length);
     const unlisted = [...CALLED].filter(([f]) => !NAMED_IN_THE_ACTION.includes(f.replace(/\.tsx?$/u, '')))
-      .flatMap(([f, calls]) => calls.filter((c) => !listedBy(actionOf(f)).has(c)).map((c) => `${f}: ${c}`));
+      .flatMap(([f, calls]) => (f === REACH_HEAD ? reaching : [actionOf(f)])
+        .flatMap((a) => calls.filter((c) => !listedBy(a).has(c)).map((c) => `${f === REACH_HEAD ? `${f} for ${a}` : f}: ${c}`)));
     expect(unlisted).toEqual([]);
     expect(CALLED.size).toBeGreaterThan(NAMED_IN_THE_ACTION.length);
   });
@@ -449,7 +467,8 @@ const mounted = (file: string, seen: ReadonlySet<string> = new Set()): boolean =
   const names = exportedBy(serverCode.get(file)!);
   for (const [other, code] of serverCode) {
     if (other === file) continue;
-    const uses = names.some((n) => new RegExp(`\\bapp\\s*\\.\\s*use\\(\\s*${n}\\(|\\b${n}\\(\\s*app\\b`, 'u').test(code));
+    /* Mounted on the app, or handed a router that is: `companyVaultRoutes` hands its router to each group of routes. */
+    const uses = names.some((n) => new RegExp(`\\bapp\\s*\\.\\s*use\\(\\s*${n}\\(|\\b${n}\\(\\s*(?:app|r)\\b`, 'u').test(code));
     if (uses && (other === 'index.ts' || mounted(other, new Set([...seen, file])))) return true;
   }
   return false;

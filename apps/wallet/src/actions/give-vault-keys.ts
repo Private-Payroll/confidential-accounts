@@ -1,18 +1,11 @@
-import {
-  INVITATION_REFUSAL, recordsKeyAnswerFor, whyTheInvitationDoesNotNameIt, type LeafOf, type RecordsKeyAnswer,
-} from 'midnight-identity/profile/records-key';
-import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { recordsKeyAnswerFor, type RecordsKeyAnswer } from 'midnight-identity/profile/records-key';
 import type { RecordsKeyRequest } from 'midnight-identity/profile/request';
 import { ownEntryFiled, vaultKeysOfferedAndFolded, type HeldForTheSeat } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withOwedEntry, withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
-import { seatInviterIn } from '../../../../src/core/proposal-filing.js';
-import { inviterForTheWallet } from '../../../../packages/web-shared/src/invitation-taken-on-device.js';
-import type { Inviter } from '../../../../src/core/invitation.js';
-import { liveLeafReader, type LeafReader } from '../chain/seat-leaf.js';
-import { companyReachFor, enteredFor, keptReach, proposalsInTheView, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import { pinHeldFor } from './company-pin.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps, type UpkeepReach } from './upkeep.js';
 
@@ -34,8 +27,6 @@ export interface VaultKeysReach extends UpkeepReach {
   readonly chain: () => CompanyChain;
   readonly builder: () => VaultBuilderClient;
   readonly now: () => number;
-  /** How the inviter's opening is turned into its seat; the account's own `signerLeaf` unless a test answers. */
-  readonly leafOf?: LeafReader;
 }
 
 /**
@@ -47,38 +38,6 @@ export interface KeysGiven {
   readonly signed: RecordsKeyAnswer;
   readonly held: HeldForTheSeat;
 }
-
-/*
- * **WHO INVITED THIS SEAT, FOR A WALLET THAT HAS KEPT NO ACCOUNT FOR THE COMPANY YET.** The invitation the saved keys
- * carry, else the one the company's proposals carry for this seat, preferring one whose inviter the network seats
- * (`inviterForTheWallet`). It is a claim: `whyTheInvitationDoesNotNameIt` believes it only against the network's seats
- * and the inviter's own opening.
- */
-const inviterOf = async (r: CompanyReach, onTheChain: readonly string[]): Promise<Inviter | undefined> => {
-  let carried: Inviter | null = null;
-  try {
-    carried = seatInviterIn(await proposalsInTheView(r)(), r.accountId, r.companyKeys, r.leaf);
-  } catch {
-    /* Proposals not read leave only the kept inviter, which the wallet then judges against the network's seats. */
-    carried = null;
-  }
-  return inviterForTheWallet((r.seat as { readonly invitedBy?: Inviter }).invitedBy, carried, onTheChain);
-};
-
-/** The inviter in the shape the records-key check reads, or none when its keys are not the wallet's kind. */
-const invitedByOf = (inviter: Inviter | undefined): RecordsKeyRequest['invitedBy'] =>
-  inviter === undefined || inviter.committeeKey.tag !== 'schnorr' || inviter.opening?.walletKey?.tag !== 'schnorr' ? undefined
-    : {
-      committeeKey: { tag: 'schnorr', value: inviter.committeeKey.value }, statement: inviter.statement,
-      opening: { ...inviter.opening, walletKey: { tag: 'schnorr', value: inviter.opening.walletKey.value } },
-    } as RecordsKeyRequest['invitedBy'];
-
-/** The seat the inviter's own opening makes, for that opening alone; one that cannot be worked out proves nothing. */
-const openingLeafOf = async (opening: NonNullable<RecordsKeyRequest['invitedBy']>['opening'], read: LeafReader): Promise<LeafOf> => {
-  const leaf = await read(opening).then((l) => l.toLowerCase(), () => null);
-  return (o) => (o.publicKey === opening.publicKey && o.blinding === opening.blinding && o.scope === opening.scope ? leaf : null);
-};
-
 
 /** The steps that give this seat's vault keys, and a way for the steps after them to read what they gave. */
 export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?: Readonly<Record<string, string | number>>) => Words, titles: string) {
@@ -99,29 +58,15 @@ export function vaultKeysSteps(reach: VaultKeysReach, why: (key: string, values?
     if (named!.toLowerCase() !== r.leaf) refuse('not-your-seat');
     const holders = await r.holders();
     const seats = { committee: holders.committee, threshold: holders.threshold, seats: holders.seats };
-    let request = {
+    const request = {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key', requester: ctx.asker, purpose: '', nonce: 'act',
       expiresAt: 0, company: r.label, account: r.account, seat: r.leaf, signingKey: signingPublicKeyOf(r.seat.signingSecret).toLowerCase(),
     } as unknown as RecordsKeyRequest;
-    let pinned = ctx.held.wallet?.pinnedFor(r.label)?.account ?? null;
-    let leafOf: LeafOf | null = null;
-    if (pinned === null) {
-      const invitedBy = invitedByOf(await inviterOf(r, holders.seats));
-      leafOf = invitedBy === undefined ? null : await openingLeafOf(invitedBy.opening, reach.leafOf ?? liveLeafReader);
-      request = { ...request, ...(invitedBy === undefined ? {} : { invitedBy }) } as RecordsKeyRequest;
-      const notNamed = whyTheInvitationDoesNotNameIt(request, seats, leafOf);
-      if (notNamed !== null) throw new StepRefused(why('records-key-refused', { says: INVITATION_REFUSAL[notNamed] }));
-      if (ctx.held.wallet === undefined) refuse('no-record');
-      try {
-        await ctx.held.wallet!.pin(r.label, r.account, 'invited');
-      } catch {
-        refuse('account-not-kept');
-      }
-      pinned = r.account;
-    }
+    /* The reach's head held the page's account to the pin for the label; the records key is signed for that pin alone. */
+    const pinned = pinHeldFor(ctx, r.label, r.account) ?? refuse('account-not-kept');
     let signed: RecordsKeyAnswer;
     try {
-      signed = recordsKeyAnswerFor(ctx.held.identity, request, seats, reach.now(), undefined, pinned as never, leafOf);
+      signed = recordsKeyAnswerFor(ctx.held.identity, request, seats, reach.now(), undefined, pinned.account);
     } catch (e) {
       throw new StepRefused(why('records-key-refused', { says: (e as Error).message }));
     }
@@ -180,18 +125,11 @@ const why = (key: string, values?: Readonly<Record<string, string | number>>): W
 });
 
 /** The lines the window shows before the passkey: the company as the page names it, and what the action does. */
-export const vaultKeysShown = (intent: { readonly fields: Readonly<Record<string, string>> }, at: string): ShownLine[] => {
-  const label = readCompanyLabel(intent.fields['company']);
-  const account = readAccountAddress(intent.fields['account']);
-  return [
-    { key: `${at}.shown.company`, values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
-    { key: `${at}.shown.company-check`, from: 'action' },
-    ...(label === null || account === null ? [] : [{
-      key: `${at}.shown.pin`, values: { account, fingerprint: companyFingerprint(label, account) }, from: 'page' as const,
-    }]),
-    { key: `${at}.shown.keys`, from: 'action' },
-  ];
-};
+export const vaultKeysShown = (intent: { readonly fields: Readonly<Record<string, string>> }, at: string): ShownLine[] => [
+  { key: `${at}.shown.company`, values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
+  { key: `${at}.shown.company-check`, from: 'action' },
+  { key: `${at}.shown.keys`, from: 'action' },
+];
 
 
 export function giveVaultKeysAction(reach: VaultKeysReach): ActionDefinition {
@@ -206,7 +144,7 @@ export function giveVaultKeysAction(reach: VaultKeysReach): ActionDefinition {
       { key: 'act.give-vault-keys.check.signed' },
       UPKEEP_CHECK,
     ],
-    check: async (intent, held) => (held.wallet === undefined ? why('no-record') : intent.fields['record'] === undefined ? why('not-a-company') : null),
+    check: async (intent) => (intent.fields['record'] === undefined ? why('not-a-company') : null),
     steps: () => {
       const keys = vaultKeysSteps(reach, why, 'act.give-vault-keys');
       const upkeep = upkeepSteps({ reach: keys.company, renew: keys.renew }, reach);

@@ -18,14 +18,19 @@ export const FINISH_COMPANY_RELAYS = Object.freeze([
   'creation', 'creation-again', 'creation-finish', 'pay-key-approve', 'pay-key-seal',
 ] as const);
 
+/** The call our service pays the fee of, handed back to be sent; and its booking told done once the call is sent. */
+export const FEE_SPONSORED: CallRoute = Object.freeze({ method: 'POST', path: '/api/accounts/:record/fee' });
+export const FEE_SPONSORED_DONE: CallRoute = Object.freeze({ method: 'POST', path: '/api/accounts/:record/fee/done' });
+
 /**
- * The one service call finishing a company makes through the page: the record of the pay-record key's proposal,
- * sealed and signed on the device, written down, and with `tx` its raise, which the service sends only once the record
- * is kept. A call with no `tx` sends nothing.
+ * The service calls finishing a company makes through the page: the record of the pay-record key's proposal, sealed
+ * and signed on the device, written down, and with `tx` its raise, which the service sends only once the record is
+ * kept (a call with no `tx` sends nothing); and the fee of the founding seat's registry entry, with its booking told done.
  */
 export const FINISH_COMPANY_CALLS: readonly CallRoute[] = Object.freeze([
-  { method: 'POST', path: '/api/accounts/:record/creation/pay-key/proposal', sends: true, sendsWith: 'tx' },
-].map((r) => Object.freeze(r)) as CallRoute[]);
+  Object.freeze<CallRoute>({ method: 'POST', path: '/api/accounts/:record/creation/pay-key/proposal', sends: true, sendsWith: 'tx' }),
+  FEE_SPONSORED, FEE_SPONSORED_DONE,
+]);
 
 /**
  * A list of routes with each route once, the first copy kept, every route frozen. `routeOf` answers with the first
@@ -34,10 +39,6 @@ export const FINISH_COMPANY_CALLS: readonly CallRoute[] = Object.freeze([
 const once = (routes: readonly CallRoute[]): readonly CallRoute[] => Object.freeze(routes
   .filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
   .map((r) => Object.freeze({ ...r })) as CallRoute[]);
-
-/** The call our service pays the fee of, handed back to be sent; and its booking told done once the call is sent. */
-export const FEE_SPONSORED: CallRoute = Object.freeze({ method: 'POST', path: '/api/accounts/:record/fee' });
-export const FEE_SPONSORED_DONE: CallRoute = Object.freeze({ method: 'POST', path: '/api/accounts/:record/fee/done' });
 
 /**
  * Every read of the company's choice of service an act makes, by route: an act that lists every one of them reads the
@@ -453,11 +454,14 @@ export const REISSUE_INVITATION_CALLS: readonly CallRoute[] = once([
 
 /*
  * What taking a re-issued invitation reads: the company's records this wallet's seat and the proposal that seated it
- * are read from, and the re-issued offer. Nothing is written.
+ * are read from, and the re-issued offer. It writes nothing of its own; like every action that reaches a company, it
+ * may write the seat's entry in the private registry, whose fee our service pays and is told done.
  */
 export const TAKE_REISSUE_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'GET', path: '/api/invites/:invitation/offer' },
+  FEE_SPONSORED,
+  FEE_SPONSORED_DONE,
 ]);
 
 /*

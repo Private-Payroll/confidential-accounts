@@ -7,6 +7,7 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
 import { NO_VIEW_OPENED } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **A COMPANY'S VAULT SECRETS ARE CHANGED FROM THE WALLET: BY THE HOOK ONCE A REMOVAL IS CARRIED OUT, AND BY A SIGNER WHO
@@ -68,7 +69,10 @@ const companyRead = () => ({
 });
 const ctxOf = (i: ActIntent = intent(BASE)) => {
   const told: Record<string, unknown>[] = [];
-  const ctx = { intent: i, person: 'usr_a', signal: new AbortController().signal, tell: (x: Record<string, unknown>) => { told.push(x); } } as unknown as StepContext;
+  const ctx = {
+    intent: i, person: 'usr_a', signal: new AbortController().signal, tell: (x: Record<string, unknown>) => { told.push(x); },
+    keyring: { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} },
+  } as unknown as StepContext;
   return { ctx, told };
 };
 const vaultReach = { secrets: () => ({}) as never, pause: async () => {}, indexerHttp: 'https://indexer.example' };

@@ -26,6 +26,7 @@ import type { SeatOpening } from '../../../src/core/seat-opening.js';
 import type { RightsRecord } from '../../../src/core/seat-rights.js';
 import { creationsInOneRecord, withoutCreation, type SavedCreation } from './keyring-creations.js';
 import type { RoleChangeKept } from './keyring-role-changes.js';
+import type { KeptPin } from './keyring-pins.js';
 
 export interface AccountKeys {
   signerId: string;
@@ -93,6 +94,21 @@ export interface AccountKeys {
    * any other way.
    */
   seat?: number;
+  /**
+   * **THIS SEAT'S ENTRY IN THE NETWORK'S PRIVATE REGISTRY**, by the seat's leaf: `written` once a read of the registry
+   * found the entry at one of this person's tags, opening under their words to this company and seat; or `sent` when a
+   * write was handed over at the tag of that index and not yet found, which holds a second write back for a day.
+   * Never set from a hand-over's own answer. Absent until a write was owed and tried.
+   */
+  registry?: RegistryMark;
+}
+
+/** Where a seat's entry in the private registry stands, for the seat's leaf it was made for. */
+export interface RegistryMark {
+  readonly leaf: Hex;
+  readonly written?: true;
+  /** The index of the tag a write was handed over at, and when, as an ISO time. */
+  readonly sent?: { readonly index: number; readonly at: string };
 }
 
 /** An entry as a saved bundle may hold it: material saved before scopes were recorded has no scope. */
@@ -145,6 +161,8 @@ export interface PendingSeat {
     label: string;
     account: string;
     offer: SignerOffer;
+    /** Set when the person confirmed the company's fingerprint matches the one their inviter gave them, before this seat was kept. */
+    confirmed?: true;
   };
 }
 
@@ -239,6 +257,12 @@ export interface Keyring {
    * Never part of what the page is shown. Optional, because saved keys written before it have no such field.
    */
   payeeJoinsKept?: Record<string, PayeeJoinKept>;
+  /**
+   * **THE ACCOUNT EACH COMPANY IS PINNED TO**, keyed by the company's label, written only by keyring-pins.ts and never
+   * moved or dropped once written. Never part of what the page is shown. Optional, because saved keys written before it
+   * have no such field.
+   */
+  pins?: Record<string, KeptPin>;
   /**
    * HOW MANY TIMES THESE SAVED KEYS HAVE BEEN WRITTEN, one more on every write (`sealKeyring`). Absent on saved keys
    * written before it was kept, which read as 0 (`counterOf`).
@@ -424,6 +448,17 @@ export function withReissuedInvitationKept(
     accounts: { ...k.accounts, [accountId]: { ...seat, invitedBy: reissued.inviter, invited: reissued.invited } },
     ...(owed === undefined ? {} : { directoryEntriesOwed: { ...k.directoryEntriesOwed, [accountId]: { ...owed, invited: reissued.invited } } }),
   };
+}
+
+/**
+ * The keyring with this company's seat carrying `mark`, or no mark when it is null; a keyring holding no seat for the
+ * company is returned as it is.
+ */
+export function withRegistryMark(k: Keyring, accountId: string, mark: RegistryMark | null): Keyring {
+  const seat = k.accounts[accountId];
+  if (seat === undefined) return k;
+  const { registry: _before, ...rest } = seat;
+  return { ...k, accounts: { ...k.accounts, [accountId]: mark === null ? rest : { ...rest, registry: mark } } };
 }
 
 /** The keyring owing this company's directory the entry given: it replaces one owed before, which a newer signing supersedes. */
@@ -653,3 +688,4 @@ export function tidiedWith(k: Keyring, tidy: readonly CreationTidy[]): Keyring {
 /* What is kept of a company being created is kept in its own file. */
 export { creationsInOneRecord, creationIn, withCreation, withoutCreation, type SavedCreation } from './keyring-creations.js';
 export { roleChangeKeyOf, withRoleChangeDone, withRoleChangeKept, type RoleChangeKept } from './keyring-role-changes.js';
+export { pinIn, withPin, type KeptPin, type PinFrom } from './keyring-pins.js';

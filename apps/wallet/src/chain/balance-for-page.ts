@@ -107,12 +107,12 @@ export interface WalletPartForBalancing {
  * The facade's own calls the wallet pays with, in the SDK's own types, so the
  * type checker holds every call to the facade's real signature: `shielded` and
  * `unshielded` are the parts holding this wallet's private and public coins,
- * and `dust` and `submitTransaction` are what a call sent straight to the
- * chain pays its own fee and is sent with.
+ * and `dust`, `estimateTransactionFee` and `submitTransaction` are what a call
+ * sent straight to the chain works out and pays its own fee with, and is sent with.
  */
 export type FacadeForBalancing = Pick<WalletFacade,
   | 'shielded' | 'unshielded' | 'dust' | 'state' | 'adoptTransaction' | 'balanceUnboundTransaction' | 'signRecipe' | 'finalizeRecipe'
-  | 'submitTransaction' | 'revert'>;
+  | 'estimateTransactionFee' | 'submitTransaction' | 'revert'>;
 
 export interface BalanceDoors {
   readonly ledger: () => Promise<LedgerForBalancing>;

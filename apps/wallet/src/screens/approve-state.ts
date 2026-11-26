@@ -7,8 +7,8 @@ import { check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition } from 'midnight-identity/profile/definition';
 import { emptyProfile, selfAssert } from 'midnight-identity/profile/model';
 import type { Profile } from 'midnight-identity/profile/model';
-import { drewTheLabelFor, pinCompanyAccount } from 'midnight-identity/profile/model';
-import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
+import { drewTheLabelFor } from 'midnight-identity/profile/model';
+import { readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { WalletRecord } from '../actions/definition.js';
 import { load, save } from 'midnight-identity/profile/store';
 import type { Opened } from 'midnight-identity/profile/seal';
@@ -229,12 +229,11 @@ export function useRowEntry(a: ApproveInputs & ApproveState & WhatIsAsked) {
 export type RowEntry = ReturnType<typeof useRowEntry>;
 
 export function useWalletRecord(a: ApproveInputs & ApproveState) {
-  const { identity, port, now, profile, setProfile } = a;
+  const { profile } = a;
   /*
-   * THIS WALLET'S OWN RECORD OF THE COMPANIES IT STARTED, for an action: read
-   * from the record as it stands when asked, and a pin written down before it
-   * is reported done, so an action never relays for an account this wallet has
-   * not kept as the company's.
+   * THIS WALLET'S OWN RECORD OF THE LABELS IT DREW, for an action: read from the
+   * record as it stands when asked. The account a company is pinned to is not
+   * here: it is kept in the person's saved keys, which the action opens.
    */
   const profileNow = useRef(profile);
   profileNow.current = profile;
@@ -244,23 +243,7 @@ export function useWalletRecord(a: ApproveInputs & ApproveState) {
       const company = readCompanyLabel(label);
       return p !== null && company !== null && drewTheLabelFor(p, company);
     },
-    pinnedFor: (label) => {
-      const pin = (profileNow.current?.pinned ?? []).find((p) => p.company === label);
-      return pin === undefined ? null : { account: pin.account, created: pin.from === 'created' };
-    },
-    pin: async (label, account, from = 'created') => {
-      const p = profileNow.current;
-      const company = readCompanyLabel(label);
-      const address = readAccountAddress(account);
-      if (p === null || company === null || address === null) throw new Error('this wallet\'s record is not open, so the account was not kept.');
-      const at = now();
-      const next = pinCompanyAccount(p, { company, account: address, from, at }, at);
-      if (next === p) return;
-      await save(port, identity, next);
-      profileNow.current = next;
-      setProfile(next);
-    },
-  }), [port, identity, now]);
+  }), []);
   return { walletRecord };
 }
 export type WalletKept = ReturnType<typeof useWalletRecord>;

@@ -8,7 +8,7 @@
  * service is the in-memory one; the chain, the proofs and the wallets' unlocking are stood in, and each wallet's browser
  * database is an in-memory one of its own.
  */
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -56,6 +56,14 @@ import { giveVaultKeysAction } from './give-vault-keys.js';
 import { rebuildDoorsIn, upkeepSteps } from './upkeep.js';
 import { rightsOfRole, scopeOfRole } from '../../../../src/core/seat-rights.js';
 import { stepOverItsCall } from './step-views.test-support.js';
+import { madeByTheWords, pinnedIn } from './seats-the-words-make.test-support.js';
+
+/* Each seated wallet's words make the company's seat it holds. */
+vi.mock('midnight-identity/profile/seat-keys', async (real) => {
+  const { seatKeysAsSeated } = await import('./seats-the-words-make.test-support.js');
+  const { committeeKeyFor: keyFor } = await import('midnight-identity/profile/committee-key');
+  return seatKeysAsSeated(await real<typeof import('midnight-identity/profile/seat-keys')>(), keyFor as never);
+});
 
 aCompanyWhoseSignersChange();
 
@@ -73,22 +81,25 @@ interface Wallet {
   readonly identity: Identity;
   readonly secret: ReturnType<typeof newSecret>;
   kept: Keyring;
-  readonly pins: Map<string, { account: string; created: boolean; from?: 'created' | 'invited' }>;
 }
 const walletWith = (person: string, fill: number, kept: Keyring = { accounts: {} }): Wallet => {
   const secret = new Uint8Array(32).fill(fill) as ReturnType<typeof newSecret>;
-  return { person, identity: identityFromSecret(secret), secret, kept, pins: new Map() };
+  return { person, identity: identityFromSecret(secret), secret, kept };
 };
 const wrappingPublicKeyOf = (secret: Hex): Hex => toHex(x25519.getPublicKey(fromHex(secret))) as Hex;
-/* A seated signer's saved keys for the company, at the seat the company already holds. */
-const seatedWallet = (s: Seat, wrappingFill: number): Wallet => walletWith(s.person, s.n, {
-  accounts: {
-    [CO]: {
-      signerId: `sgn_${s.person}`, signingSecret: s.signingSecret as Hex, wrappingSecret: toHex(new Uint8Array(32).fill(wrappingFill)) as Hex,
-      blinding: s.opening.blinding as Hex, scope: s.opening.scope as Hex, opening: s.opening as never,
+/* A seated signer's saved keys for the company, at the seat the company already holds, which their words make, with the company pinned. */
+const seatedWallet = (s: Seat, wrappingFill: number): Wallet => {
+  const w = walletWith(s.person, s.n, pinnedIn({
+    accounts: {
+      [CO]: {
+        signerId: `sgn_${s.person}`, signingSecret: s.signingSecret as Hex, wrappingSecret: toHex(new Uint8Array(32).fill(wrappingFill)) as Hex,
+        blinding: s.opening.blinding as Hex, scope: s.opening.scope as Hex, opening: s.opening as never,
+      },
     },
-  },
-});
+  }, LABEL, ADDRESS, s === ADA ? 'created' : 'invited'));
+  madeByTheWords(w.identity, LABEL, s.signingSecret);
+  return w;
+};
 const ada = seatedWallet(ADA, 41);
 const bo = seatedWallet(BO, 42);
 const dee = walletWith('dee', 81);
@@ -227,18 +238,17 @@ const ctxOf = (w: Wallet, intent: ActIntent, step: number, steps: number, told: 
   intent, asker: { origin: ORIGIN, name: 'Payroll', rdns: 'example.payroll' }, person: w.person,
   held: {
     identity: w.identity, secret: w.secret, account: 0,
-    wallet: {
-      drewTheLabel: () => false,
-      pinnedFor: (label: string) => w.pins.get(label) ?? null,
-      pin: async (label: string, account: string, from?: 'created' | 'invited') => { w.pins.set(label, { account, created: false, from }); },
-    },
+    wallet: { drewTheLabel: () => false },
   },
   at: { step, steps } as never, signal: new AbortController().signal,
   relay: async () => { throw new Error('nothing in joining a signer is relayed by the page'); },
   call: callAs(w.person),
   tell: (o: Readonly<Record<string, string | number>>) => { Object.assign(told, o); },
   show: (words: Words) => { const link = words.values?.['link']; if (typeof link === 'string') linksShown.push(link); },
-  confirm: async () => { throw new Error('nothing in joining a signer waits on a Confirm in the window'); },
+  /* The one Confirm in joining a signer: the new signer compares the company's fingerprint before their seat is kept, and it matches. */
+  confirm: async (lines: readonly Words[]) => {
+    if (lines[0]?.key !== 'act.seat-invited.confirm.fingerprint') throw new Error('nothing else in joining a signer waits on a Confirm in the window');
+  },
   releaseReadKeys: () => { throw new Error('nothing in joining a signer hands a page read keys'); },
   /* What the wallet sends itself, and finds on the chain, is counted by the run for the window's end; these acts end in the test. */
   sentByTheWallet: () => {}, seenOnTheChain: () => {},
@@ -432,7 +442,7 @@ describe('A SIGNER INVITED BY ADDRESS JOINS THROUGH EACH WALLET ACT, EACH TAKING
     /* RED WHEN: the new signer's wallet asks for its records key without the inviting seat's signed entry, and so refuses. */
     await run(ACTS.give, dee, 'give-vault-keys', companyFields);
     /* RED WHEN: the wallet keeps the company as its account other than as the one it was invited to by a seat it checked. */
-    expect(dee.pins.get(LABEL)).toMatchObject({ account: ADDRESS, from: 'invited' });
+    expect(dee.kept.pins?.[LABEL]).toMatchObject({ account: ADDRESS, from: 'invited' });
     expect(dee.kept.directoryEntriesOwed?.[CO]).toBeUndefined();
     const signing = signingPublicKeyOf(dee.kept.accounts[CO]!.signingSecret).toLowerCase();
     /* RED WHEN: the entry filed for the new seat names another seat, filing key or records key than the wallet's own. */

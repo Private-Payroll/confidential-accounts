@@ -1,7 +1,7 @@
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import type { UnlockRequest } from 'midnight-identity/profile/request';
 import type { Identity } from 'midnight-identity/keys/derivation';
-import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountHoldersRead, AccountPaymentFacts, AccountRoleEntry } from 'midnight-identity/profile/records-key';
 import { randomBytes, signingPublicKeyOf, toHex, unwrapKey, type Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
@@ -35,6 +35,8 @@ import { companyAnchorsOnChain, holdersOn, ownChainReadsOf } from '../chain/view
 import type { ViewHeld } from '../../../../packages/web-shared/src/company-view.js';
 import { handOverFor, handOverMarked, sponsorFor, type Handed } from './hand-over-in-the-wallet.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
+import { companyReachHead, entryOwedThroughTheReach, pinRefusal, seatOfThePin, type RegistryEntryDoors } from './company-reach-head.js';
+import { pinTheJoiner } from './company-pin.js';
 
 
 /*
@@ -66,6 +68,8 @@ export interface CompanyChain {
   readonly ownWallet?: (identity: Identity, account: number) => OwnWalletDoors;
   /** How this wallet reaches the service the company hosts itself, when the company chose one; absent, the browser's own. */
   readonly ownServiceSend?: typeof fetch;
+  /** The network and the account builder this person's entry in the private registry is written with; absent, none is named owed. */
+  readonly registryEntry?: RegistryEntryDoors;
 }
 
 /**
@@ -252,8 +256,9 @@ export const viewOfTheStep = (
 };
 
 /**
- * Reads the company the action names, for one step, refusing (`StepRefused`, with `why`) a record this person holds
- * no seat on, an account that does not carry the label, and a seat the chain does not hold. Everything it reads of the
+ * Reads the company the action names, for one step, refusing (`StepRefused`, with `why`) a label pinned to another
+ * account or to none (`companyReachHead`), a record this person holds no seat on, a seat this wallet's words do not make
+ * for the pinned company, an account that does not carry the label, and a seat the chain does not hold. Everything it reads of the
  * company it reads through the step's one view (`ctx.viewFor`). A seat kept only as waiting (`admittedFromWaiting`)
  * is kept as the company's seat here first, once the roster names it. The company's sealed records come from its
  * service alone: when it cannot be reached, the action is refused (`RECORDS_UNREACHED`). Its choice of service is read
@@ -263,23 +268,46 @@ export async function companyReachFor(
   ctx: StepContext, chain: CompanyChain, builder: VaultBuilderClient, why: (key: string) => Words,
 ): Promise<CompanyReach> {
   const refuse = (key: string): never => { throw new StepRefused(why(key)); };
-  const accountId = ctx.intent.fields['record'] ?? refuse('not-a-company');
-  const label = readCompanyLabel(ctx.intent.fields['company']) ?? refuse('not-a-company');
-  const account = readAccountAddress(ctx.intent.fields['account']) ?? refuse('not-a-company');
-  if (ctx.keyring === null) return refuse('no-saved-keys');
-  const keyring = ctx.keyring;
-  const held = keyring.open().read();
+  const leafOfSeat = async (s: { signingSecret: string; blinding: string; scope: unknown }): Promise<Hex> =>
+    (await builder.ownSeat({ signingSecret: s.signingSecret, blinding: s.blinding, scope: s.scope as Hex })).toLowerCase() as Hex;
   /* Who holds the company is read off the chain before anything is asked of the page; the view starts from that read. */
-  const first = holdersOn(chain, account, label)();
-  const read = await first;
+  let first: Promise<AccountHoldersRead> | undefined;
+  const firstRead = (label: CompanyLabel, account: AccountAddress): Promise<AccountHoldersRead> => (first ??= holdersOn(chain, account, label)());
+  const head = await companyReachHead(ctx, refuse, { seats: async (l, a) => (await firstRead(l, a)).seats, leafOf: leafOfSeat, chain });
+  const { accountId, keyring } = head;
+  const held = keyring.open().read();
+  const read = await firstRead(head.label, head.account);
   const later: { judges?: CompanyReach['judges']; roster?: () => Promise<OpenedAccount>; filer?: string } = {};
-  const view = viewOfTheStep(ctx, { accountId, label, account, chain, builder }, later, first);
+  const view = viewOfTheStep(ctx, { accountId, label: head.label, account: head.account, chain, builder }, later, first);
   const kept = held.accounts[accountId];
   const admitted = kept === undefined ? await onlyTheServiceHolds(() => admittedFromWaiting(view, held, accountId, read.seats, builder)) : null;
-  const seat: SavedAccountKeys = kept ?? admitted ?? refuse('no-seat');
-  const scope = typeof seat.scope === 'string' && HEX64.test(seat.scope) ? seat.scope as Hex : refuse('no-seat');
-  const leaf = (await builder.ownSeat({ signingSecret: seat.signingSecret, blinding: seat.blinding, scope })).toLowerCase() as Hex;
+  const saved: SavedAccountKeys = kept ?? admitted ?? refuse('no-seat');
+  const scope = typeof saved.scope === 'string' && HEX64.test(saved.scope) ? saved.scope as Hex : refuse('no-seat');
+  const seat = { ...saved, scope };
+  await seatOfThePin(ctx.held.identity, head, seat, refuse);
+  const leaf = await leafOfSeat(seat);
   if (!read.seats.some((s) => s.toLowerCase() === leaf)) refuse('seat-not-held');
+  return await openedOver(ctx, { head, chain, builder, view, later, seat, leaf, admitted, seats: read.seats, refuse });
+}
+
+/** What the reach has read and chosen once the seat is held, for the part of it that opens the company's records. */
+interface Seated {
+  readonly head: Awaited<ReturnType<typeof companyReachHead>>;
+  readonly chain: CompanyChain;
+  readonly builder: VaultBuilderClient;
+  readonly view: CompanyReach['stepView'];
+  readonly later: { judges?: CompanyReach['judges']; roster?: () => Promise<OpenedAccount>; filer?: string };
+  readonly seat: SavedAccountKeys & { readonly scope: Hex };
+  readonly leaf: Hex;
+  readonly admitted: (SavedAccountKeys & { readonly signerId: string }) | null;
+  readonly seats: readonly string[];
+  readonly refuse: (key: string) => never;
+}
+
+/** The company's records opened over the seat the reach holds: its key, judges, sealed record, roster and service. */
+async function openedOver(ctx: StepContext, o: Seated): Promise<CompanyReach> {
+  const { head, chain, builder, view, later, seat, leaf, admitted, refuse } = o;
+  const { accountId, label, account, keyring } = head;
   later.filer = signingPublicKeyOf(seat.signingSecret).toLowerCase();
   const companyKey = companyKeyOf(ctx, label, account);
   const { judges, servedKeyFor } = judgesThrough({ accountId, label, account, chain, builder, companyKey, seat, view, refuse });
@@ -291,11 +319,15 @@ export async function companyReachFor(
   later.roster = roster;
   if (admitted !== null) {
     /* A seat taken by address and kept only as waiting: kept as this company's seat once the roster names it, active,
-     * under the id the company's key was wrapped to it by, with the leaf the chain holds. */
+     * under the id the company's key was wrapped to it by, with the leaf the chain holds; then its company is pinned
+     * when the person confirmed it (`pinTheJoiner`). */
     const named = (await onlyTheServiceHolds(roster)).signers.find((x) => x.id === admitted.signerId && x.status === 'active');
     if (named === undefined || String(named.leafCommitment).toLowerCase() !== leaf) refuse('no-seat');
     await keyring.keep((k) => withNewSeat(k, accountId, admitted as AccountKeys));
+    const pending = Object.values(keyring.open().read().pendingSeats ?? {}).find((p) => p.accountId === accountId && p.signingSecret === admitted.signingSecret);
+    if (pending !== undefined) await pinTheJoiner(ctx, pending, leaf, o.seats, account);
   }
+  entryOwedThroughTheReach(ctx, chain, head, { ...seat, leaf }, o.seats);
   /* The company's choice of service is opened, as its spending policies are, with the records key this seat's device
    * holds from the company key, or with the company's key at the version's epoch; the keys stay here and the record is
    * handed only the opened copy. */
@@ -304,7 +336,7 @@ export async function companyReachFor(
   const records = (asked: readonly CompanyRecordAsked[]): Promise<readonly unknown[]> => view.current().records(asked);
   const service = await companyServiceHere({ accountId, records, judges, label, account, companyKeys, roster, opener }, ctx);
   return Object.freeze({
-    accountId, label, account, seat: { ...seat, scope }, leaf, companyKey, holders: () => view.current().holders(), judges, sealed,
+    accountId, label, account, seat, leaf, companyKey, holders: () => view.current().holders(), judges, sealed,
     served: () => servedKeyFor(sealed), companyKeys, roster, builder, chain, service, opener, stepView: view, records,
     vaultsHere: vaultsReadInTheView(() => view.current(), builder),
     handOver: handOverFor(ctx, chain, service, Date.now, sponsorFor(ctx.intent, (w) => writesOfTheStep({ accountId, stepView: view })(accountId, w))),
@@ -312,16 +344,22 @@ export async function companyReachFor(
 }
 
 /**
- * The company as each step of an action reads it: `at` reads it once for the step that asks, through that step's own
- * view, and hands the same read to every later ask of the same step; a later step reads it again, so nothing read in
+ * The company as each step of an action reads it: `at` checks the pin for the page's label (`pinRefusal`), then reads
+ * it once for the step that asks, through that step's own view, and hands the same read to every later ask of the same step; a later step reads it again, so nothing read in
  * one step is relied on in the next. `renew` ends the step's read, so the next ask reads the company again (after the
  * company's key changed in the step, every seal is under the new key).
  */
 export function keptReach(readFor: (ctx: StepContext) => Promise<CompanyReach>) {
   let step: { readonly ctx: StepContext; readonly read: Promise<CompanyReach> } | null = null;
+  /* The pin check runs before any reach it is handed, so a reach that skips the head is held to the pin too. */
+  const held = async (ctx: StepContext): Promise<CompanyReach> => {
+    const refused = pinRefusal(ctx);
+    if (refused !== null) throw new StepRefused({ key: `act.${ctx.intent.name}.why.${refused}` });
+    return readFor(ctx);
+  };
   return {
     at: (ctx: StepContext): Promise<CompanyReach> => {
-      if (step === null || step.ctx !== ctx) step = { ctx, read: readFor(ctx) };
+      if (step === null || step.ctx !== ctx) step = { ctx, read: held(ctx) };
       const mine = step;
       mine.read.catch(() => { if (step === mine) step = null; });
       return mine.read;

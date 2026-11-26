@@ -127,7 +127,7 @@ describe('the census can see what it looks for', () => {
     expect(withoutStrings('x.ts', "const a = '\u{1F600}'; state.balance.get(k);")).toContain('state.balance.get(k);');
     /* And it walked the tree: the reader and its two callers are among what it read. */
     expect(FILES.map((f) => f.file)).toEqual(expect.arrayContaining([
-      'src/midnight/public-balance.ts', 'src/midnight/vault-ledger.ts', 'src/server/company-vaults.ts',
+      'src/midnight/public-balance.ts', 'src/midnight/vault-ledger.ts', 'src/server/vault-creation-and-deposit-routes.ts',
       'apps/wallet/src/chain/dust.ts',
     ]));
   });
@@ -156,7 +156,7 @@ describe('a vault\'s public balance has one way in', () => {
   it('the reader is named by the vault client, by the service\'s vault view and by the device\'s read of a vault, and by nothing else', () => {
     /* RED WHEN a caller reads the balance off a state itself instead of asking the one reader. */
     expect(where(READER_NAMED).filter((f) => f !== 'src/midnight/public-balance.ts'))
-      .toEqual(['packages/web-shared/src/vault-on-chain-here.ts', 'src/midnight/vault-ledger.ts', 'src/server/company-vaults.ts']);
+      .toEqual(['packages/web-shared/src/vault-on-chain-here.ts', 'src/midnight/vault-ledger.ts', 'src/server/vault-creation-and-deposit-routes.ts']);
   });
 
   it('on the page, the device\'s read of a vault writes the list, it crosses from the worker, and only the vault holdings reader reads it', () => {

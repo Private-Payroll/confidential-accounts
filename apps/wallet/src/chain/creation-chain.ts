@@ -1,5 +1,4 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
-import { operationsFromContractState } from 'midnight-identity/profile/contract-keys';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import { publicDataProviderFor } from '../../../../packages/web-shared/src/public-data.js';
 import { accountAtOneBlockOver, accountPresenceAt } from './view-doors.js';
@@ -43,16 +42,27 @@ export function liveCreationChain(indexer = { indexerUri: INDEXER_HTTP_URL, inde
       /* The read is the states as bytes with the era that wrote them; the circuits on the account are read decoded. */
       return {
         state: at.account.serialize(), parameters: at.parameters.serialize(),
-        finished: secondStepIsOn(decodedState(at.account, ContractState), account),
+        finished: secondStepIsOn(decodedState(at.account, ContractState)),
       };
     },
   };
 }
 
-/** Whether every circuit the second step inserts is on the account's state. */
-export function secondStepIsOn(state: unknown, account: string): boolean {
-  const read = operationsFromContractState(state, account);
-  if (read.state !== 'read') return false;
-  const names = new Set(read.operations.map((o) => o.name));
+/**
+ * Whether every circuit the second step inserts is on the account's state,
+ * read from the circuits' names alone. Whether their keys are this build's is
+ * judged where they are signed for, so a key that cannot be read here never
+ * leaves a finished creation waiting.
+ */
+export function secondStepIsOn(state: unknown): boolean {
+  let listed: unknown;
+  try {
+    listed = (state as { operations?: () => unknown } | null)?.operations?.();
+  } catch {
+    /* A state that cannot list its circuits has not shown the second step; the next read asks again. */
+    return false;
+  }
+  if (!Array.isArray(listed)) return false;
+  const names = new Set(listed.map((n) => (n instanceof Uint8Array ? new TextDecoder().decode(n) : String(n))));
   return CREATION_STEPS.second.every((c) => names.has(c));
 }

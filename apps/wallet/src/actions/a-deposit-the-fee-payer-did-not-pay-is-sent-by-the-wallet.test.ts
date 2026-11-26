@@ -8,6 +8,7 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { createTranslator } from '../../../../packages/ui/src/i18n/provider.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { callOf, viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **A DEPOSIT THE COMPANY'S FEE PAYER COULD NOT PAY FOR IS SENT BY THE WALLET, WITH THE FEE FROM THE PERSON'S OWN
@@ -32,6 +33,8 @@ const secret = newSecret();
 const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const VAULT = 'de'.repeat(32);
 const TOKEN = '9b'.repeat(32);
 const NOW = 5_000_000;
@@ -88,7 +91,7 @@ const ctxWith = (answer: { status: number; body: unknown }, yes: boolean | null,
       return send({ ready: check, handedOver: () => { did.push('counted as handed over'); } });
     },
     ...(yes === null ? {} : { confirmFee: async (lines: unknown) => { asked.push(lines); did.push('fee asked'); return yes; } }),
-    keyring: null,
+    keyring: PINNED_ONLY,
   }) as unknown as StepContext;
   return { ctx, asked, told, shown };
 };

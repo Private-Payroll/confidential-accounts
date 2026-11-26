@@ -4,8 +4,8 @@
  * The network id is not a flag. It is interpolated verbatim as a segment of
  * every Bech32m address the SDK encodes and decodes:
  *
- *     'testnet'  ->  mn_shield-addr_testnet1qurswpc8...
- *     2          ->  mn_shield-addr_21qurswpc8...
+ *     'preprod'  ->  mn_shield-addr_preprod1...
+ *     2          ->  mn_shield-addr_21...
  *
  * A neighbouring repository lost a day to exactly this: `ledger.NetworkId` is a numeric
  * enum, `midnight-js-network-id` declares `type NetworkId = string`, and an
@@ -14,9 +14,16 @@
  * passes lowercase name strings.
  *
  * So this list is names, and there is no enum anywhere near it.
+ *
+ * **IT IS THE ONE LIST OF THE NETWORKS THIS PRODUCT RUNS ON.** The platform
+ * has more network ids than these (`devnet` among them); which of them this
+ * product runs on is this list's choice, not a fact about the platform. Every
+ * network the application keeps a record of (`src/core/networks.json`) is
+ * named here, and a record under any other name is refused there; it lives in
+ * this package because this package cannot read that file.
  */
 export const NETWORKS = [
-  'undeployed', 'devnet', 'preview', 'preprod', 'qanet', 'stagenet', 'testnet', 'mainnet',
+  'undeployed', 'preview', 'preprod', 'qanet', 'stagenet', 'mainnet',
 ] as const;
 
 export type NetworkName = (typeof NETWORKS)[number];
@@ -27,7 +34,7 @@ export const isNetworkName = (value: string): value is NetworkName =>
 export function networkName(value: string): NetworkName {
   if (!isNetworkName(value)) {
     throw new Error(
-      `"${value}" is not a Midnight network. It must be one of ${NETWORKS.join(', ')} — `
+      `"${value}" is not a network this product runs on. It must be one of ${NETWORKS.join(', ')} — `
       + 'and it is not a label, it is part of every address, so a wrong one produces '
       + 'addresses nothing on the real network can decode.');
   }

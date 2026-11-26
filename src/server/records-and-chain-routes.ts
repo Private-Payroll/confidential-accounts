@@ -41,6 +41,7 @@ import { DEPLOYED_CIRCUITS } from '../midnight/deferral.js';
 import { MidnightCommitments } from '../midnight/commitments.js';
 import { publicDataProviderAt } from '../midnight/providers.js';
 import { readProvenTransaction, readFinishedTransaction } from '../wiring/proven-submission.js';
+import { networkRecord } from '../core/networks.js';
 
 /** What the routes below are built from: the parts the server made at start, and its sign-in and membership gates. */
 export interface RecordsAndChainParts {
@@ -318,5 +319,7 @@ async function vaultRoutes(app: express.Express, parts: RecordsAndChainParts, re
     readers: { proven: readProvenTransaction, finished: readFinishedTransaction },
     /* A change of the super admins is signed on their own devices; this deployment signs none of it. */
     committeeChange: startup.started ? committeeChangeWith(NETWORK) : undefined,
+    /* The private registries this network lists, whose one write the fee route pays for. */
+    registries: networkRecord(NETWORK).registries,
   }));
 }

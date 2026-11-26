@@ -24,6 +24,11 @@ export const ACTED = { done: 'done', refused: 'refused' } as const;
 
 /**
  * The wallet's codes for a stop because this person's seat could not act for the company: no company, no saved keys, no
- * seat, a seat not held, no account on the chain, or a roster that did not open. Each act turns them into its own `seat`.
+ * seat, a seat not held, no account on the chain, a roster that did not open, or the wallet keeping no account, another
+ * account, or two accounts as the company's, a lookup of the person's companies that could not be read, or a seat the
+ * recovery words do not make. Each stops before anything is built. Each act turns them into its own `seat`.
  */
-export const SEAT_REFUSALS = ['not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened'] as const;
+export const SEAT_REFUSALS = [
+  'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened',
+  'no-pin', 'pinned-elsewhere', 'label-clash', 'registry-unread', 'seat-not-yours',
+] as const;

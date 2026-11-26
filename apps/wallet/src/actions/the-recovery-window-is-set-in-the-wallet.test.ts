@@ -9,6 +9,7 @@ import { RECOVERY_WINDOW_RANGE, sealRecoveryWindow } from '../../../../src/midni
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **THE RECOVERY WINDOW IS SET IN THE WALLET: AN ADMIN OR THE FOUNDING SEAT STARTS A CHANGE, ANY SEAT SIGNS IT, AND IT
@@ -47,6 +48,8 @@ const { treeKeptInMemory } = await import('../../../../packages/web-shared/src/t
 const COMPANY = 'acc_window';
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
 const COMPANY_KEY = '0c'.repeat(32) as Hex;
 const keyAt = (): Hex => COMPANY_KEY;
@@ -126,7 +129,7 @@ const ctxOf = (i: ActIntent) => {
     relay: async () => { throw new Error('setting the window relays nothing'); },
     call: async () => ({ status: 404, body: {} }),
     tell: (x: Record<string, unknown>) => { told.push(x); },
-    keyring: null,
+    keyring: PINNED_ONLY,
   }) as unknown as StepContext;
   return { ctx, told };
 };

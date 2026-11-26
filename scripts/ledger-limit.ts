@@ -1,60 +1,51 @@
 /**
- * THE FIFTEEN-FIELD LEDGER LIMIT IS ENFORCED BY NOBODY AND MUST BE ENFORCED BY
- * US.
+ * NO CONTRACT MAY DECLARE MORE THAN FIFTEEN TOP-LEVEL LEDGER FIELDS, AND THE
+ * COMPILER DOES NOT REFUSE ONE THAT DOES.
  *
- * MEASURED, `REPORT-PROBE-LAYOUT.txt:71-82,103-107`, 1 Sep: sixteen top-level
- * ledger declarations COMPILE. Fifteen emit `1 newArray() 15 arrayPush`;
- * sixteen emit `3 newArray() 18 arrayPush` — the state NESTS, and every field's
- * path moves, field 0 included. `midnight-src/compact/compiler/langs.ss:851`
- * defines `maximum-ledger-segment-length` as 15 and its two consumers are a
- * predicate and a batching pass; neither raises an error.
- *
- * SO THE BUILD SUCCEEDS, THE DEPLOY SUCCEEDS, AND EVERY CLIENT, TEST AND STORED
- * DECODER IS SILENTLY READING THE WRONG PLACES. The account contract has twelve
- * fields today and `SC8` is about to consider adding to it.
+ * Sixteen top-level fields compile: the compiler batches the top level into
+ * nested arrays, so every field's path moves, field 0 included, and the build
+ * and the deploy both succeed. Every client, test and stored decoder that reads
+ * a field by its path would then read the wrong place with no error anywhere.
+ * So the compiled output of every contract in the table is checked here before
+ * the suite runs, and an over-limit or nested ledger stops it.
  *
  * ── WHAT IS COUNTED, AND WHY IT IS NOT THE OBVIOUS THING ─────────────────────
  *
- * NOT THE SOURCE. The source is what a human miscounts, and a `.compact` with
- * a field behind a conditional or an include would be counted wrongly by
- * exactly the reader who is already wrong. The artifact is what deploys.
+ * NOT THE SOURCE. The source is what a person miscounts, and a field behind an
+ * include is counted wrongly by exactly the reader who is already wrong. The
+ * compiled output is what deploys.
  *
- * NOT A WHOLE-FILE COUNT OF `newArray()` EITHER, which is the trap in the
- * probe's own numbers. `contracts/managed/contract/index.js` contains TWO
- * `newArray()` calls with a perfectly flat top level: one builds the field
- * array and one builds the `signers` Merkle-tree-and-counter pair inside a
- * `queryLedgerState` push. Indentation does not separate them — in the sixteen
- * fixture the nested arrays sit at the SAME indent as the top-level one.
+ * NOT A WHOLE-FILE COUNT OF `newArray()` EITHER. The account's generated module
+ * holds more than one `newArray()` call with a flat top level: one builds the
+ * field array and others build values pushed inside it. Indentation does not
+ * separate them; in the sixteen-field fixture the nested arrays sit at the same
+ * indent as the top-level one.
  *
  * ── TWO INSTRUMENTS, AND A DISAGREEMENT IS ITSELF A REFUSAL ──────────────────
  *
  * (1) `compiler/contract-info.json`'s `ledger[].index`. The compiler states the
  *     path of every field, and the SHAPE of that value is the answer: a bare
  *     number while the top level is flat, an ARRAY once it has nested. On the
- *     sixteen fixture the indices are `[0,0]`, `[1,0]`, `[1,1]` … `[1,14]`.
- *     This is name-carrying, machine-readable, and needs no parsing of emitted
- *     JavaScript.
+ *     sixteen-field fixture the indices are `[0,0]`, `[1,0]`, `[1,1]` … `[1,14]`.
  * (2) The constructor's own accumulator in `contract/index.js`: the slice from
  *     `let stateValue_0 = …newArray();` to `state_0.data = …`. One `newArray`
- *     inside it is flat; more is reshaped. On the sixteen fixture that slice
- *     holds THREE, and `stateValue_0` receives ZERO `newNull()` pushes — it
- *     receives two nested arrays instead.
+ *     inside it is flat; more is nested. On the sixteen-field fixture that slice
+ *     holds three, and `stateValue_0` receives no `newNull()` push: it receives
+ *     two nested arrays instead.
  *
- * They are read from two different files written by two different compiler
- * passes. Where they disagree this refuses rather than picking one, because a
- * guard that silently prefers one instrument is a guard with an untested
- * branch.
+ * They are read from two files written by two compiler passes. Where they
+ * disagree this refuses rather than picking one.
  *
- * ── WHAT THE `.d.ts` CANNOT SEE, WHICH IS WHY IT IS NOT INSTRUMENT THREE ─────
+ * ── WHY THE GENERATED `.d.ts` IS NOT A THIRD INSTRUMENT ──────────────────────
  *
- * `contracts/fixtures/ledger-limit/sixteen`'s generated `Ledger` type declares
- * SIXTEEN FLAT KEYS, identical in shape to the fifteen fixture's fifteen. The
- * TypeScript surface is flat in both cases and carries no sign that anything
- * moved. A reader trusting `index.d.ts` — or a guard comparing key counts —
+ * The sixteen-field fixture's generated `Ledger` type declares sixteen flat
+ * keys, the same shape as the fifteen-field fixture's fifteen. The TypeScript
+ * surface carries no sign that anything moved, so a guard comparing key counts
  * learns nothing.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CONTRACT_TABLE } from './contract-sources.mjs';
 
 export type LedgerLimitTarget = {
   readonly label: string;
@@ -70,16 +61,15 @@ export type LedgerLimitTarget = {
 };
 
 /**
- * BOTH CONTRACTS. The vault has four fields and is nowhere near the ceiling
- * today, which is exactly the argument for guarding it now rather than after
- * somebody adds to it.
+ * EVERY CONTRACT IN THE TABLE (`CONTRACT_TABLE` in scripts/contract-sources.mjs), each by its compiled
+ * folder. A contract far below the ceiling is guarded too, so a field added later is caught when it is
+ * added. `npm run compact:fast` compiles every contract in the table, so it is the one door.
  */
-export const LEDGER_LIMIT_TARGETS: readonly LedgerLimitTarget[] = [
-  { label: 'ConfidentialAccount', managed: 'contracts/managed', door: 'npm run compact:fast' },
-  { label: 'Vault', managed: 'contracts/managed-vault', door: 'npm run compact:vault' },
-];
+export const LEDGER_LIMIT_TARGETS: readonly LedgerLimitTarget[] = Object.values(CONTRACT_TABLE).map((c) => ({
+  label: c.name, managed: c.compiled, door: 'npm run compact:fast',
+}));
 
-/** `langs.ss:851`. Read off the compiler's own source, not chosen here. */
+/** The compiler's own top-level segment length, past which it nests the ledger. Not chosen here. */
 export const MAX_LEDGER_FIELDS = 15;
 
 export type Layout = {
@@ -198,9 +188,8 @@ export function limitRefusalText(refusals: readonly LimitRefusal[]): string {
   out.push('  THE BUILD DID NOT RUN.');
   out.push('');
   out.push('  A LEDGER WITH MORE THAN FIFTEEN TOP-LEVEL FIELDS COMPILES AND DEPLOYS, AND EVERY');
-  out.push('  FIELD PATH MOVES — FIELD 0 INCLUDED. Nothing in the compiler refuses it');
-  out.push('  (langs.ss:851 has no error path), so every client, test and stored decoder would');
-  out.push('  read the wrong places with no error anywhere. C357.');
+  out.push('  FIELD PATH MOVES — FIELD 0 INCLUDED. Nothing in the compiler refuses it, so every');
+  out.push('  client, test and stored decoder would read the wrong places with no error anywhere.');
   out.push('');
   for (const r of refusals) {
     out.push(`  ${r.label}  —  ${r.detail}`);

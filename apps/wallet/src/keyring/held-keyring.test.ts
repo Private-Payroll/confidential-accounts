@@ -4,7 +4,7 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { keyringKeyFor } from 'midnight-identity/profile/unlock';
 import { seal, signingPublicKeyOf, toHex, unseal, type Hex } from '../../../../src/core/crypto.js';
 import {
-  counterOf, sealedDigestOf, sealKeyring, withCreation, withNewSeat, withoutCreation, withSeatSetAside, type Keyring,
+  counterOf, sealedDigestOf, sealKeyring, withCreation, withNewSeat, withoutCreation, withPin, withRegistryMark, withSeatSetAside, type Keyring,
 } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { keyringMarkOf, raiseKeyringMark } from '../accounts/storage.js';
@@ -238,6 +238,26 @@ describe('a change seals only what it adds, never a seat it drops or alters', ()
     expect(carriesASecret({ said: SEAT.blinding })).toBe(true);
   });
 
+  it('keeps a seat\'s registry mark, and changes nothing else of the seat with it', () => {
+    const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
+    const leaf = '5b'.repeat(32) as Hex;
+    /* RED WHEN: the note of a registry write sent, or the mark of one found, is refused as a change to the seat, so the entry is never written. */
+    expect(why(() => held.seal((k) => withRegistryMark(k, 'acc_A', { leaf, sent: { index: 0, at: 'then' } })).notKept())).toBe('sealed');
+    /* RED WHEN: a change to a seat's keys passes because it came with a mark. */
+    expect(why(() => held.seal((k) => ({ ...k, accounts: { acc_A: { ...SEAT, blinding: '99'.repeat(32), registry: { leaf, written: true } } } })))).toBe('refused');
+  });
+
+  it('never drops or moves a company\'s pin, and a second pin for the label changes nothing', () => {
+    const LABEL = `co_${'6c'.repeat(32)}`;
+    const held = opening(writtenByThePage(withPin(withSeats(), LABEL, '6d'.repeat(32), 'created', 'then'), 1), marksInMemory());
+    /* RED WHEN: a change drops a pin, or moves it to another account, and is sealed as the newest saved keys. */
+    expect(why(() => held.seal((k) => { const { pins: _gone, ...rest } = k; return rest; }))).toBe('refused');
+    expect(why(() => held.seal((k) => ({ ...k, pins: { [LABEL]: { account: '6e'.repeat(32), from: 'invited', at: 'now' } } })))).toBe('refused');
+    /* RED WHEN: pinning a label already pinned writes over its pin rather than leaving it. */
+    expect(withPin(held.read(), LABEL, '6e'.repeat(32), 'invited', 'now').pins?.[LABEL]?.account).toBe('6d'.repeat(32));
+    expect(why(() => held.seal((k) => withPin(k, `co_${'6f'.repeat(32)}`, '6e'.repeat(32), 'invited', 'now')))).toBe('sealed');
+  });
+
   it('a change cannot reach the saved keys it was handed and alter them in place', () => {
     const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
     /* RED WHEN: a change that writes into the keys it is handed alters what the wallet holds without being sealed. */
@@ -321,6 +341,21 @@ describe('the saved keys move to a key no page had, once, and the old key opens 
     again.kept(8);
     expect(m.seen.get('usr_a')).toMatchObject({ counter: 4, under: 2 });
     expect(held.underTheOldKey).toBe(false);
+  });
+
+  it('refuses a copy under the old key that keeps a company\'s pin or a confirmed joining seat, and still opens a plain one', () => {
+    const LABEL = `co_${'6c'.repeat(32)}`;
+    const pinned = sealKeyring(withPin({ accounts: { acc_A: SEAT }, counter: 2 }, LABEL, '6d'.repeat(32), 'invited', 'then'), OLD).sealed;
+    const pending = { accountId: 'acc_B', signingPublicKey: '71'.repeat(32), signingSecret: '72'.repeat(32), wrappingSecret: '73'.repeat(32), blinding: '74'.repeat(32), scope: '75'.repeat(32) };
+    const joining = { invitation: 'inv', acceptance: '08'.repeat(32), inbox: '09'.repeat(32), label: LABEL, account: '6d'.repeat(32), offer: {} as never };
+    const confirmed = sealKeyring({ accounts: {}, pendingSeats: { [pending.signingPublicKey]: { ...pending, joining: { ...joining, confirmed: true } } }, counter: 2 } as Keyring, OLD).sealed;
+    const unconfirmed = sealKeyring({ accounts: {}, pendingSeats: { [pending.signingPublicKey]: { ...pending, joining } }, counter: 2 } as Keyring, OLD).sealed;
+    /* RED WHEN: whoever kept the old key seals a copy pinning a label to a look-alike, or a confirmed seat for one, and a device with no mark opens it. */
+    expect(refusedWith(() => opening(pinned, marksInMemory()))).toBe('keys-did-not-open');
+    expect(refusedWith(() => opening(confirmed, marksInMemory()))).toBe('keys-did-not-open');
+    /* RED WHEN: a plain copy under the old key, as the move found them, no longer opens. */
+    expect(opening(underTheOld(3), marksInMemory()).underTheOldKey).toBe(true);
+    expect(opening(unconfirmed, marksInMemory()).underTheOldKey).toBe(true);
   });
 
   it('refuses a copy under the old key once this device has opened one under the new', () => {

@@ -46,7 +46,7 @@ export const BUILDER_STARTS_WITHIN_MS = 60_000;
 export const BUILDER_ANSWERS_WITHIN_MS = 2 * 60_000;
 
 /** The asks that prove nothing, and so are answered within `BUILDER_ANSWERS_WITHIN_MS`. */
-const PROVES_NOTHING: ReadonlySet<string> = new Set(['account-deploy', 'finished-creation', 'creation-again', 'pay-key-standing']);
+const PROVES_NOTHING: ReadonlySet<string> = new Set(['account-deploy', 'finished-creation', 'creation-again', 'pay-key-standing', 'registry-values']);
 
 const seconds = (ms: number): number => Math.round(ms / 1000);
 

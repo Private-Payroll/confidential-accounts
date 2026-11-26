@@ -1,10 +1,12 @@
 /* A SIGNER INVITED BY ADDRESS TAKES THE SEAT FROM THEIR OWN WALLET. The page names the company and hands the
  * invitation link's token, nothing else: this wallet opens the offer with it, checks the offer is for this company
  * and offers a seat by an address this wallet holds, and refuses when this wallet already holds a seat on the company
- * that the company's account still holds. A seat the account no longer holds, whose retirement the company's directory
- * also holds, is set aside in the saved keys, never written over, before the new one is kept.
+ * that the company's account still holds, or when this wallet pinned the company's label to another account. A seat the
+ * account no longer holds, whose retirement the company's directory also holds, is set aside in the saved keys, never
+ * written over, before the new one is kept.
  * It derives its own seat for the company (the first whose leaf the company's account does not hold and whose pay-key
- * wrap slot no seat has filled), keeps it in the saved keys, proves `seatInvited` with the address's coin key as the
+ * wrap slot no seat has filled), asks the person to compare the company's fingerprint with the one their inviter gave
+ * them, keeps the seat in the saved keys as confirmed, proves `seatInvited` with the address's coin key as the
  * proof's witness, and hands the transaction to the invitation's relay. The account refuses it unless the
  * invitation's proposal names this address, these rights and the threshold the seat sets (the signed invitation's,
  * or 0, which keeps the threshold in force), and is approved at the seat bar; a threshold above the seats the account
@@ -13,22 +15,27 @@
  * over those halves, the sign-in the page names and the invitation's id (`proveSeatKeys`). With no sign-in named it
  * takes no seat and asks nothing. It keeps the seat again under the id the company gave the request. When the service has already taken the request or fails, it ends waiting for admission:
  * the seat is kept with what asking again needs, and the next act on the company keeps it under the id the company's
- * roster gives it. The coin key and the seat's secrets never leave this wallet. */
+ * roster gives it. Wherever it ends with the seat on the chain, the company is pinned to the account the person
+ * confirmed. The coin key and the seat's secrets never leave this wallet. */
 import { x25519 } from '@noble/curves/ed25519.js';
 import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
-import { seatKeysFor } from 'midnight-identity/profile/seat-keys';
+import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import { withNewSeat, withPendingSeat, withSeatSetAside, type Keyring, type PendingSeat, type SavedAccountKeys } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { acceptanceProofOf, invitationIdOf, offerExpiredRefusal, openOffer, thresholdTheInvitationSets, type SignerOffer } from '../../../../src/core/invitation.js';
 import { fromHex, signingPublicKeyOf, toHex, type Hex, type Sealed } from '../../../../src/core/crypto.js';
 import { sealToInbox } from '../../../../src/core/sealed-records.js';
 import { proveSeatKeys } from '../../../../src/core/seat-invite-proof.js';
-import { seatBlinding, type SeatOpening } from '../../../../src/core/seat-opening.js';
+import type { SeatOpening } from '../../../../src/core/seat-opening.js';
 import { storedSignerLeaf } from '../../../../src/core/signer-leaf.js';
 import type { PendingSignerPayload } from '../../../../src/core/types.js';
 import { watchFor } from '../keyring/nothing-secret-crosses.js';
+import { seatAt } from '../keyring/seat-at.js';
+import type { AccountBuilding } from '../chain/account-builder-client.js';
+import { registryEntryOwed, registryWriteThrough, type SeatToEnter } from './registry-entry.js';
+import { pinHeldFor, pinnedFor, pinTheJoiner } from './company-pin.js';
+import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { heldAt } from './claim-by-address.js';
 import { handOverFor, handOverMarked } from './hand-over-in-the-wallet.js';
 import { seated } from './holders-moved-here.js';
@@ -62,6 +69,48 @@ export interface SeatInvitedReach {
   }>;
   /** The compiled account's `payKeyWrapKeyOf(account, sk, part)`: where a seat's sealed pay-record key sits in its roles. */
   readonly payKeyWrapKeyOf: () => Promise<(account: Uint8Array, sk: Uint8Array, part: bigint) => Uint8Array>;
+  /** The wallet's account builder, which builds the seat's entry in the private registry; absent, no entry is written here. */
+  readonly accountBuilder?: () => AccountBuilding;
+}
+
+/**
+ * **THE JOINER'S PIN, AND ITS ENTRY IN THE PRIVATE REGISTRY**, wherever the admission step ends: once the chain seats
+ * the seat's leaf, the company is pinned to the account the person confirmed (`pinTheJoiner`); once the seat is also
+ * saved, its entry is named owed for the run to write after the action's steps, through the one fee path. A read of
+ * who holds the account that fails leaves both for the next reach of the company, whose head pins a confirmed seat.
+ */
+async function pinnedAndOwedHere(reach: SeatInvitedReach, ctx: StepContext, company: string, s: Seat): Promise<void> {
+  const label = readCompanyLabel(ctx.intent.fields['company']);
+  const account = readAccountAddress(ctx.intent.fields['account']);
+  if (label === null || account === null || ctx.keyring === null) return;
+  let leaves: readonly string[];
+  try {
+    const holders = await reach.chain().holders(account, label);
+    leaves = 'seats' in holders ? holders.seats : [];
+  } catch {
+    return; /* who holds the account could not be read: the pin and the entry wait for the next reach of the company */
+  }
+  const pending = ctx.keyring.open().read().pendingSeats?.[signingPublicKeyOf(s.signingSecret).toLowerCase()];
+  if (pending !== undefined) await pinTheJoiner(ctx, pending, s.leaf, leaves, account);
+  const held = pinHeldFor(ctx, label, account);
+  const kept = ctx.keyring.open().read().accounts[company];
+  const builder = reach.accountBuilder;
+  if (held === null || kept === undefined || builder === undefined) return;
+  const seat: SeatToEnter = {
+    accountId: company, label, account, n: s.n, scope: s.scope, leaf: s.leaf,
+    ...(s.rights === undefined ? {} : { rights: s.rights }), ...(kept.registry === undefined ? {} : { mark: kept.registry }),
+  };
+  if (!registryEntryOwed(seat, { pinned: held.account, page: account }, leaves)) return;
+  ctx.registryEntryOwed?.(async (c) => {
+    await registryWriteThrough(c, {
+      accountId: company, network: reach.network, build: builder(), now: Date.now,
+      ...(reach.chain().ownWallet === undefined ? {} : { ownWallet: reach.chain().ownWallet }),
+      read: async (registry) => {
+        const at = await reach.chain().callState(registry as AccountAddress);
+        return at === null ? null : { registryState: at.accountState, parameters: at.parameters };
+      },
+    }, seat);
+  });
 }
 
 /** The offer as this wallet opened it, from the service with the link's token or from the seat it kept, and the invitation's id and acceptance. */
@@ -188,6 +237,9 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
       const account = readAccountAddress(f['account']);
       const token = f['token'] as Hex | undefined;
       if (label === null || account === null || token === undefined || !/^[0-9a-f]{64}$/u.test(token)) return refuse('not-a-company');
+      /* A label this wallet pinned to another account is refused before anything is read or derived for this one. */
+      const pin = pinnedFor(ctx, label);
+      if (pin.of === 'pinned' && pin.account !== String(account).toLowerCase()) return refuse('pinned-elsewhere');
       const invitation = invitationIdOf(token);
       const acceptance = acceptanceProofOf(token) as Hex;
       const fromKept = (): Opened | null => {
@@ -231,7 +283,6 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
       const walletKey = { tag: 'schnorr' as const, value: String(committeeKeyFor(ctx.held.identity, label).value).toLowerCase() };
       const scope = o.offer.invited.terms.invite!.scope.toLowerCase() as Hex;
       const rights = rightsRecordFor(o.offer.invited.terms, scope);
-      const all = String(C.allVaults()).toLowerCase() as Hex;
       const proposal = o.offer.invited.terms.proposal!.toLowerCase();
       const holders = await reach.chain().holders(account, label);
       if (!('seats' in holders)) throw new StepRefused(holders);
@@ -245,16 +296,11 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
       const keptForThis = keptHere.find((p) => String(p.invited?.terms.proposal ?? '').toLowerCase() === proposal) ?? null;
 
       const derive = (n: number) => {
-        const keys = seatKeysFor(ctx.held.identity, label, n);
-        const signingSecret = toHex(keys.signingSecret).toLowerCase() as Hex;
-        const salt = toHex(keys.salt).toLowerCase() as Hex;
-        const blinding = String(seatBlinding(walletKey, salt)).toLowerCase() as Hex;
-        const leafAt = (s: Hex) => storedSignerLeaf({ signingSecret, blinding, scope: s }, scheme).toLowerCase() as Hex;
-        const leaf = leafAt(scope);
+        const s = seatAt(ctx.held.identity, label, n, scope, scheme);
         return {
-          n, signingSecret, wrappingSecret: toHex(keys.wrappingSecret).toLowerCase() as Hex, blinding, scope, leaf, ...(rights === null ? {} : { rights }),
-          leafAtAll: scope === all ? leaf : leafAt(all),
-          opening: { publicKey: String(C.signerPublicKey(signingSecret)).toLowerCase(), scope, blinding, walletKey, salt },
+          n, signingSecret: s.signingSecret, wrappingSecret: s.wrappingSecret, blinding: s.blinding, scope, leaf: s.leaf, ...(rights === null ? {} : { rights }),
+          leafAtAll: s.leafAtAll,
+          opening: { publicKey: s.publicKey as string, scope, blinding: s.blinding, walletKey, salt: s.salt },
         };
       };
       const asSeat = (d: ReturnType<typeof derive>): Seat => {
@@ -297,6 +343,15 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
       return seat;
     };
 
+    /*
+     * The question the seating asks before it keeps a new seat: the company's fingerprint, read from the label and the
+     * account the invitation names, which the person compares with the one their inviter gave them themselves.
+     */
+    const fingerprintAsked = (label: CompanyLabel, account: AccountAddress): readonly Words[] => [
+      { key: 'act.seat-invited.confirm.fingerprint', values: { fingerprint: companyFingerprint(label, account) } },
+      { key: 'act.seat-invited.confirm.differs' },
+    ];
+
     /* The seat as kept before its leaf is published: under its signing public key, with what the admission needs. */
     const pendingOf = (company: string, s: Seat, o: Opened): PendingSeat => ({
       accountId: company, signingPublicKey: signingPublicKeyOf(s.signingSecret).toLowerCase() as Hex,
@@ -319,12 +374,19 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
             const account = readAccountAddress(ctx.intent.fields['account'])!;
             const company = ctx.intent.fields['record']!;
             const proposal = o.offer.invited.terms.proposal!.toLowerCase();
-            /* Kept before anything is proved or relayed: the saved keys hold the seat whatever happens after. */
+            /* Kept before anything is proved or relayed: the saved keys hold the seat whatever happens after. A seat
+             * kept new is kept only once the person confirmed the company's fingerprint, and kept as confirmed. */
+            const pending = pendingOf(company, s, o);
+            const before = ctx.keyring.open().read();
+            /* A seat kept under the same key, confirmed for another account under this label, is asked about again. */
+            const keptAs = before.pendingSeats?.[pending.signingPublicKey];
+            const keepsNew = (setAside || before.accounts[company] === undefined)
+              && (keptAs === undefined || String(keptAs.joining?.account ?? '').toLowerCase() !== String(account).toLowerCase());
+            if (keepsNew) await ctx.confirm(fingerprintAsked(readCompanyLabel(ctx.intent.fields['company'])!, account));
             if (setAside) await ctx.keyring.keep((k) => withSeatSetAside(k, company));
             const keptNow = ctx.keyring.open().read();
-            const pending = pendingOf(company, s, o);
             if (keptNow.accounts[company] === undefined && keptNow.pendingSeats?.[pending.signingPublicKey] === undefined) {
-              await ctx.keyring.keep((k) => withPendingSeat(k, pending));
+              await ctx.keyring.keep((k) => withPendingSeat(k, { ...pending, joining: { ...pending.joining!, confirmed: true } }));
             }
             const took = (await reach.builder().invitedSeats({ account, indexer: reach.chain().indexer, proposals: [proposal] }))[proposal] ?? null;
             if (took !== null) {
@@ -394,8 +456,8 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
             const o = await open(ctx);
             const company = ctx.intent.fields['record']!;
             if (ctx.keyring === null) return refuse('no-saved-keys');
-            if (ctx.keyring.open().read().accounts[company] !== undefined) return;
             const s = await seatOf(ctx, o);
+            if (ctx.keyring.open().read().accounts[company] !== undefined) return await pinnedAndOwedHere(reach, ctx, company, s);
             const signingPublicKey = signingPublicKeyOf(s.signingSecret).toLowerCase() as Hex;
             const wrappingPublicKey = toHex(x25519.getPublicKey(Uint8Array.from(s.wrappingSecret.match(/../gu)!.map((x) => Number.parseInt(x, 16))))) as Hex;
             const published = { signingPublicKey, wrappingPublicKey, leafCommitment: s.leaf };
@@ -417,7 +479,7 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
                * the company to admit it. The next act on the company keeps it under the id the roster gives it, and a
                * step taken up again asks again. */
               const refused = (asked.body as { refused?: unknown } | null)?.refused;
-              if ((asked.status === 410 && refused === 'used') || asked.status >= 500) return;
+              if ((asked.status === 410 && refused === 'used') || asked.status >= 500) return await pinnedAndOwedHere(reach, ctx, company, s);
               const said = (asked.body as { error?: unknown } | null)?.error;
               refuse('not-asked', { says: typeof said === 'string' ? said : `the service answered ${asked.status}` });
             }
@@ -426,6 +488,7 @@ export function seatInvitedAction(reach: SeatInvitedReach): ActionDefinition {
               ...(s.rights === undefined ? {} : { rights: s.rights }),
               opening: s.opening, invited: o.offer.invited, invitedBy: o.inviter as never, seat: s.n,
             }));
+            await pinnedAndOwedHere(reach, ctx, company, s);
           },
         },
       ];

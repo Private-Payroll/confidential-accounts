@@ -4,13 +4,16 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent, type ActRequest } from 'midnight-identity/profile/request';
 import type { ActingChannel } from 'midnight-identity/profile/channel';
-import { newWrappingKeypair, signingPublicKeyOf } from '../../../../src/core/crypto.js';
+import { newWrappingKeypair, signingPublicKeyOf, toHex } from '../../../../src/core/crypto.js';
 import { formatAmount } from '../../../../src/core/assets.js';
 import { PUBLIC_PAYMENT_SAYS } from '../../../../src/core/movement.js';
 import { registryWithTestPrivateForms, TEST_TOKEN } from '../../../../src/testing/assets.js';
 import { payeeFor } from '../../../../src/testing/payees.js';
 import { StepRefused, type StepContext } from './definition.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
+import { sealKeyring } from '../../../../packages/web-shared/src/keyring-blob.js';
+import { keyringSealKeyFor } from '../keyring/seal-key.js';
 
 /*
  * **A PAYROLL RUN IS RAISED IN THE WALLET, IN ONE WINDOW, FROM ITS OWN READS; AND APPROVED THROUGH THE ONE APPROVAL.**
@@ -118,6 +121,8 @@ const secret = newSecret();
 const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
 const VAULT = 'de'.repeat(32);
 const NET = 'undeployed' as const;
 const NOW_MS = 1_800_000_000_000;
@@ -161,7 +166,7 @@ const ctxWith = (i: ActIntent) => {
     held: { identity, secret, account: 0 }, at: { step: 3, steps: 4 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a run is raised through its calls, never a bare relay'); },
     call: async () => ({ status: 200, body: {} }),
-    tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
+    tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: PINNED_ONLY,
     /* As the runner answers: Confirm goes on, Stop ends the action with nothing after it run. */
     confirm: async (lines: readonly unknown[]) => {
       t.calls.push('confirm'); t.confirmed.push([...lines]);
@@ -486,6 +491,11 @@ describe('OVER THE REAL RUNNER, A DRAW ASKS ITS CONFIRM BEFORE ANYTHING IS HANDE
     const request = {
       schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
       purpose: 'A test.', nonce: 'n1', expiresAt: NOW_MS + 20 * 60_000, hearsProgress: true, person: 'usr_a', intent: { name: 'raise-run', fields },
+      /* The person's saved keys, sealed as the service holds them, holding the company's pin. */
+      keyring: {
+        sealed: sealKeyring(pinnedIn({ accounts: {} }, LABEL, ACCOUNT), toHex(keyringSealKeyFor(identity, { requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a' }))).sealed,
+        version: 1,
+      },
     } as unknown as ActRequest;
     /* A request that only reads: a GET, or a POST to the newest versions or the records read, as a view reads before it writes. */
     const READ_ONLY = /^(GET |POST \/api\/accounts\/acc_1\/(manifest\/newest|records\/read)$)/u;
@@ -518,7 +528,7 @@ describe('OVER THE REAL RUNNER, A DRAW ASKS ITS CONFIRM BEFORE ANYTHING IS HANDE
       };
       await runAction({
         definition: raiseRunAction(overTheRunner), request, channel, held: { identity, secret, account: 0 } as never, stop: new AbortController().signal,
-        now: () => NOW_MS, confirm: async () => { atConfirm.push([...posted]); return answer; },
+        now: () => NOW_MS, confirm: async () => { atConfirm.push([...posted]); return answer; }, marks: { markOf: () => null, raise: () => {} },
       });
       return { posted, atConfirm, ended };
     };

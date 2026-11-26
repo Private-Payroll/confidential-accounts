@@ -16,6 +16,10 @@
  * file not found there is refused here first.
  *
  *   node scripts/contract-sources.mjs [--root <folder>] <main.compact>   one root-relative path a line, main first
+ *   node scripts/contract-sources.mjs --table   one contract a line, in compile order: name, main file,
+ *                                              compiled folder, then each link as <folder name>=<contract>
+ *   node scripts/contract-sources.mjs --built-from <contract>   every file its compiled copy is built from
+ *   node scripts/contract-sources.mjs --built-on <contract>     every contract built from it, itself included
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { posix } from 'node:path';
@@ -23,11 +27,65 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
-/** Each contract by its main file, the one table every reader of the contracts takes them from. */
-export const CONTRACTS = {
-  account: 'contracts/src/ConfidentialAccount.compact',
-  vault: 'contracts/src/Vault.compact',
+/**
+ * Every contract, one row each, in the order they are compiled: the one table every reader of the
+ * contracts takes them from. `source` is its main file; `compiled` the folder its compile writes;
+ * `name` the contract type its generated module declares; `builtFrom` the parts (other contracts by
+ * name, or `witnesses`) whose code its compiled copy depends on; `links` the generated modules it
+ * imports by folder name, each linked to the compiled folder of the contract named, which is why a
+ * contract is compiled after every contract it links to.
+ */
+export const CONTRACT_TABLE = {
+  account: { source: 'contracts/src/ConfidentialAccount.compact', compiled: 'contracts/managed', name: 'ConfidentialAccount', builtFrom: ['account', 'witnesses'], links: {} },
+  vault: { source: 'contracts/src/Vault.compact', compiled: 'contracts/managed-vault', name: 'Vault', builtFrom: ['vault', 'account', 'witnesses'], links: { Acct: 'account' } },
+  registry: { source: 'contracts/src/PrivateRegistry.compact', compiled: 'contracts/managed-registry', name: 'PrivateRegistry', builtFrom: ['registry'], links: {} },
 };
+
+/** The witnesses' file: a part a contract's compiled copy can be built from besides the contracts. */
+export const WITNESSES = 'contracts/src/witnesses.ts';
+
+/**
+ * Every way a table is malformed, each by its row: a row missing a field or holding one of the wrong
+ * kind, a `builtFrom` that leaves out the row itself or names a part that is neither a row nor
+ * `witnesses`, a link to a row that is not compiled before it, and a main file or compiled folder that
+ * is empty or held by two rows. Empty when the table is sound.
+ */
+export function tableRefusals(table) {
+  const out = [];
+  const rows = Object.entries(table);
+  const order = rows.map(([k]) => k);
+  for (const [i, [k, c]] of rows.entries()) {
+    const row = c ?? {};
+    for (const f of ['source', 'compiled', 'name']) {
+      if (typeof row[f] !== 'string' || row[f] === '') out.push(`${k}: ${f} is missing or empty`);
+    }
+    if (!Array.isArray(row.builtFrom)) out.push(`${k}: builtFrom is missing`);
+    else {
+      if (!row.builtFrom.includes(k)) out.push(`${k}: builtFrom leaves out the contract itself`);
+      for (const p of row.builtFrom) if (p !== 'witnesses' && !order.includes(p)) out.push(`${k}: builtFrom names ${p}, which is no row`);
+    }
+    if (row.links === null || typeof row.links !== 'object' || Array.isArray(row.links)) out.push(`${k}: links is missing`);
+    else {
+      for (const [f, to] of Object.entries(row.links)) {
+        if (!order.slice(0, i).includes(to)) out.push(`${k}: links ${f} to ${to}, which is not a row compiled before it`);
+      }
+    }
+  }
+  for (const f of ['source', 'compiled']) {
+    const seen = rows.map(([, c]) => c?.[f]).filter((v) => typeof v === 'string');
+    for (const v of new Set(seen)) if (seen.filter((x) => x === v).length > 1) out.push(`${f} ${v} is held by two rows`);
+  }
+  return out;
+}
+
+const refused = tableRefusals(CONTRACT_TABLE);
+if (refused.length > 0) throw new Error(`the contract table is malformed:\n  ${refused.join('\n  ')}`);
+
+/** Each contract by its main file. */
+export const CONTRACTS = Object.fromEntries(Object.entries(CONTRACT_TABLE).map(([k, c]) => [k, c.source]));
+
+/** Each contract by the folder its compile writes. */
+export const COMPILED_INTO = Object.fromEntries(Object.entries(CONTRACT_TABLE).map(([k, c]) => [k, c.compiled]));
 
 /** The code with comments and spacing taken out. Strings are kept whole, so a // inside one stays. */
 export function codeOf(text) {
@@ -152,9 +210,28 @@ export const contractSourceText = (root, main) =>
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const args = process.argv.slice(2);
+    if (args[0] === '--table') {
+      for (const [k, c] of Object.entries(CONTRACT_TABLE)) {
+        console.log([k, c.source, c.compiled, ...Object.entries(c.links).map(([f, to]) => `${f}=${to}`)].join('\t'));
+      }
+      process.exit(0);
+    }
+    if (args[0] === '--built-from') {
+      const row = CONTRACT_TABLE[args[1]];
+      if (!row) throw new Error(`no contract called "${args[1]}" in the table`);
+      for (const p of row.builtFrom) {
+        for (const f of p === 'witnesses' ? [WITNESSES] : contractSources(ROOT, CONTRACT_TABLE[p].source)) console.log(f);
+      }
+      process.exit(0);
+    }
+    if (args[0] === '--built-on') {
+      if (!CONTRACT_TABLE[args[1]]) throw new Error(`no contract called "${args[1]}" in the table`);
+      for (const [k, c] of Object.entries(CONTRACT_TABLE)) if (c.builtFrom.includes(args[1])) console.log(k);
+      process.exit(0);
+    }
     const root = args[0] === '--root' ? args[1] : ROOT;
     const main = args[0] === '--root' ? args[2] : args[0];
-    if (!main) throw new Error('usage: node scripts/contract-sources.mjs [--root <folder>] <main.compact>');
+    if (!main) throw new Error('usage: node scripts/contract-sources.mjs [--root <folder>] <main.compact> | --table | --built-from <contract>');
     for (const f of contractSources(root, main)) console.log(f);
   } catch (e) {
     console.error(`contract-sources: ${e.message}`);

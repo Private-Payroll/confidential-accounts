@@ -23,7 +23,7 @@ type HandOverWay = 'service' | 'chain' | 'company-service';
  * a vault's list before its retire; and a payout, a merge or a public payout of the vault's own coins. The vault calls
  * are `VaultCallKind`, the one table the service and the wallet both check them by.
  */
-type ChainCallKind = 'account-call' | VaultCallKind;
+type ChainCallKind = 'account-call' | 'registry-put' | VaultCallKind;
 
 export interface ChainCall {
   readonly kind: ChainCallKind;

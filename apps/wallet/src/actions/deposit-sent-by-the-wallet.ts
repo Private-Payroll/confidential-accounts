@@ -8,6 +8,7 @@ import { dustFromSpecks, exactSpecks } from '../chain/amount.js';
 import { finishedSentWithOwnDust, OwnFeeNotPaid, type OwnFeeFacade, type OwnFeeUnpaid } from '../chain/finished-paid-with-own-dust.js';
 import { FeeRefused, said } from '../chain/sent-straight-to-the-chain.js';
 import type { CompanyReach } from './company-reach.js';
+import { ownFeeConfirmed } from './hand-over-in-the-wallet.js';
 import type { StepContext, Words } from './definition.js';
 
 /*
@@ -102,12 +103,7 @@ export function depositSentFor(
     try {
       const id = await ctx.sendStraight((door) => finishedSentWithOwnDust({ facade: doors.ownFee!, signSegment: doors.signSegment }, tx, {
         now, stillWanted: () => !ctx.signal.aborted,
-        confirm: async (fee) => {
-          if ((await ctx.confirmFee?.(feeLines(fee, wallet.freesAt()))) !== true) return false;
-          /* The fee confirmed, maybe minutes after the company was read: it is read again before the deposit leaves. */
-          await door.ready();
-          return true;
-        },
+        confirm: (fee) => ownFeeConfirmed(ctx, feeLines(fee, wallet.freesAt()), door.ready, fee),
         handedOver: door.handedOver,
       }), [{ vault }]);
       ctx.show({ key: 'act.fell-back.own-dust' });

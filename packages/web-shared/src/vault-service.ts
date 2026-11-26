@@ -38,7 +38,7 @@ interface VaultKeysView {
   readonly readers: readonly Hex[];
 }
 
-/** The routes in `src/server/company-vaults.ts`, as the page calls them. */
+/** The company vault routes, as the page calls them: the router `companyVaultRoutes` (`src/server/company-vaults.ts`) builds them from its route files. */
 export interface VaultService {
   keys(): Promise<VaultKeysView>;
   deploy(tx: string): Promise<{ vault: Hex; txRef: string }>;

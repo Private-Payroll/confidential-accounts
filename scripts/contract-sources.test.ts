@@ -4,6 +4,7 @@
  * Fixtures are written to a temporary folder, never into contracts/. The freshness check has the same
  * test in artifact-freshness.test.ts.
  */
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,8 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { contractSourceText, contractSources, moduleStateOf } from './contract-sources.mjs';
-import { codeHash, partHash } from './contract-version.mjs';
+import { CONTRACT_TABLE, contractSourceText, contractSources, moduleStateOf, tableRefusals } from './contract-sources.mjs';
+import { codeHash, current, partHash, zkirFormat } from './contract-version.mjs';
 import { scanSourceFile } from './disclose-scan.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -141,6 +142,69 @@ describe('a contract that brings nothing in keeps the version it always had', ()
     for (const main of ['contracts/src/ConfidentialAccount.compact', 'contracts/src/Vault.compact']) {
       expect(contractSources(ROOT, main).length).toBeGreaterThan(1);
       expect(partHash(ROOT, main)).not.toBe(codeHash(join(ROOT, main)));
+    }
+  });
+});
+
+describe('the contract table refuses a row it cannot be read by', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    source: 'contracts/src/A.compact', compiled: 'contracts/managed-a', name: 'A', builtFrom: ['a'], links: {}, ...over,
+  });
+
+  it('accepts the table as it stands, and a sound table', () => {
+    expect(tableRefusals(CONTRACT_TABLE)).toEqual([]);
+    expect(tableRefusals({ a: row(), b: row({ source: 'contracts/src/B.compact', compiled: 'contracts/managed-b', name: 'B', builtFrom: ['b', 'a', 'witnesses'], links: { A: 'a' } }) })).toEqual([]);
+  });
+
+  it('names a missing field, a builtFrom without the row itself or naming no row, a link out of order, and a folder held twice', () => {
+    /* RED WHEN: a malformed row is taken as it is, so a reader drops a part it does not know or compiles in the wrong order. */
+    expect(tableRefusals({ a: row({ compiled: '' }) })).toEqual(['a: compiled is missing or empty']);
+    expect(tableRefusals({ a: row({ builtFrom: ['witnesses'] }) })).toEqual(['a: builtFrom leaves out the contract itself']);
+    expect(tableRefusals({ a: row({ builtFrom: ['a', 'acount'] }) })).toEqual(['a: builtFrom names acount, which is no row']);
+    expect(tableRefusals({ a: row({ links: { B: 'b' } }), b: row({ source: 'contracts/src/B.compact', compiled: 'contracts/managed-b', builtFrom: ['b'] }) }))
+      .toEqual(['a: links B to b, which is not a row compiled before it']);
+    expect(tableRefusals({ a: row(), b: row({ source: 'contracts/src/B.compact', builtFrom: ['b'] }) }))
+      .toEqual(['compiled contracts/managed-a is held by two rows']);
+    expect(tableRefusals({ a: row({ links: undefined }) })).toEqual(['a: links is missing']);
+  });
+
+  it('stops every reader at once when the table itself is malformed', async () => {
+    /* RED WHEN: a malformed table loads, so each reader goes on with a row it cannot read. */
+    const dir = mkdtempSync(join(tmpdir(), 'contract-table-'));
+    try {
+      const own = readFileSync(fileURLToPath(new URL('./contract-sources.mjs', import.meta.url)), 'utf8');
+      writeFileSync(join(dir, 'contract-sources.mjs'), own.replace("builtFrom: ['registry']", "builtFrom: ['registri']"));
+      await expect(import(join(dir, 'contract-sources.mjs'))).rejects.toThrow(/contract table is malformed[\s\S]*registry: builtFrom/u);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('keys built in another key format never count as current', () => {
+  it('records the format, and a key build in the other format is stale while one recorded before the format was is not', () => {
+    const root = mkdtempSync(join(tmpdir(), 'contract-keys-format-'));
+    try {
+      const here = fileURLToPath(new URL('..', import.meta.url));
+      for (const f of [...new Set(Object.values(CONTRACT_TABLE).flatMap((c) => contractSources(here, c.source))), 'contracts/src/witnesses.ts', '.github/checks/toolchain.mjs']) {
+        mkdirSync(dirname(join(root, f)), { recursive: true });
+        writeFileSync(join(root, f), readFileSync(join(here, f)));
+      }
+      const dir = CONTRACT_TABLE.registry.compiled;
+      mkdirSync(join(root, dir), { recursive: true });
+      execFileSync('node', [fileURLToPath(new URL('./contract-version.mjs', import.meta.url)), '--root', root, '--record', dir]);
+      const recorded = JSON.parse(readFileSync(join(root, dir, '.version'), 'utf8'));
+      expect([recorded.parts.zkir, zkirFormat({}), zkirFormat({ COMPACT_ZKIR_V3: '1' })]).toEqual(['default', 'default', 'zkir-v3']);
+      expect(current(root, dir)).toBe(0);
+      /* RED WHEN: the key format is left out of the fingerprint, so keys built in ZKIR version 3 are kept as this build's. */
+      writeFileSync(join(root, dir, '.keys-version'), JSON.stringify({ ...recorded, parts: { ...recorded.parts, zkir: 'zkir-v3' } }));
+      expect(current(root, dir, '.keys-version')).toBe(1);
+      /* RED WHEN: a record written before the format was recorded is read as another format, and every kept key is set aside. */
+      const { zkir: _zkir, ...older } = recorded.parts;
+      writeFileSync(join(root, dir, '.keys-version'), JSON.stringify({ ...recorded, parts: older }));
+      expect(current(root, dir, '.keys-version')).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

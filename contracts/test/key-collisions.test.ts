@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest';
 import { contractSourceText } from '../../scripts/contract-sources.mjs';
 
 import { pureCircuits } from '../managed/contract/index.js';
+import { recordedHexOf, versionsInForce } from './frozen-facts.js';
 import { partKeyOf } from './part-keys.js';
 
 /* The account's main file and every file it brings in (scripts/contract-sources.mjs). */
@@ -69,21 +70,15 @@ const sha256OfTag = (tag: string): string => {
 };
 /*
  * The nine names the contract writes out as bytes: fixed keys of the shared maps, and the scopes and vaults no address
- * can equal. Each value is the one every account already deployed holds its entries under, written here once and
- * never derived, so a tag and its bytes changed together still fail.
+ * can equal. Each value is the one every account already deployed holds its entries under, taken from the record of
+ * frozen facts for every released version still in force and never derived here, so a tag and its bytes changed
+ * together still fail.
  */
-const FIXED_VALUES = {
-  allVaults: '78dc328cecab05f96eda4c96f34635e967154d5f82046f6ecf0430902ee541b5',
-  noVault: '48f37c0faabf55b9ce2232cb91b0ac15c5ff7784475deee421ac6324c9956f0b',
-  companyWide: '013d1f45a06cef7b200525733767038c78c55146325eff12c3b43fabd267d33b',
-  payKeyCommitmentKey: 'cc3136c78f2e28cdca860e119187d8ccafdae6f3d23e86586cc5c21bfd558c4e',
-  companyLabelKey: 'e5c1cb2519bc5f6bc4a0f779d4f851bec45bdc7127d2a5e6292b508674358903',
-  anchorKey: '635cdccbcbf76b7f6a9688c13b36700f71bdda8b551dd00d9b96787d8cd8b50f',
-  anchorSeatKey: '26c18d23bfdb55c4313c5e478e2069dd1028b556fb1dabc69f116ab1f414c925',
-  lastRecoveryKey: '800f6f4de6d643b36317a590314a8f4b06a9479521d0b128e422596d384913f4',
-  policyBarKey: 'e32da4f5eb054663098534158908cfa8cd36b6c702ac1c2dae8df0e6a1178407',
-} as const;
-const FIXED = Object.keys(FIXED_VALUES) as Array<keyof typeof FIXED_VALUES>;
+const FIXED = [
+  'allVaults', 'noVault', 'companyWide', 'payKeyCommitmentKey', 'companyLabelKey', 'anchorKey', 'anchorSeatKey',
+  'lastRecoveryKey', 'policyBarKey',
+] as const;
+const IN_FORCE = versionsInForce();
 
 /* Every key expression the contract inserts under, per map. Read off the source below, never assumed. */
 const SIGNER_ROLES_WRITES = [
@@ -223,8 +218,8 @@ describe('the derivations are separated by their tags', () => {
       expect(fixedBytesOf(fixed)).toBe(sha256OfTag(tagOf(fixed)));
       /* RED WHEN the compiled circuit returns anything but those bytes. */
       expect(hex((pureCircuits as unknown as Record<string, () => Uint8Array>)[fixed]!())).toBe(fixedBytesOf(fixed));
-      /* RED WHEN a fixed name moves off the value deployed accounts hold their entries under, even with its tag moved too. */
-      expect(fixedBytesOf(fixed)).toBe(FIXED_VALUES[fixed]);
+      /* RED WHEN a fixed name moves off the value accounts on any version in force hold their entries under, even with its tag moved too. */
+      for (const [version, facts] of IN_FORCE) expect(fixedBytesOf(fixed), `version ${version}`).toBe(recordedHexOf(facts.account, fixed));
     }
     /* RED WHEN two fixed names share a tag or a value: two writers of a shared map, or a scope standing for a vault. */
     expect(new Set(FIXED.map(tagOf)).size).toBe(FIXED.length);

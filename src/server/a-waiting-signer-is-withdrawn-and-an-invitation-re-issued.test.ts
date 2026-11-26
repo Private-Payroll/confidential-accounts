@@ -29,7 +29,7 @@ import { sealGovernanceProposal, signProposalFiling } from '../core/proposal-fil
 import { openFromInbox } from '../core/sealed-records.js';
 import { NO_ASSET } from '../core/assets.js';
 import type { PendingSignerPayload, SealedProposal } from '../core/types.js';
-import { whyTheInvitationDoesNotNameIt } from 'midnight-identity/profile/records-key';
+import { directoryEntrySignedBy } from 'midnight-identity/profile/records-key';
 import { inviteHere, reissueInvitationHere, SeatMayNotInvite, withdrawWaitingSignerHere, type InvitationSend } from 'vaults-web-shared/invitation-on-device.js';
 import { acceptAsSignerHere, openInvitationHere, takeTheReissueHere } from 'vaults-web-shared/invitation-taken-on-device.js';
 import { withdrawalReadsHere, WITHDRAWAL_ROUND_NOT_READ, WITHDRAWAL_TIME_NOT_READ } from 'vaults-web-shared/waiting-signer-withdrawn.js';
@@ -38,7 +38,6 @@ import { signingPublicKeyOf } from '../core/crypto.js';
 import { fileTheOwedDirectoryEntry } from 'vaults-web-shared/directory-filed-here.js';
 import { type OwedDirectoryEntry } from 'vaults-web-shared/keyring-blob.js';
 import { newSeatKeys } from 'vaults-web-shared/accept-seat.js';
-import { leafOfTheContract } from '../testing/directory-seats.js';
 import { invitedAsRaised, proposalMadeByHere } from '../testing/invitation-approved.js';
 import {
   aCompanyOfTwoSeats, ACME, ACME_INBOX, ADA, ADDRESS, BO, chainRead, chains, CO, fromAda, KEY, LABEL, ORIGIN, OTHER, seatOf, sendAs, store, wire, type Seat } from './a-company-of-two-seats.test-support.js';
@@ -332,15 +331,13 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
   const leeTakes = (opened: Parameters<typeof takeTheReissueHere>[0], kept: unknown[], proposals: readonly SealedProposal[] = seatedLee,
     mine: { accountId: string; person: string; seat: string } = { accountId: CO, person: 'lee', seat: LEE.seat }, chain: readonly string[] = leesChain) =>
     takeTheReissueHere(opened, { ...mine, companyKeys: KEY }, proposals, chain, async (x) => { kept.push(x); });
-  /** Lee's wallet, judging the inviter it is handed against the account as it reads it. */
-  const leesWallet = (invitedBy: Inviter) => whyTheInvitationDoesNotNameIt(
-    { kind: 'records-key', company: LABEL, account: ADDRESS, seat: LEE.seat, invitedBy } as never,
-    { committee: [], threshold: 1, seats: leesChain }, leafOfTheContract,
-  );
+  /** Whether an inviter is one a seat the account holds signed for this company, as the account reads now. */
+  const seatedInviter = (invitedBy: Inviter) => leesChain.includes(invitedBy.statement.seat)
+    && directoryEntrySignedBy(LABEL, ADDRESS, invitedBy.committeeKey, invitedBy.statement);
 
-  it('re-issued by a seat that holds one now, it is kept on the person\'s device with that seat as their inviter, and their wallet keeps the account', async () => {
-    /* RED WHEN: an inviter who has left is accepted by the person's wallet: it would keep an account on a seat nobody holds. */
-    expect(leesWallet(asInviter(BO))).toBe('inviter-not-on-account');
+  it('re-issued by a seat that holds one now, it is kept on the person\'s device with that seat as their inviter', async () => {
+    /* An inviter who has left holds no seat on the account. */
+    expect(seatedInviter(asInviter(BO))).toBe(false);
     const made = await reissueInvitationHere(ACME, ADA, { leaf: LEE.seat as Hex, proposals: seatedLee, onTheChain: leesChain }, ORIGIN, writesOver(fromAda));
     const opened = await openInvitationHere(made.link, sendAs('lee'));
     const kept: Array<{ inviter: Inviter; invited: SignedSeatInvitation }> = [];
@@ -352,8 +349,8 @@ describe('A PERSON WHOSE INVITER LEFT IS GIVEN THEIR INVITATION AGAIN', () => {
     /* RED WHEN: a re-issue changes who the seat is for, their name, their role, their vaults, their leaf or the proposal that seated them. */
     expect(kept[0]!.invited.terms).toEqual({ ...original.terms, invitation: made.id, replaces: replacing });
     expect(proposalMadeByHere(replacedBy(kept[0]!.invited)!)).toBe(original.terms.proposal);
-    /* RED WHEN: the person's wallet still refuses after the re-issue, so they stay locked out. */
-    expect(leesWallet(kept[0]!.inviter)).toBeNull();
+    /* RED WHEN: the inviter kept with the re-issue is not a seat the account holds, signed for this company. */
+    expect(seatedInviter(kept[0]!.inviter)).toBe(true);
     /* A re-issue offers no new seat: the link makes no seat request. */
     await expect(acceptAsSignerHere(opened, SimulatedCommitments, { newKeys: newSeatKeys, seal: async () => {}, promote: async () => {} },
       sendAs('lee'), 'lee', async () => WALLET_KEY, WALLET.seatAddress)).rejects.toThrow(/offers pay, not a seat|not accepted as a signer/u);

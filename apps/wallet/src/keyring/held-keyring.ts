@@ -93,8 +93,8 @@ export interface HeldKeyring {
   metadata(): KeyringMetadata;
   /**
    * Applies `change` to a copy of the saved keys held now and seals the result one write on, whatever count it
-   * carries. Refuses, with `SeatChangeRefused`, a result that drops or alters any seat or seat sealed before its leaf
-   * that is held now, and refuses once the keyring is let go.
+   * carries. Refuses, with `SeatChangeRefused`, a result that drops or alters any seat (but for its registry mark), seat
+   * sealed before its leaf or company's pin that is held now, and refuses once the keyring is let go.
    */
   seal(change: (current: Keyring) => Keyring): SealedAgain;
   /** Drops the key and the saved keys from this object; nothing more can be read or sealed with it. */
@@ -127,11 +127,17 @@ const MISSING =
   'the page handed this wallet no saved keys, and it has already opened saved keys of yours, so it does not start '
   + 'new ones over them.' + WAY_OUT;
 const SEAT_DROPPED =
-  'this action tried to drop or change a seat already in your saved keys, which an action may never do: it would lose '
-  + 'the only copy of that seat. Nothing was sealed and your saved keys are as they were. The action has to be '
+  'this action tried to drop or change a seat or a company\'s pinned account already in your saved keys, which an action '
+  + 'may never do: it would lose the only copy of that seat, or let a page move which account you act for. Nothing was sealed and your saved keys are as they were. The action has to be '
   + 'corrected before it can run; nothing you do here resolves it.';
 
-/** Whether every seat in `before` is in `after`, unchanged. */
+/** A saved seat as it is compared: without its registry mark, the one part of a seat a change may write. */
+const seatOnly = (seat: unknown): string => {
+  const { registry: _mark, ...rest } = (seat ?? {}) as { readonly registry?: unknown };
+  return canonical(rest);
+};
+
+/** Whether every seat in `before` is in `after`, unchanged but for its registry mark, and every pin with it. */
 const seatsKept = (before: Keyring, after: Keyring): boolean => {
   const kept = (a: Readonly<Record<string, unknown>> | undefined, b: Readonly<Record<string, unknown>> | undefined): boolean =>
     Object.entries(a ?? {}).every(([id, entry]) => b !== undefined && Object.prototype.hasOwnProperty.call(b, id)
@@ -142,10 +148,18 @@ const seatsKept = (before: Keyring, after: Keyring): boolean => {
     return was !== undefined && !Object.prototype.hasOwnProperty.call(after.accounts, id) && canonical(was) === canonical({ ...entry, accountId: id });
   };
   const accountsKept = Object.entries(before.accounts ?? {}).every(([id, entry]) =>
-    (Object.prototype.hasOwnProperty.call(after.accounts, id) && canonical(after.accounts[id]) === canonical(entry)) || setAside(id, entry));
+    (Object.prototype.hasOwnProperty.call(after.accounts, id) && seatOnly(after.accounts[id]) === seatOnly(entry)) || setAside(id, entry));
   return typeof after.accounts === 'object' && after.accounts !== null
-    && accountsKept && kept(before.pendingSeats, after.pendingSeats) && kept(before.formerSeats, after.formerSeats);
+    && accountsKept && kept(before.pendingSeats, after.pendingSeats) && kept(before.formerSeats, after.formerSeats) && kept(before.pins, after.pins);
 };
+const PINNED_UNDER_THE_OLD_KEY =
+  'the saved keys the page handed this wallet are sealed the way they were before this wallet moved them to the key '
+  + 'no page holds, yet they keep a company\'s account or a confirmed seat, which only copies sealed the new way ever '
+  + 'keep. Whoever kept the old key could have sealed them. Nothing was opened or changed.' + WAY_OUT;
+
+/** Whether saved keys keep any company's pinned account, or any pending seat the person confirmed. */
+const pinsOrConfirmedIn = (k: Keyring): boolean => Object.keys(k.pins ?? {}).length > 0
+  || Object.values(k.pendingSeats ?? {}).some((p) => p.joining?.confirmed === true);
 const DID_NOT_OPEN =
   'the saved keys the page handed this wallet did not open with this wallet’s key for you. They may be another '
   + 'wallet’s or another person’s. Nothing was changed.';
@@ -192,6 +206,9 @@ export function openHeldKeyring(from: OpenedFrom): HeldKeyring {
       const before = tried(old);
       if (before === null) throw new SavedKeysRefused('keys-did-not-open', DID_NOT_OPEN);
       if (mark?.under === 2) throw new SavedKeysRefused('older-keys', SEALED_BEFORE);
+      /* Pins and confirmed joining seats were only ever kept under the new key, so an old-key copy holding either was
+       * sealed by whoever kept the old key, to choose the account this wallet acts for. */
+      if (pinsOrConfirmedIn(before)) throw new SavedKeysRefused('keys-did-not-open', PINNED_UNDER_THE_OLD_KEY);
       opened = before;
       underTheOldKey = true;
     }

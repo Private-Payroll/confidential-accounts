@@ -1,16 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
-import {
-  INVITATION_REFUSAL, recordsKeySignedBy, directoryEntrySignedBy, seatBlinding, signDirectoryEntry, type SeatOpening,
-} from 'midnight-identity/profile/records-key';
-import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
-import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import { liveLeafReader } from '../chain/seat-leaf.js';
+import { recordsKeySignedBy, directoryEntrySignedBy } from 'midnight-identity/profile/records-key';
 import { signingPublicKeyOf } from '../../../../src/core/crypto.js';
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { StepRefused, type StepContext } from './definition.js';
 import { NO_VIEW_OPENED, stepOverItsCall } from './step-views.test-support.js';
+import { pinnedIn } from './seats-the-words-make.test-support.js';
 
 /*
  * **GIVING THE VAULT KEYS IN THE WALLET SIGNS ONLY FOR THE SEAT ITS OWN KEYS MAKE, AND KEEPS WHAT IT OWES BEFORE IT
@@ -67,10 +63,10 @@ const intent = (fields: Record<string, string> = {}): ActIntent =>
 
 const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown> } = {}) => {
   const calls: string[] = [];
-  let keys = { accounts: { acc_1: SEAT }, counter: 1 } as Record<string, unknown>;
+  let keys = { ...pinnedIn({ accounts: { acc_1: SEAT } } as never, LABEL, ACCOUNT), counter: 1 } as Record<string, unknown>;
   const ctx = stepOverItsCall({
     intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-    held: { identity, secret, wallet: { drewTheLabel: () => true, pinnedFor: () => ({ account: ACCOUNT, created: true }), pin: async () => {} } },
+    held: { identity, secret, wallet: { drewTheLabel: () => true } },
     at: { step: 1, steps: 3 }, signal: new AbortController().signal,
     relay: async () => { throw new Error('a vault is created through calls, never a bare relay'); },
     call: async (method: string, path: string) => {
@@ -142,73 +138,44 @@ describe('the vault keys are given for the seat the wallet\'s own keys make', ()
 });
 
 /*
- * **A SIGNER WHO JOINED GIVES THEIR VAULT KEYS IN THE SAME WINDOW.** Their wallet has kept no account for the company
- * yet; their saved keys carry the invitation they joined by. The wallet keeps the account only when that invitation
- * checks out against the network's seats and the inviter's own opening, then signs; a page that forges it gets nothing.
+ * **A WALLET THAT HAS KEPT NO ACCOUNT FOR THE COMPANY SIGNS NOTHING HERE.** The account is pinned when the company is
+ * created in the wallet or when the joining person confirms its fingerprint as they take their seat; giving vault keys
+ * never pins one, whatever invitation the saved keys carry.
  */
-describe('a signer who joined, whose wallet has kept no account for the company yet', () => {
-  const inviter = identityFromSecret(new Uint8Array(32).fill(9));
-  const inviterKey = committeeKeyFor(inviter, LABEL) as { tag: 'schnorr'; value: string };
-  const joined = async (signedBy = inviter) => {
-    const salt = '7c'.repeat(32);
-    const opening: SeatOpening = { publicKey: '2c'.repeat(32), scope: '3d'.repeat(32), blinding: seatBlinding(inviterKey, salt), walletKey: inviterKey, salt };
-    const seat = await liveLeafReader(opening);
-    return { seat, invitedBy: { committeeKey: inviterKey, opening, statement: signDirectoryEntry(signedBy, LABEL, ACCOUNT as never, new Uint8Array(32).fill(6), '2b'.repeat(32), seat) } };
+describe('a wallet that has kept no account for the company', () => {
+  const unpinnedKeys = () => {
+    let keys = { accounts: { acc_1: SEAT }, counter: 1 } as Record<string, unknown>;
+    return {
+      open: () => ({ read: () => structuredClone(keys), metadata: () => ({}), seal: () => { throw new Error('not here'); }, letGo: () => {} }),
+      keep: async (change: (k: never) => never) => { keys = change(structuredClone(keys) as never); t.order.push('kept'); },
+    };
   };
-  const unpinned = (pins: unknown[]) => ({
-    identity, secret,
-    wallet: { drewTheLabel: () => false, pinnedFor: () => null, pin: async (...a: unknown[]) => { pins.push(a); } },
-  });
 
-  it('keeps the account the invitation names, as invited, and signs, when the invitation checks out', async () => {
-    const { seat, invitedBy } = await joined();
-    t.reach = reach({
-      seat: { ...SEAT, invitedBy },
-      holders: async () => ({ seats: [LEAF, seat], committee: [inviterKey], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
-    });
-    const pins: unknown[] = [];
-    const steps = vaultKeysSteps({ chain: () => chainWith([LEAF, seat]) as never, builder: () => builder, now: () => 1 }, why, 'act.give-vault-keys');
-    const { ctx } = ctxWith({ held: unpinned(pins) as never });
-    await steps.steps[0]!.run(ctx);
-    await steps.steps[1]!.run(ctx);
-    // RED WHEN: a joiner's wallet with no account kept refuses to sign, so no joined signer can ever give their vault keys
-    expect(t.order).toEqual(['kept', 'filed what was kept', 'offered', 'folded']);
-    // RED WHEN: the account is kept as the wallet's own creation, or another account than the invitation names is kept
-    expect(pins).toEqual([[LABEL, ACCOUNT, 'invited']]);
-    expect((await steps.given(ctx)).signed.statement.seat).toBe(LEAF);
-  });
-
-  it('keeps nothing and signs nothing when the invitation is not signed by the seat it names', async () => {
-    const { seat, invitedBy } = await joined(identityFromSecret(new Uint8Array(32).fill(13)));
-    t.reach = reach({
-      seat: { ...SEAT, invitedBy },
-      holders: async () => ({ seats: [LEAF, seat], committee: [inviterKey], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
-    });
-    const pins: unknown[] = [];
-    const steps = vaultKeysSteps({ chain: () => chainWith([LEAF, seat]) as never, builder: () => builder, now: () => 1 }, why, 'act.give-vault-keys');
-    const { ctx } = ctxWith({ held: unpinned(pins) as never });
+  it('signs nothing and keeps nothing, and never pins the account the page names', async () => {
+    t.reach = reach();
+    const steps = vaultKeysSteps({ chain: () => chainWith([LEAF]) as never, builder: () => builder, now: () => 1 }, why, 'act.give-vault-keys');
+    const keyring = unpinnedKeys();
+    const { ctx } = ctxWith({ keyring: keyring as never });
     const e = await steps.steps[0]!.run(ctx).catch((x) => x);
-    // RED WHEN: an invitation its inviter did not sign gets the account kept or the keys signed
-    expect((e as StepRefused).words).toEqual({ key: 'records-key-refused', values: { says: INVITATION_REFUSAL['not-signed'] } });
-    expect(pins).toEqual([]);
+    // RED WHEN: a wallet with no account kept signs a records key, or pins the page's account on a give
+    expect((e as StepRefused).words).toEqual({ key: 'account-not-kept' });
+    expect(t.order).toEqual([]);
+    expect((keyring.open().read() as { pins?: unknown }).pins).toBeUndefined();
+  });
+
+  it('is refused, before the company is read, when it pinned the label to another account', async () => {
+    t.reach = reach();
+    const steps = vaultKeysSteps({ chain: () => chainWith([LEAF]) as never, builder: () => builder, now: () => 1 }, why, 'act.give-vault-keys');
+    const elsewhere = pinnedIn({ accounts: { acc_1: SEAT } as never }, LABEL, 'f0'.repeat(32));
+    const { ctx } = ctxWith({ keyring: { open: () => ({ read: () => structuredClone(elsewhere) }), keep: async () => { throw new Error('nothing is kept'); } } as never });
+    // RED WHEN: a reach handed to the steps skips the pin check, so another account under a pinned label is given keys
+    await expect(steps.steps[0]!.run(ctx)).rejects.toMatchObject({ words: { key: 'act.create-vault.why.pinned-elsewhere' } });
     expect(t.order).toEqual([]);
   });
 
-  it('keeps nothing when the inviter the invitation names holds no seat on the network', async () => {
-    const { invitedBy } = await joined();
-    t.reach = reach({ seat: { ...SEAT, invitedBy } });
-    const pins: unknown[] = [];
-    const steps = vaultKeysSteps({ chain: () => chainWith([LEAF]) as never, builder: () => builder, now: () => 1 }, why, 'act.give-vault-keys');
-    const { ctx } = ctxWith({ held: unpinned(pins) as never, answers: { 'GET /api/accounts/acc_1/proposals': [] } });
-    const e = await steps.steps[0]!.run(ctx).catch((x) => x);
-    // RED WHEN: an inviter the network does not seat is believed
-    expect((e as StepRefused).words).toEqual({ key: 'records-key-refused', values: { says: INVITATION_REFUSAL['inviter-not-on-account'] } });
-    expect(pins).toEqual([]);
-  });
-
-  it('shows the account the page names and its fingerprint before the passkey, as the page\'s', () => {
+  it('shows no account it would keep before the passkey', () => {
     const shown = vaultKeysShown({ fields: { company: LABEL, account: ACCOUNT } }, 'act.give-vault-keys');
-    // RED WHEN: the account a joiner's wallet may keep for good is not shown, with its fingerprint, before the passkey
-    expect(shown).toContainEqual({ key: 'act.give-vault-keys.shown.pin', values: { account: ACCOUNT, fingerprint: companyFingerprint(LABEL as never, ACCOUNT as never) }, from: 'page' });
+    // RED WHEN: the window still says it may keep the page's account as the company's
+    expect(shown.some((l) => l.key === 'act.give-vault-keys.shown.pin')).toBe(false);
   });
 });

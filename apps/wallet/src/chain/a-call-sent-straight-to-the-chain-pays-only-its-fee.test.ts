@@ -18,6 +18,8 @@ import { viewsOfTheStep } from '../actions/step-views.test-support.js';
 const ACCOUNT = 'ac'.repeat(32);
 const VAULT = 'fa'.repeat(32);
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64');
+/* The person says yes when their own DUST is offered for a fee. */
+const YES: FeeAndSubmit = { offer: async () => true };
 const intentOf = (actions: readonly unknown[], over: Record<string, unknown> = {}) =>
   ({ actions, guaranteedUnshieldedOffer: undefined, fallibleUnshieldedOffer: undefined, dustActions: undefined, ...over });
 
@@ -57,10 +59,11 @@ const aWallet = (log: string[], made?: ReadonlyMap<string, unknown>): OwnWalletD
       state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
       /* A handle the facade adopts carries the transaction its bytes are, read as the ledger reads them. */
       adoptTransaction: (bytes: Uint8Array) => ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytes),
+      estimateTransactionFee: async () => 1n,
       balanceUnboundTransaction: async (call: never, options: { tokenKindsToBalance?: 'all' | string[] }) => {
         const kinds = options.tokenKindsToBalance;
         log.push(`fee in ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
-        return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([], { dustActions: { spends: [1], registrations: [] } })]]) } };
+        return { baseTransaction: call, balancingTransaction: { guaranteedOffer: undefined, fallibleOffer: undefined, intents: new Map([[1, intentOf([], { dustActions: { spends: [{ vFee: 1n }], registrations: [] } })]]) } };
       },
       signRecipe: async (r: never) => r,
       finalizeRecipe: async (r: never) => r,
@@ -74,14 +77,16 @@ const aWallet = (log: string[], made?: ReadonlyMap<string, unknown>): OwnWalletD
 const anAct = (fields: Record<string, string>, account: number | null = 0) => ({
   intent: { name: 'approve-proposal', fields }, held: { identity: {} as never, ...(account === null ? {} : { account }) },
   signal: new AbortController().signal,
+  /* The person says yes when their own DUST is offered for a fee. */
+  confirmFee: async () => true,
   /* The runner's door for a call this wallet sends itself, with no read of the company to check here. */
   sendStraight: viewsOfTheStep(async () => { throw new Error('a hand-over reads nothing of the company here'); }).sendStraight,
-}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'sendStraight'>;
+}) as unknown as Pick<StepContext, 'intent' | 'held' | 'signal' | 'sendStraight' | 'confirmFee'>;
 
 describe('A CALL SENT STRAIGHT TO THE CHAIN', () => {
   it('one call to the contract the step names is paid for in DUST alone and sent, and the wallet is stopped after it', async () => {
     const log: string[] = [];
-    await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64({ circuit: 'approve', to: ACCOUNT }), {
+    await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, YES)(b64({ circuit: 'approve', to: ACCOUNT }), {
       kind: 'account-call', contract: ACCOUNT, circuit: 'approve',
     });
     /* RED WHEN: the wallet pays in anything but DUST, sends nothing, or is left running. */
@@ -95,7 +100,7 @@ describe('A CALL SENT STRAIGHT TO THE CHAIN', () => {
       const w = aWallet(log);
       return { ...w, facade: async () => ({ ...(await w.facade()), state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 - 1n }) }) as never };
     };
-    await expect(straightFromTheOwnWallet(behind, Date.now, () => true)(b64({ circuit: 'approve', to: ACCOUNT }), {
+    await expect(straightFromTheOwnWallet(behind, Date.now, () => true, { over: false }, YES)(b64({ circuit: 'approve', to: ACCOUNT }), {
       kind: 'account-call', contract: ACCOUNT, circuit: 'approve',
     })).rejects.toThrow(/could not learn from the network which ledger version.*asks the network again/su);
     expect(log.filter((l) => l !== 'stopped')).toEqual([]);
@@ -108,7 +113,7 @@ describe('A CALL SENT STRAIGHT TO THE CHAIN', () => {
       [{ circuit: 'writeSecretCopy', to: ACCOUNT }, { kind: 'vault-copy', contract: VAULT, circuit: 'writeSecretCopy' }],
     ] as const) {
       const log: string[] = [];
-      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64(tx), call).then(() => null, (x: unknown) => x);
+      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, YES)(b64(tx), call).then(() => null, (x: unknown) => x);
       /* RED WHEN: the person's wallet pays for, or sends, a call that is not the one the step makes. */
       expect((e as { nothingWasSent?: unknown }).nothingWasSent).toBe(true);
       expect(log).toEqual(['stopped']);
@@ -121,7 +126,7 @@ describe('A VAULT\'S RETIRE SENT STRAIGHT TO THE CHAIN', () => {
   it('is paid for in DUST alone only as this vault\'s retire asking this company\'s account, and refused before anything is paid otherwise', async () => {
     const sent = async (calls: Array<{ circuit: string; to: string }>) => {
       const log: string[] = [];
-      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64({ calls }), RETIRE).then(() => null, (x: unknown) => x);
+      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, YES)(b64({ calls }), RETIRE).then(() => null, (x: unknown) => x);
       return { log, e };
     };
     expect((await sent([{ circuit: 'retire', to: VAULT }, { circuit: 'retireVault', to: ACCOUNT }])).log).toEqual(['fee in dust', 'sent', 'stopped']);
@@ -137,7 +142,7 @@ describe('A PUBLIC TOKEN TAKEN OFF A VAULT\'S LIST, SENT STRAIGHT TO THE CHAIN',
   it('is paid for in DUST alone only as one forgetUnshielded call to this vault, and refused before anything is paid otherwise', async () => {
     const sent = async (calls: Array<{ circuit: string; to: string }>) => {
       const log: string[] = [];
-      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64({ calls }), FORGET).then(() => null, (x: unknown) => x);
+      const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, YES)(b64({ calls }), FORGET).then(() => null, (x: unknown) => x);
       return { log, e };
     };
     expect((await sent([{ circuit: 'forgetUnshielded', to: VAULT }])).log).toEqual(['fee in dust', 'sent', 'stopped']);
@@ -162,7 +167,7 @@ describe('THE FEE IS OUR SPONSORSHIP\'S, AND THE PERSON\'S OWN DUST ONLY WHEN SP
     const log: string[] = [];
     const told: string[] = [];
     const w = way(log);
-    const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, { ...w, ownDustPaid: () => told.push('own DUST') })(b64(tx), APPROVE)
+    const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, { ...YES, ...w, ownDustPaid: () => told.push('own DUST') })(b64(tx), APPROVE)
       .then(() => null, (x: unknown) => x as { message: string; nothingWasSent?: unknown });
     return { log, told, e };
   };
@@ -180,27 +185,75 @@ describe('THE FEE IS OUR SPONSORSHIP\'S, AND THE PERSON\'S OWN DUST ONLY WHEN SP
       { status: 503, nothingWasSent: true }, { status: 502, nothingWasSent: true }, { status: 504, nothingWasSent: true },
       { status: 422, code: 'fee-not-paid', nothingWasSent: true },
     ]) {
-      const { log, told, e } = await send(() => ({ sponsor: async () => { throw Object.assign(new Error('the fee payer did not pay this fee'), down); } }));
+      const offered: Array<string | null> = [];
+      const { log, told, e } = await send(() => ({
+        sponsor: async () => { throw Object.assign(new Error('the fee payer did not pay this fee'), down); },
+        offer: async (_fee, said) => { offered.push(said); return true; },
+      }));
       /* RED WHEN: a call is not sent when sponsorship is down and the person holds DUST, or the window does not say who paid. */
       expect(e, JSON.stringify(down)).toBeNull();
+      /* RED WHEN: sponsorship being down pays from the person's DUST without the offer, or names a refusal it never made. */
+      expect(offered).toEqual([null]);
       expect(log).toEqual(['fee in dust', 'sent', 'stopped']);
       expect(told).toEqual(['own DUST']);
     }
   });
 
-  it('a refusal from sponsorship is shown as a refusal, in its words, and the person\'s DUST pays nothing', async () => {
+  it('a refusal from sponsorship leads to the offer of the person\'s own DUST, with its words, and only a yes pays', async () => {
     for (const refused of [
       { status: 409, nothingWasSent: true }, { status: 401 }, { status: 422, code: 'network-refused', nothingWasSent: true }, {},
     ]) {
-      const { log, told, e } = await send(() => ({
-        sponsor: async () => { throw Object.assign(new Error('this service pays no fee for a payment out of this vault'), refused); },
-      }));
-      /* RED WHEN: a refusal the service made on purpose is undone by paying from the person's own DUST. */
-      expect(e?.nothingWasSent, JSON.stringify(refused)).toBe(true);
-      expect(e?.message).toMatch(/fee sponsorship refused this call \(this service pays no fee for a payment out of this vault\)/u);
-      expect(log).toEqual(['stopped']);
-      expect(told).toEqual([]);
+      const sponsor = async () => { throw Object.assign(new Error('this service pays no fee for a payment out of this vault'), refused); };
+      const offered: Array<string | null> = [];
+      const yes = await send(() => ({ sponsor, offer: async (_fee, said) => { offered.push(said); return true; } }));
+      /* RED WHEN: a sponsorship refusal is final and the person is not offered to pay from their own DUST. */
+      expect(yes.e, JSON.stringify(refused)).toBeNull();
+      expect(yes.log).toEqual(['fee in dust', 'sent', 'stopped']);
+      /* RED WHEN: the offer hides what the sponsorship said. */
+      expect(offered).toEqual(['this service pays no fee for a payment out of this vault']);
+      const no = await send(() => ({ sponsor, offer: async () => false }));
+      /* RED WHEN: a declined offer pays or sends anything. */
+      expect(no.e?.nothingWasSent).toBe(true);
+      expect(no.log).toEqual(['stopped']);
+      expect(no.told).toEqual([]);
     }
+  });
+
+  it('a refusal of the call itself by the sponsorship\'s checks is final: no offer, nothing paid or sent, its words shown', async () => {
+    for (const marked of [{ callRefused: true }, { body: { callRefused: true } }]) {
+      const offered: unknown[] = [];
+      const { log, e } = await send(() => ({
+        sponsor: async () => {
+          throw Object.assign(new Error('this service pays no fee for a payment out of this vault'), { status: 409, nothingWasSent: true, ...marked });
+        },
+        offer: async (fee) => { offered.push(fee); return true; },
+      }));
+      /* RED WHEN: a call the service's own checks refused is offered to the person to pay for and sent. */
+      expect(offered, JSON.stringify(marked)).toEqual([]);
+      expect(e?.nothingWasSent).toBe(true);
+      expect(e?.message).toMatch(/refused this call itself \(this service pays no fee for a payment out of this vault\)/u);
+      expect(log).toEqual(['stopped']);
+    }
+  });
+
+  it('no fee is paid from the person\'s own DUST without their yes or their own choice', async () => {
+    const down = async () => { throw Object.assign(new Error('the fee payer did not pay this fee'), { status: 503, nothingWasSent: true }); };
+    /* RED WHEN: with nobody to ask, the person's DUST pays all the same. */
+    const nobody = await send(() => ({ sponsor: down, offer: undefined }));
+    expect(nobody.e?.nothingWasSent).toBe(true);
+    expect(nobody.log).toEqual(['stopped']);
+    const asked: bigint[] = [];
+    const chosen = await send((log) => ({
+      sponsor: async (...a) => { log.push('sponsor asked'); return sponsorship(log)!(...a); }, ownWalletChosen: true,
+      offer: async (fee) => { asked.push(fee); return true; },
+    }));
+    /* RED WHEN: the person chose their own wallet and the sponsorship is still asked. */
+    expect(chosen.e).toBeNull();
+    expect(chosen.log).toEqual(['fee in dust', 'sent', 'stopped']);
+    /* RED WHEN: the fee is not worked out and shown before it is paid. */
+    expect(asked).toEqual([1n]);
+    /* RED WHEN: a fee the person chose to pay is said to have been paid because sponsorship could not. */
+    expect(chosen.told).toEqual([]);
   });
 
   it('a call handed back that the wallet will not send is said done, so it holds nothing for anyone', async () => {
@@ -279,7 +332,7 @@ describe('THE ACT IS TOLD OF EVERY CALL THIS WALLET HANDS OVER ITSELF', () => {
   const down: FeeAndSubmit['sponsor'] = async () => { throw Object.assign(new Error('the fee payer did not pay this fee'), { status: 503, nothingWasSent: true }); };
   const toldFor = async (way: FeeAndSubmit, tx: unknown = CALL): Promise<number> => {
     let told = 0;
-    await straightFromTheOwnWallet(() => aWallet([]), Date.now, () => true, { over: false }, { ...way, handedOver: () => { told += 1; } })(b64(tx), APPROVE)
+    await straightFromTheOwnWallet(() => aWallet([]), Date.now, () => true, { over: false }, { ...YES, ...way, handedOver: () => { told += 1; } })(b64(tx), APPROVE)
       .catch(() => undefined);
     return told;
   };
@@ -298,6 +351,22 @@ describe('THE ACT IS TOLD OF EVERY CALL THIS WALLET HANDS OVER ITSELF', () => {
 
 describe('WHICH WAY AN ACT\'S CALLS GO', () => {
   const wallet = (log: string[]) => ({ ownWallet: () => aWallet(log) });
+
+  it('the offer of the person\'s own DUST is the action\'s fee question, with the fee shown, and a no sends nothing', async () => {
+    for (const said of [true, false]) {
+      const log: string[] = [];
+      const asked: unknown[] = [];
+      const act = { ...anAct({}), confirmFee: async (lines: unknown) => { asked.push(lines); return said; } };
+      const over = handOverFor(act, wallet(log), { choice: { service: 'none' } });
+      const e = await over.toChain!(b64({ circuit: 'approve', to: ACCOUNT }), { kind: 'account-call', contract: ACCOUNT, circuit: 'approve' })
+        .then(() => null, (x: unknown) => x as { nothingWasSent?: unknown });
+      /* RED WHEN: the hand-over pays from the person's DUST without asking the action's fee question, or shows no fee. */
+      expect(asked).toEqual([[{ key: 'act.fee.own-offer', values: { fee: expect.any(String), specks: expect.any(String) } }]]);
+      /* RED WHEN: a no in the window still pays or sends. */
+      expect(e === null, String(said)).toBe(said);
+      expect(log.includes('sent'), String(said)).toBe(said);
+    }
+  });
 
   it('the company\'s choice decides, never what the act names', () => {
     for (const fields of [{}, { path: 'service' }, { path: 'chain' }] as Record<string, string>[]) {
@@ -367,7 +436,7 @@ describe('WHICH WAY AN ACT\'S CALLS GO', () => {
 describe('A VAULT\'S START SENT STRAIGHT TO THE CHAIN IS HELD TO WHAT THE SERVICE WOULD RELAY', () => {
   const send = async (tx: unknown, call: Parameters<ReturnType<typeof straightFromTheOwnWallet>>[1]) => {
     const log: string[] = [];
-    const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true)(b64(tx), call).then(() => null, (x: unknown) => x);
+    const e = await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, YES)(b64(tx), call).then(() => null, (x: unknown) => x);
     return { log, refused: e === null ? null : String((e as Error).message) };
   };
   const SECRET = { kind: 'vault-secret', contract: VAULT, circuit: 'setNonceSecret', account: ACCOUNT } as const;
@@ -426,7 +495,7 @@ describe('A PAYMENT OUT OF THE VAULT SENT STRAIGHT TO THE CHAIN IS HELD TO WHAT 
   const PUBLIC = { kind: 'public-payout', contract: VAULT, circuit: 'payoutUnshielded', account: ACCOUNT } as const;
   const send = async (tx: unknown, call: Parameters<ReturnType<typeof straightFromTheOwnWallet>>[1]) => {
     const log: string[] = [];
-    const e = await straightFromTheOwnWallet(() => aWallet(log, new Map([[JSON.stringify('T'), tx]])), Date.now, () => true)(b64('T'), call).then(() => null, (x: unknown) => x);
+    const e = await straightFromTheOwnWallet(() => aWallet(log, new Map([[JSON.stringify('T'), tx]])), Date.now, () => true, { over: false }, YES)(b64('T'), call).then(() => null, (x: unknown) => x);
     return { log, refused: e === null ? null : e as { message: string; nothingWasSent?: unknown } };
   };
 
@@ -458,6 +527,24 @@ describe('A PAYMENT OUT OF THE VAULT SENT STRAIGHT TO THE CHAIN IS HELD TO WHAT 
   });
 });
 
+describe('A PRIVATE REGISTRY\'S WRITE SENT STRAIGHT TO THE CHAIN IS HELD TO WHAT THE FEE ROUTE WOULD PAY FOR', () => {
+  it('one put to the registry named is paid for in DUST alone and sent; another circuit, contract or a second call is refused before anything is paid', async () => {
+    const REGISTRY = '5e'.repeat(32);
+    const put = { kind: 'registry-put', contract: REGISTRY, circuit: 'put' } as const;
+    const log: string[] = [];
+    await straightFromTheOwnWallet(() => aWallet(log), Date.now, () => true, { over: false }, YES)(b64({ circuit: 'put', to: REGISTRY }), put);
+    /* RED WHEN: the registry's one write cannot be sent from the person's own wallet. */
+    expect(log).toEqual(['fee in dust', 'sent', 'stopped']);
+    for (const tx of [{ circuit: 'other', to: REGISTRY }, { circuit: 'put', to: ACCOUNT }, { calls: [{ circuit: 'put', to: REGISTRY }, { circuit: 'put', to: REGISTRY }] }]) {
+      const refusedLog: string[] = [];
+      const e = await straightFromTheOwnWallet(() => aWallet(refusedLog), Date.now, () => true, { over: false }, YES)(b64(tx), put).then(() => null, (x: unknown) => x as { nothingWasSent?: unknown });
+      /* RED WHEN: a transaction that is not the one put to this registry is paid for or sent as the registry's write. */
+      expect(e?.nothingWasSent, JSON.stringify(tx)).toBe(true);
+      expect(refusedLog).toEqual(['stopped']);
+    }
+  });
+});
+
 describe('A CALL THE WALLET COULD NOT GET READY IS SAID AS NOT SENT', () => {
   it('a wallet whose ledger, DUST, signing or finishing fails before the call is handed over sends nothing, undoes any fee, and says so', async () => {
     const tx = b64({ circuit: 'approve', to: ACCOUNT });
@@ -474,7 +561,7 @@ describe('A CALL THE WALLET COULD NOT GET READY IS SAID AS NOT SENT', () => {
     };
     for (const where of ['ledger', 'facade', 'sign', 'finish'] as const) {
       const log: string[] = [];
-      const e = await straightFromTheOwnWallet(() => failing(log, where), Date.now, () => true)(tx, call).then(() => null, (x: unknown) => x);
+      const e = await straightFromTheOwnWallet(() => failing(log, where), Date.now, () => true, { over: false }, YES)(tx, call).then(() => null, (x: unknown) => x);
       /* RED WHEN: a call that never reached the network is said as maybe sent, so its payment is held as on its way. */
       expect((e as { nothingWasSent?: unknown } | null)?.nothingWasSent, where).toBe(true);
       expect(log, where).not.toContain('sent');

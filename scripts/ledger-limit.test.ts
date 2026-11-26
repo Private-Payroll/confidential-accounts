@@ -1,24 +1,23 @@
 /**
  * A CHECK THAT CANNOT FAIL HAS ALREADY FAILED.
  *
- * `C357` is a defect that COMPILES, DEPLOYS and produces no error anywhere, so
- * a guard against it is unusually easy to write, wire, and never see fire. The
- * fixtures below are the real thing: `contracts/fixtures/ledger-limit/fifteen`
- * and `.../sixteen` are the compiled outputs of the two probe contracts
- * `REPORT-PROBE-LAYOUT.txt:71-82` describes, copied out of
- * `contracts/probe-out-layout/` — which `.gitignore:71` excludes, so a clone
- * would have had nothing to test against.
+ * A ledger past fifteen top-level fields compiles, deploys and produces no error
+ * anywhere, so a guard against it is unusually easy to write, wire, and never
+ * see fire. The fixtures below are the real thing:
+ * `contracts/fixtures/ledger-limit/fifteen` and `.../sixteen` are the compiled
+ * outputs of a fifteen-field and a sixteen-field contract, each beside its
+ * `source.compact`.
  *
- * THEY ARE MEASUREMENTS, NOT HAND-WRITTEN FIXTURES, and that distinction is the
- * point. A hand-written `contract-info.json` asserting what a sixteen-field
- * compile looks like would be this repository asserting its own belief about
- * the compiler; these came out of compactc 0.34.0, which each fixture's own
- * `contract-info.json` records. Rule 9.
+ * THEY ARE MEASUREMENTS, NOT HAND-WRITTEN FIXTURES. A hand-written
+ * `contract-info.json` asserting what a sixteen-field compile looks like would
+ * be this repository asserting its own belief about the compiler; these came
+ * out of the compiler, whose version each fixture's own `contract-info.json`
+ * records, and a test below holds that to the installed compiler's.
  *
- * WHAT WOULD MAKE THEM STALE: a compiler upgrade. The two fixtures record which
- * version produced them, and the guard reads real artifacts compiled by
- * whatever version is installed — so a compiler that changed the emitted shape
- * would fail `layoutFromArtifact`'s anchors loudly rather than passing quietly.
+ * WHAT WOULD MAKE THEM STALE: a compiler upgrade. The guard reads real
+ * artifacts compiled by whatever version is installed, so a compiler that
+ * changed the emitted shape would fail `layoutFromArtifact`'s anchors loudly
+ * rather than passing quietly.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,7 +47,6 @@ describe('THE FIFTEEN-FIELD FIXTURE — what a legal ledger looks like', () => {
   });
 
   it('the constructor builds ONE array with fifteen direct pushes', () => {
-    // REPORT-PROBE-LAYOUT.txt:106 — "fifteen  1 newArray()  15 arrayPush".
     expect(layoutFromArtifact(read(`${FIXTURES}/fifteen/index.js`))).toEqual({
       constructorArrays: 1,
       topLevelPushes: 15,
@@ -75,7 +73,6 @@ describe('THE SIXTEENTH FIELD — THE REFUSAL FIRES, which is why this file exis
   });
 
   it('the constructor builds THREE arrays and pushes nothing at the top level', () => {
-    // REPORT-PROBE-LAYOUT.txt:107 — "sixteen  3 newArray()  18 arrayPush".
     expect(layoutFromArtifact(read(`${FIXTURES}/sixteen/index.js`))).toEqual({
       constructorArrays: 3,
       topLevelPushes: 0,
@@ -97,7 +94,7 @@ describe('THE SIXTEENTH FIELD — THE REFUSAL FIRES, which is why this file exis
       writeFileSync(join(tree, managed, 'compiler/contract-info.json'), read(`${FIXTURES}/sixteen/contract-info.json`));
       writeFileSync(join(tree, managed, 'contract/index.js'), read(`${FIXTURES}/sixteen/index.js`));
 
-      const target = { label: 'sixteen', managed, door: 'COMPILE-SIXTEEN.command' };
+      const target = { label: 'sixteen', managed, door: 'npm run compile:sixteen' };
       const refusals = limitRefusals(tree, [target]);
       expect(refusals).toHaveLength(1);
       expect(refusals[0].kind).toBe('reshaped');
@@ -129,32 +126,28 @@ describe('THE SIXTEENTH FIELD — THE REFUSAL FIRES, which is why this file exis
 describe('the refusal is one a person can act on', () => {
   it('says NO DOOR resolves an over-limit contract, because recompiling reproduces it', () => {
     const text = limitRefusalText([
-      { kind: 'reshaped', label: 'Fixture', door: 'COMPILE-FIXTURE.command', detail: '16 fields', layout: { fields: 16, reshaped: true, constructorArrays: 3, topLevelPushes: 0 } },
+      { kind: 'reshaped', label: 'Fixture', door: 'npm run compile:fixture', detail: '16 fields', layout: { fields: 16, reshaped: true, constructorArrays: 3, topLevelPushes: 0 } },
     ]);
     expect(text).toContain('THE BUILD DID NOT RUN');
     expect(text).toContain('NO DOOR RESOLVES THIS');
-    expect(text).not.toContain('Run COMPILE-FIXTURE.command');
+    expect(text).not.toContain('Run npm run compile:fixture');
     // It shows its working: all three measured numbers.
     expect(text).toContain('fields declared            16');
     expect(text).toContain('constructor newArray()     3');
     expect(text).toContain('top-level newNull() pushes 0');
-    expect(text).toContain('C357');
     expect(text).not.toMatch(/environment variable|SKIP|set [A-Z_]+=/);
   });
 
   it('names the compiler door when an artifact has simply not been built', () => {
-    const refusals = limitRefusals(ROOT, [{ label: 'Nowhere', managed: 'contracts/not-compiled-here', door: 'COMPILE-NOWHERE.command' }]);
+    const refusals = limitRefusals(ROOT, [{ label: 'Nowhere', managed: 'contracts/not-compiled-here', door: 'npm run compile:nowhere' }]);
     expect(refusals[0].kind).toBe('missing');
-    expect(limitRefusalText(refusals)).toContain('Run COMPILE-NOWHERE.command');
+    expect(limitRefusalText(refusals)).toContain('Run npm run compile:nowhere');
   });
 
   it('REFUSES RATHER THAN PICKING when the two instruments disagree', () => {
-    // AN AUDITOR DELETED THIS ENTIRE BRANCH AND ALL FIFTEEN TESTS STAYED GREEN.
-    // The old version of this test asserted the AGREEING case and a different
-    // refusal, and never constructed a disagreeing pair — while `readLayout`
-    // returns `reshaped` from instrument (1) alone, so with the branch gone
-    // instrument (2) is decoration. So the pair is built here, from the two
-    // real fixtures, crossed.
+    // `readLayout` returns `reshaped` from instrument (1) alone, so without the
+    // disagreement branch instrument (2) would be decoration. The disagreeing
+    // pair is built here, from the two real fixtures, crossed.
     const tree = mkdtempSync(join(tmpdir(), 'ledger-limit-x-'));
     try {
       const managed = 'contracts/managed-crossed';
@@ -164,7 +157,7 @@ describe('the refusal is one a person can act on', () => {
       writeFileSync(join(tree, managed, 'compiler/contract-info.json'), read(`${FIXTURES}/fifteen/contract-info.json`));
       writeFileSync(join(tree, managed, 'contract/index.js'), read(`${FIXTURES}/sixteen/index.js`));
       expect(() => readLayout(tree, managed)).toThrow(/two instruments disagree/);
-      const refusals = limitRefusals(tree, [{ label: 'crossed', managed, door: 'COMPILE-CROSSED.command' }]);
+      const refusals = limitRefusals(tree, [{ label: 'crossed', managed, door: 'npm run compile:crossed' }]);
       expect(refusals[0].kind).toBe('instruments-disagree');
       expect(limitRefusalText(refusals)).toContain('NO DOOR RESOLVES THIS');
       // And the other crossing too, so neither direction is the untested one.
@@ -196,7 +189,7 @@ describe('the refusal is one a person can act on', () => {
   });
 });
 
-describe('the guard is WIRED IN, and both contracts are under it', () => {
+describe('the guard is WIRED IN, and every contract is under it', () => {
   it('vitest.config.ts really HOLDS the globalSetup value — read, not grepped', async () => {
     const config = (await import('../vitest.config.ts')).default as { test?: { globalSetup?: string | string[] } };
     const wired = config.test?.globalSetup;
@@ -209,13 +202,12 @@ describe('the guard is WIRED IN, and both contracts are under it', () => {
     expect(() => mod.default(undefined, join(ROOT, 'scripts'))).toThrow(/THE BUILD DID NOT RUN/);
   });
 
-  it('BOTH CONTRACTS are in the table, each with the door that rebuilds IT', () => {
-    // Existence is not correctness: swapping the two doors sends a person
-    // editing the account off to recompile the vault. Rule 19 asks for the door
-    // that RESOLVES it.
+  it('every contract in the table is checked, each with the door that rebuilds it', () => {
+    /* RED WHEN: a contract is dropped from the guard's targets, or a target names a folder no compile writes. */
     expect(LEDGER_LIMIT_TARGETS.map((t) => [t.label, t.managed, t.door])).toEqual([
       ['ConfidentialAccount', 'contracts/managed', 'npm run compact:fast'],
-      ['Vault', 'contracts/managed-vault', 'npm run compact:vault'],
+      ['Vault', 'contracts/managed-vault', 'npm run compact:fast'],
+      ['PrivateRegistry', 'contracts/managed-registry', 'npm run compact:fast'],
     ]);
     // AND EACH IS A COMMAND A READER CAN ACTUALLY RUN. Read as a path, this
     // passed only in the one folder that happened to hold a file of that name.

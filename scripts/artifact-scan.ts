@@ -68,7 +68,7 @@
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { CONTRACTS } from './contract-sources.mjs';
+import { CONTRACT_TABLE } from './contract-sources.mjs';
 
 /* ------------------------------------------------------ string-aware scan --- */
 
@@ -297,22 +297,14 @@ export type ArtifactSpec = {
 };
 
 /**
- * BOTH CONTRACTS, EACH TAKEN FROM THE ONE TABLE OF THEIR MAIN FILES (`CONTRACTS`).
- * `scripts/artifact-freshness.ts` learned this the expensive way: a guard that
- * knows about the account alone is a guard the vault walks past.
+ * EVERY CONTRACT IN THE TABLE (`CONTRACT_TABLE` in scripts/contract-sources.mjs), each by its type's
+ * name, its main file and its compiled folder, so a contract added there is scanned with no second list.
+ * `scripts/artifact-freshness.ts` learned this the expensive way: a guard that knows about some contracts
+ * is a guard the others walk past.
  */
-export const ARTIFACTS: readonly ArtifactSpec[] = [
-  {
-    label: 'ConfidentialAccount',
-    source: CONTRACTS.account,
-    managed: 'contracts/managed',
-  },
-  {
-    label: 'Vault',
-    source: CONTRACTS.vault,
-    managed: 'contracts/managed-vault',
-  },
-];
+export const ARTIFACTS: readonly ArtifactSpec[] = Object.values(CONTRACT_TABLE).map((c) => ({
+  label: c.name, source: c.source, managed: c.compiled,
+}));
 
 const sha256 = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
 

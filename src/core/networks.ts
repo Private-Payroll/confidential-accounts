@@ -1,3 +1,4 @@
+import { NETWORKS } from 'midnight-identity/network';
 import { buildSetting } from 'midnight-identity/profile/origin';
 import document from './networks.json' with { type: 'json' };
 
@@ -8,7 +9,10 @@ import document from './networks.json' with { type: 'json' };
  * Every part of this application that needs to know what network it is on
  * reads a record from `networks.json` and nothing else. There is no second
  * list: no endpoints table written out again beside this one, no set of names
- * kept in a door, no default compiled into a script.
+ * kept in a door, no default compiled into a script. The names a record may
+ * carry are the one list `NETWORKS` (`midnight-identity/network`), stated in
+ * the wallet's package because that package cannot read this file; a record
+ * under any other name is refused.
  *
  * **WHY ONE PLACE IS NOT TIDINESS.** A network name is not a label. It is
  * interpolated verbatim as a segment of every bech32m address the platform
@@ -98,6 +102,12 @@ export interface NetworkRecord {
    */
   readonly testToken: string | null;
   readonly endpoints: NetworkEndpointRecord | null;
+  /**
+   * **THE ADDRESSES OF THE PRIVATE REGISTRY ON THIS NETWORK**, each 64
+   * lower-case hex characters, none twice. Empty where none is deployed, and a
+   * network with none restores nothing from a registry.
+   */
+  readonly registries: readonly string[];
 }
 
 /**
@@ -122,6 +132,18 @@ function refuse(what: string): never {
 }
 
 const A_COLOUR = /^[0-9a-f]{64}$/;
+const AN_ADDRESS = /^[0-9a-f]{64}$/;
+
+function checkedRegistries(key: string, raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) refuse(`"${key}" has a registries value that is not a list`);
+  for (const address of raw) {
+    if (typeof address !== 'string' || !AN_ADDRESS.test(address)) {
+      refuse(`"${key}" lists a registry ${JSON.stringify(address)} that is not 64 lower-case hex characters`);
+    }
+  }
+  if (new Set(raw).size !== raw.length) refuse(`"${key}" lists one registry twice`);
+  return Object.freeze([...raw] as string[]);
+}
 
 function checkedProjectToken(id: string, raw: unknown): ProjectTokenRecord | null {
   if (raw === null) return null;
@@ -176,7 +198,10 @@ function checkedTestToken(key: string, kind: NetworkKind, raw: unknown): string 
 function checkedRecord(key: string, raw: unknown): NetworkRecord {
   if (raw === null || typeof raw !== 'object') refuse(`"${key}" is not a record`);
   const r = raw as Record<string, unknown>;
-  for (const field of ['id', 'kind', 'label', 'testToken', 'endpoints']) {
+  if (!(NETWORKS as readonly string[]).includes(key)) {
+    refuse(`"${key}" is not a network this product runs on; the ones it runs on are ${NETWORKS.join(', ')}`);
+  }
+  for (const field of ['id', 'kind', 'label', 'testToken', 'endpoints', 'registries']) {
     if (!Object.prototype.hasOwnProperty.call(r, field)) refuse(`"${key}" has no "${field}" key`);
   }
   /*
@@ -197,6 +222,7 @@ function checkedRecord(key: string, raw: unknown): NetworkRecord {
     label: r.label,
     testToken: checkedTestToken(key, r.kind as NetworkKind, r.testToken),
     endpoints: checkedEndpoints(key, r.endpoints),
+    registries: checkedRegistries(key, r.registries),
   });
 }
 

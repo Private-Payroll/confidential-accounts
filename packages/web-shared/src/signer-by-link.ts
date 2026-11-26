@@ -81,8 +81,7 @@ export async function seatSignerOnDevice(
     companyKeys: KeysHeld; signerId: string; readOut: string;
     /**
      * This seat as an inviter record - its wallet key, the directory entry its wallet signed and its own seat's
-     * opening - carried in the proposal for the person's wallet, which keeps the company's account only on a seat
-     * of it (`whyTheInvitationDoesNotNameIt`). A person added from a code holds no other.
+     * opening - carried in the proposal that seats the person. A person added from a code holds no other.
      */
     inviter?: Inviter;
     /**

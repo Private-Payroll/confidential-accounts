@@ -3,7 +3,7 @@ import { base64 } from '@scure/base';
 import { committeeSigningKeyFor } from 'midnight-identity/profile/committee-key';
 import { buildCreationInsert } from 'midnight-identity/profile/contract-keys';
 import { creationShown, type CreationLedger } from 'midnight-identity/profile/creation-sign';
-import { readCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import { readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { CreationRequest } from 'midnight-identity/profile/request';
 import type { RelayLabel } from 'midnight-identity/profile/channel';
 import { NO_ASSET } from '../../../../src/core/assets.js';
@@ -23,7 +23,10 @@ import type { CreationChain } from '../chain/creation-chain.js';
 import type { ConstructionDeps } from '../chain/account-as-constructed.js';
 import { startingStateRefusal } from '../chain/account-as-constructed.js';
 import type { BuiltAccountKeys } from '../chain/this-builds-account-keys.js';
-import { foundingSeatOf, type FoundingSeat } from '../keyring/founding-seat.js';
+import { FOUNDING_SEAT, foundingSeatOf, type FoundingSeat } from '../keyring/founding-seat.js';
+import type { CompanyChain } from './company-reach.js';
+import { registryEntryOwed, registryWriteThrough, type SeatToEnter } from './registry-entry.js';
+import { pinCompany, pinHeldFor, pinnedFor } from './company-pin.js';
 import { withCompanyKey } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
@@ -64,8 +67,8 @@ import { signerMaterialOf } from '../../../../packages/web-shared/src/private-st
  *      creation is dropped from the saved keys.
  *
  * What it reads, and from where: the label from the page's ask, checked against
- * this wallet's own record that it drew it (or pinned its account as one it
- * created); the founding from the saved keys this wallet opened, checked against
+ * this wallet's own record that it drew it (or the account the saved keys pin
+ * for it, pinned as one it created); the founding from the saved keys this wallet opened, checked against
  * the seat this wallet makes again from its words; the chain from this wallet's
  * own indexer. What it trusts the page with: handing each transaction and the
  * proposal's sealed record to the service and keeping the saved keys it sealed
@@ -78,6 +81,8 @@ import { signerMaterialOf } from '../../../../packages/web-shared/src/private-st
 export interface FinishCompanyReach {
   readonly build: AccountBuilding;
   readonly chain: CreationChain;
+  /** The person's own wallet, which pays a fee from their own DUST on their yes; absent, only our sponsorship can pay. */
+  readonly ownWallet?: CompanyChain['ownWallet'];
   readonly ledger: () => Promise<CreationLedger>;
   readonly construction: () => Promise<ConstructionDeps>;
   readonly built: () => BuiltAccountKeys;
@@ -146,8 +151,8 @@ export function finishCompanyAction(reach: FinishCompanyReach): ActionDefinition
       const label = readCompanyLabel(intent.fields['company']);
       if (label === null) return why('not-a-label');
       if (held.wallet === undefined) return why('no-record');
-      const pinned = held.wallet.pinnedFor(label);
-      if (pinned === null ? !held.wallet.drewTheLabel(label) : !pinned.created) return why('not-drawn-here');
+      /* The pin is in the saved keys, which only the steps open: they refuse a pin that is not this wallet's creation. */
+      if (!held.wallet.drewTheLabel(label)) return why('not-drawn-here');
       return null;
     },
     steps: (intent) => stepsOf(reach, intent.fields['company'] ?? ''),
@@ -173,11 +178,11 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       const { setAside: _taken, ...takenUp } = aside;
       return takenUp as SavedCreation;
     })());
-    const pinned = wallet.pinnedFor(label);
-    if (pinned === null ? !wallet.drewTheLabel(label) : !pinned.created) refuse('not-drawn-here');
-    /* A pin with no deploy kept beside it, or a deploy for another account, is this wallet's record and the saved
-     * keys disagreeing: nothing is built over it. */
-    if (pinned !== null && (creation.deploy === null || creation.deploy.account !== pinned.account)) refuse('pinned-without-deploy');
+    const pinned = pinnedFor(ctx, label);
+    if (pinned.of === 'pinned' ? pinned.from !== 'created' : !wallet.drewTheLabel(label)) refuse('not-drawn-here');
+    /* A pin with no deploy kept beside it, or a deploy for another account, is the saved keys disagreeing with
+     * themselves: nothing is built over it. */
+    if (pinned.of === 'pinned' && (creation.deploy === null || creation.deploy.account.toLowerCase() !== pinned.account)) refuse('pinned-without-deploy');
     const seat = await foundingSeatOf(ctx.held.identity, label);
     const founding = creation.request.founding;
     if (String(creation.foundingKey.value).toLowerCase() !== seat.walletKey.value) refuse('not-your-key');
@@ -289,7 +294,6 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
     run: async (ctx) => {
       const f = await prepared(ctx);
       let c = f.creation;
-      const wallet = ctx.held.wallet!;
       const clock = await chainClock(c.deploy?.account ?? ZERO);
       if (c.deploy !== null && c.signed !== null && clock.held) return;
       if (c.deploy === null || c.signed === null) {
@@ -329,7 +333,7 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         };
         await keep(ctx, f, c);
       }
-      if (wallet.pinnedFor(f.label) === null) await wallet.pin(f.label, c.deploy!.account);
+      if ((await pinCompany(ctx, f.label, c.deploy!.account, 'created')).of !== 'pinned') refuse('pinned-without-deploy');
       if (!c.recorded) {
         const ready = await sendable(ctx, f, clock, 'both');
         await relay(ctx, ready.c.deploy!.tx, { what: ready.carried ? 'creation-again' : 'creation', also: ready.c.signed!.tx }, clock);
@@ -354,7 +358,10 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       let sent = false;
       for (;;) {
         const seen = await reach.chain.account(account);
-        if (seen !== null && seen.finished) return;
+        if (seen !== null && seen.finished) {
+          entryOwed(ctx, f, account);
+          return;
+        }
         const clock = await chainClock(account);
         const ready = await sendable(ctx, f, clock, 'second');
         if (ready.carried) sent = false;
@@ -365,6 +372,31 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         await waitAWhile(ctx);
       }
     },
+  };
+
+  /*
+   * The founding seat's entry in the private registry, owed once the account is finished and pinned to it: written by
+   * the run after the action's steps, through the one fee path, and never holding up or changing how the action ends.
+   */
+  const entryOwed = (ctx: StepContext, f: Found, account: string): void => {
+    const kept = ctx.keyring?.open().read().accounts[f.creation.accountId];
+    if (kept === undefined) return;
+    const seat: SeatToEnter = {
+      accountId: f.creation.accountId, label: f.label, account, n: kept.seat ?? FOUNDING_SEAT, scope: f.seat.scope, leaf: f.seat.leaf,
+      ...(kept.registry === undefined ? {} : { mark: kept.registry }),
+    };
+    const held = pinHeldFor(ctx, f.label, account.toLowerCase() as AccountAddress);
+    if (held === null || !registryEntryOwed(seat, { pinned: held.account, page: account }, [f.seat.leaf])) return;
+    ctx.registryEntryOwed?.(async (c) => {
+      await registryWriteThrough(c, {
+        accountId: f.creation.accountId, network: reach.network, build: reach.build, now: reach.now,
+        ...(reach.ownWallet === undefined ? {} : { ownWallet: reach.ownWallet }),
+        read: async (registry) => {
+          const at = await reach.chain.account(registry);
+          return at === null ? null : { registryState: b64(at.state), parameters: b64(at.parameters) };
+        },
+      }, seat);
+    });
   };
 
   /* ---------------------------------------------------------------- 3-5. the pay-record key */

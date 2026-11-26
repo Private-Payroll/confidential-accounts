@@ -143,6 +143,7 @@ import { manifestServiceOf, serviceSource } from '../../packages/web-shared/src/
 import { treeKeptInMemory } from '../../packages/web-shared/src/tree-kept-here.js';
 import { viewOver, storeReachOver } from '../../src/testing/writes-over-a-send.js';
 import type { InvitationSend as WireSend } from 'vaults-web-shared/invitation-on-device.js';
+import { pinnedIn } from '../../apps/wallet/src/actions/seats-the-words-make.test-support.js';
 
 /** Deposits or payments on their way, kept for the length of one test, sealed as the page keeps them. */
 const keptOnThisDevice = <T,>(kind: 'deposit' | 'payment'): KeptOnThisDevice<T> =>
@@ -172,6 +173,8 @@ const accountCircuits = (accountModule as any).pureCircuits;
 
 /** The label the account below carries, as its founding signer's wallet drew it. */
 const LABEL = companyLabelOf(COMPANY_LABEL);
+/* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
+const pinnedOnly = (account: string) => ({ open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, account) }), keep: async () => {} });
 
 const releasedCompanyKey = (words: string, account: string): Uint8Array => {
   const ask = parseAsk(unlockAsk({
@@ -1265,7 +1268,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         const r = await fetch(base + path, { method, ...(body === undefined ? {} : { body }), headers: { 'content-type': 'application/json', 'x-test-person': 'ada' } });
         return { status: r.status, body: await r.json().catch(() => ({})) };
       },
-      tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: null,
+      tell: (o: Record<string, unknown>) => { Object.assign(told, o); }, keyring: pinnedOnly(company),
     }) as never;
     const before = chain.applied.length;
     const known = new Set(store.listProposals(ACCOUNT_ID).map((p) => p.id));
@@ -1385,7 +1388,7 @@ describe.skipIf(!KEYS_ON_DISK)('ONE RUN, RAISED, APPROVED, CHARGED AND PAID ON T
         const r = await fetch(base + path, { method, ...(body === undefined ? {} : { body }), headers: { 'content-type': 'application/json', 'x-test-person': 'ada' } });
         return { status: r.status, body: await r.json().catch(() => ({})) };
       },
-      tell: (o: Record<string, unknown>) => { told.push(o); }, keyring: null,
+      tell: (o: Record<string, unknown>) => { told.push(o); }, keyring: pinnedOnly(company),
       /* What carrying the change out moves is pinned in the wallet's own tests; this case reads the chain itself after. */
       movesWhoHolds: () => {},
     } as never;

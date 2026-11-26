@@ -1,8 +1,8 @@
 /**
  * THE SCREEN GUARD, AND THE PHASE CLOCK.
  *
- * The guard is the one that matters: `C236` says a vault's raw address must
- * never reach a screen, and the difference between that being a rule and it
+ * The guard is the one that matters: a vault's raw address must never reach a
+ * screen, and the difference between that being a rule and it
  * being a promise is whether something refuses. Watched failing — the tests
  * below drive lines that a careful person would have written and that would
  * have destroyed a vault's money.
@@ -19,7 +19,7 @@ const screenOver = (secrets: Array<{ what: string; value: string }>) => {
   return { shown, say: createScreen(() => secrets, (l) => shown.push(l)) };
 };
 
-describe('C236: a report cannot print a vault address, even by accident', () => {
+describe('a report cannot print a vault address, even by accident', () => {
   it('prints ordinary lines', () => {
     const { shown, say } = screenOver([{ what: "the vault's address", value: VAULT }]);
     say('vault  payroll-uk');
@@ -45,7 +45,6 @@ describe('C236: a report cannot print a vault address, even by accident', () => 
   it('says why, so the next person does not widen the rule to get past it', () => {
     const { say } = screenOver([{ what: "the vault's address", value: VAULT }]);
     const failure = (() => { try { say(VAULT); return null; } catch (e) { return e as Error; } })();
-    expect(failure!.message).toMatch(/C236/);
     expect(failure!.message).toMatch(/nobody can spend/);
     expect(failure!.message).toMatch(/say the name/);
   });

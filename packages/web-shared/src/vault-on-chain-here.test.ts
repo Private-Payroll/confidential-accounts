@@ -26,6 +26,7 @@ import { contractStateAt } from '../../../src/midnight/contract-state-at.js';
 import { NoteIndexUnaskable, NoteIndexUnreadable, type ServedEvent } from '../../../src/midnight/note-index.js';
 import { HISTORIES_AT_ONCE } from '../../../src/midnight/indexer-queries.js';
 import * as L from '@midnightntwrk/ledger-v9';
+import { keyFileAround } from '../../../src/testing/an-operation-holding.js';
 
 const VAULT = 'ab'.repeat(32);
 const ACCOUNT = 'c0'.repeat(32);
@@ -414,6 +415,22 @@ describe.skipIf(!HAS_KEYS)('MONEY GOES IN OR OUT ONLY WHERE EVERY CIRCUIT OF THE
     /* RED WHEN: only the circuits' names are compared - a vault whose deposit accepts other proofs then takes money. */
     expect(read).toMatchObject({ circuits: { circuit: 'deposit' } });
     expect((read as { circuits: { why: string } }).circuits.why).toMatch(/'deposit' circuit is not the one this app's build compiled/);
+  });
+
+  it('A VAULT OR AN ACCOUNT ONE OF WHOSE CIRCUITS HIDES A SECOND KEY IN ITS OTHER SLOT IS NOT THIS BUILD\'S, AND THE CIRCUIT IS NAMED', async () => {
+    /* This build's key stays in the slot the ledger's own reading shows; a key of the older proving system goes beside it. */
+    const hiding = (state: any, circuit: string): any => {
+      const op = state.operation(circuit);
+      op.verifierKey = keyFileAround('a key nobody compiled', 'older');
+      state.setOperation(circuit, op);
+      return R.ContractState.deserialize(state.serialize());
+    };
+    const vault = await readVaultOnChain(withAccount, vaultAndAccount(hiding(aVaultOfThisBuild(), 'payout'), anAccountOfThisBuild()), VAULT, ACCOUNT);
+    /* RED WHEN: a vault's circuits are judged by the one key the ledger's own reading shows - money then goes into a vault that pays out on another statement. */
+    expect(vault).toMatchObject({ circuits: { circuit: 'payout' }, accountCircuits: null });
+    const account = await readVaultOnChain(withAccount, vaultAndAccount(aVaultOfThisBuild(), hiding(anAccountOfThisBuild(), 'recordPaymentFromVault')), VAULT, ACCOUNT);
+    /* RED WHEN: the account's circuits are judged the same way. */
+    expect(account).toMatchObject({ circuits: null, accountCircuits: { circuit: 'recordPaymentFromVault' } });
   });
 
   it('A VAULT WITH A CIRCUIT THIS BUILD DOES NOT HAVE, OR A CIRCUIT WITH NO KEY, IS NOT THIS BUILD\'S', async () => {

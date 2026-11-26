@@ -87,8 +87,8 @@ describe('the recipient is a KIND, not a string — §4', () => {
   });
 
   it('a wrong-network address is refused as a WHERE mistake, not a WHAT mistake', () => {
-    const testnetAddress = addressFor(ours.moneyAt(2).zswap, 'testnet').bech32;
-    expect(() => parseRecipient(testnetAddress, NETWORK)).toThrow(new RegExp(`network|${NETWORK}`, 'iu'));
+    const elsewhere = addressFor(ours.moneyAt(2).zswap, NETWORK === 'preview' ? 'preprod' : 'preview').bech32;
+    expect(() => parseRecipient(elsewhere, NETWORK)).toThrow(new RegExp(`network|${NETWORK}`, 'iu'));
   });
 
   it('a shielded address of the wrong length is refused before anything is built', async () => {

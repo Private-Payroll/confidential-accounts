@@ -6,6 +6,7 @@ import { INDEXER_HOST, INDEXER_HTTP_URL } from '../config.js';
 import { fromIndexerAt, labelOnAccount } from '../chain/view-doors.js';
 import type { LabelOnAccount } from '../chain/view-doors.js';
 import { StatusAlert } from '../components/status.js';
+import { BuildStamp } from './build-stamp.js';
 
 /**
  * **THE COMPANY, AS A PERSON CHECKS IT BEFORE THIS WALLET GIVES OR SIGNS
@@ -19,6 +20,10 @@ import { StatusAlert } from '../components/status.js';
  * which this shows a fingerprint of the label alone**, because the same label
  * can be written into a second account, and a fingerprint that did not cover
  * the account would let that second company wear the first one's face.
+ *
+ * When the account carries the label, the section also shows which published build
+ * the account's contract is, under the account. That line gives and refuses nothing
+ * and never changes the fingerprint or what the screen lets through.
  */
 
 /** How a screen asks the chain which label an account carries. Replaceable so a test can answer. */
@@ -122,6 +127,7 @@ function CompanySection({
         </p>
         <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>The account, in full</p>
         <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-account>{account}</p>
+        <BuildStamp address={account} contract="account" />
         <p className="m-0 text-sm text-muted-foreground">The company&rsquo;s label, in full</p>
         <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-label>{label}</p>
       </div>

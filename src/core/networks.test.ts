@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { NETWORKS } from 'midnight-identity/network';
 import {
   NETWORK_IDS, endpointsOf, isNetworkId, networkRecord, recordsFrom, shownAddress, shownAddressesIn, websocketNodeOf,
 } from './networks.js';
@@ -21,7 +22,7 @@ import {
 
 const AT_LEAST_ONE = (id: string) => ({
   version: 1,
-  networks: { [id]: { id, kind: 'test', label: 'A network', testToken: null, endpoints: null } },
+  networks: { [id]: { id, kind: 'test', label: 'A network', testToken: null, endpoints: null, registries: [] } },
 });
 
 describe('§1 the document, and what the reader will not take', () => {
@@ -50,8 +51,8 @@ describe('§1 the document, and what the reader will not take', () => {
   });
 
   it('REFUSES A RECORD MISSING A FIELD, AND `null` IS NOT MISSING', () => {
-    const ok = { id: 'stagenet', kind: 'test', label: 'A network', testToken: null, endpoints: null };
-    for (const field of ['id', 'kind', 'label', 'testToken', 'endpoints']) {
+    const ok = { id: 'stagenet', kind: 'test', label: 'A network', testToken: null, endpoints: null, registries: [] };
+    for (const field of ['id', 'kind', 'label', 'testToken', 'endpoints', 'registries']) {
       const short: Record<string, unknown> = { ...ok };
       delete short[field];
       /*
@@ -75,7 +76,7 @@ describe('§1 the document, and what the reader will not take', () => {
      */
     expect(() => recordsFrom({
       version: 1,
-      networks: { stagenet: { id: 'preview', kind: 'test', label: 'x', testToken: null, endpoints: null } },
+      networks: { stagenet: { id: 'preview', kind: 'test', label: 'x', testToken: null, endpoints: null, registries: [] } },
     })).toThrow(/carries the id "preview", and a record's key is its id/);
   });
 
@@ -87,7 +88,7 @@ describe('§1 the document, and what the reader will not take', () => {
      */
     for (const kind of ['testing', 'Test', '', 'staging', null, 1]) {
       expect(() => recordsFrom({
-        version: 1, networks: { stagenet: { id: 'stagenet', kind, label: 'x', testToken: null, endpoints: null } },
+        version: 1, networks: { stagenet: { id: 'stagenet', kind, label: 'x', testToken: null, endpoints: null, registries: [] } },
       }), JSON.stringify(kind)).toThrow(/is either "test" or "real"/);
     }
   });
@@ -97,7 +98,7 @@ describe('§1 the document, and what the reader will not take', () => {
       node: 'https://n', nodeWs: null, indexer: 'https://i', indexerWs: 'wss://i', faucet: null, projectToken: null,
     };
     const withEndpoints = (e: unknown) => () => recordsFrom({
-      version: 1, networks: { stagenet: { id: 'stagenet', kind: 'test', label: 'x', testToken: null, endpoints: e } },
+      version: 1, networks: { stagenet: { id: 'stagenet', kind: 'test', label: 'x', testToken: null, endpoints: e, registries: [] } },
     });
     expect(withEndpoints(full)).not.toThrow();
     for (const key of ['node', 'nodeWs', 'indexer', 'indexerWs', 'faucet', 'projectToken']) {
@@ -123,10 +124,36 @@ describe('§1 the document, and what the reader will not take', () => {
     expect(withEndpoints({ ...full, projectToken: 'project_id' })).toThrow(/projectToken that is neither an object nor null/);
   });
 
+  it('REFUSES A RECORD UNDER A NAME THE ONE LIST OF NETWORK NAMES DOES NOT HOLD', () => {
+    const named = (id: string) => () => recordsFrom(AT_LEAST_ONE(id));
+    for (const id of NETWORKS) expect(named(id), id).not.toThrow();
+    for (const id of ['devnet', 'testnet', 'n', 'Preprod']) {
+      /* RED WHEN a record is taken for a network `NETWORKS` does not name: `devnet` and `testnet` are real network ids this product does not run on. */
+      expect(named(id), id).toThrow(/is not a network this product runs on/);
+    }
+  });
+
+  it('REFUSES A REGISTRIES VALUE THAT IS NOT A LIST OF DISTINCT ADDRESSES', () => {
+    const address = 'ab'.repeat(32);
+    const withRegistries = (registries: unknown) => () => recordsFrom({
+      version: 1, networks: { stagenet: { id: 'stagenet', kind: 'test', label: 'x', testToken: null, endpoints: null, registries } },
+    });
+    expect(withRegistries([])).not.toThrow();
+    expect(recordsFrom({ version: 1, networks: { stagenet: { id: 'stagenet', kind: 'test', label: 'x', testToken: null, endpoints: null, registries: [address] } } })
+      .get('stagenet')!.registries).toEqual([address]);
+    /* RED WHEN a registry is listed that is not an address, or one is listed twice. */
+    expect(withRegistries(null)).toThrow(/registries value that is not a list/);
+    expect(withRegistries(address)).toThrow(/registries value that is not a list/);
+    for (const bad of ['AB'.repeat(32), 'ab'.repeat(31), '', 7]) {
+      expect(withRegistries([bad]), JSON.stringify(bad)).toThrow(/not 64 lower-case hex characters/);
+    }
+    expect(withRegistries([address, address])).toThrow(/lists one registry twice/);
+  });
+
   it('REFUSES A TEST TOKEN THAT IS NOT A COLOUR, AND ANY TEST TOKEN ON A REAL NETWORK', () => {
     const colour = 'ab'.repeat(32);
     const withTestToken = (kind: string, testToken: unknown) => () => recordsFrom({
-      version: 1, networks: { n: { id: 'n', kind, label: 'x', testToken, endpoints: null } },
+      version: 1, networks: { stagenet: { id: 'stagenet', kind, label: 'x', testToken, endpoints: null, registries: [] } },
     });
     expect(withTestToken('test', colour)).not.toThrow();
     expect(withTestToken('real', null)).not.toThrow();
@@ -224,6 +251,13 @@ describe('§3 what the records this build ships actually say', () => {
      * wrote down.
      */
     expect(Object.keys(raw.networks).sort()).toEqual([...NETWORK_IDS].sort());
+  });
+
+  it('NAMES EXACTLY THE NETWORKS OF THE ONE LIST OF NAMES, AND EVERY RECORD LISTS ITS REGISTRIES', () => {
+    /* RED WHEN a name is in the list of names with no record, or a record under a name the list lacks. */
+    expect([...NETWORK_IDS].sort()).toEqual([...NETWORKS].sort());
+    /* RED WHEN a record carries no registries list. */
+    for (const id of NETWORK_IDS) expect(Array.isArray(raw.networks[id].registries), id).toBe(true);
   });
 
   it('SAYS OF EVERY NETWORK WHETHER REAL MONEY SETTLES THERE', () => {
