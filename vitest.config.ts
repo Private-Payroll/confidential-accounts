@@ -1,4 +1,6 @@
 import { fileURLToPath } from 'node:url';
+import { globSync } from 'tinyglobby';
+import type { PluginOption } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { SERVED_TO_THE_WALLET } from './apps/wallet/this-builds-account-keys.js';
 
@@ -47,59 +49,19 @@ export const walletLibraryResolver = (source: string, importer: string | undefin
   return null;
 };
 
-export default defineConfig({
-  /*
-   * A PLUGIN AND NOT AN ALIAS ENTRY, because an alias cannot ask who is
-   * importing without `customResolver`, which vite has deprecated. `enforce:
-   * 'pre'` puts it ahead of node resolution, and returning `null` means it has
-   * no opinion - which is the answer for every importer that is not the wallet.
-   */
-  plugins: [
-    /* The company account's key digests the wallet checks a creation against, served to its tests as to its bundle. */
-    SERVED_TO_THE_WALLET.plugin(fileURLToPath(new URL('.', import.meta.url))),
-    {
-      name: 'wallet-reaches-the-library-from-source',
-      enforce: 'pre' as const,
-      /*
-       * `this.resolve` FINISHES THE JOB AND THAT IS NOT A DETAIL. What the
-       * mapping produces for a subpath is a path with no extension - the
-       * library is TypeScript and the import is spelled the way the `exports`
-       * map spells it. A `pre` plugin's return value is taken as FINAL, so
-       * returning that would name a file that is not there, and the failure
-       * reads as a missing module rather than as an unfinished resolution.
-       */
-      async resolveId(source: string, importer: string | undefined) {
-        const mapped = walletLibraryResolver(source, importer);
-        if (mapped === null) return null;
-        const finished = await this.resolve(mapped, importer, { skipSelf: true });
-        return finished ?? mapped;
-      },
-    },
-  ],
-  resolve: {
-    alias: [
-      /*
-       * The wallet's own `@/`. A STRING find matches only an import that is
-       * exactly `@` or begins `@/`, so no scoped package is touched - measured
-       * here as well as in the wallet's own config: nothing outside
-       * `apps/wallet/` imports either spelling.
-       */
-      { find: '@', replacement: WALLET + 'src' },
-    ],
-  },
-  test: {
-    /*
-     * contracts/ runs the compiled Compact circuits in process, so it needs
-     * `npm run compact:fast` to have produced contracts/managed first.
-     *
-     * **BOTH EXTENSIONS, BECAUSE NARROWING THIS HAS ALREADY COST A DEFECT.**
-     * The wallet's glob once read `.ts` only, which silently excluded every
-     * screen - a `.test.tsx` would not have been COLLECTED had somebody written
-     * one, so eleven single-line changes to the wallet's screen shell went
-     * through with the suite green. The typechecker reads a screen; it does not run it. **Narrowing
-     * this back switches the screen tests off without a word.**
-     */
-    include: [
+/*
+ * ── THE SUITE, AND THE NAMED PROJECTS IT RUNS AS ─────────────────────────────
+ *
+ * SUITE is every test this runner collects. PROJECTS splits exactly those files
+ * into named groups so CI can run each group on a machine of its own
+ * (`vitest run --project=<name>`) and a failing check names the part of the code
+ * it tests. Run with no --project, every project runs: the whole suite, once.
+ *
+ * Every collected file is put in exactly one project by projectOf below, which
+ * has an answer for every path, so a new test file always lands in a project and
+ * no file can run twice or not at all.
+ */
+const SUITE = [
       'src/**/*.test.{ts,tsx}', 'contracts/test/**/*.test.ts', 'scripts/**/*.test.ts',
       /*
        * BOTH PRODUCTS' TESTS RUN HERE, and that is the whole of what the merge
@@ -121,40 +83,200 @@ export default defineConfig({
        * above until then; this line is what keeps them collected.
        */
       'packages/web-shared/src/**/*.test.{ts,tsx}',
-    ],
+];
+
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+
+/** The project a test file runs in, read from its path. One answer for every path. */
+export const projectOf = (rel: string): string => {
+  const name = rel.slice(rel.lastIndexOf('/') + 1);
+  if (rel.startsWith('apps/wallet/')) {
+    // each wallet action reads the chain once, measured under growing data
+    if (/^every-(action|first-opening)-reads-once/.test(name)) {
+      if (/runs-and-payments-grow|of-a-run|one-off/.test(name)) return 'wallet-actions-reads-runs';
+      if (/change-of-role|read-granted|reissued/.test(name)) return 'wallet-actions-reads-roles';
+      if (/removal|recovery|retired-vault/.test(name)) return 'wallet-actions-reads-removals';
+      if (/set-up-first|first-size|^every-action-reads-once\.test|first-opening/.test(name)) return 'wallet-actions-reads-setup';
+      if (/upkeep/.test(name)) return 'wallet-actions-reads-upkeep';
+      return 'wallet-actions-reads-scale';
+    }
+    return 'wallet-actions-and-chain';
+  }
+  if (rel.startsWith('apps/web/')) {
+    // each web panel and screen reads once, measured under growing data
+    if (/^every-panel-reads-once/.test(name)) {
+      return /runs-and-payments-grow|of-a-run/.test(name) ? 'web-panels-reads-runs' : 'web-panels-reads-setup';
+    }
+    if (/^every-screen-reads-once.*runs-and-payments-grow/.test(name)) return 'web-screens-reads-runs';
+    if (/^every-screen-reads-once-past-256/.test(name)) return 'web-screens-reads-past-256';
+    if (/^every-(screen|first-opening)-reads-once/.test(name)) return 'web-screens-reads-seats';
+    return 'web-screens';
+  }
+  if (rel.startsWith('src/server/')) {
+    if (/^(a-(seat|person|company-seats)|two-devices)/.test(name)) return 'service-seating';
+    if (/^a-signer/.test(name)) return 'service-signers';
+    if (/one-off|vendor|run|leg|payroll|paid/.test(name)) return 'service-payments';
+    return 'service-records';
+  }
+  if (rel.startsWith('src/') || rel.startsWith('scripts/')) return 'service-core-and-scripts';
+  if (rel.startsWith('packages/')) return 'packages';
+  if (rel.startsWith('contracts/')) return 'contracts-logic';
+  throw new Error(`${rel} is collected by the suite but has no project: give it one in projectOf.`);
+};
+
+/** The projects, each with one line on what it tests, in the order CI lists them. */
+export const PROJECTS: Record<string, string> = {
+  'service-records': "the service's records, rosters, anchors and read grants",
+  'service-signers': 'signer invitations, removals, threshold and key changes',
+  'service-seating': 'seating people and signers; two devices on one proposal',
+  'service-payments': 'payroll runs, one-off payments, vendors and legs',
+  'service-core-and-scripts': "the service's chain and core code, and the build scripts",
+  'wallet-actions-reads-runs': 'each wallet action reads the chain once as runs and payments grow',
+  'wallet-actions-reads-scale': 'the same past 256 records, with more seats and batches',
+  'wallet-actions-reads-setup': 'the same when a company is set up first',
+  'wallet-actions-reads-removals': 'the same around removals, recovery and retired vaults',
+  'wallet-actions-reads-roles': 'the same around role changes, read grants and invitations',
+  'wallet-actions-reads-upkeep': 'the same around upkeep as the company grows',
+  'wallet-actions-and-chain': "the other wallet actions, the wallet's chain code and its screens",
+  'web-panels-reads-runs': 'each web panel reads once as runs and payments grow',
+  'web-panels-reads-setup': 'each web panel reads once at the start',
+  'web-screens-reads-runs': 'each web screen reads once as runs and payments grow',
+  'web-screens-reads-past-256': 'each web screen reads once past 256 records',
+  'web-screens-reads-seats': 'each web screen reads once at the start, with more seats and batches',
+  'web-screens': 'the other web screens and components',
+  packages: 'the shared libraries',
+  'contracts-logic': "the contracts' rules, checked without real proofs",
+};
+
+const FILES: Record<string, string[]> = Object.fromEntries(Object.keys(PROJECTS).map((p) => [p, [] as string[]]));
+for (const rel of globSync(SUITE, { cwd: ROOT, ignore: ['**/node_modules/**', '**/.git/**'] })) {
+  const project = projectOf(rel);
+  const files = FILES[project];
+  if (files === undefined) throw new Error(`projectOf put ${rel} in ${project}, which is not in PROJECTS.`);
+  files.push(rel);
+}
+
+/** Given to the root and to every project alike: a project inherits nothing it is not given. */
+const PLUGINS: PluginOption[] = [
+  /* The company account's key digests the wallet checks a creation against, served to its tests as to its bundle. */
+  SERVED_TO_THE_WALLET.plugin(fileURLToPath(new URL('.', import.meta.url))),
+  {
+    name: 'wallet-reaches-the-library-from-source',
+    enforce: 'pre' as const,
     /*
-     * **THE ROOT IS THIS FILE'S OWN DIRECTORY, SAID ABSOLUTELY.**
-     *
-     * It was `'.'`. A relative root is handed to vite and resolved with
-     * `path.resolve`, which resolves against the WORKING DIRECTORY - so `'.'`
-     * meant this repository only for as long as every run started here, and a
-     * run begun from a subdirectory would have pointed the whole suite at that
-     * subdirectory. Deriving it from this file's own URL makes it the
-     * repository root whatever directory the runner was invoked from, and gives
-     * a config that spreads this `test` block a settled absolute path rather
-     * than one that re-resolves under it.
+     * `this.resolve` FINISHES THE JOB AND THAT IS NOT A DETAIL. What the
+     * mapping produces for a subpath is a path with no extension - the
+     * library is TypeScript and the import is spelled the way the `exports`
+     * map spells it. A `pre` plugin's return value is taken as FINAL, so
+     * returning that would name a file that is not there, and the failure
+     * reads as a missing module rather than as an unfinished resolution.
      */
-    root: fileURLToPath(new URL('.', import.meta.url)),
-    testTimeout: 120_000,
+    async resolveId(source: string, importer: string | undefined) {
+      const mapped = walletLibraryResolver(source, importer);
+      if (mapped === null) return null;
+      const finished = await this.resolve(mapped, importer, { skipSelf: true });
+      return finished ?? mapped;
+    },
+  },
+];
+
+const RESOLVE = {
+  alias: [
     /*
-     * **THE ENVIRONMENT IS NOT SET HERE, ON PURPOSE.**
-     *
-     * Almost every test in this repository is a node test: it spawns the real
-     * service, opens sqlite, reads the filesystem, loads ledger WASM. Turning
-     * jsdom on globally would put a fake DOM under all of them to serve the one
-     * that needs it. So the default stays node and a screen test declares its
-     * own with `// @vitest-environment jsdom` on its first line — **the shape
-     * the wallet already uses**, in 64 files, rather than a second one invented
-     * here.
-     *
-     * **AND THE OTHER CLOCK.** `testTimeout` above bounds a whole
-     * test; it has no effect on a wait INSIDE one, which takes its budget from
-     * the testing library's own configuration and defaults to one second.
-     * Setting only the first is how a suite on a loaded machine reports
-     * failures in code that is fine. `src/test-setup.ts` sets the second, once,
-     * centrally, and carries the discipline that goes with it.
+     * The wallet's own `@/`. A STRING find matches only an import that is
+     * exactly `@` or begins `@/`, so no scoped package is touched - measured
+     * here as well as in the wallet's own config: nothing outside
+     * `apps/wallet/` imports either spelling.
      */
-    setupFiles: ['./src/test-setup.ts', './packages/identity/src/test-setup.ts'],
+    { find: '@', replacement: WALLET + 'src' },
+  ],
+};
+
+const SHARED_TEST = {
+  /*
+   * contracts/ runs the compiled Compact circuits in process, so it needs
+   * `npm run compact:fast` to have produced contracts/managed first.
+   *
+   * **BOTH EXTENSIONS, BECAUSE NARROWING THIS HAS ALREADY COST A DEFECT.**
+   * The wallet's glob once read `.ts` only, which silently excluded every
+   * screen - a `.test.tsx` would not have been COLLECTED had somebody written
+   * one, so eleven single-line changes to the wallet's screen shell went
+   * through with the suite green. The typechecker reads a screen; it does not run it. **Narrowing
+   * this back switches the screen tests off without a word.**
+   */
+  /*
+   * **THE ROOT IS THIS FILE'S OWN DIRECTORY, SAID ABSOLUTELY.**
+   *
+   * It was `'.'`. A relative root is handed to vite and resolved with
+   * `path.resolve`, which resolves against the WORKING DIRECTORY - so `'.'`
+   * meant this repository only for as long as every run started here, and a
+   * run begun from a subdirectory would have pointed the whole suite at that
+   * subdirectory. Deriving it from this file's own URL makes it the
+   * repository root whatever directory the runner was invoked from, and gives
+   * a config that spreads this `test` block a settled absolute path rather
+   * than one that re-resolves under it.
+   */
+  root: fileURLToPath(new URL('.', import.meta.url)),
+  testTimeout: 120_000,
+  /*
+   * **THE ENVIRONMENT IS NOT SET HERE, ON PURPOSE.**
+   *
+   * Almost every test in this repository is a node test: it spawns the real
+   * service, opens sqlite, reads the filesystem, loads ledger WASM. Turning
+   * jsdom on globally would put a fake DOM under all of them to serve the one
+   * that needs it. So the default stays node and a screen test declares its
+   * own with `// @vitest-environment jsdom` on its first line — **the shape
+   * the wallet already uses**, in 64 files, rather than a second one invented
+   * here.
+   *
+   * **AND THE OTHER CLOCK.** `testTimeout` above bounds a whole
+   * test; it has no effect on a wait INSIDE one, which takes its budget from
+   * the testing library's own configuration and defaults to one second.
+   * Setting only the first is how a suite on a loaded machine reports
+   * failures in code that is fine. `src/test-setup.ts` sets the second, once,
+   * centrally, and carries the discipline that goes with it.
+   */
+  setupFiles: ['./src/test-setup.ts', './packages/identity/src/test-setup.ts'],
+  /*
+   * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A PERSON READS AFTER
+   * TRYING THE PRODUCT.**
+   *
+   * The service writes every 400 it answers to
+   * `logs/REPORT-REFUSALS.txt`, and the server tests provoke dozens of them
+   * on purpose. Mixed together, the first thing somebody opens after trying
+   * the product by hand and meeting a refusal would be half fixtures — **which is the confusion the file
+   * exists to end, moved rather than fixed.** So the suite writes its own, under a
+   * name that says what it is.
+   *
+   * Here rather than in the production code: a service that asks whether it
+   * is being tested is a service whose behaviour under test is not the
+   * behaviour it ships. `refusal-log.test.ts` overrides this again with a
+   * temporary directory, because a test that greps this report has to grep
+   * one it made.
+   */
+  /*
+   * AND THE ORIGIN A SERVER TEST SIGNS AGAINST IS NOT SET HERE.
+   *
+   * A wallet signature names an origin, so the server refuses a sign-in with
+   * 503 unless it knows its own. Every test file that signs in names that
+   * origin among its own settings, through `src/testing/server-under-test.ts`,
+   * which builds the server's environment from those settings plus the few
+   * names node and the test runner need, and from nothing the shell, another
+   * module or the working tree's `.env` might hold. The one name below is kept
+   * by that helper on purpose: it is the suite's, not the machine's.
+   */
+  env: {
+    REFUSAL_LOG: './logs/REPORT-REFUSALS-FROM-TESTS.txt',
+  },
+};
+
+export default defineConfig({
+  plugins: PLUGINS,
+  resolve: RESOLVE,
+  test: {
+    ...SHARED_TEST,
+    // Read by tools that look for what the runner collects. With projects set, the projects below decide what runs.
+    include: SUITE,
     /*
      * **THREE REFUSALS BEFORE ANY TEST RUNS: A COMPILED CONTRACT OLDER THAN ITS
      * SOURCE, A CONTRACT LEDGER WITH MORE TOP-LEVEL FIELDS THAN ITS LAYOUT
@@ -189,41 +311,18 @@ export default defineConfig({
      * configuration in this repository that runs with a different guard list
      * spreads this one, so the rest of it cannot drift.
      */
+    // Once for the whole run, whichever projects are selected; a project is given everything else but this.
     globalSetup: [
       './scripts/artifact-freshness.globalSetup.ts',
       './scripts/ledger-limit.globalSetup.ts',
       './scripts/identity-lib-fresh.globalSetup.ts',
     ],
-    /*
-     * **THE SUITE'S OWN REFUSALS DO NOT GO IN THE FILE A PERSON READS AFTER
-     * TRYING THE PRODUCT.**
-     *
-     * The service writes every 400 it answers to
-     * `logs/REPORT-REFUSALS.txt`, and the server tests provoke dozens of them
-     * on purpose. Mixed together, the first thing somebody opens after trying
-     * the product by hand and meeting a refusal would be half fixtures — **which is the confusion the file
-     * exists to end, moved rather than fixed.** So the suite writes its own, under a
-     * name that says what it is.
-     *
-     * Here rather than in the production code: a service that asks whether it
-     * is being tested is a service whose behaviour under test is not the
-     * behaviour it ships. `refusal-log.test.ts` overrides this again with a
-     * temporary directory, because a test that greps this report has to grep
-     * one it made.
-     */
-    /*
-     * AND THE ORIGIN A SERVER TEST SIGNS AGAINST IS NOT SET HERE.
-     *
-     * A wallet signature names an origin, so the server refuses a sign-in with
-     * 503 unless it knows its own. Every test file that signs in names that
-     * origin among its own settings, through `src/testing/server-under-test.ts`,
-     * which builds the server's environment from those settings plus the few
-     * names node and the test runner need, and from nothing the shell, another
-     * module or the working tree's `.env` might hold. The one name below is kept
-     * by that helper on purpose: it is the suite's, not the machine's.
-     */
-    env: {
-      REFUSAL_LOG: './logs/REPORT-REFUSALS-FROM-TESTS.txt',
-    },
+    // No `extends`: a project that extends the root has its include ADDED to the root include, and would run the
+    // whole suite. Each project is given every shared option explicitly instead, and only its own files.
+    projects: Object.keys(PROJECTS).map((name) => ({
+      plugins: PLUGINS,
+      resolve: RESOLVE,
+      test: { ...SHARED_TEST, name, include: FILES[name] },
+    })),
   },
 });

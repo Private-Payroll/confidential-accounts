@@ -159,16 +159,37 @@ jobs:
           KEYS_MUST_BE_BUILT: '1'
 
   test:
-    # THE SUITE IN FOUR PARTS, ON FOUR MACHINES AT ONCE. On one machine it
-    # outgrew the time limit. Vitest splits the suite itself, every test in
-    # exactly one part, and the mark is green only when all four parts are.
+    # THE SUITE AS vitest.config.ts's NAMED PROJECTS, ONE MACHINE EACH, AT ONCE.
+    # Each project's one-line description is beside it in PROJECTS there, and
+    # projectOf puts every test file in exactly one project. The mark is green
+    # only when every project is.
     name: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        project:
+          - service-records
+          - service-signers
+          - service-seating
+          - service-payments
+          - service-core-and-scripts
+          - wallet-actions-reads-runs
+          - wallet-actions-reads-scale
+          - wallet-actions-reads-setup
+          - wallet-actions-reads-removals
+          - wallet-actions-reads-roles
+          - wallet-actions-reads-upkeep
+          - wallet-actions-and-chain
+          - web-panels-reads-runs
+          - web-panels-reads-setup
+          - web-screens-reads-runs
+          - web-screens-reads-past-256
+          - web-screens-reads-seats
+          - web-screens
+          - packages
+          - contracts-logic
     steps:
       - uses: actions/checkout@v4
         # A CHANGE FROM OUTSIDE BRINGS ITS OWN FILES, AND SOME OF THEM RUN HERE.
@@ -185,7 +206,7 @@ jobs:
       # browser (apps/web/src/dev-server.test.ts); without it that test stands
       # down, and the suite would pass without ever having started them.
       - run: npx playwright install chromium
-      - run: npx vitest run --shard=${{matrix.shard}}/4
+      - run: npx vitest run --project=${{matrix.project}}
 
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.
