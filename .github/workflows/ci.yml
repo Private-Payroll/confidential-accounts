@@ -284,9 +284,9 @@ jobs:
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.
     #
-    # They are pure functions with no dependencies, so this needs nothing
-    # installed and finishes in about a second. It runs on a push as well as on
-    # a pull request, because a rule that stopped refusing passes every case
+    # The comment rules are tested through ESLint's own rule tester, so the
+    # linter's pinned install comes first. It runs on a push as well as on a
+    # pull request, because a rule that stopped refusing passes every case
     # that was ever written to show it working.
     name: rules
     if: github.event_name != 'schedule'
@@ -303,6 +303,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      - name: install the linter as its lockfile pins it
+        run: npm ci --prefix lint
       - run: npm run test:checks
 
   message:
