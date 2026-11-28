@@ -300,7 +300,7 @@ jobs:
         # something that should not have it.
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
       - name: install the linter as its lockfile pins it
@@ -330,7 +330,7 @@ jobs:
         # something that should not have it.
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
       # Written through the environment rather than into the command line, so
