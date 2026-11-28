@@ -14,7 +14,12 @@ import type { KeysHeld } from '../../../src/core/company-key.js';
 import { kindAsked, listedHere } from './vault-page-doors.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { raisesStillHolding, sittingSigningKeysIn } from './filed-raise-still-holds.js';
-import { refuseASeatThatMayNotInvite, SeatMayNotInvite, writtenOrRefused, type InvitingSeat } from './invitation-on-device.js';
+import {
+  refuseASeatThatMayNotInvite,
+  SeatMayNotInvite,
+  writtenOrRefused,
+  type InvitingSeat
+} from './invitation-on-device.js';
 import type { CompanyWrites } from './records-source.js';
 
 /** What this device reads to withdraw a seat request: the company's inbox and proposals, and the chain's seats now. */
@@ -44,31 +49,47 @@ export interface WaitingReads {
  * to the person it seated.
  */
 export async function withdrawWaitingSignerHere(
-  company: { readonly id: string; readonly companyKeys: KeysHeld }, seat: Pick<InvitingSeat, 'signingSecret' | 'held' | 'statement'>, signerId: string,
-  reads: WaitingReads, writes: CompanyWrites, named: string,
+  company: { readonly id: string; readonly companyKeys: KeysHeld },
+  seat: Pick<InvitingSeat, 'signingSecret' | 'held' | 'statement'>,
+  signerId: string,
+  reads: WaitingReads,
+  writes: CompanyWrites,
+  named: string
 ): Promise<void> {
   refuseASeatThatMayNotInvite(seat);
   if (!reads.onTheChain.some((x) => x.toLowerCase() === seat.statement.seat.toLowerCase())) {
-    throw new SeatMayNotInvite('Your seat is not one the company\'s account holds now, so it withdraws nobody.');
+    throw new SeatMayNotInvite("Your seat is not one the company's account holds now, so it withdraws nobody.");
   }
   const box = reads.sealed.pendingSigners.find((p) => p.id === signerId);
-  if (box === undefined) throw new Error('That person is no longer waiting for a seat. Reload the page. Nothing was signed or sent.');
+  if (box === undefined)
+    throw new Error('That person is no longer waiting for a seat. Reload the page. Nothing was signed or sent.');
   /* Any key this device holds reads which invitation a request answers: withdrawing one believes nothing in it. */
-  const waiting = openedWithAnyKey(company.companyKeys, (key) => openFromInbox<PendingSignerPayload>(box.sealed, company.id, key));
+  const waiting = openedWithAnyKey(company.companyKeys, (key) =>
+    openFromInbox<PendingSignerPayload>(box.sealed, company.id, key)
+  );
   const invitation = waiting.invited?.terms.invitation;
   if (![waiting.name, waiting.invited?.terms.name].some((x) => x !== undefined && x.trim() === named.trim())) {
-    throw new Error(`This request is not the person you were shown: it is ${waiting.name}'s. Reload the page and check who you withdraw. `
-      + 'Nothing was signed or sent.');
+    throw new Error(
+      `This request is not the person you were shown: it is ${waiting.name}'s. Reload the page and check who you withdraw. ` +
+        'Nothing was signed or sent.'
+    );
   }
   if (invitation === undefined) {
-    throw new Error('This seat request names no invitation, so it cannot be withdrawn by its invitation. Nothing was signed or sent.');
+    throw new Error(
+      'This seat request names no invitation, so it cannot be withdrawn by its invitation. Nothing was signed or sent.'
+    );
   }
   if (seatStillProposedFor(reads.proposals, company.id, company.companyKeys, signerId, reads.openOnTheChain)) {
-    throw new Error('A proposal to seat this person is still open, and could still seat them. Withdraw that proposal first. '
-      + 'Nothing was signed or sent.');
+    throw new Error(
+      'A proposal to seat this person is still open, and could still seat them. Withdraw that proposal first. ' +
+        'Nothing was signed or sent.'
+    );
   }
   /* The leaf travels with it, so the service can tell a request for a seat the chain already holds from one filed late, and lets only the late one go. */
-  const withdrawal = signWithdrawal({ company: company.id, signerId, invitation, leaf: waiting.leafCommitment }, seat.signingSecret);
+  const withdrawal = signWithdrawal(
+    { company: company.id, signerId, invitation, leaf: waiting.leafCommitment },
+    seat.signingSecret
+  );
   await writtenOrRefused(writes, company.id, { to: 'signer-withdrawn', signer: signerId, body: { withdrawal } });
 }
 
@@ -85,12 +106,14 @@ export interface WithdrawalReads {
 }
 
 /** Why nobody is withdrawn when the chain's time cannot be read while a proposal to seat them waits to be raised. */
-export const WITHDRAWAL_TIME_NOT_READ = 'the network\'s time could not be read to tell whether a proposal to seat this person, written down '
-  + 'but not yet on the network, may still reach it. Nothing was signed or sent. Try again in a minute.';
+export const WITHDRAWAL_TIME_NOT_READ =
+  "the network's time could not be read to tell whether a proposal to seat this person, written down " +
+  'but not yet on the network, may still reach it. Nothing was signed or sent. Try again in a minute.';
 
 /** Why nobody is withdrawn when the chain's read leaves out a proposal to seat them: an unread one may be open. */
-export const WITHDRAWAL_ROUND_NOT_READ = 'where a proposal to seat this person stands on the network was not read, so it may still seat them. '
-  + 'Nothing was signed or sent. Try again in a minute.';
+export const WITHDRAWAL_ROUND_NOT_READ =
+  'where a proposal to seat this person stands on the network was not read, so it may still seat them. ' +
+  'Nothing was signed or sent. Try again in a minute.';
 
 /**
  * **WHAT A WITHDRAWAL OF `signerId` IS JUDGED ON, READ HERE**: the company's proposals, refused when its anchored records
@@ -102,10 +125,16 @@ export const WITHDRAWAL_ROUND_NOT_READ = 'where a proposal to seat this person s
  * withdrawn on a guess.
  */
 export async function withdrawalReadsHere(
-  reads: WithdrawalReads, sealed: SealedAccount, accountId: string, viewingKey: KeysHeld, signerId: string,
+  reads: WithdrawalReads,
+  sealed: SealedAccount,
+  accountId: string,
+  viewingKey: KeysHeld,
+  signerId: string
 ): Promise<WaitingReads> {
   if (reads.proposals === undefined || reads.roundsOnChain === undefined) {
-    throw new Error('this device cannot read the company\'s proposals and the chain\'s standing of them, so nobody was withdrawn. Reload the page.');
+    throw new Error(
+      "this device cannot read the company's proposals and the chain's standing of them, so nobody was withdrawn. Reload the page."
+    );
   }
   const here = await reads.directory(kindAsked('proposal'));
   const listed = listedHere(here, 'proposal', await reads.proposals(), 'proposal');
@@ -118,7 +147,9 @@ export async function withdrawalReadsHere(
   const heldOf = (id: string) => rounds[id]?.held;
   const open = proposed.filter((x) => heldOf(x.chainId) === 'open' || heldOf(x.chainId) === 'cleared');
   const sitting = sittingSigningKeysIn(here, new Set(onTheChain));
-  const filed = proposed.filter((x) => heldOf(x.chainId) === 'never' && x.filedBy !== undefined && sitting.has(x.filedBy));
+  const filed = proposed.filter(
+    (x) => heldOf(x.chainId) === 'never' && x.filedBy !== undefined && sitting.has(x.filedBy)
+  );
   /* Up to its raise-by time whatever its date: the device that wrote it down still raises it until then, even from a clock running ahead. */
   const holding = await raisesStillHolding(filed, reads.chainTime, raiseMayStillLandAt);
   if (holding === 'time-not-read') throw new Error(WITHDRAWAL_TIME_NOT_READ);

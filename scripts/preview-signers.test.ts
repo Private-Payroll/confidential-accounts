@@ -21,8 +21,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  assertPreviewAccountId, previewSignersFile, parsePreviewSigners,
-  readOrCreatePreviewSigners, signerBytes, PREVIEW_SIGNER_IDS,
+  assertPreviewAccountId,
+  previewSignersFile,
+  parsePreviewSigners,
+  readOrCreatePreviewSigners,
+  signerBytes,
+  PREVIEW_SIGNER_IDS
 } from './preview-signers.js';
 import { toHex } from '../src/core/crypto.js';
 import { NETWORK } from 'midnight-identity/network';
@@ -37,22 +41,23 @@ describe('the signers file of an account deployed from this machine', () => {
      * caller calling it. Delete `assertPreviewAccountId(...)` from `previewSignersFile` and
      * the direct test below stays green while a `..` escapes `.midnight/`.
      */
-    expect(() => previewSignersFile('/x/.midnight', NETWORK, '../../etc/passwd'))
-      .toThrow(/not a usable account id/);
-    expect(() => previewSignersFile('/x/.midnight', NETWORK, 'a/b'))
-      .toThrow(/not a usable account id/);
+    expect(() => previewSignersFile('/x/.midnight', NETWORK, '../../etc/passwd')).toThrow(/not a usable account id/);
+    expect(() => previewSignersFile('/x/.midnight', NETWORK, 'a/b')).toThrow(/not a usable account id/);
   });
 
   it('names a file per network AND per account, never one shared between them', () => {
     /* One shared file would have each run overwriting the last. The account id
      * is IN the name, so two accounts cannot collide however often either
      * runs. */
-    expect(previewSignersFile('/x/.midnight', NETWORK, 'default'))
-      .toBe(`/x/.midnight/${NETWORK}-preview-signers-default.json`);
-    expect(previewSignersFile('/x/.midnight', NETWORK, 'payroll-test-1'))
-      .not.toBe(previewSignersFile('/x/.midnight', NETWORK, 'default'));
-    expect(previewSignersFile('/x/.midnight', 'undeployed', 'default'))
-      .not.toBe(previewSignersFile('/x/.midnight', NETWORK, 'default'));
+    expect(previewSignersFile('/x/.midnight', NETWORK, 'default')).toBe(
+      `/x/.midnight/${NETWORK}-preview-signers-default.json`
+    );
+    expect(previewSignersFile('/x/.midnight', NETWORK, 'payroll-test-1')).not.toBe(
+      previewSignersFile('/x/.midnight', NETWORK, 'default')
+    );
+    expect(previewSignersFile('/x/.midnight', 'undeployed', 'default')).not.toBe(
+      previewSignersFile('/x/.midnight', NETWORK, 'default')
+    );
   });
 
   it('refuses an account id that could escape the directory or shadow another', () => {
@@ -91,7 +96,7 @@ describe('the signers file of an account deployed from this machine', () => {
      * `randomBytes(32)`. What no unit test can hold is the quality of a CSPRNG.
      */
     /* And the five are five, not one value copied. */
-    const secrets = new Set(PREVIEW_SIGNER_IDS.map(id => a.signers[id].signingSecret));
+    const secrets = new Set(PREVIEW_SIGNER_IDS.map((id) => a.signers[id].signingSecret));
     expect(secrets.size).toBe(PREVIEW_SIGNER_IDS.length);
   });
 
@@ -130,24 +135,23 @@ describe('the signers file of an account deployed from this machine', () => {
      * of the two is covered by a case in which the OTHER field is valid.
      */
     const ok64 = 'ab'.repeat(32);
-    expect(() => parsePreviewSigners(
-      { signers: { A: { signingSecret: 'nothex', blinding: ok64 } } }, file),
-    ).toThrow(/signer A/);
-    expect(() => parsePreviewSigners(
-      { signers: { A: { signingSecret: ok64, blinding: 'NOTHEX'.repeat(11) } } }, file),
+    expect(() => parsePreviewSigners({ signers: { A: { signingSecret: 'nothex', blinding: ok64 } } }, file)).toThrow(
+      /signer A/
+    );
+    expect(() =>
+      parsePreviewSigners({ signers: { A: { signingSecret: ok64, blinding: 'NOTHEX'.repeat(11) } } }, file)
     ).toThrow(/signer A/);
     /* Upper case is not lower case: the leaf is derived from the BYTES, and two
      * spellings of one value is how two processes stop agreeing. */
-    expect(() => parsePreviewSigners(
-      { signers: { A: { signingSecret: ok64.toUpperCase(), blinding: ok64 } } }, file),
+    expect(() =>
+      parsePreviewSigners({ signers: { A: { signingSecret: ok64.toUpperCase(), blinding: ok64 } } }, file)
     ).toThrow(/signer A/);
 
     /* Four of five is still a refusal, and it names the one that is missing. */
     const good = JSON.parse(readFileSync(file, 'utf8'));
     delete good.signers.E;
     writeFileSync(file, JSON.stringify(good));
-    expect(() => readOrCreatePreviewSigners(dir, NETWORK, 'default'))
-      .toThrow(/signer E/);
+    expect(() => readOrCreatePreviewSigners(dir, NETWORK, 'default')).toThrow(/signer E/);
   });
 
   it('hands the two values out AS THEMSELVES, not merely as two 32-byte arrays', () => {

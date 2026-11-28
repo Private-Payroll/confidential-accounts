@@ -49,11 +49,7 @@ export default defineConfig({
      * them. What is excluded here is only the attempt to run a test of the
      * seam from the side that cannot see both halves.
      */
-    exclude: [
-      '**/node_modules/**',
-      'src/profile/registry-open.test.tsx',
-      'src/profile/unlock.test.ts',
-    ],
+    exclude: ['**/node_modules/**', 'src/profile/registry-open.test.tsx', 'src/profile/unlock.test.ts'],
     root: '.',
     /*
      * The portability test derives a wallet twice and builds an address, which
@@ -67,6 +63,6 @@ export default defineConfig({
      * only the first is how a suite on a loaded machine reports failures in
      * code that is fine. `src/test-setup.ts` sets the second, once, centrally.
      */
-    setupFiles: ['./src/test-setup.ts'],
-  },
+    setupFiles: ['./src/test-setup.ts']
+  }
 });

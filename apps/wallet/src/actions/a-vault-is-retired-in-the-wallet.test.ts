@@ -16,22 +16,36 @@ const t = vi.hoisted(() => ({
   chain: {} as Record<string, any>,
   raised: null as null | Error,
   carried: { state: 'carried-out', said: null } as { state: string; said: string | null },
-  givesUp: { money: { notes: 'holds', public: 'unread' }, openRuns: 2 } as { money: { notes: string; public: string }; openRuns: number | null },
+  givesUp: { money: { notes: 'holds', public: 'unread' }, openRuns: 2 } as {
+    money: { notes: string; public: string };
+    openRuns: number | null;
+  },
   confirmed: [] as Array<readonly { key: string; values?: Record<string, unknown> }[]>,
   called: [] as string[],
   handOver: undefined as unknown,
-  raisedHanded: false,
+  raisedHanded: false
 }));
 const CHAIN_ID = 'dd'.repeat(32);
 vi.mock('../../../../packages/web-shared/src/vault-retire-round.js', async (real) => {
   const actual = await real<typeof import('../../../../packages/web-shared/src/vault-retire-round.js')>();
-  const found = (named: { proposal: string }) => ({ rec: { id: named.proposal }, round: { chainId: CHAIN_ID }, onChain: t.chain[CHAIN_ID] });
+  const found = (named: { proposal: string }) => ({
+    rec: { id: named.proposal },
+    round: { chainId: CHAIN_ID },
+    onChain: t.chain[CHAIN_ID]
+  });
   return {
     ...actual,
-    retireFoundHere: async (doors: unknown, named: { proposal: string }) => { t.shared.push({ act: 'opened', doors, named }); return found(named); },
+    retireFoundHere: async (doors: unknown, named: { proposal: string }) => {
+      t.shared.push({ act: 'opened', doors, named });
+      return found(named);
+    },
     retireRaisedHere: async (doors: unknown, vault: string) => {
       t.shared.push({ act: 'raise', doors, named: vault });
-      if (t.raisedHanded) await (doors as { handOver: { toChain: (tx: string, call: unknown) => Promise<void> } }).handOver.toChain('RETIRE', { kind: 'vault-retire', contract: vault, circuit: 'retire' });
+      if (t.raisedHanded)
+        await (doors as { handOver: { toChain: (tx: string, call: unknown) => Promise<void> } }).handOver.toChain(
+          'RETIRE',
+          { kind: 'vault-retire', contract: vault, circuit: 'retire' }
+        );
       if (t.raised !== null) throw t.raised;
       t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: company.approvals, raisedAt: 1 };
       return { found: found({ proposal: 'prp_9' }), said: null };
@@ -41,22 +55,43 @@ vi.mock('../../../../packages/web-shared/src/vault-retire-round.js', async (real
       t.chain[CHAIN_ID] = { ...t.chain[CHAIN_ID], approvals: t.chain[CHAIN_ID].approvals + 1 };
       return 'approved';
     },
-    carryRetireHere: async (doors: unknown, named: unknown) => { t.shared.push({ act: 'carry', doors, named }); return t.carried; },
-    retireGivesUpHere: async (_doors: unknown, vault: string) => { t.confirmed.push([{ key: `read ${vault}` }]); return t.givesUp; },
+    carryRetireHere: async (doors: unknown, named: unknown) => {
+      t.shared.push({ act: 'carry', doors, named });
+      return t.carried;
+    },
+    retireGivesUpHere: async (_doors: unknown, vault: string) => {
+      t.confirmed.push([{ key: `read ${vault}` }]);
+      return t.givesUp;
+    }
   };
 });
 vi.mock('./vault-doors-here.js', async (real) => ({
   ...(await real<typeof import('./vault-doors-here.js')>()),
-  vaultDoorsFor: () => ({ service: {}, approvers: async () => ({}), ...(t.handOver === undefined ? {} : { handOver: t.handOver }) }),
+  vaultDoorsFor: () => ({
+    service: {},
+    approvers: async () => ({}),
+    ...(t.handOver === undefined ? {} : { handOver: t.handOver })
+  })
 }));
 vi.mock('./upkeep.js', async (real) => {
   const actual = await real<typeof import('./upkeep.js')>();
   return {
     ...actual,
     upkeepSteps: (company: { reach: (c: unknown) => Promise<unknown>; renew: () => void }) => ({
-      first: { title: { key: 'act.upkeep.step.first' }, run: async (c: unknown) => { await company.reach(c); company.renew(); } },
-      last: { title: { key: 'act.upkeep.step.last' }, run: async (c: unknown) => { await company.reach(c); } },
-    }),
+      first: {
+        title: { key: 'act.upkeep.step.first' },
+        run: async (c: unknown) => {
+          await company.reach(c);
+          company.renew();
+        }
+      },
+      last: {
+        title: { key: 'act.upkeep.step.last' },
+        run: async (c: unknown) => {
+          await company.reach(c);
+        }
+      }
+    })
   };
 });
 
@@ -64,7 +99,10 @@ const { approveProposalAction } = await import('./approve-proposal.js');
 const { retireDoorsFor, retireVaultAction, retireVaultKind } = await import('./retire-vault.js');
 const { carriedCall } = await import('./holders-moved-here.js');
 const { RetireRefused } = await import('../../../../packages/web-shared/src/vault-retire-round.js');
-const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+  string,
+  string
+>;
 
 const identity = identityFromSecret(newSecret());
 const LABEL = drawCompanyLabel();
@@ -72,59 +110,121 @@ const ACCOUNT = 'c0'.repeat(32);
 const WIDE = 'cc'.repeat(32);
 const PAYROLL = 'ab'.repeat(32);
 const SEATS = ['a1', 'a2', 'a3'].map((x) => x.repeat(32));
-const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
+const KEYS = {
+  epoch: 0,
+  key: '11'.repeat(32),
+  newest: 0,
+  keyAt: () => '11'.repeat(32),
+  sealing: () => ({ key: '11'.repeat(32), epoch: 0 })
+};
 const BASE = { record: 'acc_1', company: LABEL, account: ACCOUNT, proposal: 'prp_1', vault: PAYROLL };
-const intent = (fields: Record<string, string>): ActIntent => ({ name: 'approve-proposal', fields: { ...BASE, ...fields } }) as ActIntent;
+const intent = (fields: Record<string, string>): ActIntent =>
+  ({ name: 'approve-proposal', fields: { ...BASE, ...fields } }) as ActIntent;
 
 /* The company as this wallet reads it: three seats on the chain, the account's threshold and each vault's own. */
 let company: { approvals: number; vaultThresholds: Array<{ vault: string; threshold: number }> };
 const reachOf = () => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
-  api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
+  accountId: 'acc_1',
+  label: LABEL,
+  account: ACCOUNT,
+  seat: {
+    signerId: 's1',
+    signingSecret: '01'.repeat(32),
+    wrappingSecret: '02'.repeat(32),
+    blinding: '03'.repeat(32),
+    scope: WIDE
+  },
+  leaf: SEATS[0],
+  companyKey: '11'.repeat(32),
+  stepView: NO_VIEW_OPENED,
+  api: async (path: string, init?: RequestInit) => {
+    t.called.push(`${init?.method ?? 'GET'} ${path}`);
+    return [];
+  },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
-    seats: SEATS, committee: [], approvals: company.approvals, seatBar: company.approvals, policyBar: null,
-    vaultThresholds: company.vaultThresholds, adoptedVaults: [PAYROLL], account: ACCOUNT,
+    seats: SEATS,
+    committee: [],
+    approvals: company.approvals,
+    seatBar: company.approvals,
+    policyBar: null,
+    vaultThresholds: company.vaultThresholds,
+    adoptedVaults: [PAYROLL],
+    account: ACCOUNT
   }),
   judges: {
     /* The directory as this wallet believes it: every seat the chain holds, with every right. */
-    directoryHereFor: () => async () => ({ dir: { seats: SEATS.map((seat) => ({ seat, retired: null, rights: { every: true } })) }, records: { history: new Map() } }),
+    directoryHereFor: () => async () => ({
+      dir: { seats: SEATS.map((seat) => ({ seat, retired: null, rights: { every: true } })) },
+      records: { history: new Map() }
+    }),
     leavesFor: () => async () => [],
-    rosterReadsFor: () => ({}),
+    rosterReadsFor: () => ({})
   },
-  sealed: {}, companyKeys: KEYS,
-  roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: SEATS.map((leaf, i) => ({ id: `s${i + 1}`, status: 'active', leafCommitment: leaf })) }),
+  sealed: {},
+  companyKeys: KEYS,
+  roster: async () => ({
+    id: 'acc_1',
+    name: 'Acme',
+    notBelieved: [],
+    signers: SEATS.map((leaf, i) => ({ id: `s${i + 1}`, status: 'active', leafCommitment: leaf }))
+  }),
   builder: {
-    roundsOnChain: async ({ chainIds }: { chainIds: string[] }) => Object.fromEntries(chainIds.map((id) => [id, t.chain[id] ?? { held: 'never', approvals: 0 }])),
+    roundsOnChain: async ({ chainIds }: { chainIds: string[] }) =>
+      Object.fromEntries(chainIds.map((id) => [id, t.chain[id] ?? { held: 'never', approvals: 0 }])),
     companyWide: async () => WIDE,
-    runsOutrun: async () => ({}),
+    runsOutrun: async () => ({})
   },
-  chain: { indexer: {}, callState: async () => null },
+  chain: { indexer: {}, callState: async () => null }
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   /* What the step said its send moves: the chain calls named, and the vaults left adopted from this one. */
   const moves: Array<{ chain: unknown[]; vaults: readonly string[] }> = [];
   const ctx = stepOverItsCall({
-    movesWhoHolds: (sends: readonly object[], move: (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] }) => {
-      moves.push({ chain: sends.map((s) => `${(s as { circuit?: string }).circuit} ${(s as { contract?: string }).contract}`), vaults: move({ adoptedVaults: [PAYROLL, 'cd'.repeat(32)] }).adoptedVaults });
+    movesWhoHolds: (
+      sends: readonly object[],
+      move: (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] }
+    ) => {
+      moves.push({
+        chain: sends.map((s) => `${(s as { circuit?: string }).circuit} ${(s as { contract?: string }).contract}`),
+        vaults: move({ adoptedVaults: [PAYROLL, 'cd'.repeat(32)] }).adoptedVaults
+      });
     },
-    intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-    held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
-    relay: async () => { throw new Error('a round of a vault\'s start is sent through its calls, never a bare relay'); },
-    call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 200, body: {} }; },
-    tell: (x: Record<string, unknown>) => { told.push(x); },
-    confirm: async (lines: readonly { key: string; values?: Record<string, unknown> }[]) => { t.confirmed.push(lines); },
-    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
+    intent: i,
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'usr_a',
+    held: { identity, account: 0 },
+    at: { step: 3, steps: 5 },
+    signal: new AbortController().signal,
+    relay: async () => {
+      throw new Error("a round of a vault's start is sent through its calls, never a bare relay");
+    },
+    call: async (method: string, path: string) => {
+      t.called.push(`${method} ${path}`);
+      return { status: 200, body: {} };
+    },
+    tell: (x: Record<string, unknown>) => {
+      told.push(x);
+    },
+    confirm: async (lines: readonly { key: string; values?: Record<string, unknown> }[]) => {
+      t.confirmed.push(lines);
+    },
+    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} }
   }) as unknown as StepContext;
   return { ctx, told, moves };
 };
 const reach = (over: Record<string, unknown> = {}) => ({
-  chain: () => ({ holders: async () => ({ seats: SEATS }) }) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0,
-  secrets: () => ({}) as never, commitments: async () => ({}) as never, reachFor: async () => reachOf() as never,
+  chain: () => ({ holders: async () => ({ seats: SEATS }) }) as never,
+  builder: () => ({}) as never,
+  pause: async () => {},
+  now: () => 0,
+  secrets: () => ({}) as never,
+  commitments: async () => ({}) as never,
+  reachFor: async () => reachOf() as never,
   indexerHttp: 'https://indexer.example/api/v3/graphql',
-  inFlight: () => ({ deposits: { get: async () => null }, payments: { get: async () => null } }), ...over,
+  inFlight: () => ({ deposits: { get: async () => null }, payments: { get: async () => null } }),
+  ...over
 });
 const run = async (i: ActIntent, ctx: StepContext, r = reach()): Promise<void> => {
   for (const step of approveProposalAction(r as never).steps(i)) await step.run(ctx);
@@ -146,8 +246,8 @@ beforeEach(() => {
   t.raisedHanded = false;
 });
 
-describe('A VAULT\'S RETIRE IN THE WALLET', () => {
-  it('another signer\'s retire is approved through the one approval and carried out by a step of its own at the company\'s threshold', async () => {
+describe("A VAULT'S RETIRE IN THE WALLET", () => {
+  it("another signer's retire is approved through the one approval and carried out by a step of its own at the company's threshold", async () => {
     const i = intent({ kind: 'retire-vault' });
     const { ctx, told, moves } = ctxOf(i);
     await run(i, ctx);
@@ -158,20 +258,26 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
     /* RED WHEN: carrying the retire out is not said to take the vault, and only it, out of the vaults the account adopts, on the retire's own chain call. */
     const carries = retireVaultKind(reach() as never).carries!(i, { id: 'prp_1', chainId: CHAIN_ID });
     expect(carriedCall(carries, 'c0')).toEqual({ circuit: 'retire', contract: PAYROLL });
-    const leaves = carries.move as unknown as (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] };
+    const leaves = carries.move as unknown as (h: { adoptedVaults: readonly string[] }) => {
+      adoptedVaults: readonly string[];
+    };
     expect(leaves({ adoptedVaults: [PAYROLL, 'cd'.repeat(32)] }).adoptedVaults).toEqual(['cd'.repeat(32)]);
     /* RED WHEN: the retire approved or carried out is not the one the window showed. */
     for (const c of t.shared) expect(c.named).toEqual({ vault: PAYROLL, proposal: 'prp_1' });
     expect(told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });
     /* RED WHEN: the approver approves without being shown what the retire gives up, read by their own wallet for this vault. */
-    expect(t.confirmed).toEqual([[{ key: `read ${PAYROLL}` }], [
-      { key: 'act.retire-vault.confirm.private.holds' }, { key: 'act.retire-vault.confirm.public.unread' },
-      { key: 'act.retire-vault.confirm.runs', values: { runs: 2 } },
-    ]]);
+    expect(t.confirmed).toEqual([
+      [{ key: `read ${PAYROLL}` }],
+      [
+        { key: 'act.retire-vault.confirm.private.holds' },
+        { key: 'act.retire-vault.confirm.public.unread' },
+        { key: 'act.retire-vault.confirm.runs', values: { runs: 2 } }
+      ]
+    ]);
     for (const lines of t.confirmed.slice(1)) for (const l of lines) expect(WORDS[l.key], l.key).toBeTypeOf('string');
   });
 
-  it('raised from the wallet, its raiser\'s approval counted, it waits for the rest and sends nothing more', async () => {
+  it("raised from the wallet, its raiser's approval counted, it waits for the rest and sends nothing more", async () => {
     const i = intent({});
     const { ctx, told } = ctxOf(i);
     await runAct(i, ctx);
@@ -184,11 +290,13 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
     t.confirmed.length = 0;
     await runAct(i, ctxOf(i).ctx);
     expect(t.confirmed[1]).toEqual([
-      { key: 'act.retire-vault.confirm.private.none' }, { key: 'act.retire-vault.confirm.public.none' }, { key: 'act.retire-vault.confirm.runs-unread' },
+      { key: 'act.retire-vault.confirm.private.none' },
+      { key: 'act.retire-vault.confirm.public.none' },
+      { key: 'act.retire-vault.confirm.runs-unread' }
     ]);
   });
 
-  it('raised where the raiser\'s approval meets the threshold, it is carried out in the same act under the record the raise found', async () => {
+  it("raised where the raiser's approval meets the threshold, it is carried out in the same act under the record the raise found", async () => {
     company = { approvals: 1, vaultThresholds: [] };
     const i = intent({});
     const { ctx } = ctxOf(i);
@@ -199,13 +307,21 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
   });
 
   it('a raise the retire round refuses is told in its own words, and as nothing sent', async () => {
-    t.raised = new RetireRefused('your wallet holds a deposit into this vault that it has not yet seen land or fail. Nothing was sent. Press Deposit on this vault again, which settles the one on its way first, then retire it.');
+    t.raised = new RetireRefused(
+      'your wallet holds a deposit into this vault that it has not yet seen land or fail. Nothing was sent. Press Deposit on this vault again, which settles the one on its way first, then retire it.'
+    );
     const i = intent({});
     const { ctx } = ctxOf(i);
-    const e = await runAct(i, ctx).then(() => null, (x: unknown) => x);
+    const e = await runAct(i, ctx).then(
+      () => null,
+      (x: unknown) => x
+    );
     /* RED WHEN: a refusal before anything was sent is told as one that may have been sent, or loses what clears it. */
     expect(e).toBeInstanceOf(StepRefused);
-    expect((e as StepRefused).words).toMatchObject({ key: 'act.retire-vault.why.not-raised', values: { says: expect.stringMatching(/Press Deposit on this vault again/u) } });
+    expect((e as StepRefused).words).toMatchObject({
+      key: 'act.retire-vault.why.not-raised',
+      values: { says: expect.stringMatching(/Press Deposit on this vault again/u) }
+    });
   });
 
   it('a refusal starts its sentence in capitals, and one that stopped after the retire was handed over says Press again once', async () => {
@@ -214,7 +330,10 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
     t.raisedHanded = true;
     t.handOver = { path: 'chain', toChain: async () => {} };
     const { ctx } = ctxOf(i);
-    const e = await runAct(i, ctx).then(() => null, (x: unknown) => x);
+    const e = await runAct(i, ctx).then(
+      () => null,
+      (x: unknown) => x
+    );
     expect(e).toBeInstanceOf(StepRefused);
     const said = (e as StepRefused).words;
     /* RED WHEN: the words a person reads start in lower case, or tell them to press again twice. */
@@ -222,14 +341,21 @@ describe('A VAULT\'S RETIRE IN THE WALLET', () => {
     expect(String(said.values?.['says'])).toBe('The network did not answer.');
     const shown = WORDS[said.key]!.replace('{says}', String(said.values?.['says']));
     expect(shown.match(/Press again/gu)).toHaveLength(1);
-    expect(shown).toMatch(/^The retire stopped after it was handed over to be sent\. The network did not answer\. Press again/u);
+    expect(shown).toMatch(
+      /^The retire stopped after it was handed over to be sent\. The network did not answer\. Press again/u
+    );
   });
 });
 
 describe('THE DOORS A RETIRE ACTS THROUGH IN THE WALLET', () => {
   it('a retire handed over marks itself handed over, and only the circuits this wallet proves are said proved', async () => {
     const sentBy: string[] = [];
-    t.handOver = { path: 'chain', toChain: async (_tx: string, call: { kind: string }) => { sentBy.push(call.kind); } };
+    t.handOver = {
+      path: 'chain',
+      toChain: async (_tx: string, call: { kind: string }) => {
+        sentBy.push(call.kind);
+      }
+    };
     const handed: { over: boolean } = { over: false };
     const doors = retireDoorsFor(ctxOf(intent({})).ctx, reachOf() as never, reach() as never, handed);
     await doors.handOver!.toChain!('RETIRE', { kind: 'vault-retire', contract: PAYROLL, circuit: 'retire' });
@@ -243,10 +369,17 @@ describe('THE DOORS A RETIRE ACTS THROUGH IN THE WALLET', () => {
     expect(['retire', 'deposit', 'splitNote'].map((c) => doors.proves!(c))).toEqual([true, true, false]);
   });
 
-  it('the real retire, given the wallet\'s own doors, is not refused for want of a key, and sends nothing before it has read the chain', async () => {
-    const real = await vi.importActual<typeof import('../../../../packages/web-shared/src/vault-retire-round.js')>('../../../../packages/web-shared/src/vault-retire-round.js');
+  it("the real retire, given the wallet's own doors, is not refused for want of a key, and sends nothing before it has read the chain", async () => {
+    const real = await vi.importActual<typeof import('../../../../packages/web-shared/src/vault-retire-round.js')>(
+      '../../../../packages/web-shared/src/vault-retire-round.js'
+    );
     const sentBy: string[] = [];
-    t.handOver = { path: 'chain', toChain: async (_tx: string, call: { kind: string }) => { sentBy.push(call.kind); } };
+    t.handOver = {
+      path: 'chain',
+      toChain: async (_tx: string, call: { kind: string }) => {
+        sentBy.push(call.kind);
+      }
+    };
     const handed = { over: false };
     const doors = retireDoorsFor(ctxOf(intent({})).ctx, reachOf() as never, reach() as never, handed);
     /*
@@ -254,16 +387,19 @@ describe('THE DOORS A RETIRE ACTS THROUGH IN THE WALLET', () => {
      * wallet's doors stop saying it proves the retire, so a wallet that carries its keys refuses one as needing an
      * update; or anything is raised or sent before the chain is read.
      */
-    const stopped = await real.retireRaisedHere(doors, PAYROLL as never).then(() => null, (e: unknown) => e);
+    const stopped = await real.retireRaisedHere(doors, PAYROLL as never).then(
+      () => null,
+      (e: unknown) => e
+    );
     expect(String((stopped as Error | null)?.message)).not.toMatch(/needs an update first/u);
     expect([sentBy, handed.over, t.called]).toEqual([[], false, []]);
   });
 
-  it('a retire approved through the one approval reads the deposits on their way from its own store, never from a payment\'s store in the same reach', async () => {
+  it("a retire approved through the one approval reads the deposits on their way from its own store, never from a payment's store in the same reach", async () => {
     const depositOnItsWay = { get: async () => ({ vault: PAYROLL }) };
     const shared = reach({
       kept: () => ({ payments: { get: async () => null }, charges: { get: async () => null } }),
-      inFlight: () => ({ deposits: depositOnItsWay, payments: { get: async () => null } }),
+      inFlight: () => ({ deposits: depositOnItsWay, payments: { get: async () => null } })
     });
     const doors = retireDoorsFor(ctxOf(intent({})).ctx, reachOf() as never, shared as never, { over: false });
     /* RED WHEN: a retire takes the one-off payment's store for its own, finds no deposits there, and retires a vault with a deposit still on its way into it. */

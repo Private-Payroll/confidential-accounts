@@ -4,8 +4,16 @@ import { createElement } from 'react';
 import { render as renderBare } from '@testing-library/react';
 import { cleanup, fireEvent, render, screen, waitFor } from './testing/render.js';
 import {
-  Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-  DialogTrigger, KitProvider, languagesFrom,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  KitProvider,
+  languagesFrom
 } from 'vaults-ui';
 import { DialogClose } from 'vaults-ui/components/dialog';
 
@@ -31,7 +39,9 @@ function Specimen({ showCloseButton = true }: { readonly showCloseButton?: boole
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button type="button" variant="outline">Open it</Button>
+        <Button type="button" variant="outline">
+          Open it
+        </Button>
       </DialogTrigger>
       <DialogContent showCloseButton={showCloseButton}>
         <DialogHeader>
@@ -133,9 +143,9 @@ describe('the ways out, and there is always one', () => {
   });
 });
 
-describe('its words are the wallet\'s', () => {
+describe("its words are the wallet's", () => {
   /* RED WHEN: the wallet's language file loses the close control's phrase. */
-  it('the corner control is named from the wallet\'s language file', () => {
+  it("the corner control is named from the wallet's language file", () => {
     render(<Specimen />);
     fireEvent.click(screen.getByText('Open it'));
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();

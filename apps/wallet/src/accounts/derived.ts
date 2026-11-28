@@ -63,21 +63,17 @@ export type Producer = (owned: OwnedAddress) => string;
  */
 const PRODUCERS: Readonly<Record<string, Producer>> = Object.freeze({
   [RECEIVING_ADDRESS]: (owned: OwnedAddress) => owned.address.bech32,
-  [PUBLIC_RECEIVING_ADDRESS]: (owned: OwnedAddress) => owned.unshieldedBech32,
+  [PUBLIC_RECEIVING_ADDRESS]: (owned: OwnedAddress) => owned.unshieldedBech32
 });
 
 /** Whether this wallet can answer a derived attribute at all. */
-export const producerFor = (name: AttributeName): Producer | null =>
-  PRODUCERS[name] ?? null;
+export const producerFor = (name: AttributeName): Producer | null => PRODUCERS[name] ?? null;
 
 /** Every derived attribute this build can produce. For the test that pairs
  * them with the registry, and for nothing else. */
-export const DERIVED_ATTRIBUTES: readonly AttributeName[] =
-  Object.freeze(Object.keys(PRODUCERS));
+export const DERIVED_ATTRIBUTES: readonly AttributeName[] = Object.freeze(Object.keys(PRODUCERS));
 
-export type Derived =
-  | { readonly ok: true; readonly value: string }
-  | { readonly ok: false; readonly says: string };
+export type Derived = { readonly ok: true; readonly value: string } | { readonly ok: false; readonly says: string };
 
 /**
  * THE ONE DOOR A DERIVED VALUE COMES OUT OF, and it is total.
@@ -91,16 +87,18 @@ export function derive(definition: AttributeDefinition, owned: OwnedAddress): De
   if (definition.source !== 'derived') {
     return {
       ok: false,
-      says: `${definition.render.label} is not something this wallet works out — it is `
-        + 'something you or somebody else states, and it is held rather than computed.',
+      says:
+        `${definition.render.label} is not something this wallet works out — it is ` +
+        'something you or somebody else states, and it is held rather than computed.'
     };
   }
   const producer = producerFor(definition.name);
   if (producer === null) {
     return {
       ok: false,
-      says: `This wallet does not know how to work out ${definition.render.label.toLowerCase()}`
-        + ', and it will not invent it. Nothing will be sent for this.',
+      says:
+        `This wallet does not know how to work out ${definition.render.label.toLowerCase()}` +
+        ', and it will not invent it. Nothing will be sent for this.'
     };
   }
   const checked = check(definition, producer(owned));
@@ -114,8 +112,9 @@ export function derive(definition: AttributeDefinition, owned: OwnedAddress): De
      */
     return {
       ok: false,
-      says: `This wallet worked out a ${definition.render.label.toLowerCase()} that is not `
-        + `one: ${checked.says} Nothing will be sent for this.`,
+      says:
+        `This wallet worked out a ${definition.render.label.toLowerCase()} that is not ` +
+        `one: ${checked.says} Nothing will be sent for this.`
     };
   }
   return { ok: true, value: checked.value };
@@ -149,7 +148,9 @@ export function receivingAddressesOf(identity: Identity, network: NetworkName): 
     try {
       const derived = derive(definition, ownedAddressFor(identity, account, {}, network));
       if (derived.ok) held.push(derived.value);
-    } catch { /* not an address this wallet can show */ }
+    } catch {
+      /* not an address this wallet can show */
+    }
   }
   return held;
 }

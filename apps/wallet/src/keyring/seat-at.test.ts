@@ -23,26 +23,49 @@ const NONE = String(C.noVault()).toLowerCase() as Hex;
 
 /** The outputs as the replaced derivations shaped them: the founding seat whole, and the taken seat as the seating keeps it. */
 const asTaken = (s: SeatAt) => ({
-  n: s.n, signingSecret: s.signingSecret, wrappingSecret: s.wrappingSecret, blinding: s.blinding, scope: s.scope, leaf: s.leaf,
-  leafAtAll: s.leafAtAll, opening: { publicKey: s.publicKey, scope: s.scope, blinding: s.blinding, walletKey: s.walletKey, salt: s.salt },
+  n: s.n,
+  signingSecret: s.signingSecret,
+  wrappingSecret: s.wrappingSecret,
+  blinding: s.blinding,
+  scope: s.scope,
+  leaf: s.leaf,
+  leafAtAll: s.leafAtAll,
+  opening: { publicKey: s.publicKey, scope: s.scope, blinding: s.blinding, walletKey: s.walletKey, salt: s.salt }
 });
-const sorted = (v: unknown): unknown => (v === null || typeof v !== 'object' ? v
-  : Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])])));
-const digest = (v: unknown) => createHash('sha256').update(JSON.stringify(sorted(v))).digest('hex');
+const sorted = (v: unknown): unknown =>
+  v === null || typeof v !== 'object'
+    ? v
+    : Object.fromEntries(
+        Object.keys(v)
+          .sort()
+          .map((k) => [k, sorted((v as Record<string, unknown>)[k])])
+      );
+const digest = (v: unknown) =>
+  createHash('sha256')
+    .update(JSON.stringify(sorted(v)))
+    .digest('hex');
 
 describe('ONE SEAT DERIVATION', () => {
   it('makes the seats the replaced derivations made, on every recorded input', async () => {
     /* RED WHEN: any part of a seat (a secret, the salt, the blinding, a leaf, a public key or the wallet key) is made differently. */
     const derive: Record<string, unknown> = {};
-    for (const [name, label] of [['A', CO_A], ['B', CO_B]] as const) {
-      for (const [where, scope] of [['all', ALL], ['none', NONE]] as const) {
+    for (const [name, label] of [
+      ['A', CO_A],
+      ['B', CO_B]
+    ] as const) {
+      for (const [where, scope] of [
+        ['all', ALL],
+        ['none', NONE]
+      ] as const) {
         for (const n of [0, 1, 7]) derive[`${name}/${where}/${n}`] = asTaken(seatAt(identity, label, n, scope, C));
       }
     }
     const founding = { A: await foundingSeatOf(identity, CO_A), B: await foundingSeatOf(identity, CO_B) };
     expect(founding.A.leaf).toBe('a2a6803b41de93e80a48514920911c927ab2c247f720044c1a36b86ea82f18da');
     expect(founding.A.publicKey).toBe('752eadcbdb04883e17af2a77b9376ecf73da81183504b3c7cd05d76f25dcff1f');
-    expect((derive['A/none/1'] as { leafAtAll: string }).leafAtAll).toBe('4514ea874dd19d2fdc7cbdb95d3dbf0ca36d82b6b4b9a9e0d60b9e0ec053b194');
+    expect((derive['A/none/1'] as { leafAtAll: string }).leafAtAll).toBe(
+      '4514ea874dd19d2fdc7cbdb95d3dbf0ca36d82b6b4b9a9e0d60b9e0ec053b194'
+    );
     expect(digest({ founding, derive })).toBe('139308eaacc2352aace215ad1d8fbde63004e68dd471afae6a3fc80b2ad48b79');
   });
 
@@ -54,7 +77,7 @@ describe('ONE SEAT DERIVATION', () => {
     expect(await foundingSeatOf(identity, CO_A)).toEqual(rest);
   });
 
-  it('draws a seat\'s leaf at its own scope, and at every vault beside it', () => {
+  it("draws a seat's leaf at its own scope, and at every vault beside it", () => {
     /* RED WHEN: the leaf ignores its scope, or the every-vault leaf is the scope's. */
     const none = seatAt(identity, CO_A, 1, NONE, C);
     const all = seatAt(identity, CO_A, 1, ALL, C);

@@ -7,14 +7,14 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./act-intents.js', () => ({
   ACT_INTENTS: Object.freeze({
     'move-between-vaults': {
-      fields: { company: 'company', account: 'account', vault: 'vault', seat: 'seat', amount: 'amount' },
+      fields: { company: 'company', account: 'account', vault: 'vault', seat: 'seat', amount: 'amount' }
     },
     /* The same action as one that asks the page to send what it finishes. */
     'move-between-vaults-sent': {
       fields: { company: 'company', account: 'account', vault: 'vault', seat: 'seat', amount: 'amount' },
-      calls: [{ method: 'POST', path: '/api/accounts/:record/vaults/:vault/move', sends: true }],
-    },
-  }),
+      calls: [{ method: 'POST', path: '/api/accounts/:record/vaults/:vault/move', sends: true }]
+    }
+  })
 }));
 
 import { RequestError, parseAsk } from './request.js';
@@ -27,17 +27,23 @@ const VAULT = 'c'.repeat(64);
 const SEAT = 'd'.repeat(64);
 
 const intent = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-  name: 'move-between-vaults', company: LABEL, account: ACCOUNT, vault: VAULT, seat: SEAT, amount: '1000', ...over,
+  name: 'move-between-vaults',
+  company: LABEL,
+  account: ACCOUNT,
+  vault: VAULT,
+  seat: SEAT,
+  amount: '1000',
+  ...over
 });
 const act = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   schema: 'midnight-identity/disclosure-request/v1',
   kind: 'act',
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-  purpose: 'To move money between two of your company\'s vaults.',
+  purpose: "To move money between two of your company's vaults.",
   nonce: 'n1',
   expiresAt: NOW + 20 * 60_000,
   intent: intent(),
-  ...over,
+  ...over
 });
 const refusal = (raw: unknown): string => {
   try {
@@ -56,7 +62,8 @@ describe('an action ask names the action and the ids and amounts it acts on, and
     expect(read.kind).toBe('act');
     if (read.kind !== 'act') return;
     expect(read.intent).toEqual({
-      name: 'move-between-vaults', fields: { company: LABEL, account: ACCOUNT, vault: VAULT, seat: SEAT, amount: '1000' },
+      name: 'move-between-vaults',
+      fields: { company: LABEL, account: ACCOUNT, vault: VAULT, seat: SEAT, amount: '1000' }
     });
     /* RED WHEN: an action ask that did not say it hears progress is told nothing while it runs, so its steps never reach the page. */
     expect(read.hearsProgress).toBe(true);
@@ -90,7 +97,7 @@ describe('an action ask names the action and the ids and amounts it acts on, and
     expect(refusal(act({ intent: intent({ company: 'not a label' }) }))).not.toBe('accepted');
   });
 
-  it('a page cannot slip another kind\'s fields into an action', () => {
+  it("a page cannot slip another kind's fields into an action", () => {
     /* RED WHEN: an action ask may carry a transaction for the wallet to pay for. */
     expect(refusal(act({ transaction: 'AAAA' }))).toBe('balance-fields-on-another-kind');
     /* RED WHEN: an action ask may carry a deploy or keys to insert, built by the page. */
@@ -105,7 +112,13 @@ describe('an action ask names the action and the ids and amounts it acts on, and
 
   it('an action belongs to an action ask: another kind carrying one is refused', () => {
     const balance = {
-      ...act(), kind: 'balance', intent: undefined, company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'AAAA',
+      ...act(),
+      kind: 'balance',
+      intent: undefined,
+      company: LABEL,
+      account: ACCOUNT,
+      vault: VAULT,
+      transaction: 'AAAA'
     };
     delete (balance as Record<string, unknown>)['intent'];
     expect(refusal(balance)).toBe('accepted');
@@ -117,7 +130,8 @@ describe('an action ask names the action and the ids and amounts it acts on, and
 
 describe('an action ask may still name which way its calls go, and the wallet takes nothing from it', () => {
   it('whatever way a page names, the action is read without it', () => {
-    const sent = (over: Record<string, unknown>) => act({ intent: intent({ name: 'move-between-vaults-sent', ...over }) });
+    const sent = (over: Record<string, unknown>) =>
+      act({ intent: intent({ name: 'move-between-vaults-sent', ...over }) });
     for (const path of ['service', 'chain', 'elsewhere', '', 1, null]) {
       const read = parseAsk(sent({ path }), ORIGIN, NOW);
       /* RED WHEN: the way a page names reaches the wallet, so the page decides where a signed call goes. */

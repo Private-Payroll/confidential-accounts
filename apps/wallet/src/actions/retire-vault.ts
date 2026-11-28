@@ -11,18 +11,36 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
 import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
-import { browserDepositsInFlight, browserPaymentsInFlight } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
+import {
+  browserDepositsInFlight,
+  browserPaymentsInFlight
+} from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import {
-  approveRetireHere, carryRetireHere, RetireRefused, retireFoundHere, retireGivesUpHere, retireRaisedHere,
-  type RetireDoors, type RetireGivesUp, type RetireNamed,
+  approveRetireHere,
+  carryRetireHere,
+  RetireRefused,
+  retireFoundHere,
+  retireGivesUpHere,
+  retireRaisedHere,
+  type RetireDoors,
+  type RetireGivesUp,
+  type RetireNamed
 } from '../../../../packages/web-shared/src/vault-retire-round.js';
 import { VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
 import { retired } from './holders-moved-here.js';
 import { handOverMarked, type Handed } from './hand-over-in-the-wallet.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { approving, carryStep, type ApprovalStop, type CarryOut, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
 import type { StartKindsReach } from './start-kinds.js';
@@ -43,31 +61,45 @@ export interface RetireVaultReach extends StartKindsReach {
 }
 
 /** What the page is told the retire got to. */
-export const RETIRE_STATE = { waiting: 'waiting-for-approvals', atItsBar: 'ready-to-carry', carried: 'carried-out' } as const;
+export const RETIRE_STATE = {
+  waiting: 'waiting-for-approvals',
+  atItsBar: 'ready-to-carry',
+  carried: 'carried-out'
+} as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.retire-vault.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.retire-vault.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const KIND_WHY: Readonly<Record<string, string>> = { closed: 'carried-out', counted: 'already-counted' };
-const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
+const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words =>
+  why(KIND_WHY[stop] ?? stop, values);
 const vaultOf = (intent: ActIntent): Hex | null => {
   const v = readVaultAddress(intent.fields['vault']);
-  return v === null ? null : String(v).toLowerCase() as Hex;
+  return v === null ? null : (String(v).toLowerCase() as Hex);
 };
 const namedOf = (intent: ActIntent): RetireNamed => ({ vault: vaultOf(intent)!, proposal: intent.fields['proposal']! });
 
 /** This wallet's own storage for a deposit and a payment on their way: this origin's, which no page can reach. */
 const keptInTheWallet = (opener: InFlightOpener): NonNullable<RetireDoors['inFlight']> => ({
-  deposits: browserDepositsInFlight(opener), payments: browserPaymentsInFlight(opener),
+  deposits: browserDepositsInFlight(opener),
+  payments: browserPaymentsInFlight(opener)
 });
 
 /**
  * The doors a retire acts through, each marking `handed` once it hands a call over. `proves` answers from the vault
  * circuits this wallet holds proving keys for.
  */
-export function retireDoorsFor(ctx: StepContext, r: CompanyReach, reach: RetireVaultReach, handed: Handed): RetireDoors {
+export function retireDoorsFor(
+  ctx: StepContext,
+  r: CompanyReach,
+  reach: RetireVaultReach,
+  handed: Handed
+): RetireDoors {
   if (reach.indexerHttp === undefined) {
-    throw new StepRefused(why('not-raised', { says: 'This wallet does not know the indexer it reads a vault at. Nothing was sent.' }));
+    throw new StepRefused(
+      why('not-raised', { says: 'This wallet does not know the indexer it reads a vault at. Nothing was sent.' })
+    );
   }
   const d = vaultDoorsFor(ctx, r, { secrets: reach.secrets, pause: reach.pause, indexerHttp: reach.indexerHttp });
   const service = governedCallServiceThrough(r.stepView);
@@ -75,9 +107,12 @@ export function retireDoorsFor(ctx: StepContext, r: CompanyReach, reach: RetireV
     ...d,
     handOver: handOverMarked(d.handOver, handed),
     proves: (circuit) => VAULT_CIRCUITS_THE_WALLET_PROVES.includes(circuit),
-    approveSent: (id, body) => { handed.over = true; return service.approve(id, body); },
+    approveSent: (id, body) => {
+      handed.over = true;
+      return service.approve(id, body);
+    },
     ...(service.closed === undefined ? {} : { closedSent: service.closed.bind(service) }),
-    inFlight: (reach.inFlight ?? keptInTheWallet)(d.me),
+    inFlight: (reach.inFlight ?? keptInTheWallet)(d.me)
   };
 }
 
@@ -97,17 +132,23 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string): never => {
 /** What every retire shows first, whether it is raised or approved: the vault, what is checked, and what goes ahead of it. */
 const retireShown = (intent: ActIntent): readonly ShownLine[] => [
   { key: 'act.retire-vault.shown.vault', values: { vault: intent.fields['vault'] ?? '' }, from: 'page' },
-  { key: 'act.retire-vault.shown.checks', from: 'action' },
+  { key: 'act.retire-vault.shown.checks', from: 'action' }
 ];
 
 /** One side of what the vault holds, as the confirm line names it. */
-const SIDE: Readonly<Record<RetireGivesUp['money']['notes'], string>> = { holds: 'holds', none: 'none', unread: 'unread' };
+const SIDE: Readonly<Record<RetireGivesUp['money']['notes'], string>> = {
+  holds: 'holds',
+  none: 'none',
+  unread: 'unread'
+};
 
 /** The lines an approver confirms: what the vault holds on each side and the runs open on it, as this wallet read them. */
 const givesUpLines = (up: RetireGivesUp): Words[] => [
   { key: `act.retire-vault.confirm.private.${SIDE[up.money.notes]}` },
   { key: `act.retire-vault.confirm.public.${SIDE[up.money.public]}` },
-  up.openRuns === null ? { key: 'act.retire-vault.confirm.runs-unread' } : { key: 'act.retire-vault.confirm.runs', values: { runs: up.openRuns } },
+  up.openRuns === null
+    ? { key: 'act.retire-vault.confirm.runs-unread' }
+    : { key: 'act.retire-vault.confirm.runs', values: { runs: up.openRuns } }
 ];
 
 /**
@@ -116,13 +157,17 @@ const givesUpLines = (up: RetireGivesUp): Words[] => [
  * the vault itself once at the company's threshold.
  */
 export function retireVaultKind(reach: RetireVaultReach): ProposalKind {
-  const carryOut: CarryOut = (ctx, r, intent, _round, handed) => carryRetireOnce(ctx, r, namedOf(intent), handed, reach);
+  const carryOut: CarryOut = (ctx, r, intent, _round, handed) =>
+    carryRetireOnce(ctx, r, namedOf(intent), handed, reach);
   const kind: ProposalKind = {
     fields: ['vault'],
     changesTheCompany: true,
     /* What the retire gives up is read by this wallet and confirmed by the person before the approval is sent. */
     readsFirst: true,
-    shown: async (intent): Promise<readonly ShownLine[]> => [...retireShown(intent), { key: 'act.retire-vault.shown.approve', from: 'action' }],
+    shown: async (intent): Promise<readonly ShownLine[]> => [
+      ...retireShown(intent),
+      { key: 'act.retire-vault.shown.approve', from: 'action' }
+    ],
     check: (intent) => (vaultOf(intent) === null ? why('not-a-vault') : null),
     opened: async (ctx, r, intent) => {
       const handed: Handed = { over: false };
@@ -147,9 +192,11 @@ export function retireVaultKind(reach: RetireVaultReach): ProposalKind {
       if (done !== 'approved') throw new ApprovalNotOwed(done === 'counted' ? 'counted' : 'carried-out');
     },
     stateAt: (atItsBar) => (atItsBar ? RETIRE_STATE.atItsBar : RETIRE_STATE.waiting),
-    carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.retire-vault.step.carry' }, carryOut)],
+    carry: (here, read, intent) => [
+      carryStep(kind, intent, read, here, { key: 'act.retire-vault.step.carry' }, carryOut)
+    ],
     carries: (intent) => ({ kind: 'retire-vault', move: retired(vaultOf(intent)!), vault: vaultOf(intent)! }),
-    why: kindWhy,
+    why: kindWhy
   };
   return kind;
 }
@@ -166,7 +213,7 @@ export function retireVaultAction(reach: RetireVaultReach): ActionDefinition {
       ...retireShown(intent),
       { key: 'act.retire-vault.shown.raise', from: 'action' as const },
       ...upkeepShown(),
-      { key: 'act.retire-vault.shown.nothing-else', from: 'action' as const },
+      { key: 'act.retire-vault.shown.nothing-else', from: 'action' as const }
     ],
     checks: [{ key: 'act.retire-vault.check.on-its-way' }, { key: 'act.retire-vault.check.seat' }, UPKEEP_CHECK],
     check: async (intent) => {
@@ -175,7 +222,9 @@ export function retireVaultAction(reach: RetireVaultReach): ActionDefinition {
     },
     steps: (intent) => {
       const kind = retireVaultKind(reach);
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const here = approving();
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const raise: ActionStep = {
@@ -198,19 +247,36 @@ export function retireVaultAction(reach: RetireVaultReach): ActionDefinition {
           here.standing = found.onChain;
           here.needed = kind.needed(found.onChain, await r.holders(), intent);
           const atItsBar = here.needed !== null && found.onChain.approvals >= here.needed;
-          ctx.tell({ state: atItsBar ? RETIRE_STATE.atItsBar : RETIRE_STATE.waiting, approvals: found.onChain.approvals, needed: here.needed ?? 0 });
-        },
+          ctx.tell({
+            state: atItsBar ? RETIRE_STATE.atItsBar : RETIRE_STATE.waiting,
+            approvals: found.onChain.approvals,
+            needed: here.needed ?? 0
+          });
+        }
       };
       /* The record the raise found names the retire carried, whatever the page named. */
-      const carry = carryStep(kind, intent, read, here, { key: 'act.retire-vault.step.carry' },
-        (ctx, r, _intent, round, handed) => carryRetireOnce(ctx, r, { vault: vaultOf(intent)!, proposal: round.id }, handed, reach));
+      const carry = carryStep(
+        kind,
+        intent,
+        read,
+        here,
+        { key: 'act.retire-vault.step.carry' },
+        (ctx, r, _intent, round, handed) =>
+          carryRetireOnce(ctx, r, { vault: vaultOf(intent)!, proposal: round.id }, handed, reach)
+      );
       return [upkeep.first, raise, carry, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }
 
 /** Carries the retire the company's record names out, or says it waits for approvals; the page is told which. */
-async function carryRetireOnce(ctx: StepContext, r: CompanyReach, named: RetireNamed, handed: Handed, reach: RetireVaultReach): Promise<void | { readonly state: string }> {
+async function carryRetireOnce(
+  ctx: StepContext,
+  r: CompanyReach,
+  named: RetireNamed,
+  handed: Handed,
+  reach: RetireVaultReach
+): Promise<void | { readonly state: string }> {
   let out: Awaited<ReturnType<typeof carryRetireHere>>;
   try {
     out = await carryRetireHere(retireDoorsFor(ctx, r, reach, handed), named);

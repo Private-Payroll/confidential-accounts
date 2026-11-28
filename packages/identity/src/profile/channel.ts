@@ -200,7 +200,12 @@ export interface ActCall {
  * made it and the service gave no answer at all; `unanswered` when the action
  * ended first; `gone` when the page could not be handed it.
  */
-export type CalledOver = { readonly of: 'answered'; readonly status: number; readonly body: unknown } | 'refused' | 'unreached' | 'unanswered' | 'gone';
+export type CalledOver =
+  | { readonly of: 'answered'; readonly status: number; readonly body: unknown }
+  | 'refused'
+  | 'unreached'
+  | 'unanswered'
+  | 'gone';
 
 /** Saved keys an action sealed again, for the page to write over the version given. */
 export interface ActKeep {
@@ -246,8 +251,19 @@ export type HandedOver = Relayed | 'unanswered' | 'gone';
  *   - `no-call-answer` - the page did not say in time what the service answered to one.
  */
 export const ACT_STOPS = [
-  'stopped', 'relay-refused', 'no-relay-answer', 'out-of-time', 'too-many', 'check-failed', 'step-failed',
-  'keys-did-not-open', 'older-keys', 'keep-refused', 'no-keep-answer', 'call-refused', 'no-call-answer',
+  'stopped',
+  'relay-refused',
+  'no-relay-answer',
+  'out-of-time',
+  'too-many',
+  'check-failed',
+  'step-failed',
+  'keys-did-not-open',
+  'older-keys',
+  'keep-refused',
+  'no-keep-answer',
+  'call-refused',
+  'no-call-answer'
 ] as const;
 export type ActStop = (typeof ACT_STOPS)[number];
 
@@ -308,7 +324,9 @@ export type ChannelState =
   /** The page said it will not ask; `why` is `null` when the reason it gave is not one this wallet knows. */
   | { readonly of: 'not-asked'; readonly why: NotAskedWhy | null };
 
-interface Postable { postMessage(message: unknown, targetOrigin: string): void }
+interface Postable {
+  postMessage(message: unknown, targetOrigin: string): void;
+}
 
 export interface ChannelWindow {
   readonly opener: Postable | null;
@@ -347,18 +365,18 @@ export type Framing =
   | { readonly of: 'refused'; readonly why: string };
 
 export const NOT_BUILT_TO_BE_FRAMED =
-  'this wallet has been put inside another page and it was not built to be, so it shows nothing '
-  + 'and answers nothing here. Open your wallet in its own tab.';
+  'this wallet has been put inside another page and it was not built to be, so it shows nothing ' +
+  'and answers nothing here. Open your wallet in its own tab.';
 
 export const FRAMED_BY_A_STRANGER =
-  'this wallet has been put inside a page it does not know, so it shows nothing and answers '
-  + 'nothing here. Open your wallet in its own tab.';
+  'this wallet has been put inside a page it does not know, so it shows nothing and answers ' +
+  'nothing here. Open your wallet in its own tab.';
 
 export const NO_PAGE_TO_ANSWER =
-  'This wallet was set up without the address of your company\'s page, so it answers no page '
-  + 'and nothing was sent. Close this window and tell whoever runs your company\'s page; once the '
-  + 'wallet is set up, open it again from that page. For whoever runs the wallet: build it with '
-  + 'VITE_APP_ORIGIN set to that page\'s address.';
+  "This wallet was set up without the address of your company's page, so it answers no page " +
+  "and nothing was sent. Close this window and tell whoever runs your company's page; once the " +
+  'wallet is set up, open it again from that page. For whoever runs the wallet: build it with ' +
+  "VITE_APP_ORIGIN set to that page's address.";
 
 /**
  * The refusal a wallet in a window of its own shows when it was built with no
@@ -413,8 +431,19 @@ export function framingOf(view: ChannelWindow, embedder: string | null): Framing
  * a channel that would then have two rules to keep in step.
  */
 export type Answer =
-  | DisclosureResponse | UnlockRelease | KeyringRelease | SealedAcceptance | BalancedAnswer | CommitteeSignatures
-  | CommitteeRequestSignature | RecordsKeyAnswer | HoldersAnswer | CreationSignature | JoinCode | AddressesAndBalances | ActEnded;
+  | DisclosureResponse
+  | UnlockRelease
+  | KeyringRelease
+  | SealedAcceptance
+  | BalancedAnswer
+  | CommitteeSignatures
+  | CommitteeRequestSignature
+  | RecordsKeyAnswer
+  | HoldersAnswer
+  | CreationSignature
+  | JoinCode
+  | AddressesAndBalances
+  | ActEnded;
 
 /**
  * **WHY A PAYMENT THE PERSON APPROVED DID NOT HAPPEN, IN FOUR WORDS AND NO MORE.**
@@ -532,7 +561,10 @@ const REFUSED_SCHEMA = 'midnight-identity/disclosure-refused/v1';
  * front of the person for a moment. Each alone leaves a way in.
  */
 export function askerIsAllowed(
-  view: ChannelWindow, framing: Framing, event: MessageEvent, page: string | null,
+  view: ChannelWindow,
+  framing: Framing,
+  event: MessageEvent,
+  page: string | null
 ): boolean {
   /* `!= null` AND NOT `!== null`: a window with no opener reports `null`, and
    * some environments report `undefined`. Either is no opener - and an
@@ -546,12 +578,10 @@ export function askerIsAllowed(
      * conversation the person opened the wallet for; and the opener itself is
      * only the page the wallet was built for when the browser saw it there.
      */
-    return event.source === (view.opener as unknown as MessageEventSource)
-      && event.origin === page;
+    return event.source === (view.opener as unknown as MessageEventSource) && event.origin === page;
   }
   if (framing.of !== 'framed') return false;
-  return event.source === (view.parent as unknown as MessageEventSource)
-    && event.origin === framing.embedder;
+  return event.source === (view.parent as unknown as MessageEventSource) && event.origin === framing.embedder;
 }
 
 /**
@@ -565,7 +595,10 @@ export function askerIsAllowed(
 const answeredHere = new WeakMap<ChannelWindow, Set<string>>();
 const answeredIn = (view: ChannelWindow): Set<string> => {
   let answered = answeredHere.get(view);
-  if (answered === undefined) { answered = new Set(); answeredHere.set(view, answered); }
+  if (answered === undefined) {
+    answered = new Set();
+    answeredHere.set(view, answered);
+  }
   return answered;
 };
 
@@ -590,7 +623,7 @@ export function listen(
    * framed wallet answers nobody, and a wallet in a window of its own answers
    * nobody and shows `NoPageToAnswer`.
    */
-  embedder: string | null = null,
+  embedder: string | null = null
 ): ActingChannel {
   let settled = false;
   let source: MessageEventSource | null = null;
@@ -612,14 +645,16 @@ export function listen(
 
   const send = (message: unknown): boolean => {
     if (source === null || origin === null) return false;
-    (source as unknown as { postMessage(m: unknown, t: string): void })
-      .postMessage(message, origin);
+    (source as unknown as { postMessage(m: unknown, t: string): void }).postMessage(message, origin);
     return true;
   };
   /* **THE ONE PLACE THE CONVERSATION ENDS.** Every terminal message passes here. */
   const end = (message: unknown): boolean => {
     if (ended) return false;
-    if (ask !== null && answeredIn(view).has(ask)) { ended = true; return false; }
+    if (ask !== null && answeredIn(view).has(ask)) {
+      ended = true;
+      return false;
+    }
     if (!send(message)) return false;
     ended = true;
     if (ask !== null) answeredIn(view).add(ask);
@@ -649,9 +684,11 @@ export function listen(
       waitingKeeps.delete(k as number);
       const version = body['version'];
       /* Kept only with the version the service now holds: a `kept` without one is not taken as kept. */
-      kept(body['outcome'] === 'kept' && typeof version === 'number' && Number.isSafeInteger(version) && version >= 0
-        ? Object.freeze({ of: 'kept' as const, version })
-        : 'refused');
+      kept(
+        body['outcome'] === 'kept' && typeof version === 'number' && Number.isSafeInteger(version) && version >= 0
+          ? Object.freeze({ of: 'kept' as const, version })
+          : 'refused'
+      );
       return;
     }
     if (body['schema'] === ACT_CALLED_SCHEMA) {
@@ -660,9 +697,17 @@ export function listen(
       if (called === undefined) return;
       waitingCalls.delete(c as number);
       const status = body['status'];
-      called(body['outcome'] === 'answered' && typeof status === 'number' && Number.isSafeInteger(status) && status >= 100 && status <= 599
-        ? Object.freeze({ of: 'answered' as const, status, body: body['body'] ?? null })
-        : body['outcome'] === 'unreached' ? 'unreached' : 'refused');
+      called(
+        body['outcome'] === 'answered' &&
+          typeof status === 'number' &&
+          Number.isSafeInteger(status) &&
+          status >= 100 &&
+          status <= 599
+          ? Object.freeze({ of: 'answered' as const, status, body: body['body'] ?? null })
+          : body['outcome'] === 'unreached'
+            ? 'unreached'
+            : 'refused'
+      );
       return;
     }
     if (body['schema'] !== ACT_RELAYED_SCHEMA) return;
@@ -675,14 +720,20 @@ export function listen(
 
   const handler = (event: MessageEvent): void => {
     if (!askerIsAllowed(view, framing, event, embedder)) return;
-    if (settled) { heardAfterTheAsk(event); return; }
+    if (settled) {
+      heardAfterTheAsk(event);
+      return;
+    }
     const body = (event.data ?? null) as { schema?: unknown } | null;
     if (body === null || typeof body !== 'object') return;
     if (body.schema === NOT_ASKING_SCHEMA) {
       settled = true;
       ended = true;
       const why = (body as { why?: unknown }).why;
-      onState({ of: 'not-asked', why: (NOT_ASKED_WHY as readonly unknown[]).includes(why) ? why as NotAskedWhy : null });
+      onState({
+        of: 'not-asked',
+        why: (NOT_ASKED_WHY as readonly unknown[]).includes(why) ? (why as NotAskedWhy) : null
+      });
       return;
     }
     if (body.schema !== 'midnight-identity/disclosure-request/v1') return;
@@ -714,7 +765,7 @@ export function listen(
        */
       end({
         schema: REFUSED_SCHEMA,
-        reason: (e as Partial<RequestError> | null)?.code === 'expired' ? 'expired' : 'unreadable',
+        reason: (e as Partial<RequestError> | null)?.code === 'expired' ? 'expired' : 'unreadable'
       });
       onState({ of: 'refused', error: e as RequestError });
       return;
@@ -743,13 +794,17 @@ export function listen(
 
   return Object.freeze({
     answer: (answer: Answer) => end(answer),
-    refuse: (reason: Refusal | 'failed', why?: PaymentFailure) => end(reason === 'failed'
-      ? {
-        schema: REFUSED_SCHEMA, reason,
-        /* Only a word from the list crosses, whatever the caller handed in. */
-        why: (PAYMENT_FAILURES as readonly unknown[]).includes(why) ? why : 'did-not-finish',
-      }
-      : { schema: REFUSED_SCHEMA, reason }),
+    refuse: (reason: Refusal | 'failed', why?: PaymentFailure) =>
+      end(
+        reason === 'failed'
+          ? {
+              schema: REFUSED_SCHEMA,
+              reason,
+              /* Only a word from the list crosses, whatever the caller handed in. */
+              why: (PAYMENT_FAILURES as readonly unknown[]).includes(why) ? why : 'did-not-finish'
+            }
+          : { schema: REFUSED_SCHEMA, reason }
+      ),
     progress: (stage: ProgressStage) => {
       if (ended || !hearsProgress) return false;
       /* Only a stage from the list crosses, whatever the caller handed in. */
@@ -760,21 +815,30 @@ export function listen(
     over: () => ended || (ask !== null && answeredIn(view).has(ask)),
     stop: () => view.removeEventListener('message', handler),
     step: (at: StepAt) => {
-      if (ended || acting === null || !countFrom1(at.steps, MOST_ACT_STEPS) || !countFrom1(at.step, at.steps)) return false;
+      if (ended || acting === null || !countFrom1(at.steps, MOST_ACT_STEPS) || !countFrom1(at.step, at.steps))
+        return false;
       return send({ schema: PROGRESS_SCHEMA, stage: 'proving', step: at.step, steps: at.steps });
     },
     relay: (at: StepAt, transaction: string, label?: RelayLabel): Promise<HandedOver> => {
       if (ended || acting === null || relays >= MOST_ACT_RELAYS) return Promise.resolve('gone');
       const n = relays + 1;
       const message = {
-        schema: ACT_RELAY_SCHEMA, nonce: acting, n, step: at.step, steps: at.steps, transaction,
-        ...(label === undefined ? {} : { what: label.what, ...(label.also === undefined ? {} : { also: label.also }) }),
+        schema: ACT_RELAY_SCHEMA,
+        nonce: acting,
+        n,
+        step: at.step,
+        steps: at.steps,
+        transaction,
+        ...(label === undefined ? {} : { what: label.what, ...(label.also === undefined ? {} : { also: label.also }) })
       };
       if (readActRelay(message, acting) === null) return Promise.resolve('gone');
       return new Promise<HandedOver>((resolve) => {
         waiting.set(n, resolve);
         relays = n;
-        if (!send(message)) { waiting.delete(n); resolve('gone'); }
+        if (!send(message)) {
+          waiting.delete(n);
+          resolve('gone');
+        }
       });
     },
     keep: (at: StepAt, sealed: SealedKeyring, ifVersion: number): Promise<KeptOver> => {
@@ -785,19 +849,34 @@ export function listen(
       return new Promise<KeptOver>((resolve) => {
         waitingKeeps.set(n, resolve);
         keeps = n;
-        if (!send(message)) { waitingKeeps.delete(n); resolve('gone'); }
+        if (!send(message)) {
+          waitingKeeps.delete(n);
+          resolve('gone');
+        }
       });
     },
     call: (at: StepAt, method: ActCall['method'], path: string, body?: string): Promise<CalledOver> => {
       if (ended || acting === null || calls >= MOST_ACT_CALLS) return Promise.resolve('gone');
       const n = calls + 1;
-      const message = { schema: ACT_CALL_SCHEMA, nonce: acting, n, step: at.step, steps: at.steps, method, path, ...(body === undefined ? {} : { body }) };
+      const message = {
+        schema: ACT_CALL_SCHEMA,
+        nonce: acting,
+        n,
+        step: at.step,
+        steps: at.steps,
+        method,
+        path,
+        ...(body === undefined ? {} : { body })
+      };
       if (readActCall(message, acting) === null) return Promise.resolve('gone');
       return new Promise<CalledOver>((resolve) => {
         waitingCalls.set(n, resolve);
         calls = n;
-        if (!send(message)) { waitingCalls.delete(n); resolve('gone'); }
+        if (!send(message)) {
+          waitingCalls.delete(n);
+          resolve('gone');
+        }
       });
-    },
+    }
   });
 }

@@ -4,12 +4,21 @@ import type { SealedAccount } from '../../../../src/core/types.js';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { SealedNotePool } from '../../../../src/midnight/vault-pool.js';
 import { deviceVaultHoldings } from 'vaults-web-shared/device-vault-holdings.js';
-import { FilingNotBelieved, type FreshJudge, type ReadsThroughTheView } from 'vaults-web-shared/http-sealed-pool-store.js';
+import {
+  FilingNotBelieved,
+  type FreshJudge,
+  type ReadsThroughTheView
+} from 'vaults-web-shared/http-sealed-pool-store.js';
 import type { VaultRecordAsked } from 'vaults-web-shared/records-source.js';
 import type { VaultsReadOnce } from 'vaults-web-shared/vaults-read-in-the-view.js';
 import { companyKeyReleasedFor, seatShownHere, type OpenedAccount } from 'vaults-web-shared/keyring.js';
 import { browserInFlightRecords } from 'vaults-web-shared/in-flight-in-this-browser.js';
-import { deviceSignerFrom, readersIn, recordsReadHere, type DirectoryRead } from 'vaults-web-shared/vault-page-doors.js';
+import {
+  deviceSignerFrom,
+  readersIn,
+  recordsReadHere,
+  type DirectoryRead
+} from 'vaults-web-shared/vault-page-doors.js';
 import type { DeviceRecords, DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { VaultBuilderClient } from 'vaults-web-shared/vault-worker-client.js';
@@ -19,7 +28,17 @@ import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.j
 import { Fault, FAULT } from '../faults.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 import { keyringFor } from './keyring-person.js';
-import { companyKeysFor, directoryHereFor, filingJudgeFor, openedHere, storeReachIn, sealedIn, vaultOnChainIn, walletIndexerIn, type PageView } from './filing-judge.js';
+import {
+  companyKeysFor,
+  directoryHereFor,
+  filingJudgeFor,
+  openedHere,
+  storeReachIn,
+  sealedIn,
+  vaultOnChainIn,
+  walletIndexerIn,
+  type PageView
+} from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { theVaultBuilder } from './vault-builder.js';
 
@@ -68,11 +87,21 @@ import { theVaultBuilder } from './vault-builder.js';
 const LEDGER = { pool: 'pool', shielded: 'shielded', theNewest: 'the-newest' } as const;
 
 /** Which of the four things a read of a vault's private money found. */
-export const PRIVATE_MONEY = { held: 'held', nothingYet: 'nothing-yet', notBelieved: 'not-believed', unreadable: 'unreadable' } as const;
+export const PRIVATE_MONEY = {
+  held: 'held',
+  nothingYet: 'nothing-yet',
+  notBelieved: 'not-believed',
+  unreadable: 'unreadable'
+} as const;
 
 /** Why a vault's private money could not be read: no company key released in this tab, the wallet did not answer the ask of who holds the company, the chain or the indexer could not be reached, the chain's ledger is not the shape this build reads, this device has no record of notes the chain holds, or something else stopped the read. */
 export const COULD_NOT_READ = {
-  noKeys: 'no-keys', walletRefused: 'wallet-refused', chain: 'chain', layout: 'layout', record: 'record', other: 'other',
+  noKeys: 'no-keys',
+  walletRefused: 'wallet-refused',
+  chain: 'chain',
+  layout: 'layout',
+  record: 'record',
+  other: 'other'
 } as const;
 type CouldNotRead = (typeof COULD_NOT_READ)[keyof typeof COULD_NOT_READ];
 
@@ -82,7 +111,11 @@ type CouldNotRead = (typeof COULD_NOT_READ)[keyof typeof COULD_NOT_READ];
  * of, counted and never shown as a figure because with no registry record there are no decimals to write one with.
  */
 export type VaultPrivateMoney =
-  | { readonly of: typeof PRIVATE_MONEY.held; readonly amounts: readonly PrivateAmount[]; readonly unrecognised: number }
+  | {
+      readonly of: typeof PRIVATE_MONEY.held;
+      readonly amounts: readonly PrivateAmount[];
+      readonly unrecognised: number;
+    }
   | { readonly of: typeof PRIVATE_MONEY.nothingYet }
   | { readonly of: typeof PRIVATE_MONEY.notBelieved }
   | { readonly of: typeof PRIVATE_MONEY.unreadable; readonly why: CouldNotRead };
@@ -91,8 +124,14 @@ const unreadable = (why: CouldNotRead): VaultPrivateMoney => ({ of: PRIVATE_MONE
 
 /** The refusals that mean the person's wallet was asked and did not answer: declined, closed, out of time or silent. */
 const WALLET_DID_NOT_ANSWER: ReadonlySet<ActRefusal> = new Set([
-  ACT_REFUSAL.declined, ACT_REFUSAL.expired, ACT_REFUSAL.ranOut, ACT_REFUSAL.unreadable, ACT_REFUSAL.noWindow,
-  ACT_REFUSAL.windowGone, ACT_REFUSAL.gaveUp, ACT_REFUSAL.silent,
+  ACT_REFUSAL.declined,
+  ACT_REFUSAL.expired,
+  ACT_REFUSAL.ranOut,
+  ACT_REFUSAL.unreadable,
+  ACT_REFUSAL.noWindow,
+  ACT_REFUSAL.windowGone,
+  ACT_REFUSAL.gaveUp,
+  ACT_REFUSAL.silent
 ]);
 
 /** What a failure the read ran into means for the screen, told by its kind: a record no seat signed, a wallet that did not answer, or something else. */
@@ -146,7 +185,9 @@ export interface SeatAndRecordsHere {
  * vault's money passes no `release`, so it asks the wallet for nothing.
  */
 export async function seatAndRecordsHere(
-  personId: string, view: PageView, release?: () => Promise<unknown>,
+  personId: string,
+  view: PageView,
+  release?: () => Promise<unknown>
 ): Promise<SeatAndRecordsHere | ActRefusal> {
   const companyId = view.company;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
@@ -180,20 +221,41 @@ export async function seatAndRecordsHere(
   const mine = deviceSignerFrom(own.seat, companyKey);
   const readers = readersIn(directory);
   const records = recordsReadHere(judge, storeReachIn(view));
-  return { view, sealed, company, account, opened, builder, companyKey, mine, leaf: own.seat, viewingKey, directory, judge, readers, records };
+  return {
+    view,
+    sealed,
+    company,
+    account,
+    opened,
+    builder,
+    companyKey,
+    mine,
+    leaf: own.seat,
+    viewingKey,
+    directory,
+    judge,
+    readers,
+    records
+  };
 }
 
 /*
  * Where a vault's private money is read from: the vault store, its pool and the journals a rebuild of its notes reads,
  * and the name of the view's layer that holds the seat and records every vault's read shares.
  */
-const MONEY_READ = { store: 'vault', records: ['pool', 'deposit-journal', 'payment-journal'], layer: 'vault-private-money:' } as const;
+const MONEY_READ = {
+  store: 'vault',
+  records: ['pool', 'deposit-journal', 'payment-journal'],
+  layer: 'vault-private-money:'
+} as const;
 
 /**
  * The seat and records a vault's private money is read with, made once for every vault read through one view, or why
  * this seat cannot read any. `records` are the vault records as this view reads them (`vaultRecordsJoinedIn`).
  */
-type MoneyReadInTheView = { readonly refused: ActRefusal; readonly here?: never } | { readonly refused?: never; readonly here: SeatAndRecordsHere; readonly records: DeviceRecords };
+type MoneyReadInTheView =
+  | { readonly refused: ActRefusal; readonly here?: never }
+  | { readonly refused?: never; readonly here: SeatAndRecordsHere; readonly records: DeviceRecords };
 
 /**
  * THE VAULT RECORDS OF EVERY VAULT THE ACCOUNT ADOPTED, READ IN ONE ASK: each
@@ -205,22 +267,35 @@ type MoneyReadInTheView = { readonly refused: ActRefusal; readonly here?: never 
  */
 function vaultRecordsJoinedIn(view: PageView, adopted: readonly string[]): ReadsThroughTheView {
   const reach = storeReachIn(view);
-  const asked: VaultRecordAsked[] = adopted.flatMap((v) => MONEY_READ.records.map((record) => ({ vault: v.toLowerCase(), record })));
+  const asked: VaultRecordAsked[] = adopted.flatMap((v) =>
+    MONEY_READ.records.map((record) => ({ vault: v.toLowerCase(), record }))
+  );
   view.declare({ records: asked.map((a) => ({ store: MONEY_READ.store, kind: a.record, id: a.vault })) });
   const vaults = new Set(asked.map((a) => a.vault));
-  const declared = (a: VaultRecordAsked): boolean => vaults.has(a.vault) && (MONEY_READ.records as readonly string[]).includes(a.record);
+  const declared = (a: VaultRecordAsked): boolean =>
+    vaults.has(a.vault) && (MONEY_READ.records as readonly string[]).includes(a.record);
   let joined: Promise<void> | null = null;
   let joinedFailed = false;
   let alone: Promise<void> = Promise.resolve();
   const vaultRecord = async (a: VaultRecordAsked): Promise<unknown> => {
     if (a.every === true || !declared(a)) return reach.vaultRecord(a);
     /* A joined read that failed is kept as failed, never as an answer: each record is asked alone after it. */
-    joined ??= view.vaultRecords(asked).then(() => undefined, () => { joinedFailed = true; });
+    joined ??= view.vaultRecords(asked).then(
+      () => undefined,
+      () => {
+        joinedFailed = true;
+      }
+    );
     await joined;
     if (!joinedFailed) return reach.vaultRecord(a);
     /* One after another, so no two join in one ask again. */
     const own = alone.then(() => reach.vaultRecord(a));
-    alone = own.then(() => undefined, () => { /* This record's failure is its own read's answer; the next is still asked. */ });
+    alone = own.then(
+      () => undefined,
+      () => {
+        /* This record's failure is its own read's answer; the next is still asked. */
+      }
+    );
     return own;
   };
   return { ...reach, vaultRecord };
@@ -246,7 +321,7 @@ const moneyReadIn = (personId: string, view: PageView): Promise<MoneyReadInTheVi
  */
 const chainReadIn = (view: PageView, round: number): VaultsReadOnce => ({
   declare: () => {},
-  read: (v, indexer) => vaultOnChainIn(view, v, indexer, round),
+  read: (v, indexer) => vaultOnChainIn(view, v, indexer, round)
 });
 
 /**
@@ -264,19 +339,35 @@ const chainReadIn = (view: PageView, round: number): VaultsReadOnce => ({
  * out for a press to read the vault again (`vaultReadAgainIn`).
  */
 export async function readVaultPrivateMoney(
-  personId: string, view: PageView, vault: string, { registry = assets, round = 0 }: { readonly registry?: AssetRegistry; readonly round?: number } = {},
+  personId: string,
+  view: PageView,
+  vault: string,
+  { registry = assets, round = 0 }: { readonly registry?: AssetRegistry; readonly round?: number } = {}
 ): Promise<VaultPrivateMoney> {
   try {
     const read = await moneyReadIn(personId, view);
     if (read.refused !== undefined) {
       const here = read.refused;
-      return unreadable(here === ACT_REFUSAL.noKeysHere ? COULD_NOT_READ.noKeys
-        : WALLET_DID_NOT_ANSWER.has(here) ? COULD_NOT_READ.walletRefused
-        : here === ACT_REFUSAL.unreachable ? COULD_NOT_READ.chain : COULD_NOT_READ.other);
+      return unreadable(
+        here === ACT_REFUSAL.noKeysHere
+          ? COULD_NOT_READ.noKeys
+          : WALLET_DID_NOT_ANSWER.has(here)
+            ? COULD_NOT_READ.walletRefused
+            : here === ACT_REFUSAL.unreachable
+              ? COULD_NOT_READ.chain
+              : COULD_NOT_READ.other
+      );
     }
-    const { here: { builder, account: address, mine, readers }, records } = read;
+    const {
+      here: { builder, account: address, mine, readers },
+      records
+    } = read;
     const poolStore = records(LEDGER.pool);
-    const pool = new SealedNotePool(poolStore, { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }, readers.signers);
+    const pool = new SealedNotePool(
+      poolStore,
+      { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret },
+      readers.signers
+    );
     const holdings = deviceVaultHoldings({
       /* The vault's notes as the chain holds them, read in this device's vault worker at the indexer this person's own wallet names, through the view with every vault the account adopted. */
       chain: async (v) => {
@@ -294,23 +385,41 @@ export async function readVaultPrivateMoney(
        * counted either way; the vault read at the indexer and through the holders this person's own wallet names.
        */
       fileAgain: async (v) => {
-        const rebuilt = await vaultNotesHere({
-          account: address, builder, me: mine, records, signers: readers.signers,
-          /* No seat is given: the read files nothing, and what it finds owed is filed by a seat action in the wallet. */
-          indexer: () => walletIndexerIn(view),
-          vaultsHere: chainReadIn(view, round),
-          onChain: async () => ({ holders: await view.holders() }),
-          /* A note nobody's records name is looked for once in the same records: the device's own store of the company keeps it. */
-          ...unnamedKeptIn(view),
-          /* The coins this device keeps, in this browser's own storage; a browser with none keeps nothing and the rest still reads. */
-          ...((globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined ? {} : {
-            kept: coinsKeptOnThisDevice(browserInFlightRecords(), { signerId: mine.signerId, wrappingSecret: mine.wrappingSecret }),
-          }),
-        }, v);
-        return { answer: LEDGER.theNewest, said: rebuilt.leaver ?? [], ...(rebuilt.of === 'not-read' ? {} : { notes: rebuilt.notes }) };
+        const rebuilt = await vaultNotesHere(
+          {
+            account: address,
+            builder,
+            me: mine,
+            records,
+            signers: readers.signers,
+            /* No seat is given: the read files nothing, and what it finds owed is filed by a seat action in the wallet. */
+            indexer: () => walletIndexerIn(view),
+            vaultsHere: chainReadIn(view, round),
+            onChain: async () => ({ holders: await view.holders() }),
+            /* A note nobody's records name is looked for once in the same records: the device's own store of the company keeps it. */
+            ...unnamedKeptIn(view),
+            /* The coins this device keeps, in this browser's own storage; a browser with none keeps nothing and the rest still reads. */
+            ...((globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined
+              ? {}
+              : {
+                  kept: coinsKeptOnThisDevice(browserInFlightRecords(), {
+                    signerId: mine.signerId,
+                    wrappingSecret: mine.wrappingSecret
+                  })
+                })
+          },
+          v
+        );
+        return {
+          answer: LEDGER.theNewest,
+          said: rebuilt.leaver ?? [],
+          ...(rebuilt.of === 'not-read' ? {} : { notes: rebuilt.notes })
+        };
       },
       /* Only what the vault holds is read here; whether payments fit is asked where a payment is made. */
-      paymentsFit: () => { throw new Fault(FAULT.vaultPaymentsNotAsked); },
+      paymentsFit: () => {
+        throw new Fault(FAULT.vaultPaymentsNotAsked);
+      }
     });
     const tokens: string[] = [];
     const assetsOf = registry.all().filter((asset) => typeof asset.ledger.shielded === 'string');
@@ -318,15 +427,21 @@ export async function readVaultPrivateMoney(
     if (new Set(tokens.map((t) => t.toLowerCase())).size !== tokens.length) return unreadable(COULD_NOT_READ.other);
     const found = await holdings.privateNotes(vault, tokens);
     switch (found.of) {
-      case 'nothing-yet': return { of: PRIVATE_MONEY.nothingYet };
-      case 'unfiled': return unreadable(COULD_NOT_READ.record);
-      case 'contradicted': return { of: PRIVATE_MONEY.notBelieved };
+      case 'nothing-yet':
+        return { of: PRIVATE_MONEY.nothingYet };
+      case 'unfiled':
+        return unreadable(COULD_NOT_READ.record);
+      case 'contradicted':
+        return { of: PRIVATE_MONEY.notBelieved };
       case 'unreadable': {
         if (found.because === 'layout') return unreadable(COULD_NOT_READ.layout);
         if (found.because === 'record') return unreadable(COULD_NOT_READ.record);
         const failed = found.cause === undefined ? null : readFailed(found.cause);
-        return failed !== null && failed.of !== PRIVATE_MONEY.unreadable ? failed
-          : failed !== null && failed.why !== COULD_NOT_READ.other ? failed : unreadable(COULD_NOT_READ.chain);
+        return failed !== null && failed.of !== PRIVATE_MONEY.unreadable
+          ? failed
+          : failed !== null && failed.why !== COULD_NOT_READ.other
+            ? failed
+            : unreadable(COULD_NOT_READ.chain);
       }
       default: {
         const amounts: PrivateAmount[] = [];

@@ -63,8 +63,7 @@ export class MemoryChallengeStore implements ChallengeStore {
     this.ttlMs = options.ttlMs ?? 120_000;
     this.capacity = options.capacity ?? 10_000;
     this.now = options.now ?? (() => Date.now());
-    this.randomBytes = options.randomBytes
-      ?? ((length) => crypto.getRandomValues(new Uint8Array(length)));
+    this.randomBytes = options.randomBytes ?? ((length) => crypto.getRandomValues(new Uint8Array(length)));
   }
 
   async issue(purpose: 'register' | 'sign-in'): Promise<string> {

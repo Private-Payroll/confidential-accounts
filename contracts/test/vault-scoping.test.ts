@@ -13,9 +13,7 @@
  * proposal's identity because it could not live in an access check.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf,
-} from './simulator.js';
+import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +34,7 @@ const TREASURY = new Uint8Array(32).fill(0xb2);
 const NO_VAULT = pureCircuits.noVault();
 
 const govChange = (seed: number): Change => change(0n, seed);
-const carrying = (sim: AccountSimulator, d: Device, c: Change) =>
-  sim.applying(d, c);
+const carrying = (sim: AccountSimulator, d: Device, c: Change) => sim.applying(d, c);
 
 /** A live two-signer account. */
 const liveAccount = async (threshold = 2n) => {
@@ -60,27 +57,34 @@ const RUN_NOW = 1_800_000_000;
 const RUN_OPENS = BigInt(RUN_NOW - 3_600);
 const RUN_CLOSES = BigInt(RUN_NOW + 3_600);
 
-const approvedFor = async (
-  sim: AccountSimulator, vault: Uint8Array, p: Uint8Array, c: Change,
-) => {
+const approvedFor = async (sim: AccountSimulator, vault: Uint8Array, p: Uint8Array, c: Change) => {
   await sim.adoptVault(vault, [A, B]);
   const payee = { details: toHex(p), nonce: toHex(payload(0x5a)) };
   const tree = payoutTreeOf([payee]);
-  const runPayload = pureCircuits.runPayload(
-    fromHex(tree.root), tree.payees, RUN_OPENS, RUN_CLOSES, 0n);
+  const runPayload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, RUN_OPENS, RUN_CLOSES, 0n);
   await sim.as(carrying(sim, A, c)).proposeRun({
-    root: fromHex(tree.root), payees: tree.payees,
-    from: RUN_OPENS, until: RUN_CLOSES, vault,
+    root: fromHex(tree.root),
+    payees: tree.payees,
+    from: RUN_OPENS,
+    until: RUN_CLOSES,
+    vault
   });
   const id = sim.proposalId(runPayload, c.salt, vault);
   await sim.as(carrying(sim, B, c)).approve(id);
   return {
     id,
     claim: {
-      proposal: id, vault, root: fromHex(tree.root), payees: tree.payees,
-      from: RUN_OPENS, until: RUN_CLOSES, salt: c.salt,
-      details: fromHex(payee.details), nonce: fromHex(payee.nonce), ...sumArgsOf(tree, 0),
-    },
+      proposal: id,
+      vault,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: RUN_OPENS,
+      until: RUN_CLOSES,
+      salt: c.salt,
+      details: fromHex(payee.details),
+      nonce: fromHex(payee.nonce),
+      ...sumArgsOf(tree, 0)
+    }
   };
 };
 
@@ -118,9 +122,11 @@ describe('a threshold per vault', () => {
     // Two approvals against an account threshold of two: payable.
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(run.claim);
     // Open until its window shuts; the payment is what proves it went through.
-    expect(sim.ledger.movements.member(
-      pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(
-        run.claim.details, run.claim.nonce)))).toBe(true);
+    expect(
+      sim.ledger.movements.member(
+        pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(run.claim.details, run.claim.nonce))
+      )
+    ).toBe(true);
   });
 
   it('a vault given a higher threshold demands it, and the account is unaffected', async () => {
@@ -135,16 +141,19 @@ describe('a threshold per vault', () => {
     // Two approvals is no longer enough for the treasury…
     const c = govChange(23);
     const run = await approvedFor(sim, TREASURY, payload(8), c);
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(run.claim))
-      .rejects.toThrow(/not enough approvals/i);
+    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(run.claim)).rejects.toThrow(
+      /not enough approvals/i
+    );
 
     // …while payroll, which has no rule of its own, still needs only two.
     const c2 = govChange(24);
     const run2 = await approvedFor(sim, PAYROLL, payload(9), c2);
     await sim.as(carrying(sim, A, c2)).recordPaymentFromVault(run2.claim);
-    expect(sim.ledger.movements.member(
-      pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(
-        run2.claim.details, run2.claim.nonce)))).toBe(true);
+    expect(
+      sim.ledger.movements.member(
+        pureCircuits.paidMovementOf(pureCircuits.payoutLeaf(run2.claim.details, run2.claim.nonce))
+      )
+    ).toBe(true);
   });
 
   it('refuses a vault threshold of zero, which would authorise anything', async () => {
@@ -154,8 +163,9 @@ describe('a threshold per vault', () => {
     const gid = sim.proposalId(p, g.salt, NO_VAULT);
     await sim.as(carrying(sim, B, g)).approve(gid);
 
-    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 0n, gid))
-      .rejects.toThrow(/zero would authorise anything/i);
+    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 0n, gid)).rejects.toThrow(
+      /zero would authorise anything/i
+    );
   });
 
   it('refuses a vault threshold change bound to a DIFFERENT proposal', async () => {
@@ -176,11 +186,13 @@ describe('a threshold per vault', () => {
     await sim.as(carrying(sim, B, g)).approve(gid);
 
     // Same number, different vault.
-    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(TREASURY, 3n, gid))
-      .rejects.toThrow(/does not authorise this vault threshold/i);
+    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(TREASURY, 3n, gid)).rejects.toThrow(
+      /does not authorise this vault threshold/i
+    );
     // Same vault, different number.
-    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 9n, gid))
-      .rejects.toThrow(/does not authorise this vault threshold/i);
+    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 9n, gid)).rejects.toThrow(
+      /does not authorise this vault threshold/i
+    );
 
     // And the proposal it really authorises still goes through.
     await sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 3n, gid);
@@ -199,8 +211,9 @@ describe('a threshold per vault', () => {
     const gid = sim.proposalId(p, g.salt, NO_VAULT);
     /* A's raise counted A: one approval of two. */
 
-    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 1n, gid))
-      .rejects.toThrow(/not enough approvals/i);
+    await expect(sim.as(carrying(sim, A, g)).setVaultThreshold(PAYROLL, 1n, gid)).rejects.toThrow(
+      /not enough approvals/i
+    );
     expect(sim.isOpen(gid)).toBe(true);
   });
 
@@ -223,7 +236,9 @@ describe('a threshold per vault', () => {
     /* RED WHEN somebody not seated can change it: her device offers a path for her own leaf beside a signer's
      * siblings, so the witness answers and the circuit refuses. */
     const offering = sim.dishonest(sim.applying(mallory, g), { ...sim.pathFor(A), leaf: sim.leafOf(mallory) });
-    await expect(sim.as(offering).setVaultThreshold(PAYROLL, 3n, gid)).rejects.toThrow(/(?<!you are )not a signer on this account/);
+    await expect(sim.as(offering).setVaultThreshold(PAYROLL, 3n, gid)).rejects.toThrow(
+      /(?<!you are )not a signer on this account/
+    );
     expect(sim.isOpen(gid)).toBe(true);
   });
 
@@ -283,17 +298,21 @@ describe('the reserved signer scope', () => {
    */
   it('the scope is read where a seat is opened and where an invitee takes one, into the leaf, and compared only where a run asks for a right', () => {
     const source = contractSourceText(
-      fileURLToPath(new URL('../..', import.meta.url)), 'contracts/src/ConfidentialAccount.compact');
+      fileURLToPath(new URL('../..', import.meta.url)),
+      'contracts/src/ConfidentialAccount.compact'
+    );
     /* Comments stripped first, so prose explaining the rule is not read as code. */
-    const code = source
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/\/\/[^\n]*/g, ' ');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
     /* RED WHEN another reader of the witness appears: the declaration, the seat's one read, and the
        invitee's, which binds the scope it reads into both the invitation it takes and the leaf it seats. */
     expect(code.match(/signerScope/g) ?? []).toHaveLength(3);
-    expect(code).toContain('governanceIdOf(signerInvitePayload(address, scope, newThreshold), proposalSalt()) == proposal');
-    expect(code).toContain('const newSignerLeaf = signerLeaf(signerPublicKey(localSecretKey()), signerBlinding(), scope);');
+    expect(code).toContain(
+      'governanceIdOf(signerInvitePayload(address, scope, newThreshold), proposalSalt()) == proposal'
+    );
+    expect(code).toContain(
+      'const newSignerLeaf = signerLeaf(signerPublicKey(localSecretKey()), signerBlinding(), scope);'
+    );
     expect(code).toMatch(/witness signerScope\(\)\s*:\s*Bytes<32>;/);
     expect(code).toContain('const scope = signerScope();');
     /* RED WHEN the seat proves membership of a leaf built from anything but the scope it read. */
@@ -309,9 +328,13 @@ describe('the reserved signer scope', () => {
     /* RED WHEN a fourth circuit starts asking for a right, which must be a run's and said here. */
     expect(asks).toEqual(['raisesAndApproves(caller.scope,', 'grants(caller.scope, 1,', 'grants(caller.scope, 2,']);
     /* RED WHEN the approve right is asked outside the branch a run's window opens. */
-    expect(code).toMatch(/if \(runWindow\.member\(id\)\) \{\s*const opened = runOpening\(id\);\s*assert\(grants\(caller\.scope, 1,/);
+    expect(code).toMatch(
+      /if \(runWindow\.member\(id\)\) \{\s*const opened = runOpening\(id\);\s*assert\(grants\(caller\.scope, 1,/
+    );
     /* RED WHEN the raiser's rights are read for a governance proposal, or the raise right is asserted outside `propose`'s run branch. */
-    expect(code).toContain('const raiser = disclose(isRun) ? raisesAndApproves(caller.scope, disclose(vault)) : [true, true];');
+    expect(code).toContain(
+      'const raiser = disclose(isRun) ? raisesAndApproves(caller.scope, disclose(vault)) : [true, true];'
+    );
     expect(code).toMatch(/if \(disclose\(isRun\)\) \{[^}]*assert\(raiser\[0\],/);
   });
 

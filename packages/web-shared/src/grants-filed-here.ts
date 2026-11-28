@@ -6,7 +6,15 @@
 import { canonical, sign, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { purposeKey } from '../../../src/core/sealed-records.js';
 import {
-  carriedFrom, entriesInOrder, grantsMessage, purposeWrapsFor, readersHandedInFor, sealGrants, takesAway, type GrantEntry, type ReadersHandedIn,
+  carriedFrom,
+  entriesInOrder,
+  grantsMessage,
+  purposeWrapsFor,
+  readersHandedInFor,
+  sealGrants,
+  takesAway,
+  type GrantEntry,
+  type ReadersHandedIn
 } from '../../../src/midnight/grants-record.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { barReadable, quorumOf } from '../../../src/midnight/seat-quorum.js';
@@ -48,13 +56,20 @@ export interface GrantsChangeFiled {
 }
 
 const wrapsOf = (doors: Pick<GrantsFilingDoors, 'accountId' | 'keys'>, entries: readonly GrantEntry[]) =>
-  purposeWrapsFor(entries, (epoch, purpose) => purposeKey(doors.keys.keyAt(epoch), doors.accountId, purpose), doors.keys.newest);
+  purposeWrapsFor(
+    entries,
+    (epoch, purpose) => purposeKey(doors.keys.keyAt(epoch), doors.accountId, purpose),
+    doors.keys.newest
+  );
 
-const UNREAD_BAR = 'who holds the company\'s account was read without the approvals a change of who is seated needs, so no signature '
-  + 'is counted. Reload the page';
-const NOT_SIGNED = 'a signature gathered on this change of the read grants does not verify, or one seat signed it twice, so this seat '
-  + 'does not add its own. Reload the page and sign the change again from your wallet';
-const NO_NEWEST_KEY = 'this seat holds no copy of the company\'s newest key, so it wraps no purpose key of it to a reader; a signer who holds it files the grants';
+const UNREAD_BAR =
+  "who holds the company's account was read without the approvals a change of who is seated needs, so no signature " +
+  'is counted. Reload the page';
+const NOT_SIGNED =
+  'a signature gathered on this change of the read grants does not verify, or one seat signed it twice, so this seat ' +
+  'does not add its own. Reload the page and sign the change again from your wallet';
+const NO_NEWEST_KEY =
+  "this seat holds no copy of the company's newest key, so it wraps no purpose key of it to a reader; a signer who holds it files the grants";
 
 /**
  * **A CHANGE OF THE READ GRANTS, SIGNED IN THIS SEAT'S WALLET AND FILED.** The change asked of the grants in force: when
@@ -70,40 +85,71 @@ const NO_NEWEST_KEY = 'this seat holds no copy of the company\'s newest key, so 
 export async function grantsChangeFiledHere(doors: GrantsFilingDoors, asked: GrantsAsked): Promise<GrantsChangeFiled> {
   const g = await grantsHere(doors);
   const base = g.inForce?.grants.entries ?? [];
-  const entries = entriesInOrder('give' in asked
-    ? [...base.filter((e) => e.recipient !== asked.give.recipient && e.person !== asked.give.person), asked.give]
-    : base.filter((e) => e.recipient !== asked.takeAway.toLowerCase()));
+  const entries = entriesInOrder(
+    'give' in asked
+      ? [...base.filter((e) => e.recipient !== asked.give.recipient && e.person !== asked.give.person), asked.give]
+      : base.filter((e) => e.recipient !== asked.takeAway.toLowerCase())
+  );
   /* `grantsHere` read the grants only with a readable bar; one never counts as 1 here either. */
   if (!barReadable(g.here.holders)) throw new GrantsNotFiled(UNREAD_BAR);
   const needed = Number(g.here.holders.seatBar);
   const sequence = (g.inForce?.grants.sequence ?? 0) + 1;
   if (canonical(entries) === canonical(base)) {
     const now = { sequence: g.inForce?.grants.sequence ?? 0, entries: base };
-    return { state: 'already', by: needed, needed, takesAway: false, readers: readersHandedInFor(now, g.inForce?.grants.signatures ?? []) };
+    return {
+      state: 'already',
+      by: needed,
+      needed,
+      takesAway: false,
+      readers: readersHandedInFor(now, g.inForce?.grants.signatures ?? [])
+    };
   }
   if (doors.keys.epoch < doors.keys.newest) throw new GrantsNotFiled(NO_NEWEST_KEY);
   const message = grantsMessage(doors.accountId, { sequence, entries });
-  const mine = { publicKey: signingPublicKeyOf(doors.signingSecret).toLowerCase() as Hex, signature: sign(message, doors.signingSecret) };
+  const mine = {
+    publicKey: signingPublicKeyOf(doors.signingSecret).toLowerCase() as Hex,
+    signature: sign(message, doors.signingSecret)
+  };
   const waiting = g.waiting?.grants;
-  const gathered = waiting !== undefined && waiting.sequence === sequence && canonical(waiting.entries) === canonical(entries)
-    ? waiting.signatures.filter((x) => x.publicKey !== mine.publicKey) : [];
+  const gathered =
+    waiting !== undefined && waiting.sequence === sequence && canonical(waiting.entries) === canonical(entries)
+      ? waiting.signatures.filter((x) => x.publicKey !== mine.publicKey)
+      : [];
   const signatures = [...gathered, mine];
   const counted = quorumOf(g.here.dir.seats, message, signatures, (seat) => g.here.holders.seats.includes(seat.seat));
   if (typeof counted === 'string') throw new GrantsNotFiled(NOT_SIGNED);
   const by = counted;
   /* Below the bar, keys go only to the entries already in force: the signer whose signature reaches it wraps a new recipient's. */
-  const grants = { sequence, entries, signatures, wraps: wrapsOf(doors, by >= needed ? entries : carriedFrom(base, entries)) };
+  const grants = {
+    sequence,
+    entries,
+    signatures,
+    wraps: wrapsOf(doors, by >= needed ? entries : carriedFrom(base, entries))
+  };
   /* A reader taken away is sealed the change only once it is in force, so a change still waiting tells it nothing. */
   const told = by >= needed ? base.filter((b) => !entries.some((e) => e.recipient === b.recipient)) : [];
-  await doors.file(sealGrants({ company: doors.accountId, version: g.highest + 1, keyEpoch: doors.keys.newest, grants, seats: await doors.seats(), told }));
+  await doors.file(
+    sealGrants({
+      company: doors.accountId,
+      version: g.highest + 1,
+      keyEpoch: doors.keys.newest,
+      grants,
+      seats: await doors.seats(),
+      told
+    })
+  );
   return {
-    state: by >= needed ? 'in-force' : 'waiting-for-signers', by, needed, takesAway: takesAway(base, entries),
-    readers: readersHandedInFor(grants, grants.signatures),
+    state: by >= needed ? 'in-force' : 'waiting-for-signers',
+    by,
+    needed,
+    takesAway: takesAway(base, entries),
+    readers: readersHandedInFor(grants, grants.signatures)
   };
 }
 
 /** What re-wrapping the grants in force came to. */
-type GrantsWrappedAgain = { readonly state: 'not-needed' | 'filed' } | { readonly state: 'not-wrapped'; readonly why: string };
+type GrantsWrappedAgain =
+  { readonly state: 'not-needed' | 'filed' } | { readonly state: 'not-wrapped'; readonly why: string };
 
 /**
  * **THE GRANTS IN FORCE, WRAPPED AGAIN AFTER THE COMPANY'S KEY CHANGES OR A SEAT IS SEATED.** Owed when the version in
@@ -119,10 +165,13 @@ export async function grantsWrappedAgainHere(doors: GrantsFilingDoors): Promise<
   const inForce = g.inForce;
   if (inForce === null || inForce.grants.entries.length === 0) return { state: 'not-needed' };
   const seats = await doors.seats();
-  const owed = inForce.keyEpoch < doors.keys.newest || seats.some((x) => !g.inForceSealedTo.includes(x.id.toLowerCase()));
+  const owed =
+    inForce.keyEpoch < doors.keys.newest || seats.some((x) => !g.inForceSealedTo.includes(x.id.toLowerCase()));
   if (!owed) return { state: 'not-needed' };
   if (doors.keys.epoch < doors.keys.newest) return { state: 'not-wrapped', why: NO_NEWEST_KEY };
   const grants = { ...inForce.grants, wraps: wrapsOf(doors, inForce.grants.entries) };
-  await doors.file(sealGrants({ company: doors.accountId, version: g.highest + 1, keyEpoch: doors.keys.newest, grants, seats }));
+  await doors.file(
+    sealGrants({ company: doors.accountId, version: g.highest + 1, keyEpoch: doors.keys.newest, grants, seats })
+  );
   return { state: 'filed' };
 }

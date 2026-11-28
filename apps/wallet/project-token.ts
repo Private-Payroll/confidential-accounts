@@ -18,14 +18,16 @@ import { networkRecord } from '../../src/core/networks.js';
  */
 export function projectTokenSettings(
   network: string,
-  setting: (name: string) => string | undefined,
+  setting: (name: string) => string | undefined
 ): Record<string, string> {
   const token = networkRecord(network).endpoints?.projectToken ?? null;
   if (token === null) return {};
   const value = setting(token.setting)?.trim();
   if (!value) {
-    throw new Error(`this wallet is built for "${network}", which answers only a caller that names a project, `
-      + `and ${token.setting} is not set. Set it in the environment of the build or in the repository's .env.`);
+    throw new Error(
+      `this wallet is built for "${network}", which answers only a caller that names a project, ` +
+        `and ${token.setting} is not set. Set it in the environment of the build or in the repository's .env.`
+    );
   }
   return { [`import.meta.env.${token.setting}`]: JSON.stringify(value) };
 }

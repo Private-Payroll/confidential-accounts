@@ -3,8 +3,26 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { fromHex, randomBytes, seal, signingPublicKeyOf, toHex, unseal, wrapKey } from '../../../src/core/crypto.js';
 import { inboxPublicKey } from '../../../src/core/sealed-records.js';
 import {
-  counterOf, creationIn, KeyringDidNotOpen, metadataFrom, metadataOf, openKeyring, sealKeyring, seatsOf, tidiedWith, servedKeysOpenedFrom,
-  withCreation, withNewSeat, withoutCreation, withPaidBy, withPayeeJoinKept, withPendingSeat, type Keyring, type PendingSeat, type SavedCreation, type ServedKeys,
+  counterOf,
+  creationIn,
+  KeyringDidNotOpen,
+  metadataFrom,
+  metadataOf,
+  openKeyring,
+  sealKeyring,
+  seatsOf,
+  tidiedWith,
+  servedKeysOpenedFrom,
+  withCreation,
+  withNewSeat,
+  withoutCreation,
+  withPaidBy,
+  withPayeeJoinKept,
+  withPendingSeat,
+  type Keyring,
+  type PendingSeat,
+  type SavedCreation,
+  type ServedKeys
 } from './keyring-blob.js';
 
 /*
@@ -18,33 +36,58 @@ const OTHER = toHex(randomBytes(32));
 const HEX = (b: string) => b.repeat(32);
 
 const aSeat = () => ({
-  signerId: 'sig_1', signingSecret: HEX('11'), wrappingSecret: HEX('22'), blinding: HEX('33'), scope: HEX('44'),
-  opening: { secret: HEX('55') } as never,
+  signerId: 'sig_1',
+  signingSecret: HEX('11'),
+  wrappingSecret: HEX('22'),
+  blinding: HEX('33'),
+  scope: HEX('44'),
+  opening: { secret: HEX('55') } as never
 });
 const aCreation = (accountId: string): SavedCreation => ({
-  accountId, person: 'usr_a', label: `co_${'a'.repeat(64)}` as never, foundingKey: { tag: 'schnorr', value: HEX('ab') },
+  accountId,
+  person: 'usr_a',
+  label: `co_${'a'.repeat(64)}` as never,
+  foundingKey: { tag: 'schnorr', value: HEX('ab') },
   request: {
-    name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1, companyLabel: `co_${'a'.repeat(64)}` as never,
+    name: 'Acme Ltd',
+    signers: [{ name: 'Priya', role: 'admin' }],
+    threshold: 1,
+    companyLabel: `co_${'a'.repeat(64)}` as never,
     foundingKey: { tag: 'schnorr', value: HEX('ab') },
     founding: {
       seat: { signerId: 'sig_1', signingPublicKey: HEX('61'), wrappingPublicKey: HEX('62'), leaf: HEX('63') },
-      account: { id: accountId } as never, roster: { kind: 'roster' } as never, state: { kind: 'state' } as never,
-    },
+      account: { id: accountId } as never,
+      roster: { kind: 'roster' } as never,
+      state: { kind: 'state' } as never
+    }
   },
-  made: true, deploy: null, signed: null, recorded: false,
+  made: true,
+  deploy: null,
+  signed: null,
+  recorded: false
 });
 const aKeyring = (): Keyring => ({
   accounts: { acc_A: aSeat() },
-  pendingSeats: { [HEX('71')]: { accountId: 'acc_B', signingPublicKey: HEX('71'), signingSecret: HEX('72'), wrappingSecret: HEX('73'), blinding: HEX('74'), scope: HEX('75') } },
+  pendingSeats: {
+    [HEX('71')]: {
+      accountId: 'acc_B',
+      signingPublicKey: HEX('71'),
+      signingSecret: HEX('72'),
+      wrappingSecret: HEX('73'),
+      blinding: HEX('74'),
+      scope: HEX('75')
+    }
+  },
   paidBy: [`co_${'b'.repeat(64)}`],
   creations: { acc_A: aCreation('acc_A') },
   directoryEntriesOwed: {
     acc_A: {
-      person: 'usr_a', company: `co_${'a'.repeat(64)}` as never,
+      person: 'usr_a',
+      company: `co_${'a'.repeat(64)}` as never,
       signed: { committeeKey: { tag: 'schnorr', value: HEX('81') }, entry: { account: 'acc_A' } as never },
-      opening: { secret: HEX('82') } as never,
-    },
-  },
+      opening: { secret: HEX('82') } as never
+    }
+  }
 });
 
 /** Every key at any depth of a value. */
@@ -78,7 +121,9 @@ describe('saved keys count their writes inside the seal', () => {
   it('a count that is not a whole number from 0, keys another key sealed, and text that is not a keyring are refused', () => {
     /* RED WHEN: a guessed count lets an older copy pass for a newer one. */
     for (const counter of [-1, 1.5, '3', null]) {
-      expect(() => openKeyring(seal(JSON.stringify({ accounts: {}, counter }), KEY), KEY), String(counter)).toThrow(KeyringDidNotOpen);
+      expect(() => openKeyring(seal(JSON.stringify({ accounts: {}, counter }), KEY), KEY), String(counter)).toThrow(
+        KeyringDidNotOpen
+      );
     }
     /* RED WHEN: keys sealed under another person's or another wallet's key are read. */
     expect(() => openKeyring(seal(JSON.stringify({ accounts: {} }), OTHER), KEY)).toThrow(KeyringDidNotOpen);
@@ -105,12 +150,31 @@ describe('the parts of saved keys that open nothing', () => {
     expect(meta.directoryEntriesOwed['acc_A']!.person).toBe('usr_a');
     /* RED WHEN: a seat's secret, blinding, scope or opening reaches what a page may list. */
     const names = keysIn(meta);
-    for (const secret of ['accounts', 'signingSecret', 'wrappingSecret', 'blinding', 'scope', 'opening', 'secret', 'salt']) {
+    for (const secret of [
+      'accounts',
+      'signingSecret',
+      'wrappingSecret',
+      'blinding',
+      'scope',
+      'opening',
+      'secret',
+      'salt'
+    ]) {
       expect(names, secret).not.toContain(secret);
     }
     /* RED WHEN: no secret value appears under some other name. */
     const text = JSON.stringify(meta);
-    for (const value of [HEX('11'), HEX('22'), HEX('33'), HEX('44'), HEX('55'), HEX('72'), HEX('73'), HEX('74'), HEX('82')]) {
+    for (const value of [
+      HEX('11'),
+      HEX('22'),
+      HEX('33'),
+      HEX('44'),
+      HEX('55'),
+      HEX('72'),
+      HEX('73'),
+      HEX('74'),
+      HEX('82')
+    ]) {
       expect(text.includes(value), value).toBe(false);
     }
   });
@@ -132,9 +196,15 @@ describe('the parts of saved keys that open nothing', () => {
     };
     const sealed = { iv: HEX('01').slice(0, 24), tag: '', body: HEX('02') };
     const record = (kind: string) => ({
-      company: 'acc_A', kind, id: `${kind}_1`, version: 1, keyEpoch: 0, sealed,
+      company: 'acc_A',
+      kind,
+      id: `${kind}_1`,
+      version: 1,
+      keyEpoch: 0,
+      sealed,
       wrapped: [{ signerId: 'sig_1', wrapped: { ...sealed, ephemeral: HEX('03') } }],
-      facts: { status: 'active' }, filedBy: { publicKey: HEX('05'), signature: HEX('06') },
+      facts: { status: 'active' },
+      filedBy: { publicKey: HEX('05'), signature: HEX('06') }
     });
     const creation = {
       ...aCreation('acc_A'),
@@ -143,26 +213,60 @@ describe('the parts of saved keys that open nothing', () => {
         founding: {
           seat: { signerId: 'sig_1', signingPublicKey: HEX('61'), wrappingPublicKey: HEX('62'), leaf: HEX('63') },
           account: {
-            id: 'acc_A', createdAt: 'now', keyEpoch: 0, signerCount: 1, memberUserIds: ['usr_a'],
-            pendingSigners: [{ id: 'ps_1', userId: null, createdAt: 'now', sealed: { ...sealed, ephemeral: HEX('07') } }],
-            wrappedKeys: [{ ...sealed, signerId: 'sig_1', ephemeral: HEX('08') }], inboxPublicKey: HEX('09'),
-            sealedRoster: sealed, sealedPolicy: sealed, contractAddress: null, companyLabel: null,
+            id: 'acc_A',
+            createdAt: 'now',
+            keyEpoch: 0,
+            signerCount: 1,
+            memberUserIds: ['usr_a'],
+            pendingSigners: [
+              { id: 'ps_1', userId: null, createdAt: 'now', sealed: { ...sealed, ephemeral: HEX('07') } }
+            ],
+            wrappedKeys: [{ ...sealed, signerId: 'sig_1', ephemeral: HEX('08') }],
+            inboxPublicKey: HEX('09'),
+            sealedRoster: sealed,
+            sealedPolicy: sealed,
+            contractAddress: null,
+            companyLabel: null
           },
-          roster: record('roster'), state: record('state'),
-        },
+          roster: record('roster'),
+          state: record('state')
+        }
       },
       deploy: { account: HEX('c0'), tx: 'REVQ', insert: [{ circuit: 'payout', key: 'S0VZ' }], builtAt: 1 },
-      signed: { tx: 'U0lH', signature: { tag: 'schnorr', value: HEX('0a') }, builtAt: 2 },
+      signed: { tx: 'U0lH', signature: { tag: 'schnorr', value: HEX('0a') }, builtAt: 2 }
     };
     const owed = {
-      person: 'usr_a', company: `co_${'a'.repeat(64)}`,
-      signed: { committeeKey: { tag: 'schnorr', value: HEX('81') }, entry: { account: 'acc_A', signingKey: HEX('0b'), wrappingKey: HEX('0c'), seat: HEX('0d'), signature: HEX('0e') } },
-      invited: {
-        terms: { company: 'acc_A', invitation: HEX('0f'), person: 'usr_a', name: 'Priya', role: 'admin', leaf: HEX('10'), replaces: { invitation: HEX('11'), signedBy: HEX('12'), signature: HEX('13') } },
-        signedBy: HEX('14'), signature: HEX('15'),
+      person: 'usr_a',
+      company: `co_${'a'.repeat(64)}`,
+      signed: {
+        committeeKey: { tag: 'schnorr', value: HEX('81') },
+        entry: {
+          account: 'acc_A',
+          signingKey: HEX('0b'),
+          wrappingKey: HEX('0c'),
+          seat: HEX('0d'),
+          signature: HEX('0e')
+        }
       },
+      invited: {
+        terms: {
+          company: 'acc_A',
+          invitation: HEX('0f'),
+          person: 'usr_a',
+          name: 'Priya',
+          role: 'admin',
+          leaf: HEX('10'),
+          replaces: { invitation: HEX('11'), signedBy: HEX('12'), signature: HEX('13') }
+        },
+        signedBy: HEX('14'),
+        signature: HEX('15')
+      }
     };
-    const k = { accounts: {}, creations: { acc_A: withExtra(creation) }, directoryEntriesOwed: { acc_A: withExtra(owed) } } as unknown as Keyring;
+    const k = {
+      accounts: {},
+      creations: { acc_A: withExtra(creation) },
+      directoryEntriesOwed: { acc_A: withExtra(owed) }
+    } as unknown as Keyring;
     const meta = metadataOf(k);
     /* RED WHEN: a field inside a creation's account, roster, state, deploy or second step, or inside an owed entry's
      * signed entry or invitation, reaches what a page may list unread. */
@@ -189,8 +293,13 @@ describe('what an action changes in saved keys', () => {
 
   it('keeps a seat before its leaf is published under its signing public key, again without change, and never over another', () => {
     const pending: PendingSeat = {
-      accountId: 'acc_C', signingPublicKey: signingPublicKeyOf(HEX('11')).toUpperCase() as never, signingSecret: HEX('11'),
-      wrappingSecret: HEX('22'), blinding: HEX('33'), scope: HEX('44'), seat: 2,
+      accountId: 'acc_C',
+      signingPublicKey: signingPublicKeyOf(HEX('11')).toUpperCase() as never,
+      signingSecret: HEX('11'),
+      wrappingSecret: HEX('22'),
+      blinding: HEX('33'),
+      scope: HEX('44'),
+      seat: 2
     };
     const k: Keyring = { accounts: {} };
     const kept = withPendingSeat(k, pending);
@@ -223,7 +332,9 @@ describe('what an action changes in saved keys', () => {
     /* RED WHEN: the same join kept again is refused or changes the saved keys. */
     expect(withPayeeJoinKept(kept, 'inv_1', { company: A, address: 'mn_shield-addr_one' })).toBe(kept);
     /* RED WHEN: another join is written over one kept under the same invitation, whose code may have been handed over. */
-    expect(() => withPayeeJoinKept(kept, 'inv_1', { company: A, address: 'mn_shield-addr_two' })).toThrow(/not written over/u);
+    expect(() => withPayeeJoinKept(kept, 'inv_1', { company: A, address: 'mn_shield-addr_two' })).toThrow(
+      /not written over/u
+    );
     /* RED WHEN: the address a join was paid at reaches what the page is shown of the saved keys. */
     expect(JSON.stringify(metadataOf(kept))).not.toContain('mn_shield-addr_one');
   });
@@ -233,29 +344,51 @@ describe('WHAT A WALLET READS FROM SAVED KEYS FOR A PAGE HOLDS NO SECRET', () =>
   const wrappingPublic = toHex(x25519.getPublicKey(fromHex(HEX('22'))));
   const viewingKey = toHex(randomBytes(32));
   const served = (over: Partial<ServedKeys> = {}): ServedKeys => ({
-    accountId: 'acc_A', inboxPublicKey: inboxPublicKey(viewingKey, 'acc_A'),
-    wrappedKeys: [{ signerId: 'sig_1', ...wrapKey(viewingKey, wrappingPublic) }], ...over,
+    accountId: 'acc_A',
+    inboxPublicKey: inboxPublicKey(viewingKey, 'acc_A'),
+    wrappedKeys: [{ signerId: 'sig_1', ...wrapKey(viewingKey, wrappingPublic) }],
+    ...over
   });
 
-  it('gives each seat\'s public halves and scope, and none of its secrets', () => {
+  it("gives each seat's public halves and scope, and none of its secrets", () => {
     const seats = seatsOf(aKeyring());
-    expect(seats).toEqual({ acc_A: { signerId: 'sig_1', signingPublicKey: signingPublicKeyOf(HEX('11')).toLowerCase(), wrappingPublicKey: wrappingPublic, scope: HEX('44') } });
+    expect(seats).toEqual({
+      acc_A: {
+        signerId: 'sig_1',
+        signingPublicKey: signingPublicKeyOf(HEX('11')).toLowerCase(),
+        wrappingPublicKey: wrappingPublic,
+        scope: HEX('44')
+      }
+    });
     /* RED WHEN: a seat's signing secret, wrapping secret or blinding is in what a page is given. */
-    for (const secret of [HEX('11'), HEX('22'), HEX('33'), HEX('55')]) expect(JSON.stringify(seats)).not.toContain(secret);
+    for (const secret of [HEX('11'), HEX('22'), HEX('33'), HEX('55')])
+      expect(JSON.stringify(seats)).not.toContain(secret);
   });
 
-  it('opens a company\'s viewing key only when it makes the company\'s inbox public key', () => {
+  it("opens a company's viewing key only when it makes the company's inbox public key", () => {
     expect(servedKeysOpenedFrom(aKeyring(), [served()])).toEqual({ acc_A: viewingKey });
     /* RED WHEN: anything else wrapped to the seat is opened for the page: here a key whose inbox key the page made up. */
     const other = toHex(randomBytes(32));
-    expect(servedKeysOpenedFrom(aKeyring(), [served({ wrappedKeys: [{ signerId: 'sig_1', ...wrapKey(other, wrappingPublic) }] })])).toEqual({});
+    expect(
+      servedKeysOpenedFrom(aKeyring(), [
+        served({ wrappedKeys: [{ signerId: 'sig_1', ...wrapKey(other, wrappingPublic) }] })
+      ])
+    ).toEqual({});
     /* RED WHEN: a key is opened for a company this keyring holds no seat on, or for another seat's copy. */
     expect(servedKeysOpenedFrom(aKeyring(), [served({ accountId: 'acc_Z' })])).toEqual({});
-    expect(servedKeysOpenedFrom(aKeyring(), [served({ wrappedKeys: [{ ...served().wrappedKeys[0]!, signerId: 'sig_2' }] })])).toEqual({});
+    expect(
+      servedKeysOpenedFrom(aKeyring(), [served({ wrappedKeys: [{ ...served().wrappedKeys[0]!, signerId: 'sig_2' }] })])
+    ).toEqual({});
   });
 
-  it('makes a page\'s asked changes to creations only where the saved keys agree, touching no seat', () => {
-    const k = { ...aKeyring(), creations: { acc_A: aCreation('acc_A'), acc_S: { ...aCreation('acc_S'), signed: { tx: 'x', signature: { tag: 'schnorr', value: HEX('aa') } } } } };
+  it("makes a page's asked changes to creations only where the saved keys agree, touching no seat", () => {
+    const k = {
+      ...aKeyring(),
+      creations: {
+        acc_A: aCreation('acc_A'),
+        acc_S: { ...aCreation('acc_S'), signed: { tx: 'x', signature: { tag: 'schnorr', value: HEX('aa') } } }
+      }
+    };
     /* RED WHEN: a creation with nothing signed for it is not dropped as asked. */
     expect(tidiedWith(k, [{ record: 'acc_A', what: 'forget' }]).creations?.['acc_A']).toBeUndefined();
     /* RED WHEN: a creation something was signed for is dropped, so a deploy that may still land is forgotten. */
@@ -268,7 +401,11 @@ describe('WHAT A WALLET READS FROM SAVED KEYS FOR A PAGE HOLDS NO SECRET', () =>
   });
 
   it('is read again on the page through the same allow-list, whatever a wallet answered', () => {
-    const answered = { ...metadataOf(aKeyring()), accounts: { acc_A: aSeat() }, creations: { acc_A: { ...aCreation('acc_A'), signingSecret: HEX('11') } } };
+    const answered = {
+      ...metadataOf(aKeyring()),
+      accounts: { acc_A: aSeat() },
+      creations: { acc_A: { ...aCreation('acc_A'), signingSecret: HEX('11') } }
+    };
     const read = metadataFrom(answered);
     /* RED WHEN: a field the allow-list does not name, a seat's secret say, reaches the page's memory. */
     expect(JSON.stringify(read)).not.toContain(HEX('11'));

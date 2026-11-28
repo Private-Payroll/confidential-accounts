@@ -20,7 +20,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, ZERO_32, invitePayloadFor, invitedAddressFor, type Change, removalPayloadFor,
+  AccountSimulator,
+  privateStateFor,
+  change,
+  ZERO_32,
+  invitePayloadFor,
+  invitedAddressFor,
+  type Change,
+  removalPayloadFor
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 
@@ -47,13 +54,10 @@ const payload = (n: number) => new Uint8Array(32).fill(n);
 const govChange = (seed: number): Change => change(0n, seed);
 
 /** A device carrying `c`'s salt, which is what a governance circuit checks. */
-const carrying = (sim: AccountSimulator, d: Device, c: Change) =>
-  sim.applying(d, c);
+const carrying = (sim: AccountSimulator, d: Device, c: Change) => sim.applying(d, c);
 
 /** Opens a proposal over `p` and answers the id the chain files it under. */
-const proposeGov = async (
-  sim: AccountSimulator, d: Device, c: Change, p: Uint8Array,
-): Promise<Uint8Array> => {
+const proposeGov = async (sim: AccountSimulator, d: Device, c: Change, p: Uint8Array): Promise<Uint8Array> => {
   await sim.as(carrying(sim, d, c)).propose(p);
   return sim.proposalId(p, c.salt);
 };
@@ -64,8 +68,7 @@ const proposeGov = async (
  * invitee with `seatInvited`, then `setThreshold` — every step through the
  * compiled circuit.
  */
-const liveAccount = async (threshold = 2n) =>
-  AccountSimulator.liveAccount([A, B], threshold);
+const liveAccount = async (threshold = 2n) => AccountSimulator.liveAccount([A, B], threshold);
 
 describe('a signer is seated only by an approved invitation the invitee takes', () => {
   it('there is no unapproved seating, from the first seat onward', async () => {
@@ -79,14 +82,14 @@ describe('a signer is seated only by an approved invitation the invitee takes', 
     expect(sim.ledger.threshold).toBe(1n);
 
     await expect(sim.seatInvited(ZERO_32, sim.invited(B, govChange(40)))).rejects.toThrow(
-      /does not invite this wallet/i,
+      /does not invite this wallet/i
     );
     expect(sim.ledger.signerLeaves.size()).toBe(1n);
 
     await sim.seatSigner(B, [A], 201);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
     await expect(sim.seatInvited(ZERO_32, sim.invited(C, govChange(40)))).rejects.toThrow(
-      /does not invite this wallet/i,
+      /does not invite this wallet/i
     );
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
@@ -118,8 +121,7 @@ describe('a signer is seated only by an approved invitation the invitee takes', 
 
     const id = await proposeGov(sim, A, seat, invitePayloadFor(C));
 
-    await expect(sim.seatInvited(id, sim.invited(C, seat)))
-      .rejects.toThrow(/not enough approvals/);
+    await expect(sim.seatInvited(id, sim.invited(C, seat))).rejects.toThrow(/not enough approvals/);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 
@@ -133,9 +135,7 @@ describe('a signer is seated only by an approved invitation the invitee takes', 
     await sim.as(B).approve(id);
     expect(sim.approvalsFor(id)).toBe(2n);
 
-    await expect(sim.seatInvited(id, sim.invited(C, spend))).rejects.toThrow(
-      /does not invite this wallet/,
-    );
+    await expect(sim.seatInvited(id, sim.invited(C, spend))).rejects.toThrow(/does not invite this wallet/);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 
@@ -147,8 +147,7 @@ describe('a signer is seated only by an approved invitation the invitee takes', 
     const id = await proposeGov(sim, A, seat, invitePayloadFor(C));
     await sim.as(B).approve(id);
 
-    await expect(sim.seatInvited(id, sim.invited(impostor, seat)))
-      .rejects.toThrow(/does not invite this wallet/);
+    await expect(sim.seatInvited(id, sim.invited(impostor, seat))).rejects.toThrow(/does not invite this wallet/);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
   });
 });
@@ -202,10 +201,8 @@ describe('the same signer approving the same proposal on two accounts', () => {
      */
     expect(onPayroll).toEqual(onTreasury);
 
-    const one = await nullifierAdded(payrollAccount,
-      () => payrollAccount.as(B).approve(onPayroll));
-    const two = await nullifierAdded(treasury,
-      () => treasury.as(B).approve(onTreasury));
+    const one = await nullifierAdded(payrollAccount, () => payrollAccount.as(B).approve(onPayroll));
+    const two = await nullifierAdded(treasury, () => treasury.as(B).approve(onTreasury));
     expect(one).toBeTruthy();
     expect(two).toBeTruthy();
 
@@ -338,8 +335,7 @@ describe('the same signer cannot be added twice', () => {
     await sim.as(B).approve(id);
 
     /* RED WHEN: seatInvited stops refusing a leaf that is already seated. */
-    await expect(sim.seatInvited(id, sim.invited(B, seat)))
-      .rejects.toThrow(/already on this account/);
+    await expect(sim.seatInvited(id, sim.invited(B, seat))).rejects.toThrow(/already on this account/);
   });
 
   it('still lets a genuinely new signer in', async () => {
@@ -395,9 +391,7 @@ describe('what the contract does when a signer is removed off chain', () => {
 
   it('a removed signer can still approve, and their approval still counts', async () => {
     const sim = await removedSignerAccount();
-    const id = await proposeGov(
-      sim, FA, govChange(71), invitePayloadFor(C),
-    );
+    const id = await proposeGov(sim, FA, govChange(71), invitePayloadFor(C));
     expect(sim.approvalsFor(id)).toBe(1n);
 
     // THE POINT. B, whom the product now shows as removed and whose copy of the
@@ -435,14 +429,13 @@ describe('what the contract does when a signer is removed off chain', () => {
      * test asserting it could only ever fail. What must not happen is that an
      * ACTION adds an occurrence — that is what disclosure looks like on chain.
      */
-    const publicState = () => JSON.stringify(sim.ledger, (_k, v) =>
-      (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
+    const publicState = () =>
+      JSON.stringify(sim.ledger, (_k, v) => (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
     const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
 
     const id = await proposeGov(sim, FA, govChange(72), payload(3));
     const before = publicState();
-    const nullifiersBefore = [...(sim.ledger.approvals as any)]
-      .map((n: Uint8Array) => hex(n));
+    const nullifiersBefore = [...(sim.ledger.approvals as any)].map((n: Uint8Array) => hex(n));
 
     await sim.as(FB).approve(id);
     const after = publicState();
@@ -485,7 +478,7 @@ describe('what the contract does when a signer is removed off chain', () => {
   });
 });
 
-describe('slotOf: reading a signer\'s slot back out of their membership path', () => {
+describe("slotOf: reading a signer's slot back out of their membership path", () => {
   /*
    * `slotOf` reconstructs a signer's position from the left/right flags in
    * their membership path. The probe proved that COMPILES. Nothing had ever run
@@ -512,8 +505,8 @@ describe('slotOf: reading a signer\'s slot back out of their membership path', (
     leaf: new Uint8Array(32),
     path: Array.from({ length: 10 }, (_, level) => ({
       sibling: { field: 0n },
-      goes_left: ((index >> BigInt(level)) & 1n) === 0n,
-    })),
+      goes_left: ((index >> BigInt(level)) & 1n) === 0n
+    }))
   });
 
   it('reads a slot number out of the path flags, at every bit of the depth', () => {
@@ -614,7 +607,7 @@ describe('removing a signer by clearing one slot', () => {
     const sim = await threeSigners();
     const before = {
       a: { slot: sim.slotOf(FA), leaf: hex(sim.leafOf(FA)) },
-      b: { slot: sim.slotOf(FB), leaf: hex(sim.leafOf(FB)) },
+      b: { slot: sim.slotOf(FB), leaf: hex(sim.leafOf(FB)) }
     };
 
     const leafC = sim.leafOf(FC);
@@ -647,8 +640,7 @@ describe('removing a signer by clearing one slot', () => {
       await sim.seatInvited(id, sim.invited(d, seat));
     }
     expect(sim.ledger.signerLeaves.size()).toBe(4n);
-    expect([sim.slotOf(FA), sim.slotOf(FB), sim.slotOf(FC), sim.slotOf(FD)])
-      .toEqual([0n, 1n, 2n, 3n]);
+    expect([sim.slotOf(FA), sim.slotOf(FB), sim.slotOf(FC), sim.slotOf(FD)]).toEqual([0n, 1n, 2n, 3n]);
 
     const leafC = sim.leafOf(FC);
     const { id, c } = await removalApproved(sim, leafC);
@@ -665,46 +657,44 @@ describe('removing a signer by clearing one slot', () => {
     await expect(sim.as(FC).approve(later)).rejects.toThrow(/not a signer/);
   });
 
-  it('a vacated slot is REUSED, so the tree does not bound how many additions an account can make',
-    async () => {
-      /*
-       * Without reuse, the tree would limit the number of ADDITIONS over an
-       * account's life rather than the number of signers it holds — the same
-       * trap as the tree-exhaustion defect the re-seating design had, in a new
-       * place. Reuse needs no free-list: taking a slot is proving it is empty,
-       * which is the same proof a removal makes about its own slot.
-       */
-      const sim = await threeSigners();
-      const vacated = sim.slotOf(FC);
-      const leafC = sim.leafOf(FC);
-      const { id, c } = await removalApproved(sim, leafC);
-      await sim.as(carrying(sim, FA, c)).removeSigner(leafC, id);
+  it('a vacated slot is REUSED, so the tree does not bound how many additions an account can make', async () => {
+    /*
+     * Without reuse, the tree would limit the number of ADDITIONS over an
+     * account's life rather than the number of signers it holds — the same
+     * trap as the tree-exhaustion defect the re-seating design had, in a new
+     * place. Reuse needs no free-list: taking a slot is proving it is empty,
+     * which is the same proof a removal makes about its own slot.
+     */
+    const sim = await threeSigners();
+    const vacated = sim.slotOf(FC);
+    const leafC = sim.leafOf(FC);
+    const { id, c } = await removalApproved(sim, leafC);
+    await sim.as(carrying(sim, FA, c)).removeSigner(leafC, id);
 
-      // The removal left the slot marked vacant, which is what makes it findable
-      // at all — a blanked slot would be indistinguishable from one never used,
-      // and the sparse tree has no path to those.
-      expect(sim.vacatedSlots()).toEqual([vacated]);
+    // The removal left the slot marked vacant, which is what makes it findable
+    // at all — a blanked slot would be indistinguishable from one never used,
+    // and the sparse tree has no path to those.
+    expect(sim.vacatedSlots()).toEqual([vacated]);
 
-      const seat = govChange(89);
-      const seatId = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
-      await sim.as(FB).approve(seatId);
-      await sim.seatInvited(seatId, sim.invited(FD, seat), true);
+    const seat = govChange(89);
+    const seatId = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
+    await sim.as(FB).approve(seatId);
+    await sim.seatInvited(seatId, sim.invited(FD, seat), true);
 
-      // The new signer took the slot the old one left, rather than a fresh one.
-      expect(sim.slotOf(FD)).toBe(vacated);
-      expect(sim.vacatedSlots()).toEqual([]);
-      expect(sim.ledger.signerLeaves.size()).toBe(3n);
+    // The new signer took the slot the old one left, rather than a fresh one.
+    expect(sim.slotOf(FD)).toBe(vacated);
+    expect(sim.vacatedSlots()).toEqual([]);
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
 
-      const later = await proposeGov(sim, FA, govChange(90), payload(8));
-      await expect(sim.as(FD).approve(later)).resolves.not.toThrow();
-    });
+    const later = await proposeGov(sim, FA, govChange(90), payload(8));
+    await expect(sim.as(FD).approve(later)).resolves.not.toThrow();
+  });
 
   it('refuses a removal with no approved proposal behind it', async () => {
     const sim = await threeSigners();
     // `ZERO_32` names no proposal on any account, which is what "there is no
     // approved round behind this" looks like now the account can hold several.
-    await expect(sim.as(FA).removeSigner(sim.leafOf(FC), ZERO_32))
-      .rejects.toThrow(/no open proposal with that id/i);
+    await expect(sim.as(FA).removeSigner(sim.leafOf(FC), ZERO_32)).rejects.toThrow(/no open proposal with that id/i);
   });
 
   it('refuses a removal one approval short', async () => {
@@ -712,8 +702,7 @@ describe('removing a signer by clearing one slot', () => {
     const leafC = sim.leafOf(FC);
     const c = govChange(91);
     const id = await proposeGov(sim, FA, c, removalPayloadFor(leafC));
-    await expect(sim.as(carrying(sim, FA, c)).removeSigner(leafC, id))
-      .rejects.toThrow(/not enough approvals/);
+    await expect(sim.as(carrying(sim, FA, c)).removeSigner(leafC, id)).rejects.toThrow(/not enough approvals/);
   });
 
   it('refuses to remove somebody the signers did not approve removing', async () => {
@@ -722,8 +711,7 @@ describe('removing a signer by clearing one slot', () => {
     // lesson: the thing being approved has to be part of what is approved.
     const sim = await threeSigners();
     const { id, c } = await removalApproved(sim, sim.leafOf(FC));
-    await expect(sim.as(carrying(sim, FA, c)).removeSigner(sim.leafOf(FB), id))
-      .rejects.toThrow(/not for this removal/);
+    await expect(sim.as(carrying(sim, FA, c)).removeSigner(sim.leafOf(FB), id)).rejects.toThrow(/not for this removal/);
   });
 
   it('a fully approved PAYROLL proposal does not authorise a removal', async () => {
@@ -731,8 +719,9 @@ describe('removing a signer by clearing one slot', () => {
     const spend = govChange(92);
     const id = await proposeGov(sim, FA, spend, payload(9));
     await sim.as(FB).approve(id);
-    await expect(sim.as(carrying(sim, FA, spend)).removeSigner(sim.leafOf(FC), id))
-      .rejects.toThrow(/not for this removal/);
+    await expect(sim.as(carrying(sim, FA, spend)).removeSigner(sim.leafOf(FC), id)).rejects.toThrow(
+      /not for this removal/
+    );
   });
 
   it('refuses to remove somebody who is not on the account', async () => {
@@ -749,8 +738,9 @@ describe('removing a signer by clearing one slot', () => {
     const sim = await AccountSimulator.liveAccount([FA, FB], 2n);
     const leafB = sim.leafOf(FB);
     const { id, c } = await removalApproved(sim, leafB);
-    await expect(sim.as(carrying(sim, FA, c)).removeSigner(leafB, id))
-      .rejects.toThrow(/fewer signers than the threshold/);
+    await expect(sim.as(carrying(sim, FA, c)).removeSigner(leafB, id)).rejects.toThrow(
+      /fewer signers than the threshold/
+    );
   });
 
   it('AND THEREFORE a removal never leaves the account below its threshold or seating without approvals', async () => {
@@ -766,8 +756,9 @@ describe('removing a signer by clearing one slot', () => {
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
 
     // No unapproved seating, at any seat count: D cannot take a seat nobody approved.
-    await expect(sim.seatInvited(ZERO_32, sim.invited(FD, govChange(92))))
-      .rejects.toThrow(/does not invite this wallet/i);
+    await expect(sim.seatInvited(ZERO_32, sim.invited(FD, govChange(92)))).rejects.toThrow(
+      /does not invite this wallet/i
+    );
 
     // A and B approve removing C. At 3 of 3 they cannot reach the threshold, so
     // this is refused for want of approvals — and even with C's own approval it
@@ -776,8 +767,9 @@ describe('removing a signer by clearing one slot', () => {
     const id = await proposeGov(sim, FA, c, removalPayloadFor(sim.leafOf(FC)));
     await sim.as(FB).approve(id);
     await sim.as(FC).approve(id);
-    await expect(sim.as(carrying(sim, FA, c)).removeSigner(sim.leafOf(FC), id))
-      .rejects.toThrow(/fewer signers than the threshold/);
+    await expect(sim.as(carrying(sim, FA, c)).removeSigner(sim.leafOf(FC), id)).rejects.toThrow(
+      /fewer signers than the threshold/
+    );
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
 
     // And still nobody is seated without an approved invitation.
@@ -796,101 +788,100 @@ describe('removing a signer by clearing one slot', () => {
     const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
     await sim.as(FB).approve(id);
     /* The device's own witness finds no vacated slot and stops before the circuit runs. */
-    await expect(sim.seatInvited(id, sim.invited(FD, seat), true)).rejects.toThrow(/no slot on this account has been vacated/);
+    await expect(sim.seatInvited(id, sim.invited(FD, seat), true)).rejects.toThrow(
+      /no slot on this account has been vacated/
+    );
     /* RED WHEN: takeVacatedSlot stops checking that the slot it is given holds the vacancy marker. Every
      * slot is occupied, so the only path a device can offer leads to a signer's leaf. */
-    await expect(sim.seatInvited(id, sim.dishonest(sim.invited(FD, seat), sim.pathFor(FC)), true))
-      .rejects.toThrow(/that slot has not been vacated/);
+    await expect(sim.seatInvited(id, sim.dishonest(sim.invited(FD, seat), sim.pathFor(FC)), true)).rejects.toThrow(
+      /that slot has not been vacated/
+    );
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
 
-  it('THE ONE THAT WOULD REMOVE THE WRONG PERSON: a path must be for the leaf it claims',
-    async () => {
-      /*
-       * The most dangerous failure available in this design, written as the
-       * attack rather than as the rule.
-       *
-       * `removeSigner` derives the slot to clear from the path it is handed. The
-       * approved proposal names WHO is leaving, and `slotOf` names WHERE — so if
-       * nothing bound the path to that leaf, a caller with an approved removal
-       * of C could hand over B's path and clear B's slot instead. The removal
-       * would settle, the chain would look correct, and the account would have
-       * removed a signer nobody voted to remove.
-       *
-       * The attacker is B, a REAL signer, and that is what makes it live: B
-       * proves membership honestly with their own path, then offers that same
-       * path as the one for the leaf being removed. Every check but this one is
-       * satisfied — B really is a signer, the proposal really did approve
-       * removing C, and the path really is in the tree.
-       */
-      const sim = await threeSigners();
-      const leafC = sim.leafOf(FC);
-      const blakesSlot = sim.slotOf(FB);
-      const { id, c } = await removalApproved(sim, leafC);
+  it('THE ONE THAT WOULD REMOVE THE WRONG PERSON: a path must be for the leaf it claims', async () => {
+    /*
+     * The most dangerous failure available in this design, written as the
+     * attack rather than as the rule.
+     *
+     * `removeSigner` derives the slot to clear from the path it is handed. The
+     * approved proposal names WHO is leaving, and `slotOf` names WHERE — so if
+     * nothing bound the path to that leaf, a caller with an approved removal
+     * of C could hand over B's path and clear B's slot instead. The removal
+     * would settle, the chain would look correct, and the account would have
+     * removed a signer nobody voted to remove.
+     *
+     * The attacker is B, a REAL signer, and that is what makes it live: B
+     * proves membership honestly with their own path, then offers that same
+     * path as the one for the leaf being removed. Every check but this one is
+     * satisfied — B really is a signer, the proposal really did approve
+     * removing C, and the path really is in the tree.
+     */
+    const sim = await threeSigners();
+    const leafC = sim.leafOf(FC);
+    const blakesSlot = sim.slotOf(FB);
+    const { id, c } = await removalApproved(sim, leafC);
 
-      /*
-       * B carries the PROPOSER'S salt as well as their own path. That is not a
-       * contrivance — the proposal salt travels between signers inside the
-       * sealed payload (decision 0002), so every approver legitimately holds
-       * it, and it is also what derives the proposal's public id.
-       * Without it this test would stop at the proposal-commitment check and
-       * never reach the line it exists to exercise.
-       */
-      const liar = sim.dishonest(carrying(sim, FB, c), sim.pathFor(FB));
-      await expect(sim.as(liar).removeSigner(leafC, id))
-        .rejects.toThrow(/not for the leaf being removed/);
+    /*
+     * B carries the PROPOSER'S salt as well as their own path. That is not a
+     * contrivance — the proposal salt travels between signers inside the
+     * sealed payload (decision 0002), so every approver legitimately holds
+     * it, and it is also what derives the proposal's public id.
+     * Without it this test would stop at the proposal-commitment check and
+     * never reach the line it exists to exercise.
+     */
+    const liar = sim.dishonest(carrying(sim, FB, c), sim.pathFor(FB));
+    await expect(sim.as(liar).removeSigner(leafC, id)).rejects.toThrow(/not for the leaf being removed/);
 
-      // And B is untouched: still seated, still in the same slot, still able to act.
-      expect(sim.slotOf(FB)).toBe(blakesSlot);
-      expect(sim.ledger.signerLeaves.size()).toBe(3n);
-    });
+    // And B is untouched: still seated, still in the same slot, still able to act.
+    expect(sim.slotOf(FB)).toBe(blakesSlot);
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
+  });
 
-  it('THE ONE THAT WOULD SEAT SOMEBODY ON TOP OF A LIVE SIGNER: a reused slot must be vacant',
-    async () => {
-      /*
-       * The same shape on the other side. `seatInvited`'s reuse path takes the
-       * slot the supplied path leads to. If nothing checked that the slot holds
-       * the vacancy marker, an invitee could hand over a LIVE signer's path and
-       * overwrite them — a removal with no proposal, no approvals and no record.
-       *
-       * Note it is the leaf check that catches this and not `checkRoot`: the
-       * path is genuine, so the root verifies. That is the whole reason the
-       * check is a separate line.
-       */
-      const sim = await threeSigners();
-      const seat = govChange(97);
-      const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
-      await sim.as(FB).approve(id);
+  it('THE ONE THAT WOULD SEAT SOMEBODY ON TOP OF A LIVE SIGNER: a reused slot must be vacant', async () => {
+    /*
+     * The same shape on the other side. `seatInvited`'s reuse path takes the
+     * slot the supplied path leads to. If nothing checked that the slot holds
+     * the vacancy marker, an invitee could hand over a LIVE signer's path and
+     * overwrite them — a removal with no proposal, no approvals and no record.
+     *
+     * Note it is the leaf check that catches this and not `checkRoot`: the
+     * path is genuine, so the root verifies. That is the whole reason the
+     * check is a separate line.
+     */
+    const sim = await threeSigners();
+    const seat = govChange(97);
+    const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
+    await sim.as(FB).approve(id);
 
-      const liar = sim.dishonest(sim.invited(FD, seat), sim.pathFor(FB));
-      await expect(sim.seatInvited(id, liar, true))
-        .rejects.toThrow(/has not been vacated/);
+    const liar = sim.dishonest(sim.invited(FD, seat), sim.pathFor(FB));
+    await expect(sim.seatInvited(id, liar, true)).rejects.toThrow(/has not been vacated/);
 
-      // B is still seated, in the same slot, with the same leaf.
-      expect(sim.ledger.signerLeaves.size()).toBe(3n);
-      expect(sim.slotOf(FB)).toBe(1n);
-      expect(sim.ledger.signers.findPathForLeaf(sim.leafOf(FB))).toBeTruthy();
-    });
+    // B is still seated, in the same slot, with the same leaf.
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
+    expect(sim.slotOf(FB)).toBe(1n);
+    expect(sim.ledger.signers.findPathForLeaf(sim.leafOf(FB))).toBeTruthy();
+  });
 
-  it('a reused slot is proved from this account\'s tree, not from a path that only claims the vacancy marker',
-    async () => {
-      /*
-       * The invitee offers a path whose leaf is the vacancy marker, so the leaf
-       * check passes, but whose position is a live signer's: it leads to a root
-       * this account's tree never had.
-       */
-      const sim = await threeSigners();
-      const seat = govChange(98);
-      const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
-      await sim.as(FB).approve(id);
-      const forged = { ...sim.pathFor(FB), leaf: pureCircuits.vacantSlot() };
+  it("a reused slot is proved from this account's tree, not from a path that only claims the vacancy marker", async () => {
+    /*
+     * The invitee offers a path whose leaf is the vacancy marker, so the leaf
+     * check passes, but whose position is a live signer's: it leads to a root
+     * this account's tree never had.
+     */
+    const sim = await threeSigners();
+    const seat = govChange(98);
+    const id = await proposeGov(sim, FA, seat, invitePayloadFor(FD));
+    await sim.as(FB).approve(id);
+    const forged = { ...sim.pathFor(FB), leaf: pureCircuits.vacantSlot() };
 
-      /* RED WHEN: takeVacatedSlot stops checking the path's root against the signers' tree. */
-      await expect(sim.seatInvited(id, sim.dishonest(sim.invited(FD, seat), forged), true))
-        .rejects.toThrow(/that path is not from this tree/);
-      expect(sim.ledger.signerLeaves.size()).toBe(3n);
-      expect(sim.slotOf(FB)).toBe(1n);
-    });
+    /* RED WHEN: takeVacatedSlot stops checking the path's root against the signers' tree. */
+    await expect(sim.seatInvited(id, sim.dishonest(sim.invited(FD, seat), forged), true)).rejects.toThrow(
+      /that path is not from this tree/
+    );
+    expect(sim.ledger.signerLeaves.size()).toBe(3n);
+    expect(sim.slotOf(FB)).toBe(1n);
+  });
 
   it('a removal publishes nothing that identifies who performed it', async () => {
     /*
@@ -902,8 +893,8 @@ describe('removing a signer by clearing one slot', () => {
     const leafC = sim.leafOf(FC);
     const { id, c } = await removalApproved(sim, leafC);
 
-    const publicState = () => JSON.stringify(sim.ledger, (_k, v) =>
-      (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
+    const publicState = () =>
+      JSON.stringify(sim.ledger, (_k, v) => (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
     const occurrences = (h: string, n: string) => h.split(n).length - 1;
     const before = publicState();
 
@@ -911,8 +902,7 @@ describe('removing a signer by clearing one slot', () => {
     const after = publicState();
 
     // A performed it. Nothing about A appeared that was not there already.
-    for (const identifying of [hex(sim.leafOf(FA)), hex(sim.publicKeyOf(FA)),
-                               hex(sim.publicKeyOf(FB))]) {
+    for (const identifying of [hex(sim.leafOf(FA)), hex(sim.publicKeyOf(FA)), hex(sim.publicKeyOf(FB))]) {
       expect(occurrences(after, identifying)).toBe(occurrences(before, identifying));
     }
     // And no public key is on chain at all — only blinded leaves ever are.
@@ -948,9 +938,7 @@ describe('changing the threshold, against the compiled circuits', () => {
    * Gets a threshold change approved, and answers the id plus the change whose
    * salt the device calling `setThreshold` has to carry.
    */
-  const changeApproved = async (
-    sim: AccountSimulator, to: bigint, who: Device[], seed = 102,
-  ) => {
+  const changeApproved = async (sim: AccountSimulator, to: bigint, who: Device[], seed = 102) => {
     const c = govChange(seed);
     const id = await proposeGov(sim, TA, c, pureCircuits.setThresholdPayload(to));
     for (const d of who.filter((a) => a !== TA)) await sim.as(d).approve(id);
@@ -983,8 +971,7 @@ describe('changing the threshold, against the compiled circuits', () => {
      * answers. A substitute is checked against the circuit, not assumed from
      * the fact that both call the same helper somewhere.
      */
-    await expect(sim.as(TA).setThreshold(3n, next))
-      .rejects.toThrow(/not enough approvals/);
+    await expect(sim.as(TA).setThreshold(3n, next)).rejects.toThrow(/not enough approvals/);
     await sim.as(TC).approve(next);
     expect(sim.approvalsFor(next)).toBe(3n);
   });
@@ -997,8 +984,9 @@ describe('changing the threshold, against the compiled circuits', () => {
      */
     const sim = await threeSigners();
     const { id, c } = await changeApproved(sim, 4n, [TA, TB]);
-    await expect(sim.as(carrying(sim, TA, c)).setThreshold(4n, id))
-      .rejects.toThrow(/cannot exceed the number of signers/);
+    await expect(sim.as(carrying(sim, TA, c)).setThreshold(4n, id)).rejects.toThrow(
+      /cannot exceed the number of signers/
+    );
     expect(sim.ledger.threshold).toBe(2n);
 
     /*
@@ -1006,32 +994,27 @@ describe('changing the threshold, against the compiled circuits', () => {
      * payload is not an invitation. Then it is cancelled and there is nothing
      * to name at all.
      */
-    await expect(sim.seatInvited(id, sim.invited(TD, c)))
-      .rejects.toThrow(/does not invite this wallet/);
+    await expect(sim.seatInvited(id, sim.invited(TD, c))).rejects.toThrow(/does not invite this wallet/);
     await sim.as(TA).cancel(id);
-    await expect(sim.seatInvited(ZERO_32, sim.invited(TD, c)))
-      .rejects.toThrow(/does not invite this wallet/i);
+    await expect(sim.seatInvited(ZERO_32, sim.invited(TD, c))).rejects.toThrow(/does not invite this wallet/i);
   });
 
   it('refuses a threshold of zero, which would be an account with no rule', async () => {
     const sim = await threeSigners();
     const { id, c } = await changeApproved(sim, 0n, [TA, TB]);
-    await expect(sim.as(carrying(sim, TA, c)).setThreshold(0n, id))
-      .rejects.toThrow(/at least one/);
+    await expect(sim.as(carrying(sim, TA, c)).setThreshold(0n, id)).rejects.toThrow(/at least one/);
     expect(sim.ledger.threshold).toBe(2n);
   });
 
   it('refuses a change with no approved proposal behind it', async () => {
     const sim = await threeSigners();
-    await expect(sim.as(TA).setThreshold(3n, ZERO_32))
-      .rejects.toThrow(/no open proposal with that id/i);
+    await expect(sim.as(TA).setThreshold(3n, ZERO_32)).rejects.toThrow(/no open proposal with that id/i);
   });
 
   it('refuses a change one approval short', async () => {
     const sim = await threeSigners();
     const { id, c } = await changeApproved(sim, 3n, [TA]);
-    await expect(sim.as(carrying(sim, TA, c)).setThreshold(3n, id))
-      .rejects.toThrow(/not enough approvals/);
+    await expect(sim.as(carrying(sim, TA, c)).setThreshold(3n, id)).rejects.toThrow(/not enough approvals/);
     expect(sim.ledger.threshold).toBe(2n);
   });
 
@@ -1042,16 +1025,14 @@ describe('changing the threshold, against the compiled circuits', () => {
     const spend = govChange(104);
     const id = await proposeGov(sim, TA, spend, payload(7));
     await sim.as(TB).approve(id);
-    await expect(sim.as(carrying(sim, TA, spend)).setThreshold(3n, id))
-      .rejects.toThrow(/not for this threshold/);
+    await expect(sim.as(carrying(sim, TA, spend)).setThreshold(3n, id)).rejects.toThrow(/not for this threshold/);
     expect(sim.ledger.threshold).toBe(2n);
   });
 
   it('an approved change to 3 cannot be swapped for a different number', async () => {
     const sim = await threeSigners();
     const { id, c } = await changeApproved(sim, 3n, [TA, TB]);
-    await expect(sim.as(carrying(sim, TA, c)).setThreshold(1n, id))
-      .rejects.toThrow(/not for this threshold/);
+    await expect(sim.as(carrying(sim, TA, c)).setThreshold(1n, id)).rejects.toThrow(/not for this threshold/);
     expect(sim.ledger.threshold).toBe(2n);
   });
 
@@ -1073,7 +1054,6 @@ describe('changing the threshold, against the compiled circuits', () => {
      */
     expect(sim.isOpen(id)).toBe(false);
     expect(sim.approvalsFor(id)).toBe(-1n);
-    await expect(sim.as(carrying(sim, TA, c)).setThreshold(3n, id))
-      .rejects.toThrow(/no open proposal with that id/i);
+    await expect(sim.as(carrying(sim, TA, c)).setThreshold(3n, id)).rejects.toThrow(/no open proposal with that id/i);
   });
 });

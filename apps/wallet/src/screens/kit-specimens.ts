@@ -7,18 +7,22 @@ import type { AlertTone, BadgeTone } from '../components/status.js';
 export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'link';
 export type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 export const KIT_VARIANT = {
-  primary: 'default', secondary: 'outline', outline: 'outline', ghost: 'ghost', danger: 'destructive', link: 'link',
+  primary: 'default',
+  secondary: 'outline',
+  outline: 'outline',
+  ghost: 'ghost',
+  danger: 'destructive',
+  link: 'link'
 } as const satisfies Record<ButtonVariant, string>;
-export const KIT_SIZE = { sm: 'sm', md: 'default', lg: 'lg', icon: 'icon' } as const satisfies Record<ButtonSize, string>;
+export const KIT_SIZE = { sm: 'sm', md: 'default', lg: 'lg', icon: 'icon' } as const satisfies Record<
+  ButtonSize,
+  string
+>;
 
-export const BUTTON_VARIANTS: readonly ButtonVariant[] = [
-  'primary', 'secondary', 'outline', 'ghost', 'danger', 'link',
-];
+export const BUTTON_VARIANTS: readonly ButtonVariant[] = ['primary', 'secondary', 'outline', 'ghost', 'danger', 'link'];
 export const BUTTON_SIZES: readonly ButtonSize[] = ['sm', 'md', 'lg', 'icon'];
 
-export const BADGE_TONES: readonly BadgeTone[] = [
-  'neutral', 'accent', 'pending', 'sent', 'failed', 'warning',
-];
+export const BADGE_TONES: readonly BadgeTone[] = ['neutral', 'accent', 'pending', 'sent', 'failed', 'warning'];
 
 export const ALERT_TONES: readonly AlertTone[] = ['info', 'success', 'warning', 'danger'];
 
@@ -36,7 +40,7 @@ export const COLOUR_ROLES: readonly { readonly token: string; readonly note: str
   { token: '--color-pending', note: 'a payment with no answer yet' },
   { token: '--color-good', note: 'sent, secured, verified' },
   { token: '--color-warn', note: 'at risk' },
-  { token: '--color-bad', note: 'failed, dangerous' },
+  { token: '--color-bad', note: 'failed, dangerous' }
 ];
 
 export const TYPE_STEPS: readonly { readonly cls: string; readonly name: string }[] = [
@@ -46,7 +50,7 @@ export const TYPE_STEPS: readonly { readonly cls: string; readonly name: string 
   { cls: 'text-lg', name: 'text-lg — 1.125rem' },
   { cls: 'text-xl', name: 'text-xl — 1.25rem' },
   { cls: 'text-2xl', name: 'text-2xl — 1.5rem' },
-  { cls: 'text-[2.75rem]', name: 'text-display — 2.75rem' },
+  { cls: 'text-[2.75rem]', name: 'text-display — 2.75rem' }
 ];
 
 /* The five chart colours. They are a PALETTE entry and not a chart

@@ -7,8 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * and what the adapter hands on and drops is read from the calls it makes.
  */
 const kr = vi.hoisted(() => ({
-  who: true, being: null as string | null, came: { of: 'dropped' } as unknown, throws: null as Error | null,
-  calls: [] as string[], builders: [] as unknown[], changed: [] as (string | null)[],
+  who: true,
+  being: null as string | null,
+  came: { of: 'dropped' } as unknown,
+  throws: null as Error | null,
+  calls: [] as string[],
+  builders: [] as unknown[],
+  changed: [] as (string | null)[]
 }));
 vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
@@ -17,22 +22,37 @@ vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
     kr.builders.push(builder);
     if (kr.throws !== null) throw kr.throws;
     return kr.came;
-  },
+  }
 }));
 vi.mock('./vault-builder.js', () => ({ theCreationBuilder: async () => ({ theBuilder: true }) }));
 vi.mock('./keyring-person.js', () => ({ keyringFor: async () => kr.who }));
 vi.mock('./creation-standing.js', async (real) => ({
   ...(await real<typeof import('./creation-standing.js')>()),
-  creationChanged: (id: string | null) => { kr.changed.push(id); },
+  creationChanged: (id: string | null) => {
+    kr.changed.push(id);
+  }
 }));
 
 async function load(origin = 'https://account.example') {
   vi.resetModules();
-  vi.doMock('./session.js', async (real) => ({ ...(await real<typeof import('./session.js')>()), ACCOUNT_ORIGIN: origin }));
+  vi.doMock('./session.js', async (real) => ({
+    ...(await real<typeof import('./session.js')>()),
+    ACCOUNT_ORIGIN: origin
+  }));
   return import('./start-again.js');
 }
-beforeEach(() => { kr.who = true; kr.being = null; kr.came = { of: 'dropped' }; kr.throws = null; kr.calls = []; kr.builders = []; kr.changed = []; });
-afterEach(() => { vi.doUnmock('./session.js'); });
+beforeEach(() => {
+  kr.who = true;
+  kr.being = null;
+  kr.came = { of: 'dropped' };
+  kr.throws = null;
+  kr.calls = [];
+  kr.builders = [];
+  kr.changed = [];
+});
+afterEach(() => {
+  vi.doUnmock('./session.js');
+});
 
 describe('starting again from the creation steps', () => {
   /* RED WHEN: a dropped creation is not handed on as done, or the cached read is left as it was. */
@@ -82,7 +102,8 @@ describe('starting again from the creation steps', () => {
     m = await load();
     kr.who = false;
     expect(await m.startAgain('u1', 'c1')).toMatchObject({ of: 'refused', why: 'not-signed-in' });
-    kr.who = true; kr.throws = new Error('boom');
+    kr.who = true;
+    kr.throws = new Error('boom');
     expect(await m.startAgain('u1', 'c1')).toMatchObject({ of: 'refused' });
     expect(kr.changed).toEqual([]);
   });

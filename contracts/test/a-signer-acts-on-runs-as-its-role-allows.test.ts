@@ -28,7 +28,10 @@ const seatedAs = (seed: number, role: SignerRole, vaults?: Uint8Array[]): Device
   const named = vaults?.map((v) => toHex(v) as Hex);
   const record = seatRightsRecordOf(role, named);
   const material = signerMaterialOf({
-    signingSecret: toHex(base.secretKey), blinding: toHex(base.blinding), scope: scopeOfRole(role, named), ...(record === null ? {} : { rights: record }),
+    signingSecret: toHex(base.secretKey),
+    blinding: toHex(base.blinding),
+    scope: scopeOfRole(role, named),
+    ...(record === null ? {} : { rights: record })
   });
   return { ...base, ...signerHalfOf(material) };
 };
@@ -43,30 +46,49 @@ const live = async (devices: Device[], threshold: bigint) => {
   return sim;
 };
 
-interface Run { id: Uint8Array; c: ReturnType<typeof change>; payload: Uint8Array; vault: Uint8Array; pay: () => Promise<unknown> }
+interface Run {
+  id: Uint8Array;
+  c: ReturnType<typeof change>;
+  payload: Uint8Array;
+  vault: Uint8Array;
+  pay: () => Promise<unknown>;
+}
 
 const raiseRun = async (sim: AccountSimulator, by: Device, vault: Uint8Array, seed: number): Promise<Run> => {
   const c = change(0n, seed);
   const tree = payoutTreeOf([{ details: toHex(fill(0x10)), nonce: toHex(fill(seed)) }]);
-  await sim.as(sim.applying(by, c)).proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault, required: 0n });
+  await sim
+    .as(sim.applying(by, c))
+    .proposeRun({ root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault, required: 0n });
   const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
   const id = sim.proposalId(payload, c.salt, vault);
-  const pay = () => sim.as(sim.applying(A, c)).recordPaymentFromVault({
-    proposal: id, vault, root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, required: 0n, salt: c.salt,
-    details: fill(0x10), nonce: fill(seed), ...sumArgsOf(tree, 0),
-  });
+  const pay = () =>
+    sim.as(sim.applying(A, c)).recordPaymentFromVault({
+      proposal: id,
+      vault,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      required: 0n,
+      salt: c.salt,
+      details: fill(0x10),
+      nonce: fill(seed),
+      ...sumArgsOf(tree, 0)
+    });
   return { id, c, payload, vault, pay };
 };
 
 const knowing = (d: Device, run: Run): Device => ({
-  ...d, runOpenings: { ...(d.runOpenings ?? {}), [hex(run.id)]: { payload: run.payload, vault: run.vault, salt: run.c.salt } },
+  ...d,
+  runOpenings: { ...(d.runOpenings ?? {}), [hex(run.id)]: { payload: run.payload, vault: run.vault, salt: run.c.salt } }
 });
 
 const NOT_RAISE = /your seat does not let you propose payments from that vault or finish setting it up/;
 const NOT_APPROVE = /your seat does not let you approve payments from that vault or finish setting it up/;
 
 describe('a signer acts on runs on the chain only as its role allows', () => {
-  it('an approver seated at its role\'s rights approves a run, and is refused raising one', async () => {
+  it("an approver seated at its role's rights approves a run, and is refused raising one", async () => {
     const approver = seatedAs(51, 'approver');
     const sim = await live([A, approver], 1n);
     /* RED WHEN: an approver is seated with every right, and raises runs its role does not allow. */
@@ -111,7 +133,9 @@ describe('a signer acts on runs on the chain only as its role allows', () => {
     await expect(raiseRun(sim, payrollAdmin, wide, 68)).rejects.toThrow(NOT_RAISE);
     const companyWide = await raiseRun(sim, A, wide, 69);
     /* RED WHEN: a seat scoped to named vaults holds a company-wide run. */
-    await expect(sim.as(knowing(payrollAdmin, companyWide)).holdRun(companyWide.id)).rejects.toThrow(/your seat does not let you hold runs on that vault/);
+    await expect(sim.as(knowing(payrollAdmin, companyWide)).holdRun(companyWide.id)).rejects.toThrow(
+      /your seat does not let you hold runs on that vault/
+    );
     /* On its own vault it raises and holds. */
     await raiseRun(sim, payrollAdmin, PAYROLL, 70);
     const onPayroll = await raiseRun(sim, A, PAYROLL, 71);

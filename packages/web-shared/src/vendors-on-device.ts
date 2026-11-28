@@ -23,7 +23,12 @@
 import { sealingWith } from '../../../src/core/company-key.js';
 import type { Invite } from '../../../src/core/types.js';
 import { stopDateRefusal } from '../../../src/core/person-record.js';
-import { sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
+import {
+  sealVendor,
+  vendorTermsRefusal,
+  type VendorRecord,
+  type VendorTerms
+} from '../../../src/core/vendor-record.js';
 import { assets as defaultAssets, whyTheMoneyCannotReach } from '../../../src/core/assets.js';
 import { toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/record-manifest.js';
@@ -33,7 +38,13 @@ import { mayFileHere } from './may-file-here.js';
 import { payeeAt, writtenOrRefused } from './invitation-on-device.js';
 import type { RecordWrite } from './records-source.js';
 import { signingPublicKeyOf } from '../../../src/core/crypto.js';
-import { madeHere, payeeCodeHandedOver, raisingWalletOf, readForTheAdmission, type PeopleDevice } from './people-on-device.js';
+import {
+  madeHere,
+  payeeCodeHandedOver,
+  raisingWalletOf,
+  readForTheAdmission,
+  type PeopleDevice
+} from './people-on-device.js';
 import { believedVersionsOf, readVendorsHere, type VendorHere } from './vendors-read-here.js';
 
 export { readVendorsHere, readVendorsWithKeys, type VendorHere, type VendorsHere } from './vendors-read-here.js';
@@ -48,7 +59,10 @@ export class VendorNotChanged extends Error {
 
 /** The next version of a vendor, sealed and signed here and filed by the write `write` makes of it, then entered in the company's records; refused first when this seat's role may not file a vendor's entry. */
 const filedAndEntered = async (
-  d: PeopleDevice, write: (wire: ReturnType<typeof toCompanyWire>) => RecordWrite, vendor: VendorRecord, version: number,
+  d: PeopleDevice,
+  write: (wire: ReturnType<typeof toCompanyWire>) => RecordWrite,
+  vendor: VendorRecord,
+  version: number
 ): Promise<VendorRecord> => {
   const refused = await mayFileHere(() => d.directory(), signingPublicKeyOf(d.signingSecret), 'vendor');
   if (refused?.why === 'role') throw new VendorNotChanged(refused.says);
@@ -71,48 +85,94 @@ const filedAndEntered = async (
 export async function admitVendorHere(d: PeopleDevice, here: VendorHere, readOut: string): Promise<VendorRecord> {
   const v = here.vendor;
   if ((v.payeeCode ?? null) !== null) throw new VendorNotChanged(`${v.name} has already been admitted.`);
-  if (v.status === 'leaver') throw new VendorNotChanged(`${v.name} is no longer a vendor of this company. Add them again.`);
-  const box = ((await readForTheAdmission(`what ${v.name} handed over`, () => d.view.vendorHandovers([v.id])))[0] as { readonly inbox?: Invite['handover'] } | undefined)?.inbox;
+  if (v.status === 'leaver')
+    throw new VendorNotChanged(`${v.name} is no longer a vendor of this company. Add them again.`);
+  const box = (
+    (await readForTheAdmission(`what ${v.name} handed over`, () => d.view.vendorHandovers([v.id])))[0] as
+      { readonly inbox?: Invite['handover'] } | undefined
+  )?.inbox;
   if (!box) throw new VendorNotChanged(`${v.name} has not handed anything over yet, so there is nothing to admit.`);
   const read = await readVendorsHere(d);
   const versions = await believedVersionsOf(d, v.id, judgeIn(await d.directory(kindAsked('company', 'vendor'))));
   if (versions === null || versions.length !== here.version) {
-    throw new VendorNotChanged(`${v.name}'s entry is not one this device believes as it was read. Read the vendors again.`);
+    throw new VendorNotChanged(
+      `${v.name}'s entry is not one this device believes as it was read. Read the vendors again.`
+    );
   }
   const typed = versions[0]!.invitedAddress ?? null;
   if (typed !== (v.invitedAddress ?? null)) {
-    throw new VendorNotChanged(`${v.name}'s entry does not name the address its first version was filed with, so they are not admitted. Add them again.`);
+    throw new VendorNotChanged(
+      `${v.name}'s entry does not name the address its first version was filed with, so they are not admitted. Add them again.`
+    );
   }
   let handed: Awaited<ReturnType<typeof payeeCodeHandedOver>>;
-  try { handed = await payeeCodeHandedOver(d, v, box, readOut, typed); } catch (e) { throw new VendorNotChanged(String((e as Error).message).replace(/ Nothing was filed\.$/u, '')); }
+  try {
+    handed = await payeeCodeHandedOver(d, v, box, readOut, typed);
+  } catch (e) {
+    throw new VendorNotChanged(String((e as Error).message).replace(/ Nothing was filed\.$/u, ''));
+  }
   const { code, claim } = handed;
-  const invites = await readForTheAdmission('the company\'s invitations', () => d.view.list('invites')) as (Invite & { subjectId?: string })[];
-  const invite = (Array.isArray(invites) ? invites : []).filter((i) => i.subjectId === v.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (invite === undefined) throw new VendorNotChanged(`there is no invitation on record for ${v.name}, so there is no way to tell who set this address. Add them again.`);
-  if (typeof invite.revokedAt === 'string') throw new VendorNotChanged(`${v.name}'s invitation was taken back before this was admitted. Add them again if they are still a vendor.`);
-  if (!invite.createdBy) throw new VendorNotChanged('nothing records who raised this invitation, so nothing says the address was set by the vendor rather than by whoever invited them. Add them again.');
+  const invites = (await readForTheAdmission("the company's invitations", () => d.view.list('invites'))) as (Invite & {
+    subjectId?: string;
+  })[];
+  const invite = (Array.isArray(invites) ? invites : [])
+    .filter((i) => i.subjectId === v.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (invite === undefined)
+    throw new VendorNotChanged(
+      `there is no invitation on record for ${v.name}, so there is no way to tell who set this address. Add them again.`
+    );
+  if (typeof invite.revokedAt === 'string')
+    throw new VendorNotChanged(
+      `${v.name}'s invitation was taken back before this was admitted. Add them again if they are still a vendor.`
+    );
+  if (!invite.createdBy)
+    throw new VendorNotChanged(
+      'nothing records who raised this invitation, so nothing says the address was set by the vendor rather than by whoever invited them. Add them again.'
+    );
   const raisedBy = await raisingWalletOf(d, invite.createdBy);
   if (typed === null && v.email === null && raisedBy !== code.committeeKey.value) {
-    throw new VendorNotChanged('this entry is not addressed to an email address, and two different wallets opened and accepted its invitation, so nobody can say whose it is. Add them again.');
+    throw new VendorNotChanged(
+      'this entry is not addressed to an email address, and two different wallets opened and accepted its invitation, so nobody can say whose it is. Add them again.'
+    );
   }
   const wallet = code.committeeKey.value;
-  if (read.vendors.some((o) => o.vendor.id !== v.id && o.vendor.status === 'active' && o.vendor.handedOverBy === wallet)) {
-    throw new VendorNotChanged('the wallet that signed this is already paid as another vendor of this company. One vendor gets one entry: mark the other a leaver first.');
+  if (
+    read.vendors.some((o) => o.vendor.id !== v.id && o.vendor.status === 'active' && o.vendor.handedOverBy === wallet)
+  ) {
+    throw new VendorNotChanged(
+      'the wallet that signed this is already paid as another vendor of this company. One vendor gets one entry: mark the other a leaver first.'
+    );
   }
   let address: VendorRecord['address'];
-  try { address = payeeAt((code.parts as PayeeParts).address, d.network); } catch (e) {
-    throw new VendorNotChanged(`the address in what they handed over is not one money can be sent to on this network: ${(e as Error).message}`);
+  try {
+    address = payeeAt((code.parts as PayeeParts).address, d.network);
+  } catch (e) {
+    throw new VendorNotChanged(
+      `the address in what they handed over is not one money can be sent to on this network: ${(e as Error).message}`
+    );
   }
   if (v.terms.kind === 'monthly') {
     const unreachable = whyTheMoneyCannotReach((d.registry ?? defaultAssets).require(v.terms.asset), address.kind);
     if (unreachable !== null) throw new VendorNotChanged(`not admitted. ${unreachable}`);
   }
   const admitted: VendorRecord = {
-    ...v, status: 'active', address, wrappingPublicKey: (code.parts as PayeeParts).payslipKey, payeeCode: code,
-    handedOverBy: wallet, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(),
-    ...(claim !== null ? { addressClaim: claim } : {}),
+    ...v,
+    status: 'active',
+    address,
+    wrappingPublicKey: (code.parts as PayeeParts).payslipKey,
+    payeeCode: code,
+    handedOverBy: wallet,
+    admittedBy: d.signedInAs,
+    admittedAt: new Date().toISOString(),
+    ...(claim !== null ? { addressClaim: claim } : {})
   };
-  return filedAndEntered(d, (wire) => ({ to: 'vendor-admitted', id: v.id, body: { vendor: wire } }), admitted, here.version + 1);
+  return filedAndEntered(
+    d,
+    (wire) => ({ to: 'vendor-admitted', id: v.id, body: { vendor: wire } }),
+    admitted,
+    here.version + 1
+  );
 }
 
 /** What a seat may change about a vendor: their payment terms, their end date (`null` takes it away), or where they stand. */
@@ -131,10 +191,14 @@ export interface VendorChange {
  * only with what their own wallet hands over, or as a new entry.
  */
 export async function changeVendorHere(
-  d: PeopleDevice, here: VendorHere, change: VendorChange, pastDraft: () => Promise<readonly string[]>,
+  d: PeopleDevice,
+  here: VendorHere,
+  change: VendorChange,
+  pastDraft: () => Promise<readonly string[]>
 ): Promise<VendorRecord> {
   const v = here.vendor;
-  if (change.terms === undefined && change.endDate === undefined && change.status === undefined) throw new VendorNotChanged('This changes nothing about them.');
+  if (change.terms === undefined && change.endDate === undefined && change.status === undefined)
+    throw new VendorNotChanged('This changes nothing about them.');
   let next: VendorRecord = { ...v };
   if (change.terms !== undefined) {
     const why = vendorTermsRefusal(change.terms);
@@ -144,22 +208,34 @@ export async function changeVendorHere(
   if (change.endDate !== undefined) {
     const why = stopDateRefusal(change.endDate, 'end date', await pastDraft());
     if (why !== null) throw new VendorNotChanged(`${v.name} is not changed: ${why}.`);
-    if (change.endDate !== null && change.endDate < v.startDate) throw new VendorNotChanged(`${v.name} is not changed: an end date is on or after their start date, ${v.startDate}.`);
+    if (change.endDate !== null && change.endDate < v.startDate)
+      throw new VendorNotChanged(
+        `${v.name} is not changed: an end date is on or after their start date, ${v.startDate}.`
+      );
     next = { ...next, endDate: change.endDate };
   }
   if (change.status !== undefined) {
     if (change.status === 'active' && next.address === null) {
-      throw new VendorNotChanged(`${v.name} has no address on file, so there is nowhere to pay them and nothing to make active.`);
+      throw new VendorNotChanged(
+        `${v.name} has no address on file, so there is nowhere to pay them and nothing to make active.`
+      );
     }
     if (change.status === 'leaver' && v.status !== 'pending') {
       const end = next.endDate ?? null;
       if (end === null) {
-        throw new VendorNotChanged(`${v.name} has no end date, so the days they are paid for are not known and they would go unpaid for them. Give the day their work ends and mark them a leaver again.`);
+        throw new VendorNotChanged(
+          `${v.name} has no end date, so the days they are paid for are not known and they would go unpaid for them. Give the day their work ends and mark them a leaver again.`
+        );
       }
       const why = stopDateRefusal(end, 'end date', await pastDraft());
       if (why !== null) throw new VendorNotChanged(`${v.name} is not made a leaver: ${why}.`);
     }
     next = { ...next, status: change.status };
   }
-  return filedAndEntered(d, (wire) => ({ to: 'record', kind: 'vendor', id: v.id, version: here.version + 1, body: wire }), next, here.version + 1);
+  return filedAndEntered(
+    d,
+    (wire) => ({ to: 'record', kind: 'vendor', id: v.id, version: here.version + 1, body: wire }),
+    next,
+    here.version + 1
+  );
 }

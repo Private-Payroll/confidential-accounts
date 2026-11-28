@@ -42,13 +42,14 @@ const TOKEN_LINES: readonly {
 }[] = [
   {
     kind: 'unshielded',
-    title: FAUCET_NAME === null
-      ? 'Unshielded NIGHT — ordinary transfers'
-      : 'Unshielded NIGHT — ordinary transfers, the faucet',
-    hero: true,
+    title:
+      FAUCET_NAME === null
+        ? 'Unshielded NIGHT — ordinary transfers'
+        : 'Unshielded NIGHT — ordinary transfers, the faucet',
+    hero: true
   },
   { kind: 'shielded', title: 'Shielded — private payments', hero: false },
-  { kind: 'dust', title: 'DUST — pays transaction fees', hero: false },
+  { kind: 'dust', title: 'DUST — pays transaction fees', hero: false }
 ];
 
 /**
@@ -68,7 +69,14 @@ const TOKEN_LINES: readonly {
  * an account — **so naming is the act of creation**, and on an unnamed slot the
  * control reads *"Name this wallet"* rather than *"Rename"*.
  */
-export function HeroCard({ identity, secret, owned, names, onRename, onEstablished }: {
+export function HeroCard({
+  identity,
+  secret,
+  owned,
+  names,
+  onRename,
+  onEstablished
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
   readonly owned: OwnedAddress;
@@ -90,11 +98,14 @@ export function HeroCard({ identity, secret, owned, names, onRename, onEstablish
   const stopDust = useRef<StopBalance | null>(null);
   /* Mounted per wallet, so this cleanup is what guarantees at most one wallet
    * is ever syncing live — the one on screen. */
-  useEffect(() => () => {
-    stopShielded.current?.();
-    stopUnshielded.current?.();
-    stopDust.current?.();
-  }, []);
+  useEffect(
+    () => () => {
+      stopShielded.current?.();
+      stopUnshielded.current?.();
+      stopDust.current?.();
+    },
+    []
+  );
 
   /* The press reads both kinds of NIGHT, and the fee tank too. A
    * wallet that read only the shielded balance was showing zero over money that
@@ -113,13 +124,11 @@ export function HeroCard({ identity, secret, owned, names, onRename, onEstablish
   };
 
   const stateOf = (kind: 'unshielded' | 'shielded' | 'dust'): BalanceState | null =>
-    (kind === 'dust' ? dust : kind === 'shielded' ? shielded : unshielded);
+    kind === 'dust' ? dust : kind === 'shielded' ? shielded : unshielded;
 
   const asked = shielded !== null || unshielded !== null || dust !== null;
-  const anyFailed = shielded?.name === 'failed' || unshielded?.name === 'failed'
-    || dust?.name === 'failed';
-  const anySynced = shielded?.name === 'synced' || unshielded?.name === 'synced'
-    || dust?.name === 'synced';
+  const anyFailed = shielded?.name === 'failed' || unshielded?.name === 'failed' || dust?.name === 'failed';
+  const anySynced = shielded?.name === 'synced' || unshielded?.name === 'synced' || dust?.name === 'synced';
 
   return (
     <Card
@@ -162,8 +171,16 @@ export function HeroCard({ identity, secret, owned, names, onRename, onEstablish
   );
 }
 
-
-function HeroHeader({ identity, secret, owned, names, personal, renaming, setDraft, setRenaming }: {
+function HeroHeader({
+  identity,
+  secret,
+  owned,
+  names,
+  personal,
+  renaming,
+  setDraft,
+  setRenaming
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
   readonly owned: OwnedAddress;
@@ -178,7 +195,7 @@ function HeroHeader({ identity, secret, owned, names, personal, renaming, setDra
     <>
       <CardHeader>
         {/* THE OWNER LINE: a number never appears without the wallet it
-          * belongs to, and a personal name never travels without its slot. */}
+         * belongs to, and a personal name never travels without its slot. */}
         <div className="wallet-owner flex flex-wrap items-center gap-2">
           <Mark address={owned.address.bech32} account={account} size={28} />
           <StatusBadge tone="accent" data-wallet-name="">
@@ -210,8 +227,7 @@ function HeroHeader({ identity, secret, owned, names, personal, renaming, setDra
         <CardDescription>
           {account === MAIN_ACCOUNT
             ? 'The main wallet — what any Midnight wallet opens from these words.'
-            : 'Its own address and its own money, under the same passkey and the same '
-              + 'recovery pieces.'}
+            : 'Its own address and its own money, under the same passkey and the same ' + 'recovery pieces.'}
         </CardDescription>
       </CardHeader>
     </>
@@ -219,7 +235,14 @@ function HeroHeader({ identity, secret, owned, names, personal, renaming, setDra
 }
 
 /** The form that names or renames the wallet, shown only while it is open. */
-function HeroRenameForm({ owned, renaming, draft, setDraft, setRenaming, onRename }: {
+function HeroRenameForm({
+  owned,
+  renaming,
+  draft,
+  setDraft,
+  setRenaming,
+  onRename
+}: {
   readonly owned: OwnedAddress;
   readonly renaming: boolean;
   readonly draft: string;
@@ -230,44 +253,53 @@ function HeroRenameForm({ owned, renaming, draft, setDraft, setRenaming, onRenam
   const { account } = owned;
   return (
     <>
-        {renaming && (
-          <form
-            className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              onRename(draft);
-              setRenaming(false);
-            }}
-          >
-            <Label htmlFor="wallet-name" className="mb-2">
-              {account === MAIN_ACCOUNT
-                ? 'A name for the main wallet'
-                : `A name for ${owned.slot}`}
-            </Label>
-            <Input
-              id="wallet-name"
-              value={draft}
-              maxLength={24}
-              placeholder={defaultNameOf(account)}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button type="submit" variant="default" size="sm">Save the name</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setRenaming(false)}>Cancel</Button>
-            </div>
-            <p className="m-0 text-xs text-muted-foreground">
-              Naming a wallet is what makes it yours to find again. Names live in this
-              browser only — after a recovery every wallet comes back and the names are
-              the part you re-type. Leave it empty to go back to the slot&rsquo;s own name.
-            </p>
-          </form>
-        )}
+      {renaming && (
+        <form
+          className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onRename(draft);
+            setRenaming(false);
+          }}
+        >
+          <Label htmlFor="wallet-name" className="mb-2">
+            {account === MAIN_ACCOUNT ? 'A name for the main wallet' : `A name for ${owned.slot}`}
+          </Label>
+          <Input
+            id="wallet-name"
+            value={draft}
+            maxLength={24}
+            placeholder={defaultNameOf(account)}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="default" size="sm">
+              Save the name
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setRenaming(false)}>
+              Cancel
+            </Button>
+          </div>
+          <p className="m-0 text-xs text-muted-foreground">
+            Naming a wallet is what makes it yours to find again. Names live in this browser only — after a recovery
+            every wallet comes back and the names are the part you re-type. Leave it empty to go back to the
+            slot&rsquo;s own name.
+          </p>
+        </form>
+      )}
     </>
   );
 }
 
 /** What the card says about the three balances: not asked yet, or one line each. */
-function HeroBalances({ asked, check, stateOf, owned, anySynced, anyFailed }: {
+function HeroBalances({
+  asked,
+  check,
+  stateOf,
+  owned,
+  anySynced,
+  anyFailed
+}: {
   readonly asked: boolean;
   readonly check: () => void;
   readonly stateOf: (kind: 'unshielded' | 'shielded' | 'dust') => BalanceState | null;
@@ -277,41 +309,43 @@ function HeroBalances({ asked, check, stateOf, owned, anySynced, anyFailed }: {
 }): ReactNode {
   return (
     <>
-        {!asked ? (
-          <div>
-            <p className="m-0 text-sm text-muted-foreground">
-              Not asked yet. Checking reads all three balances — unshielded NIGHT,
-              shielded, and DUST, which pays fees — and asks the indexer at{' '}
-              {INDEXER_HOST}, which learns this wallet&rsquo;s addresses. Nothing is sent
-              until you press.
+      {!asked ? (
+        <div>
+          <p className="m-0 text-sm text-muted-foreground">
+            Not asked yet. Checking reads all three balances — unshielded NIGHT, shielded, and DUST, which pays fees —
+            and asks the indexer at {INDEXER_HOST}, which learns this wallet&rsquo;s addresses. Nothing is sent until
+            you press.
+          </p>
+          <Button type="button" variant="default" className="mt-3" onClick={check}>
+            Check the balance
+          </Button>
+        </div>
+      ) : (
+        <>
+          {TOKEN_LINES.map((line, at) => (
+            <div key={line.kind}>
+              {at > 0 && <Separator decorative className="mb-4" />}
+              <BalanceLine
+                kind={line.kind}
+                title={line.title}
+                hero={line.hero}
+                state={stateOf(line.kind)}
+                owner={owned.owner}
+              />
+            </div>
+          ))}
+          {anySynced && (
+            <p className="m-0 text-xs text-muted-foreground">
+              1 NIGHT = 1,000,000 STARs and 1 DUST = 10^15 SPECKs — the Foundation&rsquo;s own figures.
             </p>
-            <Button type="button" variant="default" className="mt-3" onClick={check}>
-              Check the balance
+          )}
+          {anyFailed && (
+            <Button type="button" variant="outline" onClick={check}>
+              Try again
             </Button>
-          </div>
-        ) : (
-          <>
-            {TOKEN_LINES.map((line, at) => (
-              <div key={line.kind}>
-                {at > 0 && <Separator decorative className="mb-4" />}
-                <BalanceLine
-                  kind={line.kind}
-                  title={line.title}
-                  hero={line.hero}
-                  state={stateOf(line.kind)}
-                  owner={owned.owner}
-                />
-              </div>
-            ))}
-            {anySynced && (
-              <p className="m-0 text-xs text-muted-foreground">
-                1 NIGHT = 1,000,000 STARs and 1 DUST = 10^15 SPECKs — the
-                Foundation&rsquo;s own figures.
-              </p>
-            )}
-            {anyFailed && <Button type="button" variant="outline" onClick={check}>Try again</Button>}
-          </>
-        )}
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -331,7 +365,13 @@ function HeroBalances({ asked, check, stateOf, owned, anySynced, anyFailed }: {
  * network may never read as a wait that never ends, so `failed` has words and
  * no skeleton, and the sentence beside every skeleton says what is happening.
  */
-function BalanceLine({ kind, title, hero, state, owner }: {
+function BalanceLine({
+  kind,
+  title,
+  hero,
+  state,
+  owner
+}: {
   readonly kind: 'unshielded' | 'shielded' | 'dust';
   readonly title: string;
   readonly hero: boolean;
@@ -344,43 +384,38 @@ function BalanceLine({ kind, title, hero, state, owner }: {
   const arriving = state?.name === 'connecting' || state?.name === 'syncing';
   return (
     <div data-kind={kind} aria-busy={arriving ? 'true' : undefined}>
-      <h3 className="m-0 text-sm font-medium text-muted-foreground">
-        {title}
-      </h3>
+      <h3 className="m-0 text-sm font-medium text-muted-foreground">{title}</h3>
 
       {state === null && (
-        <p className="m-0 mt-1 text-sm text-muted-foreground" role="status">Not asked yet.</p>
+        <p className="m-0 mt-1 text-sm text-muted-foreground" role="status">
+          Not asked yet.
+        </p>
       )}
 
       {arriving && <Skeleton className={hero ? 'mt-2 h-11 w-56' : 'mt-2 h-6 w-32'} />}
 
-      {state?.name === 'connecting' && (state.quietMs === undefined
-        ? (
+      {state?.name === 'connecting' &&
+        (state.quietMs === undefined ? (
           <p className="m-0 mt-2 text-sm text-muted-foreground" role="status">
             Asking {INDEXER_HOST}… nothing is known yet — this is a wait, not a zero.
           </p>
-        )
-        : (
+        ) : (
           <p className="m-0 mt-2 text-sm text-warn-text" role="status">
-            Nothing has answered in {Math.round(state.quietMs / 1000)} seconds. Still
-            trying — still a wait, not a zero — and the wallet will stop waiting on its
-            own if the silence keeps.
+            Nothing has answered in {Math.round(state.quietMs / 1000)} seconds. Still trying — still a wait, not a zero
+            — and the wallet will stop waiting on its own if the silence keeps.
           </p>
         ))}
 
       {state?.name === 'syncing' && (
         <p className="m-0 mt-2 text-sm text-muted-foreground" role="status">
           Reading {owner}&rsquo;s coins — {state.applied.toLocaleString()}{' '}
-          {kind === 'unshielded' ? 'transactions' : 'events'} applied; the newest the
-          indexer has reported is{' '}
-          {state.highest === 0n ? 'not known yet' : state.highest.toLocaleString()}. No
-          number until the wallet has seen them all.
+          {kind === 'unshielded' ? 'transactions' : 'events'} applied; the newest the indexer has reported is{' '}
+          {state.highest === 0n ? 'not known yet' : state.highest.toLocaleString()}. No number until the wallet has seen
+          them all.
         </p>
       )}
 
-      {state?.name === 'synced' && (
-        <SyncedFigure kind={kind} title={title} hero={hero} state={state} owner={owner} />
-      )}
+      {state?.name === 'synced' && <SyncedFigure kind={kind} title={title} hero={hero} state={state} owner={owner} />}
 
       {state?.name === 'failed' && (
         <>
@@ -388,8 +423,8 @@ function BalanceLine({ kind, title, hero, state, owner }: {
             The indexer could not be reached: {state.message}
           </div>
           <p className="m-0 mt-1 text-sm text-warn-text">
-            This says nothing about the money — it is <strong>not a zero</strong>. The
-            coins are on the chain; only the reading failed.
+            This says nothing about the money — it is <strong>not a zero</strong>. The coins are on the chain; only the
+            reading failed.
           </p>
         </>
       )}
@@ -398,7 +433,13 @@ function BalanceLine({ kind, title, hero, state, owner }: {
 }
 
 /** The balance once the wallet has seen every event: the figure, the exact amount, and what the line says about its kind. */
-function SyncedFigure({ kind, title, hero, state, owner }: {
+function SyncedFigure({
+  kind,
+  title,
+  hero,
+  state,
+  owner
+}: {
   readonly kind: 'unshielded' | 'shielded' | 'dust';
   readonly title: string;
   readonly hero: boolean;
@@ -409,64 +450,67 @@ function SyncedFigure({ kind, title, hero, state, owner }: {
   const exact = kind === 'dust' ? exactSpecks : exactStars;
   const unit = kind === 'dust' ? 'tDUST' : 'tNIGHT';
   return (
-        <>
-          <div
-            className={hero
-              ? 'balance-big mt-1 font-sans text-3xl tracking-tight font-semibold text-foreground'
-              : 'balance-big mt-1 font-sans text-xl font-semibold text-foreground'}
-            aria-label={`${title} balance of ${owner}`}
-          >
-            {big(state.night)} <span className="balance-unit text-muted-foreground">{unit}</span>
-          </div>
-          <p className="m-0 mt-1 text-xs text-muted-foreground">
-            Exactly {exact(state.night)}, as of {asClock(state.asOf)}.
+    <>
+      <div
+        className={
+          hero
+            ? 'balance-big mt-1 font-sans text-3xl tracking-tight font-semibold text-foreground'
+            : 'balance-big mt-1 font-sans text-xl font-semibold text-foreground'
+        }
+        aria-label={`${title} balance of ${owner}`}
+      >
+        {big(state.night)} <span className="balance-unit text-muted-foreground">{unit}</span>
+      </div>
+      <p className="m-0 mt-1 text-xs text-muted-foreground">
+        Exactly {exact(state.night)}, as of {asClock(state.asOf)}.
+      </p>
+      {kind !== 'dust' &&
+        state.others !== undefined &&
+        otherTokenLines(state.others).map(([colour, amount]) => (
+          /* EVERY OTHER TOKEN THIS LINE HOLDS, private on the shielded line
+           * and public on the unshielded one, one plain line each, after
+           * NIGHT's. The wallet has no name and no scale for these, so the
+           * amount is in the token's smallest unit and the token is named by
+           * its colour: short, with the whole colour beside it. Only held
+           * tokens get a line; there is no zero line for a token not held. */
+          <p key={colour} className="m-0 mt-1 text-sm text-foreground" data-token={colour}>
+            {smallestUnits(amount)} of token{' '}
+            <span className="font-mono" title={colour}>
+              {shortColour(colour)}
+            </span>
+            <span className="block break-all font-mono text-xs text-muted-foreground">{colour}</span>
           </p>
-          {kind !== 'dust' && state.others !== undefined
-            && otherTokenLines(state.others).map(([colour, amount]) => (
-              /* EVERY OTHER TOKEN THIS LINE HOLDS, private on the shielded line
-               * and public on the unshielded one, one plain line each, after
-               * NIGHT's. The wallet has no name and no scale for these, so the
-               * amount is in the token's smallest unit and the token is named by
-               * its colour: short, with the whole colour beside it. Only held
-               * tokens get a line; there is no zero line for a token not held. */
-              <p key={colour} className="m-0 mt-1 text-sm text-foreground" data-token={colour}>
-                {smallestUnits(amount)} of token{' '}
-                <span className="font-mono" title={colour}>{shortColour(colour)}</span>
-                <span className="block break-all font-mono text-xs text-muted-foreground">{colour}</span>
-              </p>
-            ))}
-          {kind === 'shielded' && state.others === undefined && (
-            /* A SAVED FIGURE FROM BEFORE OTHER TOKENS WERE RECORDED. It knows
-             * NIGHT and nothing else, so it says that, rather than showing no
-             * other token as if there were none. */
-            <p className="m-0 mt-1 text-xs text-muted-foreground" data-others="not-recorded">
-              Other private tokens are not recorded in this saved figure. A completed
-              check of this wallet&rsquo;s balance reads them.
-            </p>
-          )}
-          {kind === 'shielded' && (
-            /* THE PRIVATE BALANCE LINE, and the copy is the point of it. Private
-             * value on this ledger is minted by a contract; there is no step that
-             * moves public NIGHT in. A mint writes its amount into the public
-             * record even though the coin it makes is private, so the sentence
-             * says so rather than calling everything on this line private from
-             * the start. A zero is what the last completed read found. */
-            <p className="m-0 mt-1 text-xs text-muted-foreground">
-              Money sent to you privately appears here: NIGHT above, and any other
-              token on its own line, in that token&rsquo;s smallest unit. Private value on
-              this ledger is minted by a contract, and the amount of a mint is public on
-              the chain even though the coin it makes is private. A zero here is what the
-              last completed check found, not a wallet that has stopped looking.
-            </p>
-          )}
-          {kind === 'dust' && state.night === 0n && (
-            <p className="m-0 mt-1 text-xs text-muted-foreground">
-              A real zero, not an unknown: DUST is not paid in — it grows over time from
-              NIGHT that has been <strong>registered</strong> for generation, and this
-              wallet has registered none yet. Without DUST no fee can be paid, so nothing
-              can be sent.
-            </p>
-          )}
-        </>
+        ))}
+      {kind === 'shielded' && state.others === undefined && (
+        /* A SAVED FIGURE FROM BEFORE OTHER TOKENS WERE RECORDED. It knows
+         * NIGHT and nothing else, so it says that, rather than showing no
+         * other token as if there were none. */
+        <p className="m-0 mt-1 text-xs text-muted-foreground" data-others="not-recorded">
+          Other private tokens are not recorded in this saved figure. A completed check of this wallet&rsquo;s balance
+          reads them.
+        </p>
+      )}
+      {kind === 'shielded' && (
+        /* THE PRIVATE BALANCE LINE, and the copy is the point of it. Private
+         * value on this ledger is minted by a contract; there is no step that
+         * moves public NIGHT in. A mint writes its amount into the public
+         * record even though the coin it makes is private, so the sentence
+         * says so rather than calling everything on this line private from
+         * the start. A zero is what the last completed read found. */
+        <p className="m-0 mt-1 text-xs text-muted-foreground">
+          Money sent to you privately appears here: NIGHT above, and any other token on its own line, in that
+          token&rsquo;s smallest unit. Private value on this ledger is minted by a contract, and the amount of a mint is
+          public on the chain even though the coin it makes is private. A zero here is what the last completed check
+          found, not a wallet that has stopped looking.
+        </p>
+      )}
+      {kind === 'dust' && state.night === 0n && (
+        <p className="m-0 mt-1 text-xs text-muted-foreground">
+          A real zero, not an unknown: DUST is not paid in — it grows over time from NIGHT that has been{' '}
+          <strong>registered</strong> for generation, and this wallet has registered none yet. Without DUST no fee can
+          be paid, so nothing can be sent.
+        </p>
+      )}
+    </>
   );
 }

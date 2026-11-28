@@ -93,8 +93,10 @@ export const FIRST_DOWNLOAD_BUDGET = 705_082;
  * held to no file limit here.
  */
 export const WORKERS: Readonly<Record<string, string>> = {
-  '../../packages/web-shared/src/vault-worker-entry.ts': 'builds and proves a vault\'s transactions, with the ledger and the prover, which are WebAssembly',
-  '../../packages/web-shared/src/vault-proof-worker-entry.ts': 'proves one part of a private deposit beside the others, started by the vault worker and never by the page; carries the prover, which is WebAssembly',
+  '../../packages/web-shared/src/vault-worker-entry.ts':
+    "builds and proves a vault's transactions, with the ledger and the prover, which are WebAssembly",
+  '../../packages/web-shared/src/vault-proof-worker-entry.ts':
+    'proves one part of a private deposit beside the others, started by the vault worker and never by the page; carries the prover, which is WebAssembly'
 };
 
 /**
@@ -110,7 +112,10 @@ export const WORKERS: Readonly<Record<string, string>> = {
  * bundles them whole.
  */
 export const WASM_PACKAGES = [
-  '@midnightntwrk/zkir-v3', '@midnightntwrk/zkir-v2', '@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4',
+  '@midnightntwrk/zkir-v3',
+  '@midnightntwrk/zkir-v2',
+  '@midnightntwrk/ledger-v9',
+  '@midnightntwrk/onchain-runtime-v4'
 ] as const;
 
 /**
@@ -121,7 +126,10 @@ function packageFolder(name: string): string {
   for (let dir = ROOT; ; dir = dirname(dir)) {
     const candidate = join(dir, 'node_modules', name);
     if (existsSync(join(candidate, 'package.json'))) return realpathSync(candidate);
-    if (dirname(dir) === dir) throw new Error(`${name} is not installed, so the development server cannot be allowed to serve its WebAssembly. Install the packages.`);
+    if (dirname(dir) === dir)
+      throw new Error(
+        `${name} is not installed, so the development server cannot be allowed to serve its WebAssembly. Install the packages.`
+      );
   }
 }
 
@@ -144,7 +152,7 @@ export const SERVED_FROM = [
   ROOT.replace(/\/$/, ''),
   ...new Set(Object.keys(WORKERS).map((entry) => dirname(fileURLToPath(new URL(entry, import.meta.url))))),
   fileURLToPath(new URL('../../node_modules/@fontsource-variable/inter', import.meta.url)),
-  ...WASM_PACKAGES.map(packageFolder),
+  ...WASM_PACKAGES.map(packageFolder)
 ];
 
 /*
@@ -155,16 +163,41 @@ export const SERVED_FROM = [
  * folders, the logs, the chain's local database, and the safe. Each name is
  * refused as a file and as a folder with everything in it.
  */
-export const REFUSED_NAMES = ['.env', '.env.*', '*.seed', '.keys-backup', '.midnight', 'logs', 'SAFE', '.data', '.wallet-state', '.pre-reset-*', 'midnight-level-db', 'db', '.git'];
+export const REFUSED_NAMES = [
+  '.env',
+  '.env.*',
+  '*.seed',
+  '.keys-backup',
+  '.midnight',
+  'logs',
+  'SAFE',
+  '.data',
+  '.wallet-state',
+  '.pre-reset-*',
+  'midnight-level-db',
+  'db',
+  '.git'
+];
 export const REFUSED = ['**/*.{crt,pem}', ...REFUSED_NAMES.flatMap((name) => [`**/${name}`, `**/${name}/**`])];
-
 
 /** One file of a build's output, as the bundler hands it to a plugin: a script, with what it imports, or anything else. */
 export type BuiltFile =
-  | { type: 'chunk'; fileName: string; code: string; isEntry: boolean; imports: readonly string[]; viteMetadata?: { importedCss?: ReadonlySet<string> } }
+  | {
+      type: 'chunk';
+      fileName: string;
+      code: string;
+      isEntry: boolean;
+      imports: readonly string[];
+      viteMetadata?: { importedCss?: ReadonlySet<string> };
+    }
   | { type: 'asset'; fileName: string; source: string | Uint8Array };
 
-const bytesOf = (f: BuiltFile): number => (f.type === 'chunk' ? Buffer.byteLength(f.code) : typeof f.source === 'string' ? Buffer.byteLength(f.source) : f.source.length);
+const bytesOf = (f: BuiltFile): number =>
+  f.type === 'chunk'
+    ? Buffer.byteLength(f.code)
+    : typeof f.source === 'string'
+      ? Buffer.byteLength(f.source)
+      : f.source.length;
 
 /** The files of the first download, and their size in bytes. */
 export function firstDownloadOf(bundle: Readonly<Record<string, BuiltFile>>): { files: string[]; bytes: number } {
@@ -193,8 +226,11 @@ export const isWorkers = (f: BuiltFile): boolean => f.type === 'asset' && /\.(m?
 export function overBudget(bundle: Readonly<Record<string, BuiltFile>>, budget: number, fileLimit: number): string[] {
   const over: string[] = [];
   const first = firstDownloadOf(bundle);
-  if (first.bytes > budget) over.push(`the first download is ${first.bytes} bytes, over its budget of ${budget}: ${first.files.join(', ')}`);
-  for (const f of Object.values(bundle)) if (bytesOf(f) > fileLimit && !/\.woff2?$/.test(f.fileName) && !isWorkers(f)) over.push(`${f.fileName} is ${bytesOf(f)} bytes, over the bundler's warning at ${fileLimit}`);
+  if (first.bytes > budget)
+    over.push(`the first download is ${first.bytes} bytes, over its budget of ${budget}: ${first.files.join(', ')}`);
+  for (const f of Object.values(bundle))
+    if (bytesOf(f) > fileLimit && !/\.woff2?$/.test(f.fileName) && !isWorkers(f))
+      over.push(`${f.fileName} is ${bytesOf(f)} bytes, over the bundler's warning at ${fileLimit}`);
   return over;
 }
 
@@ -204,11 +240,13 @@ export function firstDownloadBudget(budget = FIRST_DOWNLOAD_BUDGET): Plugin {
   return {
     name: 'first-download-budget',
     apply: 'build',
-    configResolved(c) { fileLimit = c.build.chunkSizeWarningLimit * 1000; },
+    configResolved(c) {
+      fileLimit = c.build.chunkSizeWarningLimit * 1000;
+    },
     generateBundle(_options, bundle) {
       const over = overBudget(bundle as unknown as Record<string, BuiltFile>, budget, fileLimit);
       if (over.length > 0) this.error(over.join('\n'));
-    },
+    }
   };
 }
 
@@ -252,8 +290,8 @@ export default defineConfig({
     hmr: false,
     fs: { allow: SERVED_FROM, deny: REFUSED },
     proxy: { ...SERVICE_PROXY },
-    headers: { ...framingHeadersFor(null) },
+    headers: { ...framingHeadersFor(null) }
   },
   preview: { headers: { ...framingHeadersFor(null) } },
-  build: { outDir: '../../dist/apps-web', emptyOutDir: true },
+  build: { outDir: '../../dist/apps-web', emptyOutDir: true }
 });

@@ -34,7 +34,7 @@ import {
   ContractOperation,
   sampleContractAddress,
   createConstructorContext,
-  createCircuitContext,
+  createCircuitContext
 } from '@midnight-ntwrk/compact-runtime';
 import { Contract, type Ledger, ledger, pureCircuits } from '../managed/contract/index.js';
 import * as LedgerV9 from '@midnightntwrk/ledger-v9';
@@ -46,10 +46,13 @@ import {
   type InvitedAddress,
   type SignerPath,
   ALL_VAULTS,
-  NO_VAULT,
+  NO_VAULT
 } from '../src/witnesses.js';
 import {
-  buildPayoutTree, rootOfLeaves, type PayoutLeafInput, type PayoutTree,
+  buildPayoutTree,
+  rootOfLeaves,
+  type PayoutLeafInput,
+  type PayoutTree
 } from '../../src/midnight/payout-tree.js';
 import { toHex } from '../../src/core/crypto.js';
 import { crossContractInputsFor } from '../../src/midnight/contract-modules.js';
@@ -90,8 +93,7 @@ const bytes = (seed: number): Uint8Array => {
  * than spelling it a second time.
  */
 export const leafOfDevice = (state: AccountPrivateState): Uint8Array =>
-  pureCircuits.signerLeaf(
-    pureCircuits.signerPublicKey(state.secretKey), state.blinding, state.scope);
+  pureCircuits.signerLeaf(pureCircuits.signerPublicKey(state.secretKey), state.blinding, state.scope);
 
 const testBytes = (label: string, of: Uint8Array): Uint8Array =>
   Uint8Array.from(createHash('sha256').update(label).update(of).digest());
@@ -103,7 +105,7 @@ const testBytes = (label: string, of: Uint8Array): Uint8Array =>
  */
 export const invitedAddressFor = (state: AccountPrivateState): InvitedAddress => ({
   coinSecretKey: testBytes('a test wallet coin secret key', state.secretKey),
-  addressSalt: testBytes('a test invitation address salt', state.secretKey),
+  addressSalt: testBytes('a test invitation address salt', state.secretKey)
 });
 
 /** The commitment a seating proposal names for an invited address, as an inviter makes it from the address. */
@@ -115,13 +117,13 @@ export const invitedAddressCommitmentOf = (invite: InvitedAddress): Uint8Array =
  * the seat sets once it is taken: 0, the default, keeps the threshold in force.
  */
 export const invitePayloadFor = (
-  who: AccountPrivateState, invite: InvitedAddress = invitedAddressFor(who), newThreshold = 0n,
-): Uint8Array =>
-  pureCircuits.signerInvitePayload(invitedAddressCommitmentOf(invite), who.scope, newThreshold);
+  who: AccountPrivateState,
+  invite: InvitedAddress = invitedAddressFor(who),
+  newThreshold = 0n
+): Uint8Array => pureCircuits.signerInvitePayload(invitedAddressCommitmentOf(invite), who.scope, newThreshold);
 
 /** What the signers approve to remove the signer whose leaf is `leaf` and keep the threshold in force. */
-export const removalPayloadFor = (leaf: Uint8Array): Uint8Array =>
-  pureCircuits.removeAndSetThresholdPayload(leaf, 0n);
+export const removalPayloadFor = (leaf: Uint8Array): Uint8Array => pureCircuits.removeAndSetThresholdPayload(leaf, 0n);
 
 /**
  * A token's 32 bytes, from the 64 lower-case hex characters the ledger and
@@ -145,21 +147,21 @@ export const TEST_AMOUNT = 100n;
 export const payoutTreeOf = (
   payments: PayoutLeafInput[],
   amounts: bigint[] = payments.map(() => TEST_AMOUNT),
-  asset: Uint8Array = TEST_TOKEN_BYTES,
+  asset: Uint8Array = TEST_TOKEN_BYTES
 ): PayoutTree => buildPayoutTree(payments, amounts, toHex(asset));
 
 /** The root over `leaves` at `amounts` in `asset`, with `payoutTreeOf`'s defaults. */
 export const rootOfTestLeaves = (
   leaves: string[],
   amounts: bigint[] = leaves.map(() => TEST_AMOUNT),
-  asset: Uint8Array = TEST_TOKEN_BYTES,
+  asset: Uint8Array = TEST_TOKEN_BYTES
 ): string => rootOfLeaves(leaves, amounts, toHex(asset));
 
 /** What a payment of payee `i` hands the account beside its leaf: the amount, the token and the path. */
 export const sumArgsOf = (tree: PayoutTree, i: number) => ({
   amount: tree.amounts[i]!,
   asset: Uint8Array.from(Buffer.from(tree.asset, 'hex')),
-  path: tree.pathFor(i),
+  path: tree.pathFor(i)
 });
 
 /**
@@ -189,7 +191,7 @@ export const vaultRunOf = (a: {
   salt: a.salt,
   nonce: typeof a.nonce === 'string' ? Uint8Array.from(Buffer.from(a.nonce, 'hex')) : a.nonce,
   asset: Uint8Array.from(Buffer.from(a.tree.asset, 'hex')),
-  path: a.tree.pathFor(a.i),
+  path: a.tree.pathFor(a.i)
 });
 
 /**
@@ -219,7 +221,7 @@ export const NOT_IN_THE_APPROVED_RUN =
 export const privateStateFor = (
   seed: number,
   viewSeed = 0,
-  asset: Uint8Array = TEST_TOKEN_BYTES,
+  asset: Uint8Array = TEST_TOKEN_BYTES
 ): AccountPrivateState => ({
   secretKey: bytes(seed),
   blinding: bytes(seed + 400),
@@ -245,7 +247,7 @@ export const privateStateFor = (
   changeAmount: 0n,
   changeBatchDigest: bytes(seed + 500),
   pinnedPath: null,
-  pinAnyLeaf: false,
+  pinAnyLeaf: false
 });
 
 /**
@@ -267,9 +269,8 @@ export const change = (amount: bigint, seed = 9, asset: Uint8Array = TEST_TOKEN_
   asset,
   amount,
   batch: bytes(seed + 600),
-  salt: bytes(seed + 700),
+  salt: bytes(seed + 700)
 });
-
 
 /** This build's account verifier keys, read once from contracts/managed/keys. */
 const ACCOUNT_VERIFIER_KEYS = accountVerifierKeysIn(fileURLToPath(new URL('../..', import.meta.url)));
@@ -291,7 +292,7 @@ export class AccountSimulator {
     address: string,
     contractState: any,
     privateState: AccountPrivateState,
-    zswap: any,
+    zswap: any
   ) {
     this.contract = contract;
     this.address = address;
@@ -334,21 +335,20 @@ export class AccountSimulator {
   static async create(
     founder: AccountPrivateState,
     foundingLeaf: Uint8Array = leafOfDevice(founder),
-    companyLabel: Uint8Array = COMPANY_LABEL,
+    companyLabel: Uint8Array = COMPANY_LABEL
   ): Promise<AccountSimulator> {
     const contract = new Contract<AccountPrivateState>(witnesses);
-    const { currentPrivateState, currentContractState, currentZswapLocalState } =
-      await contract.initialState(
-        createConstructorContext(founder, '0'.repeat(64)),
-        foundingLeaf,
-        companyLabel,
-      );
+    const { currentPrivateState, currentContractState, currentZswapLocalState } = await contract.initialState(
+      createConstructorContext(founder, '0'.repeat(64)),
+      foundingLeaf,
+      companyLabel
+    );
     return new AccountSimulator(
       contract,
       sampleContractAddress(),
       currentContractState,
       currentPrivateState,
-      currentZswapLocalState,
+      currentZswapLocalState
     );
   }
 
@@ -375,13 +375,13 @@ export class AccountSimulator {
    */
   static async liveAccount(
     devices: AccountPrivateState[],
-    threshold: bigint = BigInt(devices.length),
+    threshold: bigint = BigInt(devices.length)
   ): Promise<AccountSimulator> {
     if (devices.length < 1) throw new Error('an account needs a founding signer');
     if (threshold < 1n || threshold > BigInt(devices.length)) {
       throw new Error(
         `a threshold of ${threshold} is not reachable with ${devices.length} signer(s): ` +
-        'the contract refuses a threshold above the seat count',
+          'the contract refuses a threshold above the seat count'
       );
     }
     const sim = await AccountSimulator.create(devices[0]!);
@@ -408,7 +408,7 @@ export class AccountSimulator {
     who: AccountPrivateState,
     approvers: AccountPrivateState[],
     seed = 301,
-    intoVacatedSlot = false,
+    intoVacatedSlot = false
   ): Promise<Uint8Array> {
     const c = change(0n, seed);
     const invite = invitedAddressFor(who);
@@ -432,14 +432,14 @@ export class AccountSimulator {
     secrets: { signingSecret: string; blinding: string; scope: string },
     leaf: Uint8Array,
     approvers: AccountPrivateState[],
-    seed = 301,
+    seed = 301
   ): Promise<Uint8Array> {
     const bytesOf = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^0x/u, ''), 'hex'));
     const device: AccountPrivateState = {
       ...privateStateFor(seed + 1000),
       secretKey: bytesOf(secrets.signingSecret),
       blinding: bytesOf(secrets.blinding),
-      scope: bytesOf(secrets.scope),
+      scope: bytesOf(secrets.scope)
     };
     const id = await this.seatSigner(device, approvers, seed);
     if (!this.ledger.signerLeaves.member(leaf)) {
@@ -453,11 +453,7 @@ export class AccountSimulator {
    *
    * Same salt discipline as `seatSigner`, against `setThresholdPayload`.
    */
-  async raiseThreshold(
-    newThreshold: bigint,
-    approvers: AccountPrivateState[],
-    seed = 381,
-  ): Promise<Uint8Array> {
+  async raiseThreshold(newThreshold: bigint, approvers: AccountPrivateState[], seed = 381): Promise<Uint8Array> {
     const c = change(0n, seed);
     const payload = pureCircuits.setThresholdPayload(newThreshold);
     const by = approvers[0]!;
@@ -519,13 +515,13 @@ export class AccountSimulator {
   /** A context for one call. The circuit id is part of it, so it is per call. */
   private contextFor(circuitId: string): CircuitContext<AccountPrivateState> {
     return createCircuitContext<AccountPrivateState>({
-        circuitId: circuitId,
-        contractAddress: this.address as never,
-        coinPublicKeyOrZswapState: this.zswap ?? '0'.repeat(64),
-        contractState: this.contractState,
-        privateState: this.privateState,
-        time: this.blockTime,
-      });
+      circuitId: circuitId,
+      contractAddress: this.address as never,
+      coinPublicKeyOrZswapState: this.zswap ?? '0'.repeat(64),
+      contractState: this.contractState,
+      privateState: this.privateState,
+      time: this.blockTime
+    });
   }
 
   /**
@@ -704,7 +700,7 @@ export class AccountSimulator {
    */
   private async run<T>(
     circuitId: string,
-    fn: (ctx: CircuitContext<AccountPrivateState>) => Promise<{ context: any; result: T }>,
+    fn: (ctx: CircuitContext<AccountPrivateState>) => Promise<{ context: any; result: T }>
   ): Promise<T> {
     if (!this.installed(circuitId)) {
       throw new Error(`${circuitId} is not installed on this account: the creation step that adds it has not landed`);
@@ -735,12 +731,15 @@ export class AccountSimulator {
    */
   seatInvited(proposal: Uint8Array, invitee: AccountPrivateState, intoVacatedSlot = false, newThreshold = 0n) {
     this.as(invitee);
-    return this.run('seatInvited',
-      (c) => this.contract.impureCircuits.seatInvited(c, proposal, intoVacatedSlot, newThreshold));
+    return this.run('seatInvited', (c) =>
+      this.contract.impureCircuits.seatInvited(c, proposal, intoVacatedSlot, newThreshold)
+    );
   }
 
   /** What a vacated slot holds, from the contract's own definition. */
-  get vacant(): Uint8Array { return pureCircuits.vacantSlot(); }
+  get vacant(): Uint8Array {
+    return pureCircuits.vacantSlot();
+  }
 
   /** Which slots currently hold the vacancy marker, lowest first. */
   vacatedSlots(): bigint[] {
@@ -761,8 +760,9 @@ export class AccountSimulator {
 
   /** Removes one signer and sets the threshold (0 keeps the one in force), under one approved proposal. */
   removeSignerAndSetThreshold(removedLeaf: Uint8Array, newThreshold: bigint, proposal: Uint8Array) {
-    return this.run('removeSignerAndSetThreshold',
-      (c) => this.contract.impureCircuits.removeSignerAndSetThreshold(c, removedLeaf, newThreshold, proposal));
+    return this.run('removeSignerAndSetThreshold', (c) =>
+      this.contract.impureCircuits.removeSignerAndSetThreshold(c, removedLeaf, newThreshold, proposal)
+    );
   }
 
   /** A proposal's hold as the chain holds it, or undefined when it has none. */
@@ -785,8 +785,7 @@ export class AccountSimulator {
    * the account's commitment to the key, under the approved round `proposal`.
    */
   sealPayKey(wrap: Uint8Array[], commitment: Uint8Array, proposal: Uint8Array = ZERO_32) {
-    return this.run('sealPayKey',
-      (c) => this.contract.impureCircuits.sealPayKey(c, wrap, commitment, proposal));
+    return this.run('sealPayKey', (c) => this.contract.impureCircuits.sealPayKey(c, wrap, commitment, proposal));
   }
 
   /** The account's commitment to its pay-record key, as the chain holds it, or undefined. */
@@ -797,7 +796,12 @@ export class AccountSimulator {
 
   /** The account's own address as the circuits read it (`kernel.self().bytes`). */
   selfBytes(): Uint8Array {
-    return Uint8Array.from(this.address.replace(/^0x/, '').match(/../g)!.map((b) => parseInt(b, 16)));
+    return Uint8Array.from(
+      this.address
+        .replace(/^0x/, '')
+        .match(/../g)!
+        .map((b) => parseInt(b, 16))
+    );
   }
 
   /** The four entries of one signer's sealed copy, as the chain holds them, or undefined. */
@@ -823,7 +827,9 @@ export class AccountSimulator {
    * held the account as it judged the batch (by default, who holds it now).
    */
   anchor(previous: Uint8Array, batch: Uint8Array, held = this.heldNow()) {
-    return this.run('anchor', (c) => this.contract.impureCircuits.anchor(c, previous, batch, held.approvals, held.signerRoot));
+    return this.run('anchor', (c) =>
+      this.contract.impureCircuits.anchor(c, previous, batch, held.approvals, held.signerRoot)
+    );
   }
 
   /** The company's record anchor as the chain holds it, or undefined before the first. */
@@ -852,11 +858,27 @@ export class AccountSimulator {
    * by default), under `proposal`. The device carries the salt the recovery was raised with.
    */
   recoverAnchor(
-    previous: Uint8Array, batch: Uint8Array, resumesFrom: Uint8Array, latest: bigint, proposal: Uint8Array, held = this.heldNow(),
-    lastRecovery = this.lastRecovery(),
+    previous: Uint8Array,
+    batch: Uint8Array,
+    resumesFrom: Uint8Array,
+    latest: bigint,
+    proposal: Uint8Array,
+    held = this.heldNow(),
+    lastRecovery = this.lastRecovery()
   ) {
-    return this.run('recoverAnchor', (c) => this.contract.impureCircuits.recoverAnchor(
-      c, previous, batch, held.approvals, held.signerRoot, resumesFrom, latest, lastRecovery, proposal));
+    return this.run('recoverAnchor', (c) =>
+      this.contract.impureCircuits.recoverAnchor(
+        c,
+        previous,
+        batch,
+        held.approvals,
+        held.signerRoot,
+        resumesFrom,
+        latest,
+        lastRecovery,
+        proposal
+      )
+    );
   }
 
   /**
@@ -867,8 +889,11 @@ export class AccountSimulator {
    * follows and the change its raiser's device carries, which carrying it out needs.
    */
   async approvedRecovery(
-    resumesFrom: Uint8Array, approvers: AccountPrivateState[], seed = 461, latest = BigInt(this.blockTime + 3600),
-    lastRecovery = this.lastRecovery(),
+    resumesFrom: Uint8Array,
+    approvers: AccountPrivateState[],
+    seed = 461,
+    latest = BigInt(this.blockTime + 3600),
+    lastRecovery = this.lastRecovery()
   ): Promise<{ id: Uint8Array; c: Change; latest: bigint; lastRecovery: Uint8Array }> {
     const c = change(0n, seed);
     const payload = pureCircuits.recoverAnchorPayload(resumesFrom, latest, lastRecovery);
@@ -880,8 +905,7 @@ export class AccountSimulator {
 
   /** Changes M in M of N, through an approved round. */
   setThreshold(newThreshold: bigint, proposal: Uint8Array) {
-    return this.run('setThreshold',
-      (c) => this.contract.impureCircuits.setThreshold(c, newThreshold, proposal));
+    return this.run('setThreshold', (c) => this.contract.impureCircuits.setThreshold(c, newThreshold, proposal));
   }
 
   /**
@@ -890,8 +914,9 @@ export class AccountSimulator {
    */
   propose(payloadHash: Uint8Array, vault: Uint8Array = NO_VAULT, deadline: bigint = this.aDayFromNow()) {
     /* The opaque path of the merged `propose`: `isRun` false, run parts zero. */
-    return this.run('propose', (c) => this.contract.impureCircuits.propose(
-      c, payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, vault, deadline));
+    return this.run('propose', (c) =>
+      this.contract.impureCircuits.propose(c, payloadHash, ZERO_32, 0n, 0n, 0n, 0n, false, vault, deadline)
+    );
   }
 
   /**
@@ -899,7 +924,9 @@ export class AccountSimulator {
    * `deadline` is as `propose`'s.
    */
   proposeCompanyChange(payloadHash: Uint8Array, deadline: bigint = this.aDayFromNow()) {
-    return this.run('proposeCompanyChange', (c) => this.contract.impureCircuits.proposeCompanyChange(c, payloadHash, deadline));
+    return this.run('proposeCompanyChange', (c) =>
+      this.contract.impureCircuits.proposeCompanyChange(c, payloadHash, deadline)
+    );
   }
 
   /** A day after the simulated clock, in seconds: the default deadline of a raise. */
@@ -940,11 +967,25 @@ export class AccountSimulator {
     asset: Uint8Array;
     path: unknown;
   }) {
-    return this.run('recordPaymentFromVault',
-      (c) => this.contract.impureCircuits.recordPaymentFromVault(
-        c, args.proposal, args.vault, args.payingVault ?? args.vault, args.root, args.payees,
-        args.from, args.until, args.required ?? 0n, args.salt, args.details, args.nonce,
-        args.amount, args.asset, args.path as never));
+    return this.run('recordPaymentFromVault', (c) =>
+      this.contract.impureCircuits.recordPaymentFromVault(
+        c,
+        args.proposal,
+        args.vault,
+        args.payingVault ?? args.vault,
+        args.root,
+        args.payees,
+        args.from,
+        args.until,
+        args.required ?? 0n,
+        args.salt,
+        args.details,
+        args.nonce,
+        args.amount,
+        args.asset,
+        args.path as never
+      )
+    );
   }
 
   /**
@@ -968,11 +1009,24 @@ export class AccountSimulator {
     asset: Uint8Array;
     path: unknown;
   }) {
-    return this.run('approveVaultChange',
-      (c) => this.contract.impureCircuits.approveVaultChange(
-        c, args.proposal, args.vault, args.payingVault ?? args.vault, args.root, args.payees,
-        args.from, args.until, args.required ?? 0n, args.salt, args.details, args.nonce,
-        args.asset, args.path as never));
+    return this.run('approveVaultChange', (c) =>
+      this.contract.impureCircuits.approveVaultChange(
+        c,
+        args.proposal,
+        args.vault,
+        args.payingVault ?? args.vault,
+        args.root,
+        args.payees,
+        args.from,
+        args.until,
+        args.required ?? 0n,
+        args.salt,
+        args.details,
+        args.nonce,
+        args.asset,
+        args.path as never
+      )
+    );
   }
 
   /**
@@ -980,8 +1034,7 @@ export class AccountSimulator {
    * an approved round over `setPolicyPayload(vault, assetKey, commitment)`.
    */
   setPolicy(vault: Uint8Array, commitment: Uint8Array, proposal: Uint8Array) {
-    return this.run('setPolicy',
-      (c) => this.contract.impureCircuits.setPolicy(c, vault, commitment, proposal));
+    return this.run('setPolicy', (c) => this.contract.impureCircuits.setPolicy(c, vault, commitment, proposal));
   }
 
   /**
@@ -1005,10 +1058,23 @@ export class AccountSimulator {
     /** The leg it retries, for a retry; none for any other run. */
     retry?: RetryOfALeg;
   }) {
-    return this.run('clearRun',
-      (c) => this.contract.impureCircuits.clearRun(
-        c, args.proposal, args.vault, args.root, args.payees, args.from, args.until,
-        args.required ?? 0n, args.salt, args.top, args.total, args.period, ...retryArgsOf(args.fresh, args.retry)));
+    return this.run('clearRun', (c) =>
+      this.contract.impureCircuits.clearRun(
+        c,
+        args.proposal,
+        args.vault,
+        args.root,
+        args.payees,
+        args.from,
+        args.until,
+        args.required ?? 0n,
+        args.salt,
+        args.top,
+        args.total,
+        args.period,
+        ...retryArgsOf(args.fresh, args.retry)
+      )
+    );
   }
 
   /** What the account's shared map holds under `key`, or undefined. */
@@ -1026,11 +1092,7 @@ export class AccountSimulator {
    * a contract becomes one this account accepts a payment from. Does nothing for a
    * vault already adopted.
    */
-  async adoptVault(
-    vault: Uint8Array,
-    approvers: AccountPrivateState[],
-    seed = 391,
-  ): Promise<void> {
+  async adoptVault(vault: Uint8Array, approvers: AccountPrivateState[], seed = 391): Promise<void> {
     if (this.ledger.vaults.member(vault)) return;
     const c = change(0n, seed);
     const payload = pureCircuits.adoptVaultPayload(vault);
@@ -1059,16 +1121,25 @@ export class AccountSimulator {
     deadline?: bigint;
   }) {
     /* The run path of the merged `propose`: `isRun` true, opaque hash zero. */
-    return this.run('propose',
-      (c) => this.contract.impureCircuits.propose(
-        c, ZERO_32, args.root, args.payees, args.from, args.until, args.required ?? 0n, true,
-        args.vault ?? NO_VAULT, args.deadline ?? this.aDayFromNow()));
+    return this.run('propose', (c) =>
+      this.contract.impureCircuits.propose(
+        c,
+        ZERO_32,
+        args.root,
+        args.payees,
+        args.from,
+        args.until,
+        args.required ?? 0n,
+        true,
+        args.vault ?? NO_VAULT,
+        args.deadline ?? this.aDayFromNow()
+      )
+    );
   }
 
   /** Sweeps a run whose window has closed. Permissionless by design. */
   closeExpiredRun(proposal: Uint8Array) {
-    return this.run('closeExpiredRun',
-      (c) => this.contract.impureCircuits.closeExpiredRun(c, proposal));
+    return this.run('closeExpiredRun', (c) => this.contract.impureCircuits.closeExpiredRun(c, proposal));
   }
 
   /**
@@ -1094,8 +1165,9 @@ export class AccountSimulator {
   }
 
   setVaultThreshold(vault: Uint8Array, newThreshold: bigint, proposal: Uint8Array) {
-    return this.run('setVaultThreshold',
-      (c) => this.contract.impureCircuits.setVaultThreshold(c, vault, newThreshold, proposal));
+    return this.run('setVaultThreshold', (c) =>
+      this.contract.impureCircuits.setVaultThreshold(c, vault, newThreshold, proposal)
+    );
   }
 
   /**
@@ -1104,8 +1176,7 @@ export class AccountSimulator {
    * Retiring is `retireVault` below.
    */
   adopt(vault: Uint8Array, proposal: Uint8Array) {
-    return this.run('adopt',
-      (c) => this.contract.impureCircuits.adopt(c, vault, proposal));
+    return this.run('adopt', (c) => this.contract.impureCircuits.adopt(c, vault, proposal));
   }
 
   /**
@@ -1117,8 +1188,7 @@ export class AccountSimulator {
    * (`a-payment-needs-a-vaults-receipt.test.ts` builds the real transaction).
    */
   retireVault(proposal: Uint8Array, vault: Uint8Array, salt: Uint8Array) {
-    return this.run('retireVault',
-      (c) => this.contract.impureCircuits.retireVault(c, proposal, vault, salt));
+    return this.run('retireVault', (c) => this.contract.impureCircuits.retireVault(c, proposal, vault, salt));
   }
 
   /** Which vaults this account has adopted, as the chain holds them. */
@@ -1144,23 +1214,24 @@ export class AccountSimulator {
 
   /** Replaces `oldLeaf` with `newLeaf` in its slot under an approved proposal over `reseatPayload`. */
   reseatSigner(oldLeaf: Uint8Array, newLeaf: Uint8Array, proposal: Uint8Array) {
-    return this.run('reseatSigner',
-      (c) => this.contract.impureCircuits.reseatSigner(c, oldLeaf, newLeaf, proposal));
+    return this.run('reseatSigner', (c) => this.contract.impureCircuits.reseatSigner(c, oldLeaf, newLeaf, proposal));
   }
 
   /** Sets the approvals a policy change needs, under an approved proposal over `setPolicyBarPayload`. */
   setPolicyBar(newBar: bigint, proposal: Uint8Array) {
-    return this.run('setPolicyBar',
-      (c) => this.contract.impureCircuits.setPolicyBar(c, newBar, proposal));
+    return this.run('setPolicyBar', (c) => this.contract.impureCircuits.setPolicyBar(c, newBar, proposal));
   }
 
   /** A run's hold as the chain holds it: who placed it, and how far its release has got. */
-  runHoldOf(proposal: Uint8Array): {
-    placedBy: Uint8Array; releaseNeeded: bigint; releaseApprovals: bigint; releaseRemovals: bigint;
-  } | undefined {
-    return this.ledger.proposalHolds.member(proposal)
-      ? this.ledger.proposalHolds.lookup(proposal).runHold
-      : undefined;
+  runHoldOf(proposal: Uint8Array):
+    | {
+        placedBy: Uint8Array;
+        releaseNeeded: bigint;
+        releaseApprovals: bigint;
+        releaseRemovals: bigint;
+      }
+    | undefined {
+    return this.ledger.proposalHolds.member(proposal) ? this.ledger.proposalHolds.lookup(proposal).runHold : undefined;
   }
 
   /**
@@ -1186,7 +1257,7 @@ export class AccountSimulator {
       assetId: c.asset,
       changeAmount: c.amount,
       changeBatchDigest: c.batch,
-      proposalSalt: c.salt,
+      proposalSalt: c.salt
     };
   }
 }
@@ -1200,7 +1271,7 @@ export class AccountSimulator {
  * here: it reads back with the `pre-proof` marker and the chain's `binding` one.
  */
 export const transactionOfCalls = (
-  calls: ReadonlyArray<{ readonly call: any; readonly entryPoint: string; readonly address?: string }>,
+  calls: ReadonlyArray<{ readonly call: any; readonly entryPoint: string; readonly address?: string }>
 ): Uint8Array => {
   const L = LedgerV9 as any;
   const params = L.LedgerParameters.initialParameters();
@@ -1211,9 +1282,20 @@ export const transactionOfCalls = (
     context.block = qc.block;
     context.effects = qc.effects;
     const [parts] = L.partitionTranscripts([new L.PreTranscript(context, call.publicTranscript, undefined)], params);
-    intent = intent.addCall(new L.ContractCallPrototype(
-      address ?? call.contractAddress, entryPoint, new L.ContractOperation(), parts[0], parts[1], call.privateTranscriptOutputs,
-      call.input, call.output, L.communicationCommitmentRandomness(), entryPoint));
+    intent = intent.addCall(
+      new L.ContractCallPrototype(
+        address ?? call.contractAddress,
+        entryPoint,
+        new L.ContractOperation(),
+        parts[0],
+        parts[1],
+        call.privateTranscriptOutputs,
+        call.input,
+        call.output,
+        L.communicationCommitmentRandomness(),
+        entryPoint
+      )
+    );
   }
   return L.Transaction.fromParts('undeployed', undefined, undefined, intent).bind().serialize();
 };

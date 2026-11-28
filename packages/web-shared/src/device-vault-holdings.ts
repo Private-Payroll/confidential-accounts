@@ -68,7 +68,10 @@ export interface DeviceHoldingsDoors {
    * of note a payment makes: `fits`, or `does-not-fit` naming the first they
    * cannot. Refuses only when it could not ask.
    */
-  readonly paymentsFit: (notes: readonly PoolNote[], payments: ReadonlyArray<{ token: Hex; amount: bigint }>) => Promise<PaymentsFitAnswer>;
+  readonly paymentsFit: (
+    notes: readonly PoolNote[],
+    payments: ReadonlyArray<{ token: Hex; amount: bigint }>
+  ) => Promise<PaymentsFitAnswer>;
   /**
    * The notes this device's records name as the vault's that its pool may not
    * hold yet: the change of a payment on its way, the coin of a deposit on its
@@ -88,9 +91,10 @@ export interface DeviceHoldingsDoors {
    * (`vaultNotesHere`) returns them as `notes`: each is a note the chain holds
    * that the vault's records name, and is counted as `accountedFor`'s are.
    */
-  readonly fileAgain?: (vault: Hex, held: (note: PoolNote) => Promise<boolean>) => Promise<
-    Pick<PoolTheChainHolds, 'answer' | 'said'> & { readonly notes?: readonly PoolNote[] }
-  >;
+  readonly fileAgain?: (
+    vault: Hex,
+    held: (note: PoolNote) => Promise<boolean>
+  ) => Promise<Pick<PoolTheChainHolds, 'answer' | 'said'> & { readonly notes?: readonly PoolNote[] }>;
 }
 
 /** The parts of a read of a vault this reader reads: this device's own, in its vault worker. */
@@ -114,7 +118,8 @@ type UnreadableBecause = 'chain' | 'layout' | 'record';
  * `unreadable` for `record`, and so never count a note this device has not
  * filed as money that can be spent.
  */
-type Reconciled = { readonly of: 'notes'; readonly notes: readonly PoolNote[] }
+type Reconciled =
+  | { readonly of: 'notes'; readonly notes: readonly PoolNote[] }
   | { readonly of: 'nothing-yet' }
   | { readonly of: 'unreadable'; readonly why: string; readonly because: UnreadableBecause; readonly cause?: unknown }
   | { readonly of: 'unfiled'; readonly onChain: number }
@@ -133,25 +138,37 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex, unfiledIsAnAns
   try {
     view = await doors.chain(vault);
   } catch (e) {
-    return { of: 'unreadable', because: 'chain', cause: e, why: `the chain could not be asked what this vault holds: ${why(e)}` };
+    return {
+      of: 'unreadable',
+      because: 'chain',
+      cause: e,
+      why: `the chain could not be asked what this vault holds: ${why(e)}`
+    };
   }
   if (view?.onChain !== true) {
     return { of: 'unreadable', because: 'chain', why: 'the chain shows no vault at this address yet' };
   }
   if (!Array.isArray(view.notes)) {
-    return { of: 'unreadable', because: 'chain', why: 'the chain was read and did not say which notes this vault holds' };
+    return {
+      of: 'unreadable',
+      because: 'chain',
+      why: 'the chain was read and did not say which notes this vault holds'
+    };
   }
   if (view.notesFromThisBuild !== true) {
     return {
       of: 'unreadable',
       because: 'layout',
-      why: 'the read of the chain did not confirm that this vault is laid out the way this version of the product '
-        + `reads one, so which notes it holds is not known${typeof view.notesWhy === 'string' ? `: ${view.notesWhy}` : ''}`,
+      why:
+        'the read of the chain did not confirm that this vault is laid out the way this version of the product ' +
+        `reads one, so which notes it holds is not known${typeof view.notesWhy === 'string' ? `: ${view.notesWhy}` : ''}`
     };
   }
   const onChain = new Set(view.notes.map((n) => String(n).toLowerCase()));
   if (doors.fileAgain === undefined) return againstTheChain(doors, vault, onChain, [], unfiledIsAnAnswer);
-  const filed = await doors.fileAgain(vault, async (note) => onChain.has((await doors.heldCommitmentOf(vault, note)).toLowerCase()));
+  const filed = await doors.fileAgain(vault, async (note) =>
+    onChain.has((await doors.heldCommitmentOf(vault, note)).toLowerCase())
+  );
   /* What a seat that left filed and this device could not take is said, never summed past. */
   if (filed.said.length > 0) return { of: 'contradicted', why: `${filed.said.join('. ')}.` };
   return againstTheChain(doors, vault, onChain, filed.notes ?? [], unfiledIsAnAnswer);
@@ -159,7 +176,11 @@ async function reconciled(doors: DeviceHoldingsDoors, vault: Hex, unfiledIsAnAns
 
 /** The pool this device believes against the notes the chain holds for the vault (`onChain`), once. */
 async function againstTheChain(
-  doors: DeviceHoldingsDoors, vault: Hex, onChain: ReadonlySet<string>, rebuilt: readonly PoolNote[], unfiledIsAnAnswer: boolean,
+  doors: DeviceHoldingsDoors,
+  vault: Hex,
+  onChain: ReadonlySet<string>,
+  rebuilt: readonly PoolNote[],
+  unfiledIsAnAnswer: boolean
 ): Promise<Reconciled> {
   const filed = await doors.pool(vault);
   if (filed === null) {
@@ -168,28 +189,29 @@ async function againstTheChain(
     return {
       of: 'unreadable',
       because: 'record',
-      why: `the chain holds ${onChain.size} note(s) for this vault and this device has no record of its notes`,
+      why: `the chain holds ${onChain.size} note(s) for this vault and this device has no record of its notes`
     };
   }
   const notes = filed;
   const held: Array<{ note: PoolNote; commitment: string }> = [];
   for (const note of notes) held.push({ note, commitment: (await doors.heldCommitmentOf(vault, note)).toLowerCase() });
   const named: Array<{ note: PoolNote; commitment: string }> = [];
-  for (const note of [...(await doors.accountedFor?.(vault) ?? []), ...rebuilt]) {
+  for (const note of [...((await doors.accountedFor?.(vault)) ?? []), ...rebuilt]) {
     named.push({ note, commitment: (await doors.heldCommitmentOf(vault, note)).toLowerCase() });
   }
   const verdict = poolAgainstChain(held, { has: (c) => onChain.has(c), size: BigInt(onChain.size) }, named);
   if (verdict.of === 'pool-claims-more') {
     return {
       of: 'contradicted',
-      why: `${verdict.missing.length} of the ${notes.length} note(s) this vault's record holds are not among the notes the `
-        + 'chain holds for it, so the record claims money the vault cannot spend',
+      why:
+        `${verdict.missing.length} of the ${notes.length} note(s) this vault's record holds are not among the notes the ` +
+        'chain holds for it, so the record claims money the vault cannot spend'
     };
   }
   if (verdict.of === 'counts-differ') {
     return {
       of: 'contradicted',
-      why: `this vault's record holds ${verdict.poolHolds} note(s) and counts one of them more than once, so it counts money twice`,
+      why: `this vault's record holds ${verdict.poolHolds} note(s) and counts one of them more than once, so it counts money twice`
     };
   }
   /* Notes nothing here names are left out: never the vault's to spend, and never a reason to stop reading. */
@@ -232,37 +254,59 @@ export const deviceVaultHoldings = (doors: DeviceHoldingsDoors): DeviceVaultHold
       const read = await publicHoldingsOfTheVault(doors, vault);
       if (read.of !== 'held') return read;
       const wanted = token.toLowerCase();
-      return { of: 'held', amount: read.holdings.filter((h) => h.token.toLowerCase() === wanted).reduce((a, h) => a + h.amount, 0n) };
+      return {
+        of: 'held',
+        amount: read.holdings.filter((h) => h.token.toLowerCase() === wanted).reduce((a, h) => a + h.amount, 0n)
+      };
     }
-    if (form !== 'shielded') return { of: 'unreadable', why: `"${String(form)}" is not a form money takes on Midnight` };
+    if (form !== 'shielded')
+      return { of: 'unreadable', why: `"${String(form)}" is not a form money takes on Midnight` };
     const r = await reconciled(doors, vault as Hex);
     if (r.of === 'nothing-yet') return { of: 'unreadable', why: NO_NOTES_YET };
-    if (r.of !== 'notes') return r.of === 'contradicted' ? { of: 'contradicted', why: r.why } : { of: 'unreadable', why: r.of === 'unreadable' ? r.why : NOT_FILED_HERE };
+    if (r.of !== 'notes')
+      return r.of === 'contradicted'
+        ? { of: 'contradicted', why: r.why }
+        : { of: 'unreadable', why: r.of === 'unreadable' ? r.why : NOT_FILED_HERE };
     const wanted = token.toLowerCase();
-    return { of: 'held', amount: r.notes.filter((n) => n.token.toLowerCase() === wanted).reduce((a, n) => a + n.value, 0n) };
+    return {
+      of: 'held',
+      amount: r.notes.filter((n) => n.token.toLowerCase() === wanted).reduce((a, n) => a + n.value, 0n)
+    };
   },
 
   fits: async (vault: string, payments: ReadonlyArray<PaymentAsked>): Promise<FitAnswer> => {
-    if (payments.length > 0 && payments.every((p) => p.payee.kind === 'unshielded')) return publicPaymentsFit(doors, vault, payments);
+    if (payments.length > 0 && payments.every((p) => p.payee.kind === 'unshielded'))
+      return publicPaymentsFit(doors, vault, payments);
     if (payments.some((p) => p.payee.kind !== 'shielded')) {
-      return { of: 'unreadable', why: 'these payments mix private and public money, and a vault pays one run in one form' };
+      return {
+        of: 'unreadable',
+        why: 'these payments mix private and public money, and a vault pays one run in one form'
+      };
     }
     const r = await reconciled(doors, vault as Hex);
     if (r.of === 'nothing-yet') return { of: 'unreadable', why: NO_NOTES_YET };
-    if (r.of !== 'notes') return r.of === 'contradicted' ? { of: 'contradicted', why: r.why } : { of: 'unreadable', why: r.of === 'unreadable' ? r.why : NOT_FILED_HERE };
+    if (r.of !== 'notes')
+      return r.of === 'contradicted'
+        ? { of: 'contradicted', why: r.why }
+        : { of: 'unreadable', why: r.of === 'unreadable' ? r.why : NOT_FILED_HERE };
     /*
      * Only the walk's own answer is an answer about the notes. Anything else -
      * the background thread not starting, a payment it could not read - is a
      * failure to ask, and is passed on as that rather than as money short.
      */
-    const answer = await doors.paymentsFit(r.notes, payments.map((p) => ({ token: p.token as Hex, amount: p.amount })));
+    const answer = await doors.paymentsFit(
+      r.notes,
+      payments.map((p) => ({ token: p.token as Hex, amount: p.amount }))
+    );
     if (answer?.of === 'fits') return { of: 'fits' };
     if (answer?.of === 'does-not-fit') {
       /* The note-level reason ends by advising a merge, and no vault can merge notes. */
       return { of: 'does-not-fit', why: String(answer.why).replace(/\s*Merge them first[^.]*\.?\s*$/, '') };
     }
-    throw new Error('the check of whether this vault can make each payment did not finish on this device. Reload the page and try again');
-  },
+    throw new Error(
+      'the check of whether this vault can make each payment did not finish on this device. Reload the page and try again'
+    );
+  }
 });
 
 /* ------------------------------------------------ what it holds publicly */
@@ -282,14 +326,22 @@ async function publicHoldingsOfTheVault(doors: DeviceHoldingsDoors, vault: strin
  * notes to fit, so it fits when the balance of each token covers what the
  * payments in that token add up to.
  */
-async function publicPaymentsFit(doors: DeviceHoldingsDoors, vault: string, payments: ReadonlyArray<PaymentAsked>): Promise<FitAnswer> {
+async function publicPaymentsFit(
+  doors: DeviceHoldingsDoors,
+  vault: string,
+  payments: ReadonlyArray<PaymentAsked>
+): Promise<FitAnswer> {
   const read = await publicHoldingsOfTheVault(doors, vault);
   if (read.of !== 'held') return read;
   const asked = new Map<string, bigint>();
   for (const p of payments) asked.set(p.token.toLowerCase(), (asked.get(p.token.toLowerCase()) ?? 0n) + p.amount);
   for (const [token, amount] of asked) {
     const held = read.holdings.filter((h) => h.token.toLowerCase() === token).reduce((a, h) => a + h.amount, 0n);
-    if (held < amount) return { of: 'does-not-fit', why: `the vault holds ${held} of token ${token} publicly and the payments in it add up to ${amount}` };
+    if (held < amount)
+      return {
+        of: 'does-not-fit',
+        why: `the vault holds ${held} of token ${token} publicly and the payments in it add up to ${amount}`
+      };
   }
   return { of: 'fits' };
 }
@@ -313,18 +365,23 @@ function publicHoldingsFromView(view: unknown): PublicHoldingsAnswer {
   if (!Array.isArray(v.publicBalances)) {
     return {
       of: 'unreadable',
-      why: typeof v.publicBalancesWhy === 'string' && v.publicBalancesWhy !== ''
-        ? v.publicBalancesWhy
-        : 'the read of the chain did not say what this vault holds in public money',
+      why:
+        typeof v.publicBalancesWhy === 'string' && v.publicBalancesWhy !== ''
+          ? v.publicBalancesWhy
+          : 'the read of the chain did not say what this vault holds in public money'
     };
   }
   const holdings: Array<{ token: string; amount: bigint }> = [];
   for (const row of v.publicBalances as Array<{ token?: unknown; amount?: unknown } | null>) {
-    if (typeof row?.token !== 'string' || !COLOUR.test(row.token)
-      || typeof row.amount !== 'string' || !WHOLE.test(row.amount)) {
+    if (
+      typeof row?.token !== 'string' ||
+      !COLOUR.test(row.token) ||
+      typeof row.amount !== 'string' ||
+      !WHOLE.test(row.amount)
+    ) {
       return {
         of: 'unreadable',
-        why: 'the read of the vault gave an amount this page cannot read, so none is shown',
+        why: 'the read of the vault gave an amount this page cannot read, so none is shown'
       };
     }
     holdings.push({ token: row.token, amount: BigInt(row.amount) });

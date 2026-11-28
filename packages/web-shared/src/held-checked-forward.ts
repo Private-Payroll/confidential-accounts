@@ -6,9 +6,23 @@
  * anchor past it.
  */
 import type { Hex } from '../../../src/core/crypto.js';
-import { ENTRIES_AT_ONCE, entryIdOf, manifestEntryRefusal, type ManifestEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
 import {
-  checkForward, headStepOf, leafHashOf, treeHeaderReadable, treeLeafRefusal, type CheckedHead, type HeadStep, type TreeHeader, type TreeLeaf,
+  ENTRIES_AT_ONCE,
+  entryIdOf,
+  manifestEntryRefusal,
+  type ManifestEntry,
+  type ManifestEntryBody
+} from '../../../src/midnight/record-manifest.js';
+import {
+  checkForward,
+  headStepOf,
+  leafHashOf,
+  treeHeaderReadable,
+  treeLeafRefusal,
+  type CheckedHead,
+  type HeadStep,
+  type TreeHeader,
+  type TreeLeaf
 } from '../../../src/midnight/record-tree.js';
 import type { AnchorLanded } from './governed-call-builder.js';
 import type { DirectoryAsAnchoredHere, HeadsHere, HeldDoors, SeatsHere } from './held-heads-here.js';
@@ -18,13 +32,23 @@ import { keptWith, type CheckedHeads } from './tree-kept-here.js';
 import type { DirectoryBelieved, HeldAsAnchored } from './vault-page-doors.js';
 
 /** Which seat held a key as anchored, and the first directory version the service served short of what the headers anchor. */
-export const seatOfAsAnchored = (here: DirectoryBelieved, anchored: Pick<DirectoryAsAnchoredHere, 'dirAt' | 'accountHeldOf'>) => {
+export const seatOfAsAnchored = (
+  here: DirectoryBelieved,
+  anchored: Pick<DirectoryAsAnchoredHere, 'dirAt' | 'accountHeldOf'>
+) => {
   const { dirAt, accountHeldOf } = anchored;
   /** The first directory version a header on the chain's path anchors that the service did not serve, or served as other bytes. */
   let servedShort: { readonly version: number; readonly without: boolean } | undefined;
   /** Which seat held a key, by the directory as anchored at `dirVersion` - each version counted against who held the account as it was anchored. */
-  const seatOf = (publicKey: Hex, entry: ManifestEntryBody | undefined, dirVersion: number, header: TreeHeader): string | null | undefined => {
-    const inHeader = new Map(header.changes.filter((c) => c.leaf.store === 'directory').map((c) => [c.leaf.version, c.leaf]));
+  const seatOf = (
+    publicKey: Hex,
+    entry: ManifestEntryBody | undefined,
+    dirVersion: number,
+    header: TreeHeader
+  ): string | null | undefined => {
+    const inHeader = new Map(
+      header.changes.filter((c) => c.leaf.store === 'directory').map((c) => [c.leaf.version, c.leaf])
+    );
     /* Every version anchored up to `dirVersion` is in `dirAt` or this header; one in neither was passed over, never entered. */
     const digests = new Map<number, Hex>();
     for (let v = 1; v <= dirVersion; v += 1) {
@@ -79,9 +103,10 @@ const headsByPage = (doors: Pick<HeldDoors, 'builder'>) => {
     if (asked.length === 0) return;
     const a = await doors.builder.anchorHeads({ after: asked });
     if (!Array.isArray(a?.after) || a.after.length !== asked.length) {
-      throw new AnchorNotMade('this device could not read the anchor\'s heads. Reload the page');
+      throw new AnchorNotMade("this device could not read the anchor's heads. Reload the page");
     }
-    if (a.after.some((h) => typeof h !== 'string')) throw new AnchorNotMade('the anchor\'s heads were not read for every batch. Reload the page');
+    if (a.after.some((h) => typeof h !== 'string'))
+      throw new AnchorNotMade("the anchor's heads were not read for every batch. Reload the page");
     asked.forEach((s, i) => kept.set(keyOf(s), a.after[i] as Hex));
   };
   return {
@@ -89,7 +114,7 @@ const headsByPage = (doors: Pick<HeldDoors, 'builder'>) => {
     headsOf: async (steps: readonly HeadStep[]): Promise<readonly Hex[]> => {
       await made(steps);
       return steps.map((s) => kept.get(keyOf(s))!);
-    },
+    }
   };
 };
 
@@ -112,46 +137,62 @@ const forwardFromHere = async (w: ForwardFrom) => {
    * seat whose entry this device did not believe leaves its tag unmapped, and
    * the check goes on without it.
    */
-  const tagged = doors.tagSeats === undefined || landed.length === 0 ? undefined : await doors.tagSeats(here).catch(() => {
-    /* Unread: the check goes on with no tag mapped. */
-    return undefined;
-  });
+  const tagged =
+    doors.tagSeats === undefined || landed.length === 0
+      ? undefined
+      : await doors.tagSeats(here).catch(() => {
+          /* Unread: the check goes on with no tag mapped. */
+          return undefined;
+        });
   /* A head this device checked before the one it checks from, whole: what a recovery the quorum approved may resume from. */
   const earlier = (h: Hex): CheckedHead | undefined => kept?.recent?.find((r) => r.head === h.toLowerCase());
   const made = headsByPage(doors);
-  const forwardFrom = (start: CheckedHead) => checkForward({
-    company, from: start, landed: new Set(landed.map((l) => l.head.toLowerCase() as Hex)), chainHead: head,
-    ...(kept?.recent === undefined || kept.recent.length === 0 ? {} : { earlier, earliestSeq: kept.recent[0]!.seq }),
-    ...(tagged === undefined ? {} : { tagSeat: (t: Hex) => tagged.get(t.toLowerCase()) }),
-    headersAfter: async (seq, limit) => {
-      const page = await doors.tree.headersAfter(company, seq, limit);
-      await made.pageGiven((page.headers ?? []).filter((h): h is TreeHeader => treeHeaderReadable(h) && h.seq > seq));
-      for (const e of page.entries ?? []) if (manifestEntryRefusal(company, e) === null) givenEntries.set(entryIdOf(e as ManifestEntry), e as ManifestEntry);
-      for (const l of page.leaves ?? []) if (treeLeafRefusal(l) === null) givenLeaves.set(leafHashOf(l as TreeLeaf), l as TreeLeaf);
-      return page;
-    },
-    headsOf: made.headsOf,
-    seatOf,
-    confirmed: async (path) => {
-      for (const s of path) headsBySeq.set(s.header.seq, s.head);
-      await readSeats(path.map((s) => s.header.held));
-    },
-    keep: async (c, header) => {
-      for (const ch of header.changes) {
-        if (ch.leaf.store === 'directory') dirAt.set(ch.leaf.version, { digest: ch.leaf.digest, batch: header.seq, held: header.held });
+  const forwardFrom = (start: CheckedHead) =>
+    checkForward({
+      company,
+      from: start,
+      landed: new Set(landed.map((l) => l.head.toLowerCase() as Hex)),
+      chainHead: head,
+      ...(kept?.recent === undefined || kept.recent.length === 0 ? {} : { earlier, earliestSeq: kept.recent[0]!.seq }),
+      ...(tagged === undefined ? {} : { tagSeat: (t: Hex) => tagged.get(t.toLowerCase()) }),
+      headersAfter: async (seq, limit) => {
+        const page = await doors.tree.headersAfter(company, seq, limit);
+        await made.pageGiven((page.headers ?? []).filter((h): h is TreeHeader => treeHeaderReadable(h) && h.seq > seq));
+        for (const e of page.entries ?? [])
+          if (manifestEntryRefusal(company, e) === null)
+            givenEntries.set(entryIdOf(e as ManifestEntry), e as ManifestEntry);
+        for (const l of page.leaves ?? [])
+          if (treeLeafRefusal(l) === null) givenLeaves.set(leafHashOf(l as TreeLeaf), l as TreeLeaf);
+        return page;
+      },
+      headsOf: made.headsOf,
+      seatOf,
+      confirmed: async (path) => {
+        for (const s of path) headsBySeq.set(s.header.seq, s.head);
+        await readSeats(path.map((s) => s.header.held));
+      },
+      keep: async (c, header) => {
+        for (const ch of header.changes) {
+          if (ch.leaf.store === 'directory')
+            dirAt.set(ch.leaf.version, { digest: ch.leaf.digest, batch: header.seq, held: header.held });
+        }
+        if (header.seq === 0) first = header;
+        for (const ch of header.changes) if (ch.prior !== null) givenLeaves.set(leafHashOf(ch.prior), ch.prior);
+        lastChecked = header;
+        kept = keptAfter(kept, c, fromZero);
+        /* From a start this device chose, nothing is kept until the read holds what it must (below). */
+        if (chosen === null) await doors.checked?.write(company, kept);
       }
-      if (header.seq === 0) first = header;
-      for (const ch of header.changes) if (ch.prior !== null) givenLeaves.set(leafHashOf(ch.prior), ch.prior);
-      lastChecked = header;
-      kept = keptAfter(kept, c, fromZero);
-      /* From a start this device chose, nothing is kept until the read holds what it must (below). */
-      if (chosen === null) await doors.checked?.write(company, kept);
-    },
-  });
+    });
   return {
-    forwardFrom, tagged, givenEntries, givenLeaves,
+    forwardFrom,
+    tagged,
+    givenEntries,
+    givenLeaves,
     read: () => ({ kept, first, lastChecked }),
-    fromZeroNoMore: () => { fromZero = false; },
+    fromZeroNoMore: () => {
+      fromZero = false;
+    }
   };
 };
 
@@ -176,8 +217,14 @@ export async function checkedForwardHere(w: ForwardFrom, from: CheckedHead) {
     const keptAt = await doors.headers.at(company, forward.stop.seq);
     for (const k of keptAt) {
       /* A repair: through the view it is sent without the check and never ends it; refused, the check says so. */
-      if (doors.tree.refileHeader !== undefined) await doors.tree.refileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE));
-      else try { await doors.tree.fileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE)); } catch { /* the service would not keep it: the check says */ }
+      if (doors.tree.refileHeader !== undefined)
+        await doors.tree.refileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE));
+      else
+        try {
+          await doors.tree.fileHeader(company, k.header, k.entries.slice(0, ENTRIES_AT_ONCE));
+        } catch {
+          /* the service would not keep it: the check says */
+        }
     }
     if (keptAt.length > 0) forward = await forwardFrom(forward.reached);
   }
@@ -188,18 +235,32 @@ export async function checkedForwardHere(w: ForwardFrom, from: CheckedHead) {
    * - the batches this device cannot follow were given up, not withheld - and otherwise with the seat that moved the
    * anchor past it, where its tag maps to one: the block's last anchoring seat, said so where the block held several.
    */
-  const stop = forward.stop?.stop !== 'not-given' ? forward.stop : (() => {
-    const after = landed.slice(landed.findIndex((l) => l.head.toLowerCase() === reached.head) + 1);
-    if (after.some((l) => l.recovered === true)) return { ...forward.stop, recovery: true as const };
-    const next = after[0];
-    const by = next?.tag === undefined ? undefined : tagged?.get(next.tag.toLowerCase());
-    if (by === undefined) return forward.stop;
-    return { ...forward.stop, movedBy: by, ...((next!.anchorsInBlock ?? 1) > 1 ? { anchorsInBlock: next!.anchorsInBlock } : {}) };
-  })();
+  const stop =
+    forward.stop?.stop !== 'not-given'
+      ? forward.stop
+      : (() => {
+          const after = landed.slice(landed.findIndex((l) => l.head.toLowerCase() === reached.head) + 1);
+          if (after.some((l) => l.recovered === true)) return { ...forward.stop, recovery: true as const };
+          const next = after[0];
+          const by = next?.tag === undefined ? undefined : tagged?.get(next.tag.toLowerCase());
+          if (by === undefined) return forward.stop;
+          return {
+            ...forward.stop,
+            movedBy: by,
+            ...((next!.anchorsInBlock ?? 1) > 1 ? { anchorsInBlock: next!.anchorsInBlock } : {})
+          };
+        })();
   const { kept, first, lastChecked } = f.read();
   /* The last header this device checked, kept with what checking it needs, so this device can file it again. */
   if (lastChecked !== undefined) {
-    await doors.headers?.checked(company, keptWith(lastChecked, (id) => givenEntries.get(id), (h) => givenLeaves.get(h)));
+    await doors.headers?.checked(
+      company,
+      keptWith(
+        lastChecked,
+        (id) => givenEntries.get(id),
+        (h) => givenLeaves.get(h)
+      )
+    );
   }
   return { forward, reached, stop, kept, first };
 }

@@ -3,7 +3,16 @@ import { KitProvider } from 'vaults-ui';
 import { App } from './app.js';
 import { DocumentTitle } from './document-title.js';
 import { LANGUAGES } from './languages.js';
-import { browserStorage, computerIsDark, followComputer, keepPreferences, readPreferences, showAppearance, themeFor, type Preferences } from './preferences.js';
+import {
+  browserStorage,
+  computerIsDark,
+  followComputer,
+  keepPreferences,
+  readPreferences,
+  showAppearance,
+  themeFor,
+  type Preferences
+} from './preferences.js';
 import { onAMac } from './shortcuts.js';
 
 /**
@@ -16,7 +25,9 @@ export function Root() {
   const [preferences, setPreferences] = useState<Preferences>(() => readPreferences(browserStorage()));
   const [dark, setDark] = useState<boolean>(computerIsDark);
   useEffect(() => followComputer(() => setDark(computerIsDark())), []);
-  useEffect(() => { showAppearance(document.documentElement, themeFor(preferences.mode, dark), preferences.base); }, [preferences.mode, preferences.base, dark]);
+  useEffect(() => {
+    showAppearance(document.documentElement, themeFor(preferences.mode, dark), preferences.base);
+  }, [preferences.mode, preferences.base, dark]);
   const choose = useCallback((change: Partial<Preferences>) => {
     setPreferences((was) => {
       const next = { ...was, ...change };

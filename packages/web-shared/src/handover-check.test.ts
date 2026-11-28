@@ -19,9 +19,13 @@ describe('a committee is built only from a roster that names a signer at every s
     expect(why).toContain(WAITING);
     expect(why).toContain(ALSO);
     /* RED WHEN: the refusal says giving keys admits a waiting signer: only Admit a signer, from a seat that may file the list, does. */
-    expect(why).toMatch(/still waiting to be admitted is admitted from the wallet of a seat that may file the list of signers \(Admit a signer\)/u);
+    expect(why).toMatch(
+      /still waiting to be admitted is admitted from the wallet of a seat that may file the list of signers \(Admit a signer\)/u
+    );
     expect(why).not.toMatch(/gives their keys .* admits them/u);
     /* RED WHEN: a signer already admitted whose keys are not in the list is not told to give them, for the next seat action to fold in. */
-    expect(why).toMatch(/already admitted whose keys are not in the list gives their keys from their own wallet .* folds them in/u);
+    expect(why).toMatch(
+      /already admitted whose keys are not in the list gives their keys from their own wallet .* folds them in/u
+    );
   });
 });

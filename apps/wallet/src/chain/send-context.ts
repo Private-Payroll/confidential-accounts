@@ -37,15 +37,16 @@ export interface SendWiring {
    * prover, and that network's coins. Null only in tests that exercise the
    * rehearsal side alone. */
   readonly live: {
-    readonly doorsFor: (identity: Identity, account: number) =>
-    SendDoors & { readonly stop?: () => Promise<void> };
+    readonly doorsFor: (identity: Identity, account: number) => SendDoors & { readonly stop?: () => Promise<void> };
     /** The network's terms, fetched from the indexer — shown once on this
      * screen, hash recorded, blocking nothing (a decision, built). */
     readonly fetchTerms: () => Promise<{ hash: string; url: string }>;
   } | null;
   /** The pretend chain, kept one quiet click away. */
   readonly rehearsalDoorsFor: (
-    identity: Identity, account: number, scenario: RehearsalScenario,
+    identity: Identity,
+    account: number,
+    scenario: RehearsalScenario
   ) => SendDoors & { readonly stop?: () => Promise<void> };
   /** The engine itself — injectable so screen tests can drive states. */
   readonly start: typeof startSend;
@@ -57,9 +58,7 @@ export interface SendWiring {
  * same click-to-check rule the balance card holds — and one facade serves
  * every send until the screen is left.
  */
-export function liveDoors(
-  identity: Identity, account: number,
-): SendDoors & { readonly stop: () => Promise<void> } {
+export function liveDoors(identity: Identity, account: number): SendDoors & { readonly stop: () => Promise<void> } {
   let running: Promise<WalletFacade> | null = null;
   const facade = (): Promise<WalletFacade> => {
     running ??= (async () => {
@@ -81,13 +80,15 @@ export function liveDoors(
       if (!running) return;
       const f = await running.catch(() => null);
       running = null;
-      await f?.stop().catch(() => { /* already stopping is fine */ });
-    },
+      await f?.stop().catch(() => {
+        /* already stopping is fine */
+      });
+    }
   };
 }
 
 export const SendContext = createContext<SendWiring>({
   live: { doorsFor: liveDoors, fetchTerms: fetchNetworkTerms },
   rehearsalDoorsFor: (identity, account, scenario) => rehearsalDoors(identity, account, scenario),
-  start: startSend,
+  start: startSend
 });

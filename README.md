@@ -23,12 +23,12 @@ under a policy, with an audit trail.
 Porting a Safe would not fix it. On a transparent chain a Safe publishes every owner, every approval
 and every balance. On Midnight we can do what Safe cannot.
 
-|           | Safe on a transparent chain | Here                                                             |
-| --------- | --------------------------- | ---------------------------------------------------------------- |
-| Owners    | Every address public        | Blinded commitments as Merkle leaves; only the root on chain       |
-| Approvals | Name the signer             | Nullifiers: a distinct authorised signer approved, not which one   |
-| Payload   | Public                      | Commitment only                                                    |
-| Balance   | Public                      | Not on chain at all. The account contract holds no balance field   |
+|           | Safe on a transparent chain | Here                                                                  |
+| --------- | --------------------------- | --------------------------------------------------------------------- |
+| Owners    | Every address public        | Blinded commitments as Merkle leaves; only the root on chain          |
+| Approvals | Name the signer             | Nullifiers: a distinct authorised signer approved, not which one      |
+| Payload   | Public                      | Commitment only                                                       |
+| Balance   | Public                      | Not on chain at all. The account contract holds no balance field      |
 | Threshold | Public                      | Public here too, deliberately: it is what makes the account auditable |
 
 ## How it works
@@ -47,8 +47,8 @@ are held to, and it is the shortest route to what each one actually means.
 
 ## Current state
 
-| Layer                        | State                                                                  |
-| ---------------------------- | ---------------------------------------------------------------------- |
+| Layer                        | State                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------- |
 | Cryptography                 | Real. ed25519, x25519, AES-256-GCM, all `@noble`. Passkeys via WebAuthn |
 | Account, policy, payroll     | Real                                                                    |
 | Identity and multi-tenancy   | Real. A wallet signs in. There is no password, anywhere                 |
@@ -56,23 +56,23 @@ are held to, and it is the shortest route to what each one actually means.
 | Wallet application           | Real. `apps/wallet`                                                     |
 | Contracts                    | Two. The account and the vault. Both compile; their circuits are tested |
 | On chain                     | The account contract has been deployed to Stagenet and settled          |
-| Ledger and proofs at runtime | **Simulated.** `MidnightLedger` is written, not wired to a node          |
-| Plug-in isolation            | **Not built.** The catalogue is manifest data, not a sandbox             |
+| Ledger and proofs at runtime | **Simulated.** `MidnightLedger` is written, not wired to a node         |
+| Plug-in isolation            | **Not built.** The catalogue is manifest data, not a sandbox            |
 
 ### On chain
 
 The account contract was deployed to Midnight Stagenet on 28 August 2026 and the chain accepted it
 as `SucceedEntirely`, at block 215,346.
 
-|                              |                                                                     |
-| ---------------------------- | ------------------------------------------------------------------- |
-| Circuits live                | 11 of 15                                                             |
-| Transaction size             | 31,201 of a 50,000 limit - 62.4%, against a real ceiling of 37,500   |
-| Predicted before submitting  | 31,450, so the size model was 0.8% low                               |
-| Fee                          | estimated to the unit                                                |
-| Deploy time                  | 28.3s, or 67.4s including wallet sync                                |
-| Proof server                 | `midnightntwrk/proof-server:9.0.0-rc.3`                              |
-| Protocol version             | 2000000                                                              |
+|                             |                                                                    |
+| --------------------------- | ------------------------------------------------------------------ |
+| Circuits live               | 11 of 15                                                           |
+| Transaction size            | 31,201 of a 50,000 limit - 62.4%, against a real ceiling of 37,500 |
+| Predicted before submitting | 31,450, so the size model was 0.8% low                             |
+| Fee                         | estimated to the unit                                              |
+| Deploy time                 | 28.3s, or 67.4s including wallet sync                              |
+| Proof server                | `midnightntwrk/proof-server:9.0.0-rc.3`                            |
+| Protocol version            | 2000000                                                            |
 
 Of the transaction, 25,035 bytes are the contract's initial state and 22,541 are the eleven verifier
 keys. **The four remaining circuits were deferred deliberately, not omitted**: `adopt`,

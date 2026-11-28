@@ -1,7 +1,5 @@
 import { ShieldedWallet } from '@midnightntwrk/wallet-sdk/shielded';
-import type {
-  ShieldedWallet as RunningShieldedWallet, ShieldedWalletClass,
-} from '@midnightntwrk/wallet-sdk/shielded';
+import type { ShieldedWallet as RunningShieldedWallet, ShieldedWalletClass } from '@midnightntwrk/wallet-sdk/shielded';
 import { DefaultForkSchedule, NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
 import type { ShieldedKeysByEpoch } from '@midnightntwrk/wallet-sdk';
 import { ZswapSecretKeys as V8ZswapSecretKeys } from '@midnightntwrk/wallet-sdk/ledger/v8';
@@ -79,9 +77,11 @@ export type BalanceState =
    * figure did not record them, as a shielded checkpoint from an older version
    * of the wallet did not, and absent never means none. */
   | {
-    readonly name: 'synced'; readonly night: bigint; readonly asOf: number;
-    readonly others?: OtherTokens;
-  }
+      readonly name: 'synced';
+      readonly night: bigint;
+      readonly asOf: number;
+      readonly others?: OtherTokens;
+    }
   /** The indexer could not be reached or the sync died. NOT a zero. */
   | { readonly name: 'failed'; readonly message: string };
 
@@ -94,7 +94,9 @@ export type StopBalance = () => void;
  * one on screen.
  */
 export type BalanceEngine = (
-  identity: Identity, account: number, onState: (state: BalanceState) => void,
+  identity: Identity,
+  account: number,
+  onState: (state: BalanceState) => void
 ) => StopBalance;
 
 /** The HD-derived shielded key for one account — the RIGHT thirty-two bytes. */
@@ -122,8 +124,10 @@ const guardAccount = (account: number): void => {
    * open is §2.3's invisible-money trap wearing a sync job. Account 1 is
    * refused one call deeper by `moneyAt` as well. */
   if (!isWalletAccount(account)) {
-    throw new Error(`account ${account} is not a wallet this interface offers`
-      + (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.'));
+    throw new Error(
+      `account ${account} is not a wallet this interface offers` +
+        (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.')
+    );
   }
 };
 
@@ -137,19 +141,20 @@ const guardAccount = (account: number): void => {
  */
 export const READ_BATCH_SIZE = 100;
 
-const configuredWallet = (): ShieldedWalletClass => ShieldedWallet({
-  networkId: NETWORK,
-  indexerClientConnection: {
-    indexerHttpUrl: INDEXER_HTTP_URL,
-    indexerWsUrl: INDEXER_WS_URL,
-  },
-  batchUpdates: { size: READ_BATCH_SIZE },
-  /* History is later work; the configuration merely requires that a storage
-   * exists. A no-op keeps every fact about payments out of every store
-   * until history is actually built and audited. */
-  txHistoryStorage: new NoOpTransactionHistoryStorage(),
-  forks: DefaultForkSchedule,
-});
+const configuredWallet = (): ShieldedWalletClass =>
+  ShieldedWallet({
+    networkId: NETWORK,
+    indexerClientConnection: {
+      indexerHttpUrl: INDEXER_HTTP_URL,
+      indexerWsUrl: INDEXER_WS_URL
+    },
+    batchUpdates: { size: READ_BATCH_SIZE },
+    /* History is later work; the configuration merely requires that a storage
+     * exists. A no-op keeps every fact about payments out of every store
+     * until history is actually built and audited. */
+    txHistoryStorage: new NoOpTransactionHistoryStorage(),
+    forks: DefaultForkSchedule
+  });
 
 /**
  * The SDK's shielded wallet for ONE of this identity's accounts, through the
@@ -177,9 +182,7 @@ type Synced = Extract<BalanceState, { name: 'synced' }>;
  * map: NIGHT in STARs, and every other private token the wallet holds
  * (`splitShielded`).
  */
-export const syncedFromBalances = (
-  balances: Readonly<Record<string, bigint>>, asOf: number,
-): Synced => {
+export const syncedFromBalances = (balances: Readonly<Record<string, bigint>>, asOf: number): Synced => {
   const { night, others } = splitShielded(balances, NIGHT_RAW);
   return { name: 'synced', night, asOf, others };
 };
@@ -191,12 +194,14 @@ export const syncedFromBalances = (
  * none. The live sync that follows replaces it with the whole map.
  */
 export const syncedFromCheckpoint = (checkpoint: WalletCheckpoint): Synced =>
-  (checkpoint.others === undefined
+  checkpoint.others === undefined
     ? { name: 'synced', night: checkpoint.night, asOf: checkpoint.asOf }
     : {
-      name: 'synced', night: checkpoint.night, asOf: checkpoint.asOf,
-      others: checkpoint.others,
-    });
+        name: 'synced',
+        night: checkpoint.night,
+        asOf: checkpoint.asOf,
+        others: checkpoint.others
+      };
 
 /**
  * The raw engine: checkpoint-first, then the SDK wallet's own state stream,
@@ -210,7 +215,9 @@ export const syncedFromCheckpoint = (checkpoint: WalletCheckpoint): Synced =>
  */
 const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
   let stopped = false;
-  const tell = (state: BalanceState): void => { if (!stopped) onState(state); };
+  const tell = (state: BalanceState): void => {
+    if (!stopped) onState(state);
+  };
 
   /**
    * **WHICH WALLET THIS ENGINE BELONGS TO, DECIDED HERE AND NOWHERE ELSE.**
@@ -250,16 +257,16 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
     }
     try {
       try {
-        wallet = checkpoint
-          ? walletRestoredFrom(checkpoint.serialized)
-          : await walletFor(identity, account);
+        wallet = checkpoint ? walletRestoredFrom(checkpoint.serialized) : await walletFor(identity, account);
       } catch {
         /* A checkpoint the SDK refuses (a version drift, a bad blob) is a
          * cache miss, never a dead end: fall back to the cold door. */
         wallet = await walletFor(identity, account);
       }
       if (stopped) {
-        void wallet.stop().catch(() => { /* already stopping is fine */ });
+        void wallet.stop().catch(() => {
+          /* already stopping is fine */
+        });
         return;
       }
       subscription = wallet.state.subscribe({
@@ -274,10 +281,20 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
              * failure to write is a failure to cache, nothing more. The store
              * keeps none with anything in flight (`snapshot.ts` says why). */
             try {
-              void saveWalletCheckpoint(coinPublicKey, account, {
-                serialized: state.serialize(), night, others, asOf,
-              }, walletId).catch(() => {});
-            } catch { /* serialisation refused; the next sync tries again */ }
+              void saveWalletCheckpoint(
+                coinPublicKey,
+                account,
+                {
+                  serialized: state.serialize(),
+                  night,
+                  others,
+                  asOf
+                },
+                walletId
+              ).catch(() => {});
+            } catch {
+              /* serialisation refused; the next sync tries again */
+            }
             return;
           }
           if (numberShown) return; /* the established number stands */
@@ -289,7 +306,7 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
         },
         error: (e: unknown) => {
           if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
-        },
+        }
       });
       wallet.start(shieldedKeysFor(identity, account)).catch((e: unknown) => {
         if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
@@ -302,7 +319,9 @@ const startBalanceRaw: BalanceEngine = (identity, account, onState) => {
   return () => {
     stopped = true;
     subscription?.unsubscribe();
-    void wallet?.stop().catch(() => { /* already stopping is fine */ });
+    void wallet?.stop().catch(() => {
+      /* already stopping is fine */
+    });
   };
 };
 
@@ -325,7 +344,7 @@ export const GIVE_UP_AFTER_MS = 45_000;
 export function withOwnClock(
   engine: BalanceEngine,
   quietMs: number = QUIET_AFTER_MS,
-  giveUpMs: number = GIVE_UP_AFTER_MS,
+  giveUpMs: number = GIVE_UP_AFTER_MS
 ): BalanceEngine {
   return (identity, account, onState) => {
     let onlySilence = true;
@@ -343,9 +362,10 @@ export function withOwnClock(
       stopInner();
       onState({
         name: 'failed',
-        message: `nothing answered in ${Math.round(giveUpMs / 1000)} seconds — the wallet `
-          + 'stopped waiting. The indexer never spoke; the connection is the thing that '
-          + 'failed.',
+        message:
+          `nothing answered in ${Math.round(giveUpMs / 1000)} seconds — the wallet ` +
+          'stopped waiting. The indexer never spoke; the connection is the thing that ' +
+          'failed.'
       });
     }, giveUpMs);
     const disarm = (): void => {

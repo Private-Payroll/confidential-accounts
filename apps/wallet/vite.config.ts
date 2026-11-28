@@ -38,8 +38,11 @@ const FRAMING_HEADERS = framingHeadersFor(embedderFrom(process.env['VITE_APP_ORI
  * the contracts' own circuits and zkir-v2 for the network's.
  */
 export const WASM_PACKAGES = [
-  '@midnightntwrk/zkir-v3', '@midnightntwrk/zkir-v2', '@midnightntwrk/ledger-v9', '@midnightntwrk/ledger-v8',
-  '@midnightntwrk/onchain-runtime-v4',
+  '@midnightntwrk/zkir-v3',
+  '@midnightntwrk/zkir-v2',
+  '@midnightntwrk/ledger-v9',
+  '@midnightntwrk/ledger-v8',
+  '@midnightntwrk/onchain-runtime-v4'
 ] as const;
 
 export default defineConfig(({ mode }) => ({
@@ -80,7 +83,13 @@ export default defineConfig(({ mode }) => ({
    * the folder.
    */
   /* The company account's key digests the founding signer's wallet checks a creation against, made from this build's keys. */
-  plugins: [react(), tailwind(), wasm(), topLevelAwait(), SERVED_TO_THE_WALLET.plugin(fileURLToPath(new URL('../..', import.meta.url)))],
+  plugins: [
+    react(),
+    tailwind(),
+    wasm(),
+    topLevelAwait(),
+    SERVED_TO_THE_WALLET.plugin(fileURLToPath(new URL('../..', import.meta.url)))
+  ],
   /*
    * The PROVING WORKER's own build pipeline. `proving-worker.ts` loads
    * the zkir WASM, which arrives through the same wasm plugin and therefore
@@ -91,7 +100,7 @@ export default defineConfig(({ mode }) => ({
    */
   worker: {
     format: 'es',
-    plugins: () => [wasm(), topLevelAwait()],
+    plugins: () => [wasm(), topLevelAwait()]
   },
   resolve: {
     /*
@@ -112,7 +121,10 @@ export default defineConfig(({ mode }) => ({
        * alias points the built-in at a ten-line shim that throws on failure,
        * which is all the codec asks of it.
        */
-      { find: 'assert', replacement: fileURLToPath(new URL('../../packages/identity/src/browser/assert-shim.ts', import.meta.url)) },
+      {
+        find: 'assert',
+        replacement: fileURLToPath(new URL('../../packages/identity/src/browser/assert-shim.ts', import.meta.url))
+      },
       /*
        * The matching half of tsconfig's `paths`. The typechecker resolves
        * `@/` through `paths`; the bundler has to be told separately, or the
@@ -146,11 +158,20 @@ export default defineConfig(({ mode }) => ({
        * FROM SOURCE RATHER THAN FROM THE EMITTED BUILD, so the dev server and
        * the tests need no build step and can never read a stale one.
        */
-      { find: /^midnight-identity$/, replacement: fileURLToPath(new URL('../../packages/identity/src/index.ts', import.meta.url)) },
-      { find: /^midnight-identity\/browser$/, replacement: fileURLToPath(new URL('../../packages/identity/src/browser/index.ts', import.meta.url)) },
-      { find: /^midnight-identity\/network$/, replacement: fileURLToPath(new URL('../../packages/identity/src/wallet/network.ts', import.meta.url)) },
-      { find: 'midnight-identity', replacement: fileURLToPath(new URL('../../packages/identity/src', import.meta.url)) },
-    ],
+      {
+        find: /^midnight-identity$/,
+        replacement: fileURLToPath(new URL('../../packages/identity/src/index.ts', import.meta.url))
+      },
+      {
+        find: /^midnight-identity\/browser$/,
+        replacement: fileURLToPath(new URL('../../packages/identity/src/browser/index.ts', import.meta.url))
+      },
+      {
+        find: /^midnight-identity\/network$/,
+        replacement: fileURLToPath(new URL('../../packages/identity/src/wallet/network.ts', import.meta.url))
+      },
+      { find: 'midnight-identity', replacement: fileURLToPath(new URL('../../packages/identity/src', import.meta.url)) }
+    ]
   },
   server: { port: 5180, strictPort: true, host: true, headers: { ...FRAMING_HEADERS } },
   preview: { headers: { ...FRAMING_HEADERS } },
@@ -172,7 +193,7 @@ export default defineConfig(({ mode }) => ({
      * build from a different box. A test wallet does not need smaller CSS, and
      * one fewer native dependency is worth more than the bytes.
      */
-    cssMinify: false,
+    cssMinify: false
   },
   /*
    * `wallet-sdk-prover-client` is excluded for one reason: the WASM prover
@@ -196,12 +217,15 @@ export default defineConfig(({ mode }) => ({
    * build is not affected: it bundles them whole.
    */
   optimizeDeps: {
-    exclude: [...WASM_PACKAGES, '@midnightntwrk/wallet-sdk-prover-client'],
+    exclude: [...WASM_PACKAGES, '@midnightntwrk/wallet-sdk-prover-client']
   },
   /*
    * The project token of the network this wallet is built for, where its
    * record asks for one, read from the build's environment or the
    * repository's environment file and put into this build alone.
    */
-  define: projectTokenSettings(NETWORK, (name) => loadEnv(mode, fileURLToPath(new URL('../..', import.meta.url)), name)[name]),
+  define: projectTokenSettings(
+    NETWORK,
+    (name) => loadEnv(mode, fileURLToPath(new URL('../..', import.meta.url)), name)[name]
+  )
 }));

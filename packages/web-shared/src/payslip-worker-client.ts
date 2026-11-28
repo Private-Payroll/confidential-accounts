@@ -57,7 +57,7 @@ export function readerOver(worker: WorkerLike): ChainReader {
     const resolve = waiting.get(a.id);
     if (resolve === undefined) return;
     waiting.delete(a.id);
-    resolve(Array.isArray(a.recorded) && a.recorded.every(r => typeof r === 'boolean') ? a.recorded : null);
+    resolve(Array.isArray(a.recorded) && a.recorded.every((r) => typeof r === 'boolean') ? a.recorded : null);
   });
   return {
     recorded: (indexer, company, payments) => {
@@ -65,8 +65,8 @@ export function readerOver(worker: WorkerLike): ChainReader {
       next += 1;
       const answered = new Promise<boolean[] | null>((resolve) => waiting.set(id, resolve));
       worker.postMessage({ id, indexer, company, payments } satisfies PayslipAsk);
-      return answered.then(r => (r !== null && r.length === payments.length ? r : null));
-    },
+      return answered.then((r) => (r !== null && r.length === payments.length ? r : null));
+    }
   };
 }
 
@@ -86,18 +86,21 @@ export function payslipReader(): ChainReader {
         const reader = await started;
         return await Promise.race([
           reader.recorded(indexer, company, payments),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), READ_WAIT_MS)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), READ_WAIT_MS))
         ]);
       } catch {
         started = null;
         return null;
       }
-    },
+    }
   };
 }
 
 function startPayslipReader(): Promise<ChainReader> {
-  const worker = new Worker(new URL('./payslip-worker-entry.js', import.meta.url), { type: 'module', name: 'payslip-reader' });
+  const worker = new Worker(new URL('./payslip-worker-entry.js', import.meta.url), {
+    type: 'module',
+    name: 'payslip-reader'
+  });
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('the payslip reader did not start.')), 30_000);
     worker.addEventListener('message', function ready(event: MessageEvent) {

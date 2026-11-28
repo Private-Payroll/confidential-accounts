@@ -16,13 +16,11 @@ export interface UnopenableSaying {
   readonly tone: 'danger';
 }
 
-export function sayingForUnopenable(
-  opened: Extract<Opened, { of: 'unopenable' }>,
-): UnopenableSaying {
+export function sayingForUnopenable(opened: Extract<Opened, { of: 'unopenable' }>): UnopenableSaying {
   return {
     title: 'There are details here that this account cannot open',
     sentence: opened.why,
-    tone: 'danger',
+    tone: 'danger'
   };
 }
 
@@ -33,6 +31,7 @@ export function sayingForUnopenable(
  * saved it, or it may be this wallet's own and changed since - the two fail the
  * same way - so both are said, and nothing about it is acted on.
  */
-export const OTHER_DETAILS_HERE = 'This browser also keeps saved details that this wallet cannot '
-  + 'open: another wallet used here saved them, or they were changed after they were saved. They '
-  + 'are left exactly as they are, and they do not stop this wallet saving its own.';
+export const OTHER_DETAILS_HERE =
+  'This browser also keeps saved details that this wallet cannot ' +
+  'open: another wallet used here saved them, or they were changed after they were saved. They ' +
+  'are left exactly as they are, and they do not stop this wallet saving its own.';

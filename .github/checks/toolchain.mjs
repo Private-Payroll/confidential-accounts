@@ -39,7 +39,7 @@ const TARGETS = {
   'darwin/arm64': 'aarch64-darwin',
   'darwin/x64': 'x86_64-darwin',
   'linux/arm64': 'aarch64-unknown-linux-musl',
-  'linux/x64': 'x86_64-unknown-linux-musl',
+  'linux/x64': 'x86_64-unknown-linux-musl'
 };
 
 /**
@@ -55,7 +55,7 @@ export function targetFor(platform, arch) {
     throw new Error(
       `no Compact compiler ${COMPACTC_VERSION} is published for ${platform}/${arch}. ` +
         'Install a compiler of that version by hand and point COMPACT_HOME at the directory holding it; ' +
-        'every build step here reads that variable first.',
+        'every build step here reads that variable first.'
     );
   }
   return target;

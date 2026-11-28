@@ -1,32 +1,30 @@
 // @vitest-environment jsdom
-import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  act, cleanup, fireEvent, render, screen, waitFor, within,
-} from '../testing/render.js';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '../testing/render.js';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { IDBFactory } from 'fake-indexeddb';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { ShieldedWallet } from '@midnightntwrk/wallet-sdk/shielded';
 import { DefaultForkSchedule, NoOpTransactionHistoryStorage } from '@midnightntwrk/wallet-sdk';
 import { MidnightBech32m } from '@midnightntwrk/wallet-sdk-address-format';
-import {
-  addressFor, identityFromSecret, identityFromWords, newSecret, secretFromWords,
-} from 'midnight-identity';
+import { addressFor, identityFromSecret, identityFromWords, newSecret, secretFromWords } from 'midnight-identity';
 import type { Identity, Secret } from 'midnight-identity';
 import { INDEXER_HOST, INDEXER_HTTP_URL, INDEXER_WS_URL, NETWORK } from '../config.js';
 import { networkRecord } from '../../../../src/core/networks.js';
+import { VIEWING_KEY_FIELD, mentionsViewingKey } from '../../scripts/viewing-key-tripwire.mjs';
 import {
-  VIEWING_KEY_FIELD, mentionsViewingKey,
-} from '../../scripts/viewing-key-tripwire.mjs';
-import {
-  GIVE_UP_AFTER_MS, QUIET_AFTER_MS, coinPublicKeyOf, syncedFromBalances, syncedFromCheckpoint,
-  walletFor, walletRestoredFrom, withOwnClock,
+  GIVE_UP_AFTER_MS,
+  QUIET_AFTER_MS,
+  coinPublicKeyOf,
+  syncedFromBalances,
+  syncedFromCheckpoint,
+  walletFor,
+  walletRestoredFrom,
+  withOwnClock
 } from './balance.js';
 import { shieldedToken } from '@midnightntwrk/ledger-v9';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
@@ -36,12 +34,8 @@ import { BalanceEnginesContext } from './balance-context.js';
 import type { BalanceEngines } from './balance-context.js';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 import { dustFromSpecks, exactSpecks, exactStars, nightFromStars } from './amount.js';
-import {
-  forgetWalletCheckpoints, loadWalletCheckpoint, saveWalletCheckpoint,
-} from '../accounts/storage.js';
-import {
-  ORIGINAL_SLOT, checkpointKeyFor, forgetOpenWallet, openWallet, sealKeyFor,
-} from '../accounts/wallets-held.js';
+import { forgetWalletCheckpoints, loadWalletCheckpoint, saveWalletCheckpoint } from '../accounts/storage.js';
+import { ORIGINAL_SLOT, checkpointKeyFor, forgetOpenWallet, openWallet, sealKeyFor } from '../accounts/wallets-held.js';
 import { Home } from '../screens/home.js';
 import { KEPT_SNAPSHOT, snapshotForTest } from '../testing/snapshot.js';
 
@@ -91,10 +85,11 @@ describe('the right door — §1.1, the address-agreement test', () => {
     const wrong = ShieldedWallet({
       networkId: NETWORK,
       indexerClientConnection: {
-        indexerHttpUrl: INDEXER_HTTP_URL, indexerWsUrl: INDEXER_WS_URL,
+        indexerHttpUrl: INDEXER_HTTP_URL,
+        indexerWsUrl: INDEXER_WS_URL
       },
       txHistoryStorage: new NoOpTransactionHistoryStorage(),
-      forks: DefaultForkSchedule,
+      forks: DefaultForkSchedule
     }).startWithSeed(secret);
     const fromWrongDoor = await bech32Of(await wrong);
     await (await wrong).stop().catch(() => {});
@@ -109,7 +104,7 @@ describe('the right door — §1.1, the address-agreement test', () => {
   });
 });
 
-describe('the wallet reads the indexer of the network it is built for, from that network\'s record', () => {
+describe("the wallet reads the indexer of the network it is built for, from that network's record", () => {
   it('one named constant, and the indexer answers for exactly that network', () => {
     /* RED WHEN the wallet's indexer is written anywhere but the network's
      * record, or is another network's. */
@@ -125,8 +120,9 @@ describe('the wallet reads the indexer of the network it is built for, from that
 
   it('every address the wallet shows carries the network in the string', () => {
     const secret = newSecret();
-    expect(addressFor(identityFromSecret(secret).money.zswap, NETWORK).bech32)
-      .toMatch(new RegExp(`^mn_shield-addr_${NETWORK}1`));
+    expect(addressFor(identityFromSecret(secret).money.zswap, NETWORK).bech32).toMatch(
+      new RegExp(`^mn_shield-addr_${NETWORK}1`)
+    );
   });
 });
 
@@ -166,9 +162,8 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
   /* Comments out, code left alone. Line comments are recognised only when
    * not preceded by ':' or a quote, so `https://…` inside a string
    * survives. A tripwire needs to catch a string literal, not parse TS. */
-  const stripComments = (source: string): string => source
-    .replace(/\/\*[\s\S]*?\*\//gu, '')
-    .replace(/(^|[^:'"`\\])\/\/.*$/gmu, '$1');
+  const stripComments = (source: string): string =>
+    source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:'"`\\])\/\/.*$/gmu, '$1');
 
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -211,10 +206,17 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
     const found: string[] = [];
     const walk = (dir: string): void => {
       let names: string[];
-      try { names = readdirSync(dir); } catch { return; }
+      try {
+        names = readdirSync(dir);
+      } catch {
+        return;
+      }
       for (const name of names) {
         const full = path.join(dir, name);
-        if (statSync(full).isDirectory()) { walk(full); continue; }
+        if (statSync(full).isDirectory()) {
+          walk(full);
+          continue;
+        }
         if (!SOURCE_EXTENSIONS.test(name)) continue;
         found.push(path.relative(root, full));
       }
@@ -224,8 +226,10 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
   };
 
   const offendersUnder = (root: string, trees: readonly string[], skip: string): string[] =>
-    sourceFilesUnder(root, trees).filter((rel) => path.join(root, rel) !== skip
-      && mentionsViewingKey(stripComments(readFileSync(path.join(root, rel), 'utf8'))));
+    sourceFilesUnder(root, trees).filter(
+      (rel) =>
+        path.join(root, rel) !== skip && mentionsViewingKey(stripComments(readFileSync(path.join(root, rel), 'utf8')))
+    );
 
   it('stripped of comments, NO source file spells the field — the one that holds it is skipped by path', () => {
     expect(offendersUnder(REPO, SOURCE_TREES, TRIPWIRE_TRIGGER)).toEqual([]);
@@ -255,12 +259,10 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
     expect(seen).toContain(path.join('apps', 'wallet', 'src', 'chain', 'balance.ts'));
     expect(seen).toContain(path.join('apps', 'wallet', 'src', 'chain', 'balance.test.tsx'));
     for (const ext of ['.ts', '.tsx', '.mjs', '.d.mts']) {
-      expect(seen.filter((f) => f.endsWith(ext)).length, `no ${ext} source was scanned`)
-        .toBeGreaterThan(0);
+      expect(seen.filter((f) => f.endsWith(ext)).length, `no ${ext} source was scanned`).toBeGreaterThan(0);
     }
     for (const tree of SOURCE_TREES) {
-      expect(seen.filter((f) => f.startsWith(tree)).length, `the scan did not reach ${tree}`)
-        .toBeGreaterThan(0);
+      expect(seen.filter((f) => f.startsWith(tree)).length, `the scan did not reach ${tree}`).toBeGreaterThan(0);
     }
     /*
      * **AND ONE NAMED FILE INSIDE A SUBDIRECTORY, BECAUSE A TREE FLOOR DOES NOT
@@ -292,26 +294,26 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
     for (const tree of SOURCE_TREES) mkdirSync(path.join(root, tree), { recursive: true });
     mkdirSync(path.join(root, APP, 'scripts'), { recursive: true });
     writeFileSync(path.join(root, APP, 'clean.ts'), 'export const a = 1;\n');
-    writeFileSync(path.join(root, APP, 'documented.ts'),
-      `/* ${VIEWING_KEY_FIELD} is what this must never send */\nexport const b = 2;\n`);
-    writeFileSync(path.join(root, APP, 'leaks.ts'),
-      `export const q = { ${VIEWING_KEY_FIELD}: 'x' };\n`);
-    writeFileSync(path.join(root, APP, 'scripts', 'leaks.mjs'),
-      `export const q = { ${VIEWING_KEY_FIELD}: 'x' };\n`);
-    writeFileSync(path.join(root, APP, 'scripts', 'leaks.d.mts'),
-      `export declare const q: { ${VIEWING_KEY_FIELD}: string };\n`);
+    writeFileSync(
+      path.join(root, APP, 'documented.ts'),
+      `/* ${VIEWING_KEY_FIELD} is what this must never send */\nexport const b = 2;\n`
+    );
+    writeFileSync(path.join(root, APP, 'leaks.ts'), `export const q = { ${VIEWING_KEY_FIELD}: 'x' };\n`);
+    writeFileSync(path.join(root, APP, 'scripts', 'leaks.mjs'), `export const q = { ${VIEWING_KEY_FIELD}: 'x' };\n`);
+    writeFileSync(
+      path.join(root, APP, 'scripts', 'leaks.d.mts'),
+      `export declare const q: { ${VIEWING_KEY_FIELD}: string };\n`
+    );
     /* And one in the library half, so a control that only ever reaches the
      * application would be red rather than quietly narrower. */
-    writeFileSync(path.join(root, LIB_SRC, 'leaks.ts'),
-      `export const q = { ${VIEWING_KEY_FIELD}: 'x' };\n`);
+    writeFileSync(path.join(root, LIB_SRC, 'leaks.ts'), `export const q = { ${VIEWING_KEY_FIELD}: 'x' };\n`);
 
-    expect(offendersUnder(root, SOURCE_TREES, path.join(root, 'nothing-is-skipped')))
-      .toEqual([
-        path.join(APP, 'leaks.ts'),
-        path.join(APP, 'scripts', 'leaks.d.mts'),
-        path.join(APP, 'scripts', 'leaks.mjs'),
-        path.join(LIB_SRC, 'leaks.ts'),
-      ]);
+    expect(offendersUnder(root, SOURCE_TREES, path.join(root, 'nothing-is-skipped'))).toEqual([
+      path.join(APP, 'leaks.ts'),
+      path.join(APP, 'scripts', 'leaks.d.mts'),
+      path.join(APP, 'scripts', 'leaks.mjs'),
+      path.join(LIB_SRC, 'leaks.ts')
+    ]);
   });
 
   it('the skip is one exact path, so a second file of the same NAME is still caught', () => {
@@ -326,8 +328,9 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
     writeFileSync(real, `export const F = '${VIEWING_KEY_FIELD}';\n`);
     writeFileSync(impostor, `export const F = '${VIEWING_KEY_FIELD}';\n`);
 
-    expect(offendersUnder(root, SOURCE_TREES, real))
-      .toEqual([path.join(APP, 'scripts', 'nested', 'viewing-key-tripwire.mjs')]);
+    expect(offendersUnder(root, SOURCE_TREES, real)).toEqual([
+      path.join(APP, 'scripts', 'nested', 'viewing-key-tripwire.mjs')
+    ]);
   });
 
   it('THE FIELD IS THE INDEXER’S OWN — measured against its schema, not against itself', () => {
@@ -346,10 +349,20 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
      * IT FAILS RATHER THAN SKIPPING when the package is absent, deliberately:
      * a check that quietly passes when it could not look is worse than no
      * check, because the work looks done. */
-    const connect = path.join(REPO, 'node_modules',
-      '@midnightntwrk', 'wallet-sdk-indexer-client', 'dist', 'graphql', 'queries', 'Connect.js');
-    expect(existsSync(connect), 'the indexer client is not installed, so whether the tripwire '
-      + 'names the real field is unknown').toBe(true);
+    const connect = path.join(
+      REPO,
+      'node_modules',
+      '@midnightntwrk',
+      'wallet-sdk-indexer-client',
+      'dist',
+      'graphql',
+      'queries',
+      'Connect.js'
+    );
+    expect(
+      existsSync(connect),
+      'the indexer client is not installed, so whether the tripwire ' + 'names the real field is unknown'
+    ).toBe(true);
     const schema = readFileSync(connect, 'utf8');
     expect(schema).toContain(`${VIEWING_KEY_FIELD}: ViewingKey!`);
     expect(schema).toContain(`connect(${VIEWING_KEY_FIELD}:`);
@@ -376,14 +389,24 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
     expect(code).not.toMatch(/\bimport\b/u);
     expect(code).not.toMatch(/\brequire\b/u);
     for (const reach of [
-      'fetch', 'XMLHttpRequest', 'WebSocket', 'http', 'https', 'URL', 'axios',
-      'process', 'eval', 'Function(',
+      'fetch',
+      'XMLHttpRequest',
+      'WebSocket',
+      'http',
+      'https',
+      'URL',
+      'axios',
+      'process',
+      'eval',
+      'Function('
     ]) {
       expect(code.includes(reach), `the skipped file names \`${reach}\``).toBe(false);
     }
     /* And it exports exactly the two things both ends read from it. */
-    expect([...code.matchAll(/export\s+(?:const|function)\s+(\w+)/gu)].map((m) => m[1]).sort())
-      .toEqual(['VIEWING_KEY_FIELD', 'mentionsViewingKey']);
+    expect([...code.matchAll(/export\s+(?:const|function)\s+(\w+)/gu)].map((m) => m[1]).sort()).toEqual([
+      'VIEWING_KEY_FIELD',
+      'mentionsViewingKey'
+    ]);
   });
 
   it('mentions are a string question: absent bodies are not hits', () => {
@@ -398,10 +421,8 @@ describe('the viewing key never enters this repository’s CODE — §1.2', () =
   });
 
   it('the stripper keeps code and drops commentary — proved on the shapes that matter', () => {
-    expect(stripComments(`/* ${VIEWING_KEY_FIELD} documented */ const a = 1;`))
-      .not.toContain(VIEWING_KEY_FIELD);
-    expect(stripComments(`// ${VIEWING_KEY_FIELD} noted\nconst a = 1;`))
-      .not.toContain(VIEWING_KEY_FIELD);
+    expect(stripComments(`/* ${VIEWING_KEY_FIELD} documented */ const a = 1;`)).not.toContain(VIEWING_KEY_FIELD);
+    expect(stripComments(`// ${VIEWING_KEY_FIELD} noted\nconst a = 1;`)).not.toContain(VIEWING_KEY_FIELD);
     expect(stripComments(`const leak = '${VIEWING_KEY_FIELD}';`)).toContain(VIEWING_KEY_FIELD);
     /* A URL is not a comment. */
     expect(stripComments(`const u = 'https://x/${VIEWING_KEY_FIELD}';`)).toContain(VIEWING_KEY_FIELD);
@@ -430,7 +451,11 @@ function fakeEngine(): FakeEngine {
       const mine = calls.length;
       return () => stops.push(mine);
     },
-    emit: (state) => { act(() => { onState?.(state); }); },
+    emit: (state) => {
+      act(() => {
+        onState?.(state);
+      });
+    }
   };
 }
 
@@ -440,11 +465,9 @@ const inert: BalanceEngine = () => () => {};
 
 function renderHome(secret: Secret, engines: Partial<BalanceEngines>): ReturnType<typeof render> {
   return render(
-    <BalanceEnginesContext.Provider
-      value={{ shielded: inert, unshielded: inert, dust: inert, ...engines }}
-    >
+    <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert, ...engines }}>
       <Home identity={identityFromSecret(secret)} secret={secret} />
-    </BalanceEnginesContext.Provider>,
+    </BalanceEnginesContext.Provider>
   );
 }
 
@@ -471,7 +494,8 @@ describe('zero and “I do not know” are different sentences — §4', () => {
     const shielded = fakeEngine();
     const unshielded = fakeEngine();
     const { container } = renderHome(newSecret(), {
-      shielded: shielded.engine, unshielded: unshielded.engine,
+      shielded: shielded.engine,
+      unshielded: unshielded.engine
     });
     expect(screen.getByText(/Not asked yet/)).toBeTruthy();
     expect(screen.getByText(/Nothing is sent until you press/)).toBeTruthy();
@@ -485,7 +509,9 @@ describe('zero and “I do not know” are different sentences — §4', () => {
     const unshielded = fakeEngine();
     const dust = fakeEngine();
     renderHome(newSecret(), {
-      shielded: shielded.engine, unshielded: unshielded.engine, dust: dust.engine,
+      shielded: shielded.engine,
+      unshielded: unshielded.engine,
+      dust: dust.engine
     });
     /* Switch to Subwallet 1 (account 2), then check. */
     fireEvent.click(screen.getByText('Switch wallet'));
@@ -561,7 +587,8 @@ describe('zero and “I do not know” are different sentences — §4', () => {
     const shielded = fakeEngine();
     const unshielded = fakeEngine();
     const { container } = renderHome(newSecret(), {
-      shielded: shielded.engine, unshielded: unshielded.engine,
+      shielded: shielded.engine,
+      unshielded: unshielded.engine
     });
     fireEvent.click(screen.getByText('Check the balance'));
     /* The faucet's 5000 tNIGHT arriving unshielded: 5,000,000,000 STARs. */
@@ -596,8 +623,7 @@ describe('zero and “I do not know” are different sentences — §4', () => {
      * registered NIGHT, and none is registered — never a bare 0 that reads
      * like missing money. */
     dust.emit({ name: 'synced', night: 0n, asOf: Date.now() });
-    expect(container.querySelector('[data-kind="dust"] .balance-big')?.textContent)
-      .toContain('0');
+    expect(container.querySelector('[data-kind="dust"] .balance-big')?.textContent).toContain('0');
     expect(screen.getByText(/A real zero, not an unknown/)).toBeTruthy();
     expect(screen.getByText(/registered none yet/)).toBeTruthy();
     expect(screen.getByText(/Without DUST no fee can be paid/)).toBeTruthy();
@@ -607,7 +633,8 @@ describe('zero and “I do not know” are different sentences — §4', () => {
     const fake = fakeEngine();
     const unshielded = fakeEngine();
     const { container } = renderHome(newSecret(), {
-      shielded: fake.engine, unshielded: unshielded.engine,
+      shielded: fake.engine,
+      unshielded: unshielded.engine
     });
     fireEvent.click(screen.getByText('Check the balance'));
     fake.emit({ name: 'synced', night: 42n, asOf: Date.now() });
@@ -663,13 +690,20 @@ describe('the wallet’s own clock — because the socket does not report its ow
     return {
       stops,
       tell: (s) => onState?.(s),
-      engine: (_i, _a, tell) => { onState = tell; return () => stops.push(1); },
+      engine: (_i, _a, tell) => {
+        onState = tell;
+        return () => stops.push(1);
+      }
     };
   };
   const identity = identityFromSecret(newSecret());
 
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('says the silence out loud, then gives up into the failed state and stops the sync', () => {
     const inner = silentEngine();
@@ -692,7 +726,7 @@ describe('the wallet’s own clock — because the socket does not report its ow
     for (const answer of [
       { name: 'synced', night: 5n, asOf: 1 },
       { name: 'syncing', applied: 1n, highest: 2n },
-      { name: 'failed', message: 'real error' },
+      { name: 'failed', message: 'real error' }
     ] as const) {
       const inner = silentEngine();
       const seen: BalanceState[] = [];
@@ -793,8 +827,7 @@ describe('checkpoints: sealed, named by their wallet, and only ever a cache', ()
     const raw = await new Promise<unknown>((resolve, reject) => {
       const open = indexedDB.open('midnight-identity', 1);
       open.onsuccess = () => {
-        const request = open.result.transaction('keys', 'readonly')
-          .objectStore('keys').get('balance-checkpoints');
+        const request = open.result.transaction('keys', 'readonly').objectStore('keys').get('balance-checkpoints');
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       };
@@ -807,8 +840,8 @@ describe('checkpoints: sealed, named by their wallet, and only ever a cache', ()
      * base64 of the plaintext must fail here, only ciphertext passes. */
     const entry = (raw as { perAccount: Record<string, { sealed: string }> }).perAccount['0']!;
     const decoded = new TextDecoder().decode(
-      Uint8Array.from(atob(entry.sealed.replace(/-/gu, '+').replace(/_/gu, '/')),
-        (c) => c.charCodeAt(0)));
+      Uint8Array.from(atob(entry.sealed.replace(/-/gu, '+').replace(/_/gu, '/')), (c) => c.charCodeAt(0))
+    );
     expect(decoded).not.toContain('publicKeys');
     expect(decoded).not.toContain('123456');
     expect(decoded).not.toContain('coinPublicKey');
@@ -896,12 +929,10 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     renderHome(newSecret(), { shielded: fake.engine });
     /* Home's own claim first: the sentence that says an unchecked slot can be
      * holding money is on the screen a person lands on, not behind a press. */
-    await waitFor(() =>
-      expect(screen.getByText(/can be holding money nobody was told about/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/can be holding money nobody was told about/)).toBeTruthy());
     openEveryWallet();
     revealEverySlot();
-    const listed = (): NodeListOf<Element> =>
-      document.querySelectorAll('[data-wallet-balance-row]');
+    const listed = (): NodeListOf<Element> => document.querySelectorAll('[data-wallet-balance-row]');
     await waitFor(() => expect(listed()).toHaveLength(11));
     /* SCOPED TO THE DIALOG, because Home's preview is still behind it and says
      * the same true thing about the slots it shows. The claim is unchanged:
@@ -917,14 +948,21 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
   it('a checkpointed wallet shows its last number WITH ITS AGE, not as a fresh fact', async () => {
     const secret = newSecret();
     const identity = identityFromSecret(secret);
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 3), 3, {
-      serialized: KEPT_SNAPSHOT, night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
-    }, HERE);
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 3),
+      3,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 2_500_000n,
+        asOf: new Date(2026, 7, 18, 9, 30).getTime()
+      },
+      HERE
+    );
     const fake = fakeEngine();
     render(
       <BalanceEnginesContext.Provider value={{ shielded: fake.engine, unshielded: inert, dust: inert }}>
         <Home identity={identity} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     await waitFor(() => expect(screen.getByText(/2\.5 tNIGHT/)).toBeTruthy());
     /* The moment travels with the number — locale renders it either way
@@ -950,8 +988,7 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     renderHome(newSecret(), { shielded: auto });
     openEveryWallet();
     revealEverySlot();
-    await waitFor(() =>
-      expect(document.querySelectorAll('[data-wallet-balance-row]')).toHaveLength(11));
+    await waitFor(() => expect(document.querySelectorAll('[data-wallet-balance-row]')).toHaveLength(11));
     fireEvent.click(screen.getByText('Check all 11 wallets'));
     await waitFor(() => expect(calls).toEqual([0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
     /* NOT ONE ROW ANYWHERE still says it — the dialog's eleven and the preview
@@ -981,8 +1018,7 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     const preview = [...document.querySelectorAll('[data-wallet-preview-row]')];
     expect(preview.length).toBeGreaterThan(0);
     for (const row of preview) {
-      expect(row.textContent, row.getAttribute('data-account') ?? '')
-        .toMatch(/tNIGHT shielded ·/);
+      expect(row.textContent, row.getAttribute('data-account') ?? '').toMatch(/tNIGHT shielded ·/);
     }
   });
 
@@ -1001,22 +1037,34 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
      * holds nothing, so it is a real zero rather than an unknown: its figure
      * recorded every token, and there were none. A figure that recorded NIGHT
      * only could not say that, and would rank with the funded ones. */
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
-      serialized: KEPT_SNAPSHOT, night: 4_000_000n, asOf: Date.now(),
-    }, HERE);
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: KEPT_SNAPSHOT, night: 0n, others: {}, asOf: Date.now(),
-    }, HERE);
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 9),
+      9,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 4_000_000n,
+        asOf: Date.now()
+      },
+      HERE
+    );
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 11),
+      11,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 0n,
+        others: {},
+        asOf: Date.now()
+      },
+      HERE
+    );
     render(
-      <BalanceEnginesContext.Provider
-        value={{ shielded: inert, unshielded: inert, dust: inert }}
-      >
+      <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
         <Home identity={identity} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     const previewed = (): string[] =>
-      [...document.querySelectorAll('[data-wallet-preview-row]')]
-        .map((row) => row.getAttribute('data-account') ?? '');
+      [...document.querySelectorAll('[data-wallet-preview-row]')].map((row) => row.getAttribute('data-account') ?? '');
     /* The funded slot is IN, the checked-empty one is not, and the preview is
      * still three rows long. */
     await waitFor(() => expect(previewed()).toEqual(['0', '2', '9']));
@@ -1026,23 +1074,29 @@ describe('every wallet, honestly — §5 decided, and the invisible-money answer
     const secret = newSecret();
     const identity = identityFromSecret(secret);
     for (const account of [3, 5, 7, 9, 11]) {
-      await saveWalletCheckpoint(coinPublicKeyOf(identity, account), account, {
-        serialized: KEPT_SNAPSHOT, night: BigInt(account) * 1_000_000n, asOf: Date.now(),
-      }, HERE);
+      await saveWalletCheckpoint(
+        coinPublicKeyOf(identity, account),
+        account,
+        {
+          serialized: KEPT_SNAPSHOT,
+          night: BigInt(account) * 1_000_000n,
+          asOf: Date.now()
+        },
+        HERE
+      );
     }
     render(
-      <BalanceEnginesContext.Provider
-        value={{ shielded: inert, unshielded: inert, dust: inert }}
-      >
+      <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
         <Home identity={identity} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     /* Three is a FLOOR. Ranking alone would still have hidden two of these
      * five, which is the rule happening through a layout decision. */
-    await waitFor(() => expect(
-      [...document.querySelectorAll('[data-wallet-preview-row]')]
-        .map((row) => row.getAttribute('data-account')),
-    ).toEqual(['3', '5', '7', '9', '11']));
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-wallet-preview-row]')].map((row) => row.getAttribute('data-account'))
+      ).toEqual(['3', '5', '7', '9', '11'])
+    );
   });
 });
 
@@ -1070,12 +1124,10 @@ describe('a wallet switch mid-flight does not move where the work lands', () => 
     /* The engine started while A was open; the sync answers after the person
      * has turned to B. The compartment the engine captured is the argument. */
     openWallet('wallet-b');
-    await saveWalletCheckpoint('coin-key-a', 3,
-      { serialized: A_STATE, night: 5n, asOf: 1_000 }, 'wallet-a');
+    await saveWalletCheckpoint('coin-key-a', 3, { serialized: A_STATE, night: 5n, asOf: 1_000 }, 'wallet-a');
 
     /* It landed in A's compartment... */
-    expect((await loadWalletCheckpoint('coin-key-a', 3, 'wallet-a'))?.serialized)
-      .toBe(A_STATE);
+    expect((await loadWalletCheckpoint('coin-key-a', 3, 'wallet-a'))?.serialized).toBe(A_STATE);
     /* ...and B's compartment never heard of it. Before this was an argument,
      * this is where the entry went. */
     expect(await loadWalletCheckpoint('coin-key-a', 3, 'wallet-b')).toBeNull();
@@ -1088,17 +1140,22 @@ describe('a wallet switch mid-flight does not move where the work lands', () => 
      * once per slot, so all but the first resolve after the switch below. */
     openWallet('wallet-a');
     for (const account of [3, 5, 7, 9, 11]) {
-      await saveWalletCheckpoint(coinPublicKeyOf(identity, account), account, {
-        serialized: KEPT_SNAPSHOT, night: BigInt(account) * 1_000_000n, asOf: Date.now(),
-      }, 'wallet-a');
+      await saveWalletCheckpoint(
+        coinPublicKeyOf(identity, account),
+        account,
+        {
+          serialized: KEPT_SNAPSHOT,
+          night: BigInt(account) * 1_000_000n,
+          asOf: Date.now()
+        },
+        'wallet-a'
+      );
     }
 
     render(
-      <BalanceEnginesContext.Provider
-        value={{ shielded: inert, unshielded: inert, dust: inert }}
-      >
+      <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
         <Home identity={identity} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     /* THE SWITCH, while the loop is in flight. */
     openWallet('wallet-b');
@@ -1106,10 +1163,11 @@ describe('a wallet switch mid-flight does not move where the work lands', () => 
     /* Every funded slot is still found. Without the capture the later
      * iterations read `wallet-b`'s empty store and those rows go `unknown`,
      * which drops them out of the preview. */
-    await waitFor(() => expect(
-      [...document.querySelectorAll('[data-wallet-preview-row]')]
-        .map((row) => row.getAttribute('data-account')),
-    ).toEqual(['3', '5', '7', '9', '11']));
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-wallet-preview-row]')].map((row) => row.getAttribute('data-account'))
+      ).toEqual(['3', '5', '7', '9', '11'])
+    );
   });
 });
 
@@ -1137,8 +1195,9 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
    * were recorded: the same four fields, the same key, the same record. Written
    * here field by field so the old shape does not depend on today's writer. */
   const sealOldShape = async (
-    coinPublicKey: string, account: number,
-    old: { serialized: string; night: bigint; asOf: number },
+    coinPublicKey: string,
+    account: number,
+    old: { serialized: string; night: bigint; asOf: number }
   ): Promise<void> => {
     /* Any save makes the compartment's sealing key; then the entry is replaced. */
     await saveWalletCheckpoint(coinPublicKey, account, { ...old }, HERE);
@@ -1147,27 +1206,33 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
       open.onsuccess = () => resolve(open.result);
       open.onerror = () => reject(open.error);
     });
-    const get = (key: string): Promise<unknown> => new Promise((resolve, reject) => {
-      const request = db.transaction('keys', 'readonly').objectStore('keys').get(key);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    const get = (key: string): Promise<unknown> =>
+      new Promise((resolve, reject) => {
+        const request = db.transaction('keys', 'readonly').objectStore('keys').get(key);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
     const key = (await get(sealKeyFor(HERE))) as CryptoKey;
     const record = (await get(checkpointKeyFor(HERE))) as {
       perAccount: Record<string, { coinPublicKey: string; iv: string; sealed: string }>;
     };
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const plain = new TextEncoder().encode(JSON.stringify({
-      coinPublicKey, serialized: old.serialized, night: old.night.toString(), asOf: old.asOf,
-    }));
-    const sealed = new Uint8Array(await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv }, key, plain as BufferSource));
+    const plain = new TextEncoder().encode(
+      JSON.stringify({
+        coinPublicKey,
+        serialized: old.serialized,
+        night: old.night.toString(),
+        asOf: old.asOf
+      })
+    );
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain as BufferSource));
     record.perAccount[String(account)] = {
-      coinPublicKey, iv: toBase64Url(iv), sealed: toBase64Url(sealed),
+      coinPublicKey,
+      iv: toBase64Url(iv),
+      sealed: toBase64Url(sealed)
     };
     await new Promise<void>((resolve, reject) => {
-      const request = db.transaction('keys', 'readwrite').objectStore('keys')
-        .put(record, checkpointKeyFor(HERE));
+      const request = db.transaction('keys', 'readwrite').objectStore('keys').put(record, checkpointKeyFor(HERE));
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -1175,8 +1240,7 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
   };
 
   it('the state a completed sync makes carries the whole map, NIGHT as itself', () => {
-    const synced = syncedFromBalances(
-      { [NIGHT_RAW]: 1_234_567n, [TOKEN]: 5_000n, [SECOND]: 0n }, 42);
+    const synced = syncedFromBalances({ [NIGHT_RAW]: 1_234_567n, [TOKEN]: 5_000n, [SECOND]: 0n }, 42);
     /* RED WHEN NIGHT is read from anything but its own key. */
     expect(synced.night).toBe(1_234_567n);
     /* RED WHEN the state goes back to one key and drops the rest, or keeps a
@@ -1204,17 +1268,20 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     expect(line?.textContent).not.toMatch(/tNIGHT|STARs/);
   });
 
-  it('6. NIGHT\'s line is unchanged by other tokens beside it: same unit, same exact figure', () => {
+  it("6. NIGHT's line is unchanged by other tokens beside it: same unit, same exact figure", () => {
     const lineOf = (others?: Record<string, bigint>): [string | null, string | null] => {
       cleanup();
       const fake = fakeEngine();
       const { container } = renderHome(newSecret(), { shielded: fake.engine });
       fireEvent.click(screen.getByText('Check the balance'));
-      fake.emit(others === undefined
-        ? { name: 'synced', night: 1_234_567n, asOf: 1_700_000_000_000 }
-        : { name: 'synced', night: 1_234_567n, asOf: 1_700_000_000_000, others });
-      const exact = [...container.querySelectorAll('[data-kind="shielded"] p')]
-        .find((p) => /^Exactly /.test(p.textContent ?? ''));
+      fake.emit(
+        others === undefined
+          ? { name: 'synced', night: 1_234_567n, asOf: 1_700_000_000_000 }
+          : { name: 'synced', night: 1_234_567n, asOf: 1_700_000_000_000, others }
+      );
+      const exact = [...container.querySelectorAll('[data-kind="shielded"] p')].find((p) =>
+        /^Exactly /.test(p.textContent ?? '')
+      );
       return [bigBalanceOf(container, 'shielded'), exact?.textContent ?? null];
     };
     const alone = lineOf();
@@ -1231,63 +1298,81 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     fireEvent.click(screen.getByText('Check the balance'));
     fake.emit({ name: 'synced', night: 0n, asOf: Date.now(), others: { [TOKEN]: 5_000n } });
     /* RED WHEN a wallet with no NIGHT shows none of what it does hold. */
-    expect(tokenLine(container, TOKEN)?.textContent)
-      .toContain(`${smallestUnits(5_000n)} of token`);
+    expect(tokenLine(container, TOKEN)?.textContent).toContain(`${smallestUnits(5_000n)} of token`);
     cleanup();
 
     /* The list. Account 9 holds only the other token and cannot reach the
      * first three by slot order; account 11 is checked and holds nothing. */
     const secret = newSecret();
     const identity = identityFromSecret(secret);
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
-      serialized: KEPT_SNAPSHOT, night: 0n, others: { [TOKEN]: 5_000n }, asOf: Date.now(),
-    }, HERE);
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: KEPT_SNAPSHOT, night: 0n, others: {}, asOf: Date.now(),
-    }, HERE);
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 9),
+      9,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 0n,
+        others: { [TOKEN]: 5_000n },
+        asOf: Date.now()
+      },
+      HERE
+    );
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 11),
+      11,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 0n,
+        others: {},
+        asOf: Date.now()
+      },
+      HERE
+    );
     render(
       <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
         <Home identity={identity} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     const previewed = (): string[] =>
-      [...document.querySelectorAll('[data-wallet-preview-row]')]
-        .map((row) => row.getAttribute('data-account') ?? '');
+      [...document.querySelectorAll('[data-wallet-preview-row]')].map((row) => row.getAttribute('data-account') ?? '');
     /* RED WHEN `holdsMoney` asks about NIGHT alone: 9 ranks as empty and the
      * preview is 0, 2, 3. */
     await waitFor(() => expect(previewed()).toEqual(['0', '2', '9']));
     const row9 = document.querySelector('[data-wallet-preview-row][data-account="9"]');
     /* RED WHEN the row drops the token it holds. */
-    expect(row9?.querySelector(`[data-token="${TOKEN}"]`)?.textContent)
-      .toContain(`${smallestUnits(5_000n)} of token ${shortColour(TOKEN)}`);
+    expect(row9?.querySelector(`[data-token="${TOKEN}"]`)?.textContent).toContain(
+      `${smallestUnits(5_000n)} of token ${shortColour(TOKEN)}`
+    );
   });
 
   it('2, live. a slot checked from the list shows the token it holds and ranks as holding money', async () => {
     /* The list's own check, not a saved checkpoint: each slot answers at
      * once, and only account 9 holds anything, and only the other token. */
     const auto: BalanceEngine = (_identity, account, tell) => {
-      tell(account === 9
-        ? { name: 'synced', night: 0n, asOf: Date.now(), others: { [TOKEN]: 5_000n } }
-        : { name: 'synced', night: 0n, asOf: Date.now(), others: {} });
+      tell(
+        account === 9
+          ? { name: 'synced', night: 0n, asOf: Date.now(), others: { [TOKEN]: 5_000n } }
+          : { name: 'synced', night: 0n, asOf: Date.now(), others: {} }
+      );
       return () => {};
     };
     renderHome(newSecret(), { shielded: auto });
     openEveryWallet();
     revealEverySlot();
-    await waitFor(() =>
-      expect(document.querySelectorAll('[data-wallet-balance-row]')).toHaveLength(11));
+    await waitFor(() => expect(document.querySelectorAll('[data-wallet-balance-row]')).toHaveLength(11));
     fireEvent.click(screen.getByText('Check all 11 wallets'));
     const panel = document.querySelector('[role="dialog"]') as HTMLElement;
     /* RED WHEN the live answer drops the other tokens on the way to the row. */
-    await waitFor(() => expect(
-      panel.querySelector(`[data-wallet-balance-row][data-account="9"] [data-token="${TOKEN}"]`)
-        ?.textContent,
-    ).toContain(`${smallestUnits(5_000n)} of token`));
+    await waitFor(() =>
+      expect(
+        panel.querySelector(`[data-wallet-balance-row][data-account="9"] [data-token="${TOKEN}"]`)?.textContent
+      ).toContain(`${smallestUnits(5_000n)} of token`)
+    );
     /* RED WHEN a live answer holding only another token ranks as empty. */
-    await waitFor(() => expect(
-      [...document.querySelectorAll('[data-wallet-preview-row]')]
-        .map((row) => row.getAttribute('data-account')),
-    ).toContain('9'));
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[data-wallet-preview-row]')].map((row) => row.getAttribute('data-account'))
+      ).toContain('9')
+    );
   });
 
   it('"not recorded" is said on the private line only, never on the public or DUST card', () => {
@@ -1295,7 +1380,9 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const unshielded = fakeEngine();
     const dust = fakeEngine();
     const { container } = renderHome(newSecret(), {
-      shielded: shielded.engine, unshielded: unshielded.engine, dust: dust.engine,
+      shielded: shielded.engine,
+      unshielded: unshielded.engine,
+      dust: dust.engine
     });
     fireEvent.click(screen.getByText('Check the balance'));
     /* None of the three carries `others`: the public and DUST engines never do. */
@@ -1327,7 +1414,9 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const identity = identityFromSecret(secret);
     const mine = coinPublicKeyOf(identity, 3);
     await sealOldShape(mine, 3, {
-      serialized: KEPT_SNAPSHOT, night: 2_500_000n, asOf: new Date(2026, 7, 18, 9, 30).getTime(),
+      serialized: KEPT_SNAPSHOT,
+      night: 2_500_000n,
+      asOf: new Date(2026, 7, 18, 9, 30).getTime()
     });
     const loaded = await loadWalletCheckpoint(mine, 3, HERE);
     /* RED WHEN the old record no longer loads, or its NIGHT moves. */
@@ -1344,8 +1433,7 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     fake.emit(state);
     expect(bigBalanceOf(container, 'shielded')).toContain('2.5');
     /* RED WHEN the screen shows no line and no word, which reads as none. */
-    expect(container.querySelector('[data-others="not-recorded"]')?.textContent)
-      .toMatch(/not recorded/);
+    expect(container.querySelector('[data-others="not-recorded"]')?.textContent).toMatch(/not recorded/);
     expect(container.querySelectorAll('[data-kind="shielded"] [data-token]')).toHaveLength(0);
 
     /* And the list row for the same slot. */
@@ -1363,8 +1451,10 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const identity = identityFromSecret(newSecret());
     const mine = coinPublicKeyOf(identity, 0);
     const CP = {
-      serialized: KEPT_SNAPSHOT, night: 123_456n, asOf: 1_700_000_000_000,
-      others: { [TOKEN]: 18_446_744_073_709_551_615n, [SECOND]: 7n },
+      serialized: KEPT_SNAPSHOT,
+      night: 123_456n,
+      asOf: 1_700_000_000_000,
+      others: { [TOKEN]: 18_446_744_073_709_551_615n, [SECOND]: 7n }
     };
     await saveWalletCheckpoint(mine, 0, CP, HERE);
     /* RED WHEN a token, a digit, or NIGHT is lost on the way through. */
@@ -1373,8 +1463,7 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     const raw = await new Promise<unknown>((resolve, reject) => {
       const open = indexedDB.open('midnight-identity', 1);
       open.onsuccess = () => {
-        const request = open.result.transaction('keys', 'readonly')
-          .objectStore('keys').get(checkpointKeyFor(HERE));
+        const request = open.result.transaction('keys', 'readonly').objectStore('keys').get(checkpointKeyFor(HERE));
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       };
@@ -1385,8 +1474,8 @@ describe('every private token the wallet holds, from the SDK to the screen', () 
     expect(flattened).not.toContain('18446744073709551615');
     const entry = (raw as { perAccount: Record<string, { sealed: string }> }).perAccount['0']!;
     const decoded = new TextDecoder().decode(
-      Uint8Array.from(atob(entry.sealed.replace(/-/gu, '+').replace(/_/gu, '/')),
-        (c) => c.charCodeAt(0)));
+      Uint8Array.from(atob(entry.sealed.replace(/-/gu, '+').replace(/_/gu, '/')), (c) => c.charCodeAt(0))
+    );
     expect(decoded).not.toContain(TOKEN);
     expect(decoded).not.toContain('others');
   });

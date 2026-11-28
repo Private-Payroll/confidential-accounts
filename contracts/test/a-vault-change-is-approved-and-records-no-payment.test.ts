@@ -15,9 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  AccountSimulator, change, privateStateFor, type Change, payoutTreeOf, sumArgsOf,
-} from './simulator.js';
+import { AccountSimulator, change, privateStateFor, type Change, payoutTreeOf, sumArgsOf } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { fromHex, toHex } from '../../src/core/crypto.js';
@@ -45,33 +43,56 @@ const live = async (devices = [A, B], threshold = 2n) => {
 
 /** A run of change leaves, each carrying no amount, naming `vault`, approved by `approvers` (the first by raising it). */
 const approvedChanges = async (
-  sim: AccountSimulator, vault: Uint8Array, leaves: PayoutLeafInput[], c: Change,
-  approvers = [A, B],
+  sim: AccountSimulator,
+  vault: Uint8Array,
+  leaves: PayoutLeafInput[],
+  c: Change,
+  approvers = [A, B]
 ) => {
-  const tree = payoutTreeOf(leaves, leaves.map(() => 0n));
+  const tree = payoutTreeOf(
+    leaves,
+    leaves.map(() => 0n)
+  );
   await sim.as(sim.applying(approvers[0]!, c)).proposeRun({
-    root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault,
+    root: fromHex(tree.root),
+    payees: tree.payees,
+    from: OPENS,
+    until: CLOSES,
+    vault
   });
-  const id = sim.proposalId(
-    pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
+  const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
   for (const a of approvers.slice(1)) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id };
 };
 
 const ask = (
-  run: Awaited<ReturnType<typeof approvedChanges>>, leaves: PayoutLeafInput[],
-  vault: Uint8Array, c: Change, i: number, payingVault?: Uint8Array,
+  run: Awaited<ReturnType<typeof approvedChanges>>,
+  leaves: PayoutLeafInput[],
+  vault: Uint8Array,
+  c: Change,
+  i: number,
+  payingVault?: Uint8Array
 ) => {
   const { asset, path } = sumArgsOf(run.tree, i);
   return {
-    proposal: run.id, vault, payingVault, root: fromHex(run.tree.root), payees: run.tree.payees,
-    from: OPENS, until: CLOSES, salt: c.salt,
-    details: fromHex(leaves[i]!.details), nonce: fromHex(leaves[i]!.nonce), asset, path,
+    proposal: run.id,
+    vault,
+    payingVault,
+    root: fromHex(run.tree.root),
+    payees: run.tree.payees,
+    from: OPENS,
+    until: CLOSES,
+    salt: c.salt,
+    details: fromHex(leaves[i]!.details),
+    nonce: fromHex(leaves[i]!.nonce),
+    asset,
+    path
   };
 };
 
-const oneChange = (seed: number): PayoutLeafInput[] =>
-  [{ details: toHex(bytes(seed)), nonce: toHex(bytes(seed + 100)) }];
+const oneChange = (seed: number): PayoutLeafInput[] => [
+  { details: toHex(bytes(seed)), nonce: toHex(bytes(seed + 100)) }
+];
 
 /** Everything the account records as paid, as hex, sorted. */
 const paidRecord = (sim: AccountSimulator) => [...sim.ledger.movements].map(hex).sort();
@@ -85,11 +106,10 @@ const setBar = async (sim: AccountSimulator, vault: Uint8Array, to: bigint, seed
   await sim.as(sim.applying(A, tc)).setVaultThreshold(vault, to, bid);
 };
 
-const unshielded = (m: Map<any, bigint>) =>
-  [...m].map(([t, v]) => [typeof t === 'string' ? t : (t.raw ?? t), v]);
+const unshielded = (m: Map<any, bigint>) => [...m].map(([t, v]) => [typeof t === 'string' ? t : (t.raw ?? t), v]);
 
 describe('an approved change to a vault records no payment', () => {
-  it('THE HEADLINE: a change approved at the vault\'s bar leaves the record of payments exactly as it was', async () => {
+  it("THE HEADLINE: a change approved at the vault's bar leaves the record of payments exactly as it was", async () => {
     const sim = await live();
     await sim.adoptVault(PAYROLL, [A, B]);
     const leaves = oneChange(5);
@@ -136,8 +156,9 @@ describe('an approved change to a vault records no payment', () => {
     expect(sim.ledger.openProposals.member(run.id)).toBe(false);
     expect(sim.ledger.runWindow.member(run.id)).toBe(false);
     /* RED WHEN the same approval is taken again once its run is closed. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0)))
-      .rejects.toThrow(/there is no open proposal with that id/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).rejects.toThrow(
+      /there is no open proposal with that id/
+    );
     expect(sim.ledger.movements.size()).toBe(0n);
   });
 
@@ -171,8 +192,9 @@ describe('an approved change to a vault records no payment', () => {
     /* RED WHEN the mark is read as a hold: the second change would be refused. */
     await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 1));
     /* RED WHEN holdRun's paid-from refusal goes: it is then refused for another reason. */
-    await expect(sim.as(sim.applying(B, c)).holdRun(run.id))
-      .rejects.toThrow(/a payment or a change from that run has already been made, so it can no longer be held/);
+    await expect(sim.as(sim.applying(B, c)).holdRun(run.id)).rejects.toThrow(
+      /a payment or a change from that run has already been made, so it can no longer be held/
+    );
     await sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 2));
     expect(sim.ledger.openProposals.member(run.id)).toBe(false);
   });
@@ -185,8 +207,9 @@ describe('who a change can be approved for, and at what bar', () => {
     const c = change(0n, 81);
     const run = await approvedChanges(sim, STRANGER, leaves, c);
     /* RED WHEN the step stops reading `vaults`. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, STRANGER, c, 0)))
-      .rejects.toThrow(/not a vault this company holds/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, STRANGER, c, 0))).rejects.toThrow(
+      /not a vault this company holds/
+    );
   });
 
   it('A RETIRED VAULT is admitted: it may still hold private money, and its secret changes with the others', async () => {
@@ -207,7 +230,7 @@ describe('who a change can be approved for, and at what bar', () => {
     expect(sim.ledger.openProposals.member(run.id)).toBe(false);
   });
 
-  it('A RUN BELOW THE VAULT\'S OWN THRESHOLD is refused', async () => {
+  it("A RUN BELOW THE VAULT'S OWN THRESHOLD is refused", async () => {
     const sim = await live([A, B, C], 2n);
     await sim.adoptVault(TREASURY, [A, B]);
     await setBar(sim, TREASURY, 3n, 93);
@@ -216,11 +239,14 @@ describe('who a change can be approved for, and at what bar', () => {
     /* Approved by two, against a vault that needs three. */
     const run = await approvedChanges(sim, TREASURY, leaves, c, [A, B]);
     /* RED WHEN the step stops asking the bar a payment from that vault needs. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, TREASURY, c, 0)))
-      .rejects.toThrow(/not enough approvals yet/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, TREASURY, c, 0))).rejects.toThrow(
+      /not enough approvals yet/
+    );
     /* And the third approval is what lets it through. */
     await sim.as(sim.applying(C, c)).approve(run.id);
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, TREASURY, c, 0))).resolves.toBeDefined();
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, TREASURY, c, 0))
+    ).resolves.toBeDefined();
   });
 
   it('A RUN FOR ANOTHER VAULT cannot change this one', async () => {
@@ -231,8 +257,9 @@ describe('who a change can be approved for, and at what bar', () => {
     const c = change(0n, 111);
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     /* RED WHEN the step stops requiring the changed vault to be the run's vault. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0, TREASURY)))
-      .rejects.toThrow(/that run is for another vault/);
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0, TREASURY))
+    ).rejects.toThrow(/that run is for another vault/);
   });
 
   it('A GOVERNANCE PROPOSAL changes no vault', async () => {
@@ -243,11 +270,22 @@ describe('who a change can be approved for, and at what bar', () => {
     const c = change(0n, 121);
     const tree = payoutTreeOf(leaves, [0n]);
     /* RED WHEN the step stops refusing `noVault()` before anything else. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange({
-      proposal: bytes(1), vault: NO_VAULT, payingVault: PAYROLL, root: fromHex(tree.root), payees: 1n,
-      from: OPENS, until: CLOSES, salt: c.salt, details: fromHex(leaves[0]!.details),
-      nonce: fromHex(leaves[0]!.nonce), asset: sumArgsOf(tree, 0).asset, path: sumArgsOf(tree, 0).path,
-    })).rejects.toThrow(/a governance proposal changes no vault/);
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange({
+        proposal: bytes(1),
+        vault: NO_VAULT,
+        payingVault: PAYROLL,
+        root: fromHex(tree.root),
+        payees: 1n,
+        from: OPENS,
+        until: CLOSES,
+        salt: c.salt,
+        details: fromHex(leaves[0]!.details),
+        nonce: fromHex(leaves[0]!.nonce),
+        asset: sumArgsOf(tree, 0).asset,
+        path: sumArgsOf(tree, 0).path
+      })
+    ).rejects.toThrow(/a governance proposal changes no vault/);
   });
 
   it('A LEAF NOT IN THE RUN, OR ONE CARRYING AN AMOUNT, is refused', async () => {
@@ -257,20 +295,32 @@ describe('who a change can be approved for, and at what bar', () => {
     const c = change(0n, 131);
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     /* RED WHEN the step stops checking the leaf against the approved root. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange({
-      ...ask(run, leaves, PAYROLL, c, 0), details: bytes(99),
-    })).rejects.toThrow(/that change is not in the approved run/);
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange({
+        ...ask(run, leaves, PAYROLL, c, 0),
+        details: bytes(99)
+      })
+    ).rejects.toThrow(/that change is not in the approved run/);
     /* A payment's leaf, at an amount, is not a change: the step checks it at zero. */
     const paying = payoutTreeOf(leaves);
     const pc = change(0n, 132);
     await sim.as(sim.applying(A, pc)).proposeRun({
-      root: fromHex(paying.root), payees: paying.payees, from: OPENS, until: CLOSES, vault: PAYROLL,
+      root: fromHex(paying.root),
+      payees: paying.payees,
+      from: OPENS,
+      until: CLOSES,
+      vault: PAYROLL
     });
-    const pid = sim.proposalId(pureCircuits.runPayload(fromHex(paying.root), paying.payees, OPENS, CLOSES, 0n), pc.salt, PAYROLL);
+    const pid = sim.proposalId(
+      pureCircuits.runPayload(fromHex(paying.root), paying.payees, OPENS, CLOSES, 0n),
+      pc.salt,
+      PAYROLL
+    );
     await sim.as(sim.applying(B, pc)).approve(pid);
     /* RED WHEN the step reads the leaf's amount from its caller rather than taking zero. */
-    await expect(sim.as(sim.applying(A, pc)).approveVaultChange(
-      ask({ tree: paying, id: pid }, leaves, PAYROLL, pc, 0))).rejects.toThrow(/that change is not in the approved run/);
+    await expect(
+      sim.as(sim.applying(A, pc)).approveVaultChange(ask({ tree: paying, id: pid }, leaves, PAYROLL, pc, 0))
+    ).rejects.toThrow(/that change is not in the approved run/);
   });
 
   it('A HELD RUN is refused until its hold is released', async () => {
@@ -281,11 +331,12 @@ describe('who a change can be approved for, and at what bar', () => {
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     await sim.as(sim.applying(B, c)).holdRun(run.id);
     /* RED WHEN the step stops reading the run's hold. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0)))
-      .rejects.toThrow(/a signer has held that run/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).rejects.toThrow(
+      /a signer has held that run/
+    );
   });
 
-  it('A TREE OF ONE\'S OWN CANNOT RIDE ANOTHER RUN\'S APPROVALS: the run is rebuilt from its parts and must be the one approved', async () => {
+  it("A TREE OF ONE'S OWN CANNOT RIDE ANOTHER RUN'S APPROVALS: the run is rebuilt from its parts and must be the one approved", async () => {
     const sim = await live();
     await sim.adoptVault(PAYROLL, [A, B]);
     const leaves = oneChange(17);
@@ -295,13 +346,16 @@ describe('who a change can be approved for, and at what bar', () => {
     const forged = oneChange(18);
     const theirs = payoutTreeOf(forged, [0n]);
     /* RED WHEN the step stops rebuilding the proposal's id from the run it is handed: any approved id would then approve any change. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask({ tree: theirs, id: run.id }, forged, PAYROLL, c, 0)))
-      .rejects.toThrow(/that is not this run, or you were not given it/);
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange(ask({ tree: theirs, id: run.id }, forged, PAYROLL, c, 0))
+    ).rejects.toThrow(/that is not this run, or you were not given it/);
     /* Nor another window, or another salt, on the same id. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange({ ...ask(run, leaves, PAYROLL, c, 0), until: CLOSES + 1n }))
-      .rejects.toThrow(/that is not this run, or you were not given it/);
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange({ ...ask(run, leaves, PAYROLL, c, 0), salt: bytes(0x5a) }))
-      .rejects.toThrow(/that is not this run, or you were not given it/);
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange({ ...ask(run, leaves, PAYROLL, c, 0), until: CLOSES + 1n })
+    ).rejects.toThrow(/that is not this run, or you were not given it/);
+    await expect(
+      sim.as(sim.applying(A, c)).approveVaultChange({ ...ask(run, leaves, PAYROLL, c, 0), salt: bytes(0x5a) })
+    ).rejects.toThrow(/that is not this run, or you were not given it/);
     /* The control: the run as approved is accepted. */
     await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).resolves.toBeDefined();
   });
@@ -314,8 +368,9 @@ describe('who a change can be approved for, and at what bar', () => {
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     sim.at(Number(OPENS) - 60);
     /* RED WHEN the step stops reading the window's opening: a change would apply while the signers may still cancel it. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0)))
-      .rejects.toThrow(/that run has not started yet, so it can change nothing/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).rejects.toThrow(
+      /that run has not started yet, so it can change nothing/
+    );
   });
 
   it('OUTSIDE ITS WINDOW a run changes nothing', async () => {
@@ -326,41 +381,47 @@ describe('who a change can be approved for, and at what bar', () => {
     const run = await approvedChanges(sim, PAYROLL, leaves, c);
     sim.at(NOW + 7_200);
     /* RED WHEN the step stops reading the window's close. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0)))
-      .rejects.toThrow(/the window for this run has closed/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(ask(run, leaves, PAYROLL, c, 0))).rejects.toThrow(
+      /the window for this run has closed/
+    );
   });
 });
 
 describe('a company-wide change: each vault its own leaf, never a stricter vault', () => {
   const companyChange = async (sim: AccountSimulator, boundTo: Uint8Array, seed: number) => {
     const inner = bytes(seed);
-    const leaves: PayoutLeafInput[] = [{
-      details: toHex(pureCircuits.companyWideDetailsOf(inner, boundTo)), nonce: toHex(bytes(seed + 100)),
-    }];
+    const leaves: PayoutLeafInput[] = [
+      {
+        details: toHex(pureCircuits.companyWideDetailsOf(inner, boundTo)),
+        nonce: toHex(bytes(seed + 100))
+      }
+    ];
     const c = change(0n, seed);
     const run = await approvedChanges(sim, pureCircuits.companyWide(), leaves, c);
     return { args: { ...ask(run, leaves, pureCircuits.companyWide(), c, 0, boundTo), details: inner }, c };
   };
 
-  it('changes a vault with no bar of its own, on the company\'s approvals, on its own leaf only', async () => {
+  it("changes a vault with no bar of its own, on the company's approvals, on its own leaf only", async () => {
     const sim = await live();
     await sim.adoptVault(PAYROLL, [A, B]);
     await sim.adoptVault(TREASURY, [A, B], 393);
     const { args, c } = await companyChange(sim, PAYROLL, 16);
     /* RED WHEN the account stops binding a company-wide leaf to the vault it changes. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange({ ...args, payingVault: TREASURY }))
-      .rejects.toThrow(/that change is not in the approved run/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange({ ...args, payingVault: TREASURY })).rejects.toThrow(
+      /that change is not in the approved run/
+    );
     await expect(sim.as(sim.applying(A, c)).approveVaultChange(args)).resolves.toBeDefined();
     expect(sim.ledger.movements.size()).toBe(0n);
   });
 
-  it('THE STRICTER-VAULT REFUSAL: a vault whose own bar is above the company\'s gets its own run', async () => {
+  it("THE STRICTER-VAULT REFUSAL: a vault whose own bar is above the company's gets its own run", async () => {
     const sim = await live([A, B, C], 2n);
     await sim.adoptVault(TREASURY, [A, B]);
     await setBar(sim, TREASURY, 3n, 94);
     const { args, c } = await companyChange(sim, TREASURY, 17);
     /* RED WHEN the step stops comparing the vault's own bar with the company's. */
-    await expect(sim.as(sim.applying(A, c)).approveVaultChange(args))
-      .rejects.toThrow(/change it through a run of its own/);
+    await expect(sim.as(sim.applying(A, c)).approveVaultChange(args)).rejects.toThrow(
+      /change it through a run of its own/
+    );
   });
 });

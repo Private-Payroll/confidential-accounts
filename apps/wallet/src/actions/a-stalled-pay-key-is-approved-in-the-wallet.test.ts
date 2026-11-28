@@ -7,7 +7,14 @@ import { StepRefused, type StepContext } from './definition.js';
 import { withCompanyKey } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import * as accountModule from '../../../../contracts/managed/contract/index.js';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../../src/core/crypto.js';
-import { ADOPT_VAULT, newProposalId, PAY_KEY, PAY_KEY_SUMMARY, sealGovernanceProposal, signProposalFiling } from '../../../../src/core/proposal-filing.js';
+import {
+  ADOPT_VAULT,
+  newProposalId,
+  PAY_KEY,
+  PAY_KEY_SUMMARY,
+  sealGovernanceProposal,
+  signProposalFiling
+} from '../../../../src/core/proposal-filing.js';
 import { payKeyRoundOf, type PayKeyPure } from '../../../../src/midnight/pay-key-round.js';
 import { openSealedPayKey } from '../../../../src/midnight/pay-key-commitment.js';
 import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
@@ -25,28 +32,44 @@ import { viewOverItsApi, stepOverItsCall } from './step-views.test-support.js';
 const t = vi.hoisted(() => ({
   state: { payKey: '' as string },
   leaver: null as Error | null,
-  believed: null as Error | null,
+  believed: null as Error | null
 }));
 vi.mock('../../../../packages/web-shared/src/run-rebuilt-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/run-rebuilt-here.js')>()),
-  signedStateHere: async () => ({ seeds: [], payKey: t.state.payKey, assetBlinding: 'ab'.repeat(32) }),
+  signedStateHere: async () => ({ seeds: [], payKey: t.state.payKey, assetBlinding: 'ab'.repeat(32) })
 }));
 vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/round-opened-here.js')>()),
-  believedFilerHere: async () => { if (t.believed !== null) throw t.believed; return 'aa'.repeat(32); },
+  believedFilerHere: async () => {
+    if (t.believed !== null) throw t.believed;
+    return 'aa'.repeat(32);
+  }
 }));
 vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
-  refuseARunALeaverRaisedHere: async () => { if (t.leaver !== null) throw t.leaver; },
+  refuseARunALeaverRaisedHere: async () => {
+    if (t.leaver !== null) throw t.leaver;
+  }
 }));
 vi.mock('./upkeep.js', async (real) => {
   const actual = await real<typeof import('./upkeep.js')>();
   return {
     ...actual,
     upkeepSteps: (company: { reach: (c: unknown) => Promise<unknown>; renew: () => void }) => ({
-      first: { title: { key: 'act.upkeep.step.first' }, run: async (c: unknown) => { await company.reach(c); company.renew(); } },
-      last: { title: { key: 'act.upkeep.step.last' }, run: async (c: unknown) => { await company.reach(c); } },
-    }),
+      first: {
+        title: { key: 'act.upkeep.step.first' },
+        run: async (c: unknown) => {
+          await company.reach(c);
+          company.renew();
+        }
+      },
+      last: {
+        title: { key: 'act.upkeep.step.last' },
+        run: async (c: unknown) => {
+          await company.reach(c);
+        }
+      }
+    })
   };
 });
 
@@ -63,23 +86,56 @@ const ROUND = payKeyRoundOf(P, KEY);
 const NO_VAULT = Buffer.from(P.noVault()).toString('hex');
 const FOUNDER = newSigningKeypair();
 const WRAPPING = newWrappingKeypair();
-const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
-const KEYS = { epoch: 0, key: COMPANY_KEY, newest: 0, keyAt: () => COMPANY_KEY, sealing: () => ({ key: COMPANY_KEY, epoch: 0 }) };
-const intent = (proposal: string): ActIntent => ({
-  name: 'approve-proposal', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, proposal, kind: 'pay-key' },
-}) as ActIntent;
+const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+  string,
+  string
+>;
+const KEYS = {
+  epoch: 0,
+  key: COMPANY_KEY,
+  newest: 0,
+  keyAt: () => COMPANY_KEY,
+  sealing: () => ({ key: COMPANY_KEY, epoch: 0 })
+};
+const intent = (proposal: string): ActIntent =>
+  ({
+    name: 'approve-proposal',
+    fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, proposal, kind: 'pay-key' }
+  }) as ActIntent;
 
 /* The record of a proposal as the founding seat's device writes it down: sealed under the company's key, signed by that seat. */
 const recordOf = (o: { kind?: string; key?: Hex } = {}) => {
   const round = payKeyRoundOf(P, o.key ?? KEY);
-  const filing = signProposalFiling('acc_1', {
-    id: newProposalId(), digest: round.payload as Hex, chainId: round.proposal as Hex, keyEpoch: 0, createdAt: new Date().toISOString(),
-    sealed: sealGovernanceProposal(withCompanyKey({
-      accountId: 'acc_1', kind: (o.kind ?? PAY_KEY) as typeof PAY_KEY, summary: PAY_KEY_SUMMARY, noVault: NO_VAULT as Hex,
-      body: o.kind === ADOPT_VAULT ? { vault: 'ab'.repeat(32) as Hex } : { commitment: round.commitment as Hex },
-      change: { asset: '00'.repeat(32), amount: 0n, batchDigest: '00'.repeat(32) as Hex, salt: round.salt as Hex }, proposedBy: 's1',
-    }, COMPANY_KEY as Hex)),
-  }, FOUNDER.secret as Hex);
+  const filing = signProposalFiling(
+    'acc_1',
+    {
+      id: newProposalId(),
+      digest: round.payload as Hex,
+      chainId: round.proposal as Hex,
+      keyEpoch: 0,
+      createdAt: new Date().toISOString(),
+      sealed: sealGovernanceProposal(
+        withCompanyKey(
+          {
+            accountId: 'acc_1',
+            kind: (o.kind ?? PAY_KEY) as typeof PAY_KEY,
+            summary: PAY_KEY_SUMMARY,
+            noVault: NO_VAULT as Hex,
+            body: o.kind === ADOPT_VAULT ? { vault: 'ab'.repeat(32) as Hex } : { commitment: round.commitment as Hex },
+            change: {
+              asset: '00'.repeat(32),
+              amount: 0n,
+              batchDigest: '00'.repeat(32) as Hex,
+              salt: round.salt as Hex
+            },
+            proposedBy: 's1'
+          },
+          COMPANY_KEY as Hex
+        )
+      )
+    },
+    FOUNDER.secret as Hex
+  );
   return { ...filing, accountId: 'acc_1', status: 'open', approvalCount: 0 };
 };
 
@@ -96,51 +152,102 @@ const api = async (path: string, init?: RequestInit): Promise<unknown> => {
     /* The chain as the sent call leaves it: an approval counted as this seat's, or the proposal closed by the seal. */
     const { call } = JSON.parse(String(init!.body)) as { call: string };
     const c = chain[ROUND.proposal]!;
-    chain[ROUND.proposal] = call === 'approve' ? { ...c, approvals: c.approvals + 1, approvedHere: true } : { ...c, held: 'closed' };
+    chain[ROUND.proposal] =
+      call === 'approve' ? { ...c, approvals: c.approvals + 1, approvedHere: true } : { ...c, held: 'closed' };
     return { txRef: 'r' };
   }
   throw new Error(`this test answers no ${said}`);
 };
-const reachOf = () => viewOverItsApi({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT,
-  seat: { signerId: 's2', signingSecret: '01'.repeat(32), wrappingSecret: WRAPPING.secret, blinding: '03'.repeat(32), scope: WIDE },
-  leaf: 'a2'.repeat(32), companyKey: COMPANY_KEY,
-  api,
-  send: async () => ({ status: 404, body: {} }),
-  holders: async () => ({ seats: ['a1'.repeat(32), 'a2'.repeat(32)], committee: [], approvals: 2, seatBar: 2, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
-  judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }), leavesFor: () => async () => [], rosterReadsFor: () => ({}) },
-  sealed: {}, companyKeys: KEYS,
-  roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: [] }),
-  builder: {
-    roundsOnChain: async ({ chainIds }: { chainIds: string[] }) => Object.fromEntries(chainIds.map((id) => [id, chain[id] ?? { held: 'never', approvals: 0 }])),
-    governedCall: async (input: { order: any; opened: any; material: any }) => {
-      built.push(input);
-      return { tx: `VFgt${String(input.order.circuit).slice(0, 4)}` };
+const reachOf = () =>
+  viewOverItsApi({
+    accountId: 'acc_1',
+    label: LABEL,
+    account: ACCOUNT,
+    seat: {
+      signerId: 's2',
+      signingSecret: '01'.repeat(32),
+      wrappingSecret: WRAPPING.secret,
+      blinding: '03'.repeat(32),
+      scope: WIDE
     },
-  },
-  chain: { indexer: {}, callState: async () => ({ blockHash: '00'.repeat(32), accountState: 'U1RBVEU=', parameters: 'UEFSQU1T' }) },
-});
+    leaf: 'a2'.repeat(32),
+    companyKey: COMPANY_KEY,
+    api,
+    send: async () => ({ status: 404, body: {} }),
+    holders: async () => ({
+      seats: ['a1'.repeat(32), 'a2'.repeat(32)],
+      committee: [],
+      approvals: 2,
+      seatBar: 2,
+      policyBar: null,
+      vaultThresholds: [],
+      adoptedVaults: [],
+      account: ACCOUNT
+    }),
+    judges: {
+      directoryHereFor: () => async () => ({ dir: { seats: [] }, records: { history: new Map() } }),
+      leavesFor: () => async () => [],
+      rosterReadsFor: () => ({})
+    },
+    sealed: {},
+    companyKeys: KEYS,
+    roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: [] }),
+    builder: {
+      roundsOnChain: async ({ chainIds }: { chainIds: string[] }) =>
+        Object.fromEntries(chainIds.map((id) => [id, chain[id] ?? { held: 'never', approvals: 0 }])),
+      governedCall: async (input: { order: any; opened: any; material: any }) => {
+        built.push(input);
+        return { tx: `VFgt${String(input.order.circuit).slice(0, 4)}` };
+      }
+    },
+    chain: {
+      indexer: {},
+      callState: async () => ({ blockHash: '00'.repeat(32), accountState: 'U1RBVEU=', parameters: 'UEFSQU1T' })
+    }
+  });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   const ctx = stepOverItsCall({
-    intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_b',
-    held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
-    relay: async () => { throw new Error('the pay-record key is approved through its calls, never a bare relay'); },
-    call: async (method: string, path: string, body?: string) => ({ status: 200, body: await api(path, { method, ...(body === undefined ? {} : { body }) }) }),
-    tell: (x: Record<string, unknown>) => { told.push(x); },
-    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
+    intent: i,
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'usr_b',
+    held: { identity, account: 0 },
+    at: { step: 3, steps: 5 },
+    signal: new AbortController().signal,
+    relay: async () => {
+      throw new Error('the pay-record key is approved through its calls, never a bare relay');
+    },
+    call: async (method: string, path: string, body?: string) => ({
+      status: 200,
+      body: await api(path, { method, ...(body === undefined ? {} : { body }) })
+    }),
+    tell: (x: Record<string, unknown>) => {
+      told.push(x);
+    },
+    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} }
   }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = () => ({
-  chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, secrets: () => ({}) as never,
-  commitments: async () => ({}) as never, reachFor: async () => reachOf() as never, payKeyPure: async () => P, everyMs: 1, waitMs: 3,
+  chain: () => ({}) as never,
+  builder: () => ({}) as never,
+  pause: async () => {},
+  now: () => 0,
+  secrets: () => ({}) as never,
+  commitments: async () => ({}) as never,
+  reachFor: async () => reachOf() as never,
+  payKeyPure: async () => P,
+  everyMs: 1,
+  waitMs: 3
 });
 const run = async (i: ActIntent, ctx: StepContext): Promise<void> => {
   for (const step of approveProposalAction(reach() as never).steps(i)) await step.run(ctx);
 };
 const refusalOf = async (p: Promise<unknown>): Promise<{ key: string; says: string }> => {
-  const e = await p.then(() => null, (x: unknown) => x);
+  const e = await p.then(
+    () => null,
+    (x: unknown) => x
+  );
   expect(e).toBeInstanceOf(StepRefused);
   return { key: (e as StepRefused).words.key, says: String((e as StepRefused).words.values?.['says'] ?? '') };
 };
@@ -164,25 +271,44 @@ describe('A STALLED PAY-RECORD KEY IS APPROVED AND COMMITTED BY A SECOND SIGNER 
     /* RED WHEN: the approval and the seal are not each built with this seat's own material and sent to the creation's route, in that order. */
     expect(built.map((b) => b.order.circuit)).toEqual(['approve', 'sealPayKey']);
     for (const b of built) expect(b.material.signingSecret).toBe('01'.repeat(32));
-    expect(sentHere()).toEqual(['POST /api/accounts/acc_1/creation/pay-key', 'POST /api/accounts/acc_1/creation/pay-key']);
+    expect(sentHere()).toEqual([
+      'POST /api/accounts/acc_1/creation/pay-key',
+      'POST /api/accounts/acc_1/creation/pay-key'
+    ]);
     /* RED WHEN: the proposal approved or committed is not the one the wallet made from the key the company's signed first state holds. */
     for (const b of built) {
-      expect(b.opened).toMatchObject({ chainId: ROUND.proposal, digest: ROUND.payload, salt: ROUND.salt, vault: NO_VAULT, governance: { kind: 'pay-key', commitment: ROUND.commitment } });
+      expect(b.opened).toMatchObject({
+        chainId: ROUND.proposal,
+        digest: ROUND.payload,
+        salt: ROUND.salt,
+        vault: NO_VAULT,
+        governance: { kind: 'pay-key', commitment: ROUND.commitment }
+      });
     }
-    expect(built[0]!.order).toEqual({ circuit: 'approve', proposal: ROUND.proposal, of: { governance: { kind: 'pay-key', commitment: ROUND.commitment }, proposalSalt: ROUND.salt } });
+    expect(built[0]!.order).toEqual({
+      circuit: 'approve',
+      proposal: ROUND.proposal,
+      of: { governance: { kind: 'pay-key', commitment: ROUND.commitment }, proposalSalt: ROUND.salt }
+    });
     /* RED WHEN: the copy sealed is not the key the approvers saw, sealed to this seat's own wrapping key. */
-    expect(built[1]!.order).toMatchObject({ circuit: 'sealPayKey', commitment: ROUND.commitment, proposal: ROUND.proposal, proposalSalt: ROUND.salt });
+    expect(built[1]!.order).toMatchObject({
+      circuit: 'sealPayKey',
+      commitment: ROUND.commitment,
+      proposal: ROUND.proposal,
+      proposalSalt: ROUND.salt
+    });
     expect(openSealedPayKey(built[1]!.order.wrap, WRAPPING.secret as Hex, ROUND.commitment)).toBe(KEY);
     /* RED WHEN: the page is told the key was committed without the approvals and the bar the chain showed. */
     expect(told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });
   });
 
-  it('approving files no record and raises nothing: it reads the company\'s proposals and sends its own two calls, nothing more', async () => {
+  it("approving files no record and raises nothing: it reads the company's proposals and sends its own two calls, nothing more", async () => {
     const i = intent(proposals[0]!.id);
     await run(i, ctxOf(i).ctx);
     /* RED WHEN: approving the pay-record key writes down a record, a version of one, or a raise. */
     expect(called.filter((c) => !c.startsWith('GET /api/accounts/acc_1/proposals'))).toEqual([
-      'POST /api/accounts/acc_1/creation/pay-key', 'POST /api/accounts/acc_1/creation/pay-key',
+      'POST /api/accounts/acc_1/creation/pay-key',
+      'POST /api/accounts/acc_1/creation/pay-key'
     ]);
     expect(built.some((b) => b.order.circuit === 'propose')).toBe(false);
   });
@@ -198,7 +324,7 @@ describe('A STALLED PAY-RECORD KEY IS APPROVED AND COMMITTED BY A SECOND SIGNER 
     expect(told).toContainEqual({ state: 'waiting-for-approvals', approvals: 1, needed: 2 });
   });
 
-  it('a record that commits another key than the company\'s signed first state holds is refused before anything is built', async () => {
+  it("a record that commits another key than the company's signed first state holds is refused before anything is built", async () => {
     proposals = [recordOf({ key: '7b'.repeat(32) as Hex })];
     const i = intent(proposals[0]!.id);
     const refused = await refusalOf(run(i, ctxOf(i).ctx));
@@ -219,14 +345,20 @@ describe('A STALLED PAY-RECORD KEY IS APPROVED AND COMMITTED BY A SECOND SIGNER 
   });
 
   it('a record this wallet does not believe, or one a signer on their way out filed, is refused before anything is built', async () => {
-    t.believed = new Error('This device does not believe the company\'s record of this proposal.');
+    t.believed = new Error("This device does not believe the company's record of this proposal.");
     const i = intent(proposals[0]!.id);
     /* RED WHEN: a record nobody this device believes wrote down is approved. */
-    expect(await refusalOf(run(i, ctxOf(i).ctx))).toMatchObject({ key: 'act.approve-pay-key.why.not-approved', says: expect.stringMatching(/does not believe/u) });
+    expect(await refusalOf(run(i, ctxOf(i).ctx))).toMatchObject({
+      key: 'act.approve-pay-key.why.not-approved',
+      says: expect.stringMatching(/does not believe/u)
+    });
     t.believed = null;
     t.leaver = new Error('a signer whose removal is raised filed it.');
     /* RED WHEN: a proposal a leaver filed is approved or carried out. */
-    expect(await refusalOf(run(i, ctxOf(i).ctx))).toMatchObject({ key: 'act.approve-pay-key.why.not-approved', says: expect.stringMatching(/removal is raised/u) });
+    expect(await refusalOf(run(i, ctxOf(i).ctx))).toMatchObject({
+      key: 'act.approve-pay-key.why.not-approved',
+      says: expect.stringMatching(/removal is raised/u)
+    });
     expect(built).toEqual([]);
   });
 
@@ -240,9 +372,25 @@ describe('A STALLED PAY-RECORD KEY IS APPROVED AND COMMITTED BY A SECOND SIGNER 
     expect(built).toEqual([]);
   });
 
-  it('every word the kind can say is in the wallet\'s language file', () => {
-    const keys = ['shown.proposal', 'shown.checks', 'shown.approve', 'step.carry', ...['not-a-pay-key', 'not-as-held', 'not-raised', 'not-approved',
-      'not-carried', 'may-be-sent', 'withdrawn', 'carried-out', 'already-counted', 'outrun'].map((k) => `why.${k}`)];
+  it("every word the kind can say is in the wallet's language file", () => {
+    const keys = [
+      'shown.proposal',
+      'shown.checks',
+      'shown.approve',
+      'step.carry',
+      ...[
+        'not-a-pay-key',
+        'not-as-held',
+        'not-raised',
+        'not-approved',
+        'not-carried',
+        'may-be-sent',
+        'withdrawn',
+        'carried-out',
+        'already-counted',
+        'outrun'
+      ].map((k) => `why.${k}`)
+    ];
     /* RED WHEN: the window would show a key in place of words. */
     expect(keys.filter((k) => typeof WORDS[`act.approve-pay-key.${k}`] !== 'string')).toEqual([]);
   });

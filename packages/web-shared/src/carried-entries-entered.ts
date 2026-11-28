@@ -16,23 +16,44 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
-import { companyRecordEntry, ENTRIES_AT_ONCE, entryIdOf, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
-import { FOUNDING_RECORDS, heldStandingOf, type RecordsAsked, type RecordsHeld } from '../../../src/midnight/records-held.js';
 import {
-  fromCompanyWire, verifiedCompanyFiler, type CompanyRecordKind, type SealedCompanyRecord,
+  companyRecordEntry,
+  ENTRIES_AT_ONCE,
+  entryIdOf,
+  type ManifestEntry
+} from '../../../src/midnight/record-manifest.js';
+import {
+  FOUNDING_RECORDS,
+  heldStandingOf,
+  type RecordsAsked,
+  type RecordsHeld
+} from '../../../src/midnight/records-held.js';
+import {
+  fromCompanyWire,
+  verifiedCompanyFiler,
+  type CompanyRecordKind,
+  type SealedCompanyRecord
 } from '../../../src/midnight/sealed-record-wire.js';
 import type { ManifestService } from './record-entered-here.js';
 import type { CompanyView } from './company-view.js';
 
 /** How many carried entries were entered, and why the rest were not when the service refused them; null when none was refused. */
-interface CarriedEntered { readonly entered: number; readonly refused: string | null }
+interface CarriedEntered {
+  readonly entered: number;
+  readonly refused: string | null;
+}
 
 /**
  * Whether a served version's carried entry is owed: its own filer's, not a record the company was founded with as it
  * was founded (its founding seat enters those, first), and named nowhere in the company's records.
  */
 const owedEntryOf = (company: string, held: RecordsHeld, rec: SealedCompanyRecord): ManifestEntry | null => {
-  if (rec.company !== company || (rec.version === 1 && FOUNDING_RECORDS.some((r) => r.kind === rec.kind && r.id === rec.id)) || carriedEntryRefusal(rec) !== null) return null;
+  if (
+    rec.company !== company ||
+    (rec.version === 1 && FOUNDING_RECORDS.some((r) => r.kind === rec.kind && r.id === rec.id)) ||
+    carriedEntryRefusal(rec) !== null
+  )
+    return null;
   const s = heldStandingOf(held, companyRecordEntry(rec), verifiedCompanyFiler(rec)!);
   return s.standing === 'not-entered' && s.newest < rec.version ? rec.entry! : null;
 };
@@ -47,7 +68,8 @@ const owedEntryOf = (company: string, held: RecordsHeld, rec: SealedCompanyRecor
  */
 export async function carriedEntriesEntered(
   doors: { readonly accountId: string; readonly manifest: Pick<ManifestService, 'enter'> },
-  held: RecordsHeld, served: readonly SealedCompanyRecord[],
+  held: RecordsHeld,
+  served: readonly SealedCompanyRecord[]
 ): Promise<CarriedEntered> {
   if (held.reached.seq < 0) return { entered: 0, refused: null };
   const owed = new Map<Hex, ManifestEntry>();
@@ -82,7 +104,9 @@ interface EnteredThroughTheView {
 async function sweptThroughTheView(doors: EnteredThroughTheView, kind: CompanyRecordKind, id: string) {
   const { view } = doors;
   if (view.company !== doors.accountId) {
-    throw new Error(`the read of company ${view.company} was handed in for company ${doors.accountId}, so nothing of either is entered through it.`);
+    throw new Error(
+      `the read of company ${view.company} was handed in for company ${doors.accountId}, so nothing of either is entered through it.`
+    );
   }
   const name = { store: 'company' as const, kind, id };
   view.declare({ records: [name] });
@@ -97,10 +121,15 @@ async function sweptThroughTheView(doors: EnteredThroughTheView, kind: CompanyRe
  * caller reads the record again when anything was entered. Every read and
  * entry goes through the step's view.
  */
-export async function recordEnteredHere(doors: EnteredThroughTheView, kind: CompanyRecordKind, id: string): Promise<CarriedEntered> {
+export async function recordEnteredHere(
+  doors: EnteredThroughTheView,
+  kind: CompanyRecordKind,
+  id: string
+): Promise<CarriedEntered> {
   const read = await sweptThroughTheView(doors, kind, id);
   const b = read.versions as { versions?: unknown } | null | undefined;
-  if (!Array.isArray(b?.versions)) return { entered: 0, refused: 'the service did not answer with the record\'s versions' };
+  if (!Array.isArray(b?.versions))
+    return { entered: 0, refused: "the service did not answer with the record's versions" };
   const served = b.versions.map((w: unknown) => fromCompanyWire(w, { company: doors.accountId, kind, id }).sealed);
   return carriedEntriesEntered({ accountId: doors.accountId, manifest: read.manifest }, read.held, served);
 }
@@ -111,7 +140,9 @@ export async function recordEnteredHere(doors: EnteredThroughTheView, kind: Comp
  * refusal stands as it was thrown.
  */
 export async function readAfterEntering<T>(
-  read: () => Promise<T>, unentered: (e: unknown) => boolean, sweep: () => Promise<CarriedEntered>,
+  read: () => Promise<T>,
+  unentered: (e: unknown) => boolean,
+  sweep: () => Promise<CarriedEntered>
 ): Promise<T> {
   try {
     return await read();

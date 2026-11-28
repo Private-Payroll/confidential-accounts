@@ -1,12 +1,20 @@
 import { Effect, Either, Exit, Scope, Stream } from 'effect';
 import {
-  V9, makeV9SimulatorBlockDataFetcher, makeV9SimulatorProvingService, makeV9SimulatorSubmissionService,
+  V9,
+  makeV9SimulatorBlockDataFetcher,
+  makeV9SimulatorProvingService,
+  makeV9SimulatorSubmissionService
 } from '@midnightntwrk/wallet-sdk/capabilities';
 import type {
-  AnyVersionUnboundTransaction, SubmissionService, SubmissionServiceEffect,
+  AnyVersionUnboundTransaction,
+  SubmissionService,
+  SubmissionServiceEffect
 } from '@midnightntwrk/wallet-sdk/capabilities';
 import {
-  InMemoryTransactionHistoryStorage, NoOpTransactionHistoryStorage, ProtocolVersion, WalletFacade,
+  InMemoryTransactionHistoryStorage,
+  NoOpTransactionHistoryStorage,
+  ProtocolVersion,
+  WalletFacade
 } from '@midnightntwrk/wallet-sdk';
 import type { FinalizedTx, WalletSeeds } from '@midnightntwrk/wallet-sdk';
 import { CustomShieldedWallet } from '@midnightntwrk/wallet-sdk/shielded';
@@ -101,8 +109,9 @@ const unshieldedSimSyncCapability = (): ReturnType<typeof UnshieldedV2.Sync.make
     applyUpdate: (state, update, activeRange) =>
       Either.map(inner.applyUpdate(state, update, activeRange), (next) =>
         UnshieldedV2.CoreWallet.updateProgress(next, {
-          highestTransactionId: next.progress.appliedId,
-        })),
+          highestTransactionId: next.progress.appliedId
+        })
+      )
   };
 };
 
@@ -124,20 +133,20 @@ const unshieldedSimSyncCapability = (): ReturnType<typeof UnshieldedV2.Sync.make
  * first one recorded. Nothing is re-implemented: the service and the capability
  * inside are the SDK's own.
  */
-const eachUpdateTwice = <Args extends unknown[], Update, Failure, Needs>(
-  updates: (...args: Args) => Stream.Stream<Update, Failure, Needs>,
-) => (...args: Args): Stream.Stream<Update, Failure, Needs> =>
+const eachUpdateTwice =
+  <Args extends unknown[], Update, Failure, Needs>(updates: (...args: Args) => Stream.Stream<Update, Failure, Needs>) =>
+  (...args: Args): Stream.Stream<Update, Failure, Needs> =>
     Stream.flatMap(updates(...args), (update) => Stream.make(update, update));
 
 const shieldedSimSyncService = (
-  config: Parameters<typeof ShieldedV2.Sync.makeSimulatorSyncService>[0],
+  config: Parameters<typeof ShieldedV2.Sync.makeSimulatorSyncService>[0]
 ): ReturnType<typeof ShieldedV2.Sync.makeSimulatorSyncService> => {
   const inner = ShieldedV2.Sync.makeSimulatorSyncService(config);
   return { ...inner, updates: eachUpdateTwice(inner.updates) };
 };
 
 const dustSimSyncService = (
-  config: Parameters<typeof DustV2.SyncService.makeSimulatorSyncService>[0],
+  config: Parameters<typeof DustV2.SyncService.makeSimulatorSyncService>[0]
 ): ReturnType<typeof DustV2.SyncService.makeSimulatorSyncService> => {
   const inner = DustV2.SyncService.makeSimulatorSyncService(config);
   return { ...inner, updates: eachUpdateTwice(inner.updates) };
@@ -149,7 +158,7 @@ const dustSimSyncService = (
  * ledger must agree on what time it is — both read the simulator.
  */
 const simulatorClock = (simulator: V9.Simulator): { now: () => Date } => ({
-  now: () => Effect.runSync(Effect.map(simulator.getLatestState(), V9.getCurrentTime)),
+  now: () => Effect.runSync(Effect.map(simulator.getLatestState(), V9.getCurrentTime))
 });
 
 /**
@@ -160,9 +169,8 @@ const simulatorClock = (simulator: V9.Simulator): { now: () => Date } => ({
  */
 const asPromiseSubmission = <T>(service: SubmissionServiceEffect<T>): SubmissionService<T> => ({
   submitTransaction: ((tx: T, waitForStatus?: 'Submitted' | 'InBlock' | 'Finalized') =>
-    Effect.runPromise(service.submitTransaction(tx, waitForStatus))) as
-      SubmissionService<T>['submitTransaction'],
-  close: () => Effect.runPromise(service.close()),
+    Effect.runPromise(service.submitTransaction(tx, waitForStatus))) as SubmissionService<T>['submitTransaction'],
+  close: () => Effect.runPromise(service.close())
 });
 
 /**
@@ -181,7 +189,7 @@ const simulatorProving = (): FacadeProving => {
     prove: async (tx) => {
       if (!(tx instanceof Transaction)) throw new Error('the rehearsal proves only ledger-v9 transactions.');
       return (await inner.prove(tx)) as unknown as AnyVersionUnboundTransaction;
-    },
+    }
   };
 };
 
@@ -193,13 +201,15 @@ const proofErasedIn = (handle: unknown): ProofErasedTransaction => {
 };
 
 /** The SDK's simulator submission service, taking the facade's finished handles. */
-const simulatorSubmission = (simulator: V9.Simulator): SubmissionService<FinalizedTx> => asPromiseSubmission(
-  makeV9SimulatorSubmissionService<FinalizedTx>()({
-    simulator: {
-      submitTransaction: (handle) => Effect.asVoid(simulator.submitTransaction(proofErasedIn(handle))),
-      getLatestState: () => simulator.getLatestState(),
-    },
-  }));
+const simulatorSubmission = (simulator: V9.Simulator): SubmissionService<FinalizedTx> =>
+  asPromiseSubmission(
+    makeV9SimulatorSubmissionService<FinalizedTx>()({
+      simulator: {
+        submitTransaction: (handle) => Effect.asVoid(simulator.submitTransaction(proofErasedIn(handle))),
+        getLatestState: () => simulator.getLatestState()
+      }
+    })
+  );
 
 export interface RehearsalOptions {
   /** STARs minted to the account's unshielded address at genesis. The
@@ -244,8 +254,11 @@ export interface Rehearsal {
 
 /** The three wallets over the simulated chain, started from this account's own keys. */
 function simulatedWallets(
-  identity: Identity, account: number, simulator: V9.Simulator,
-  keystore: ReturnType<typeof unshieldedKeystoreFor>, shieldedKeys: ReturnType<typeof secretKeysFor>,
+  identity: Identity,
+  account: number,
+  simulator: V9.Simulator,
+  keystore: ReturnType<typeof unshieldedKeystoreFor>,
+  shieldedKeys: ReturnType<typeof secretKeysFor>
 ) {
   /* THE THREE WALLETS, rebuilt over the simulator's seams. Each builder
    * line swaps exactly one capability for the SDK's simulator flavour of
@@ -258,8 +271,9 @@ function simulatedWallets(
       networkId: NETWORK,
       simulator,
       txHistoryStorage: new InMemoryTransactionHistoryStorage(
-        ShieldedV2.TransactionHistory.ShieldedTransactionHistoryEntrySchema),
-      indexerClientConnection: { indexerHttpUrl: NOWHERE_HTTP },
+        ShieldedV2.TransactionHistory.ShieldedTransactionHistoryEntrySchema
+      ),
+      indexerClientConnection: { indexerHttpUrl: NOWHERE_HTTP }
     },
     new ShieldedV2.V2Builder()
       .withTransactionType<ProofErasedTransaction>()
@@ -270,7 +284,7 @@ function simulatedWallets(
       .withCoinsAndBalancesDefaults()
       .withKeysDefaults()
       .withStartAuxDefaults()
-      .withTransactionHistory(ShieldedV2.TransactionHistory.makeSimulatorTransactionHistoryService),
+      .withTransactionHistory(ShieldedV2.TransactionHistory.makeSimulatorTransactionHistoryService)
   ).startWithSecretKeys(shieldedKeys);
 
   const unshielded = CustomUnshieldedWallet(
@@ -278,7 +292,8 @@ function simulatedWallets(
       networkId: NETWORK,
       simulator,
       txHistoryStorage: new InMemoryTransactionHistoryStorage(
-        UnshieldedV2.TransactionHistory.UnshieldedTransactionHistoryEntrySchema),
+        UnshieldedV2.TransactionHistory.UnshieldedTransactionHistoryEntrySchema
+      )
     },
     new UnshieldedV2.V2Builder()
       .withSync(UnshieldedV2.Sync.makeSimulatorSyncService, unshieldedSimSyncCapability)
@@ -288,7 +303,7 @@ function simulatedWallets(
       .withCoinSelectionDefaults()
       .withCoinsAndBalancesDefaults()
       .withKeysDefaults()
-      .withTransactionHistoryDefaults(),
+      .withTransactionHistoryDefaults()
   ).startWithPublicKey(PublicKey.fromKeyStore(keystore));
 
   const dust = CustomDustWallet(
@@ -297,8 +312,9 @@ function simulatedWallets(
       simulator,
       costParameters: { feeBlocksMargin: 5 },
       txHistoryStorage: new InMemoryTransactionHistoryStorage(
-        DustV2.TransactionHistory.DustTransactionHistoryEntrySchema),
-      indexerClientConnection: { indexerHttpUrl: NOWHERE_HTTP },
+        DustV2.TransactionHistory.DustTransactionHistoryEntrySchema
+      ),
+      indexerClientConnection: { indexerHttpUrl: NOWHERE_HTTP }
     },
     new DustV2.V2Builder()
       .withTransactionType<ProofErasedTransaction>()
@@ -309,15 +325,17 @@ function simulatedWallets(
       .withCoinsAndBalancesDefaults()
       .withKeysDefaults()
       .withStartAuxDefaults()
-      .withTransactionHistory(DustV2.TransactionHistory.makeSimulatorTransactionHistoryService),
+      .withTransactionHistory(DustV2.TransactionHistory.makeSimulatorTransactionHistoryService)
   ).startWithSecretKey(dustSecretKeyFor(identity, account));
   return { shielded, unshielded, dust };
 }
 
 /** Registers the account's public NIGHT for DUST on the simulated chain and lets a day of DUST accrue. */
 async function registeredForDust(
-  facade: WalletFacade, simulator: V9.Simulator,
-  keystore: ReturnType<typeof unshieldedKeystoreFor>, fastForward: (seconds: bigint) => Promise<void>,
+  facade: WalletFacade,
+  simulator: V9.Simulator,
+  keystore: ReturnType<typeof unshieldedKeystoreFor>,
+  fastForward: (seconds: bigint) => Promise<void>
 ): Promise<void> {
   /* DUST THE HONEST WAY — the registration every wallet runs
    * (`registerNightForDust`), re-run against the pretend chain: estimate, wait
@@ -327,21 +345,26 @@ async function registeredForDust(
    * move: a day of pretend time first, so the projection the SDK computes
    * from the coin's age already covers the fee. */
   await fastForward(86_400n);
-  const done = await registerNightForDust(facade, { verifyingKey: keystore.getPublicKey(), sign: keystore.signDataAsync }, {
-    waitMs: 10_000,
-    /* The SETUP registration is proved and submitted by the simulator
-     * DIRECTLY, not through the facade's injected services — because a
-     * rehearsal scenario may deliberately inject a prover or a
-     * submission door that fails, and the failure being rehearsed is
-     * the SEND's, not the scaffolding's. */
-    send: async (registration) => {
-      const unproven = carriedBy(registration.transaction);
-      if (!(unproven instanceof Transaction)) throw new Error('the rehearsal could not read its own DUST registration.');
-      const proofErased = await makeV9SimulatorProvingService().prove(unproven);
-      await Effect.runPromise(simulator.submitTransaction(proofErased));
-      return proofErased.identifiers()[0] ?? '';
-    },
-  });
+  const done = await registerNightForDust(
+    facade,
+    { verifyingKey: keystore.getPublicKey(), sign: keystore.signDataAsync },
+    {
+      waitMs: 10_000,
+      /* The SETUP registration is proved and submitted by the simulator
+       * DIRECTLY, not through the facade's injected services — because a
+       * rehearsal scenario may deliberately inject a prover or a
+       * submission door that fails, and the failure being rehearsed is
+       * the SEND's, not the scaffolding's. */
+      send: async (registration) => {
+        const unproven = carriedBy(registration.transaction);
+        if (!(unproven instanceof Transaction))
+          throw new Error('the rehearsal could not read its own DUST registration.');
+        const proofErased = await makeV9SimulatorProvingService().prove(unproven);
+        await Effect.runPromise(simulator.submitTransaction(proofErased));
+        return proofErased.identifiers()[0] ?? '';
+      }
+    }
+  );
   if (done.registered === 0) return;
   /* Another pretend day, so the registered NIGHT has generated DUST
    * worth spending — the state the real wallet reached. */
@@ -357,7 +380,7 @@ async function registeredForDust(
 export async function startRehearsal(
   identity: Identity,
   account: number,
-  options: RehearsalOptions = {},
+  options: RehearsalOptions = {}
 ): Promise<Rehearsal> {
   const unshieldedStars = options.unshieldedStars ?? 5_000_000_000n;
   const shieldedStars = options.shieldedStars ?? 100_000_000n;
@@ -367,30 +390,34 @@ export async function startRehearsal(
   /* The simulator lives in an Effect scope; the scope is held open for the
    * rehearsal's life and closed by `stop`. */
   const scope = Effect.runSync(Scope.make());
-  const simulator = await Effect.runPromise(Scope.extend(V9.Simulator.init({
-    networkId: NETWORK,
-    protocolVersion: options.chainVersion,
-    genesisMints: [
-      {
-        type: 'unshielded',
-        tokenType: nativeToken().raw,
-        amount: unshieldedStars,
-        recipient: keystore.getAddress(),
-        /* NIGHT cannot be minted from nothing (supply invariant) — the
-         * simulator claims it as a reward, which needs the verifying key. */
-        verifyingKey: keystore.getPublicKey(),
-      },
-      {
-        type: 'shielded',
-        tokenType: shieldedToken().raw,
-        amount: shieldedStars,
-        recipient: shieldedKeys,
-      },
-    ],
-  }), scope));
+  const simulator = await Effect.runPromise(
+    Scope.extend(
+      V9.Simulator.init({
+        networkId: NETWORK,
+        protocolVersion: options.chainVersion,
+        genesisMints: [
+          {
+            type: 'unshielded',
+            tokenType: nativeToken().raw,
+            amount: unshieldedStars,
+            recipient: keystore.getAddress(),
+            /* NIGHT cannot be minted from nothing (supply invariant) — the
+             * simulator claims it as a reward, which needs the verifying key. */
+            verifyingKey: keystore.getPublicKey()
+          },
+          {
+            type: 'shielded',
+            tokenType: shieldedToken().raw,
+            amount: shieldedStars,
+            recipient: shieldedKeys
+          }
+        ]
+      }),
+      scope
+    )
+  );
 
-  const stopScope = (): Promise<void> =>
-    Effect.runPromise(Scope.close(scope, Exit.void)).then(() => undefined);
+  const stopScope = (): Promise<void> => Effect.runPromise(Scope.close(scope, Exit.void)).then(() => undefined);
 
   try {
     const { shielded, unshielded, dust } = simulatedWallets(identity, account, simulator, keystore, shieldedKeys);
@@ -401,7 +428,7 @@ export async function startRehearsal(
         relayURL: new URL(NOWHERE_WS),
         indexerClientConnection: { indexerHttpUrl: NOWHERE_HTTP, indexerWsUrl: NOWHERE_WS },
         txHistoryStorage: new NoOpTransactionHistoryStorage(),
-        forks: options.ledgerNineFrom === undefined ? REHEARSAL_FORKS : { v9: options.ledgerNineFrom },
+        forks: options.ledgerNineFrom === undefined ? REHEARSAL_FORKS : { v9: options.ledgerNineFrom }
       },
       shielded: () => shielded,
       unshielded: () => unshielded,
@@ -409,12 +436,11 @@ export async function startRehearsal(
       provingService: () => options.provingService ?? simulatorProving(),
       submissionService: () => options.submissionService ?? simulatorSubmission(simulator),
       fetchBlockData: () => makeV9SimulatorBlockDataFetcher(simulator),
-      clock: () => simulatorClock(simulator),
+      clock: () => simulatorClock(simulator)
     });
 
     const seeds = seedsFor(identity, account);
-    const fastForward = (seconds: bigint): Promise<void> =>
-      Effect.runPromise(simulator.fastForward(seconds));
+    const fastForward = (seconds: bigint): Promise<void> => Effect.runPromise(simulator.fastForward(seconds));
 
     await facade.start(seeds);
     await facade.waitForSyncedState();
@@ -428,12 +454,18 @@ export async function startRehearsal(
       fastForward,
       now: () => simulatorClock(simulator).now(),
       stop: async () => {
-        await facade.stop().catch(() => { /* already stopping is fine */ });
-        await stopScope().catch(() => { /* scope already closed is fine */ });
-      },
+        await facade.stop().catch(() => {
+          /* already stopping is fine */
+        });
+        await stopScope().catch(() => {
+          /* scope already closed is fine */
+        });
+      }
     };
   } catch (e) {
-    await stopScope().catch(() => { /* scope already closed is fine */ });
+    await stopScope().catch(() => {
+      /* scope already closed is fine */
+    });
     throw e;
   }
 }
@@ -466,9 +498,11 @@ const slowSimulatorProving = (delayMs: number): FacadeProving => {
   const inner = simulatorProving();
   return {
     prove: async (tx, protocolVersion) => {
-      await new Promise((resolve) => { setTimeout(resolve, delayMs); });
+      await new Promise((resolve) => {
+        setTimeout(resolve, delayMs);
+      });
       return inner.prove(tx, protocolVersion);
-    },
+    }
   };
 };
 
@@ -476,10 +510,11 @@ const slowSimulatorProving = (delayMs: number): FacadeProving => {
  * proof has already succeeded. What it says is what a dropped connection
  * looks like from a browser. */
 const refusingSubmission: SubmissionService<FinalizedTx> = {
-  submitTransaction: (() => Promise.reject(new Error(
-    'the connection to the node closed before any answer arrived'))) as
-      SubmissionService<FinalizedTx>['submitTransaction'],
-  close: () => Promise.resolve(),
+  submitTransaction: (() =>
+    Promise.reject(
+      new Error('the connection to the node closed before any answer arrived')
+    )) as SubmissionService<FinalizedTx>['submitTransaction'],
+  close: () => Promise.resolve()
 };
 
 export interface RehearsalDoors extends SendDoors {
@@ -497,15 +532,13 @@ export function rehearsalDoors(
   identity: Identity,
   account: number,
   scenario: RehearsalScenario = 'ordinary',
-  options: { readonly slowMs?: number } = {},
+  options: { readonly slowMs?: number } = {}
 ): RehearsalDoors {
   let running: Promise<Rehearsal> | null = null;
   const rehearsal = (): Promise<Rehearsal> => {
     running ??= startRehearsal(identity, account, {
-      provingService: scenario === 'slow-proving'
-        ? slowSimulatorProving(options.slowMs ?? SLOW_PROVING_MS)
-        : undefined,
-      submissionService: scenario === 'submission-fails' ? refusingSubmission : undefined,
+      provingService: scenario === 'slow-proving' ? slowSimulatorProving(options.slowMs ?? SLOW_PROVING_MS) : undefined,
+      submissionService: scenario === 'submission-fails' ? refusingSubmission : undefined
     });
     return running;
   };
@@ -522,12 +555,12 @@ export function rehearsalDoors(
      * person would see: the watched middle, refusing a duplicate, ending
      * only when the (real) TTL would end it. */
     pending: throwawayPendingGuard(),
-    transactionStatus: async () => ({ found: false } as const),
+    transactionStatus: async () => ({ found: false }) as const,
     stop: async () => {
       if (!running) return;
       const r = await running.catch(() => null);
       running = null;
       await r?.stop();
-    },
+    }
   };
 }

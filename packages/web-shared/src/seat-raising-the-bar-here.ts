@@ -27,8 +27,10 @@ const MAYBE_SENT = 'Anything this press already sent may have gone through and s
  */
 export async function seatRaisingTheBarHere(doors: LeavingReads, viewingKey: KeysHeld): Promise<string | null> {
   if (doors.records === undefined || !doors.service.sealedProposals) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s proposals, so it cannot tell whether a seat being added '
-      + 'raises the approvals this removal needs. Nothing was sent. Reload the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's proposals, so it cannot tell whether a seat being added " +
+        'raises the approvals this removal needs. Nothing was sent. Reload the page to get the current version.'
+    );
   }
   const bar = (await doors.records.directory()).holders.seatBar;
   const served = await doors.service.sealedProposals(doors.accountId);
@@ -38,23 +40,37 @@ export async function seatRaisingTheBarHere(doors: LeavingReads, viewingKey: Key
     if (p.accountId !== doors.accountId || p.status !== 'open') continue;
     let opened: OpenedRound;
     try {
-      opened = await openTheRoundHere(doors.service, doors.accountId, p.id, viewingKey, false, doors.records, doors.leaves, false, 'add-signer');
+      opened = await openTheRoundHere(
+        doors.service,
+        doors.accountId,
+        p.id,
+        viewingKey,
+        false,
+        doors.records,
+        doors.leaves,
+        false,
+        'add-signer'
+      );
     } catch (e) {
       if (passedOverAs(e, 'add-signer')) continue;
       const said = blockingProposalSaid(named, p.id, e);
       return `${said.charAt(0).toUpperCase()}${said.slice(1)}. Whether it raises the approvals this removal needs cannot be told. ${MAYBE_SENT}`;
     }
     const g = opened.governance;
-    const written = g?.kind === 'add-signer' ? g.threshold ?? '0' : '0';
+    const written = g?.kind === 'add-signer' ? (g.threshold ?? '0') : '0';
     if (!/^[0-9]+$/u.test(written)) {
-      return `Proposal ${p.id} adds a signer whose seat sets the approvals the company needs to ${written}, which is not a whole number, `
-        + `so the network never carries it out. ${MAYBE_SENT} Withdraw that invitation, then make this removal again.`;
+      return (
+        `Proposal ${p.id} adds a signer whose seat sets the approvals the company needs to ${written}, which is not a whole number, ` +
+        `so the network never carries it out. ${MAYBE_SENT} Withdraw that invitation, then make this removal again.`
+      );
     }
     /* Compared as a whole number of any size: an invitation may set up to the chain's own limit, past what a number counts exactly. */
     if (BigInt(written) > BigInt(bar)) {
-      return `Proposal ${p.id} adds a signer whose seat sets the approvals the company needs to ${written} once it is taken, above the ${bar} `
-        + `this removal is approved at, so the removal could never be carried out once that seat is taken. ${MAYBE_SENT} Let the `
-        + 'person take that seat first, or withdraw that invitation, then make this removal again.';
+      return (
+        `Proposal ${p.id} adds a signer whose seat sets the approvals the company needs to ${written} once it is taken, above the ${bar} ` +
+        `this removal is approved at, so the removal could never be carried out once that seat is taken. ${MAYBE_SENT} Let the ` +
+        'person take that seat first, or withdraw that invitation, then make this removal again.'
+      );
     }
   }
   return null;

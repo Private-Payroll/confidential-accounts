@@ -71,13 +71,24 @@ import { loadEnvFile } from '../src/db/connect.js';
 import { theNetwork, type NetworkName } from '../src/midnight/network.js';
 import { publicDataProviderAt } from '../src/midnight/providers.js';
 import { parseVaultRegistry, theVault, vaultRegistryFile } from '../src/midnight/vault-record.js';
-import { deployment, deploymentRecordPath, serviceStorePath, storeDir, type Deployment } from '../src/wiring/deployment.js';
+import {
+  deployment,
+  deploymentRecordPath,
+  serviceStorePath,
+  storeDir,
+  type Deployment
+} from '../src/wiring/deployment.js';
 import { startProduct, type Startup } from '../src/wiring/product.js';
 import { ContractBook, type RecordedContract } from '../src/wiring/account-contract.js';
 import type { LedgerStatus } from '../src/core/ledger.js';
 import {
-  sayReading, carriesNumbers, compareReadbacks, vaultNumbers, verdict,
-  type AccountNumbers, type Reading,
+  sayReading,
+  carriesNumbers,
+  compareReadbacks,
+  vaultNumbers,
+  verdict,
+  type AccountNumbers,
+  type Reading
 } from './read-the-chain-rules.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -90,8 +101,12 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
  */
 loadEnvFile(join(ROOT, '.env'));
 
-const B = '[1m'; const D = '[2m'; const O = '[0m';
-const G = '[32m'; const R = '[31m'; const Y = '[33m';
+const B = '[1m';
+const D = '[2m';
+const O = '[0m';
+const G = '[32m';
+const R = '[31m';
+const Y = '[33m';
 
 /* Every address this run touches, registered before the first printed line. */
 const secret: Array<{ what: string; value: string }> = [];
@@ -145,7 +160,7 @@ function numbersOf(s: LedgerStatus): AccountNumbers | null {
     threshold: Number(s.threshold),
     signerCount: Number(s.signerCount),
     openProposals: Array.isArray(s.openProposals) ? s.openProposals.length : Number.NaN,
-    movementCount: Number(s.movementCount),
+    movementCount: Number(s.movementCount)
   };
   for (const v of Object.values(four)) if (!Number.isFinite(v)) return null;
   return four;
@@ -163,7 +178,7 @@ function numbersOf(s: LedgerStatus): AccountNumbers | null {
 async function readThrough(
   ledger: { status(id: string): Promise<LedgerStatus | null> },
   accountId: string,
-  addressWasResolvable: boolean,
+  addressWasResolvable: boolean
 ): Promise<{ reading: Reading; ms: number }> {
   const started = Date.now();
   try {
@@ -174,10 +189,16 @@ async function readThrough(
     }
     const numbers = numbersOf(s);
     if (numbers === null) {
-      return { reading: { kind: 'failed', cause:
-        'the contract answered and its state did not decode into all four of the numbers '
-        + 'this reading turns on, so what came back is a measurement of how far the decoding '
-        + 'got rather than of the account' }, ms };
+      return {
+        reading: {
+          kind: 'failed',
+          cause:
+            'the contract answered and its state did not decode into all four of the numbers ' +
+            'this reading turns on, so what came back is a measurement of how far the decoding ' +
+            'got rather than of the account'
+        },
+        ms
+      };
     }
     return { reading: { kind: 'answered', numbers }, ms };
   } catch (e) {
@@ -216,8 +237,10 @@ async function main(): Promise<number> {
   try {
     d = deployment(ROOT, process.env);
     if (d.contractAddress === null) {
-      throw new Error(`no account was deployed from this machine on ${network}, so there is no address to read; `
-        + 'every company here was founded from its signer\'s browser. Read one of those companies instead.');
+      throw new Error(
+        `no account was deployed from this machine on ${network}, so there is no address to read; ` +
+          "every company here was founded from its signer's browser. Read one of those companies instead."
+      );
     }
     secret.push({ what: "the account's contract address", value: d.contractAddress });
     say(`  ${G}✓${O} the product resolved a deployment from what is on disk`);
@@ -267,13 +290,14 @@ async function main(): Promise<number> {
           stored.set(id, {
             address: a.contractAddress,
             source: a.addressSource ?? null,
-            wiring: a.wiring ?? null,
+            wiring: a.wiring ?? null
           });
           secret.push({ what: 'a stored account address', value: a.contractAddress });
         }
       }
-      say(`  ${G}✓${O} ${Object.keys(accounts).length} account(s) stored, `
-        + `${stored.size} carrying a contract address`);
+      say(
+        `  ${G}✓${O} ${Object.keys(accounts).length} account(s) stored, ` + `${stored.size} carrying a contract address`
+      );
     } catch (e) {
       refuse("the product's store", `it exists and could not be read: ${scrubbed(e)}`);
     }
@@ -285,8 +309,11 @@ async function main(): Promise<number> {
     say();
     clock.print('finished');
     printRefusals();
-    const v = verdict({ deploymentResolved: false,
-      asConfigured: { kind: 'never-asked' }, withAddressSupplied: { kind: 'never-asked' } });
+    const v = verdict({
+      deploymentResolved: false,
+      asConfigured: { kind: 'never-asked' },
+      withAddressSupplied: { kind: 'never-asked' }
+    });
     return sayVerdict(v);
   }
 
@@ -295,9 +322,10 @@ async function main(): Promise<number> {
   clock.begin(3, 6, "The product's boundary, as this deployment is configured");
 
   const asConfigured = await runOne(
-    id => stored.get(id) ?? null,
+    (id) => stored.get(id) ?? null,
     stored.size > 0 ? [...stored.keys()] : ['the-account-this-deployment-was-built-for'],
-    (id) => stored.has(id));
+    (id) => stored.has(id)
+  );
   say();
 
   /* ---- 4. the same boundary, with the address supplied ---- */
@@ -314,7 +342,9 @@ async function main(): Promise<number> {
    */
   const supplied = await runOne(
     () => ({ address: d!.contractAddress!, source: 'chain', wiring: 'chain' }),
-    ['supplied'], () => true);
+    ['supplied'],
+    () => true
+  );
   say();
 
   /* ---- 5. a contract the indexer has no state for ---- */
@@ -326,7 +356,10 @@ async function main(): Promise<number> {
   const absent = neighbourOf(d.contractAddress!);
   secret.push({ what: 'the undeployed address', value: absent });
   const absentRead = await runOne(
-    () => ({ address: absent, source: 'chain', wiring: 'chain' }), ['absent'], () => true);
+    () => ({ address: absent, source: 'chain', wiring: 'chain' }),
+    ['absent'],
+    () => true
+  );
 
   if (absentRead.reading.kind === 'no-state') {
     say(`  ${B}THE SAME ABSENT VALUE THE EMPTY LOOKUP PRODUCES.${O} The boundary answers`);
@@ -355,19 +388,27 @@ async function main(): Promise<number> {
    * uncomparable here and no run of this instrument will ever call them agreed.
    */
   const recorded = recordedNumbers(ROOT, network);
-  const from = carriesNumbers(asConfigured.reading) ? 'the product as configured'
-    : carriesNumbers(supplied.reading) ? 'the run with the address supplied' : 'nothing';
-  const read = carriesNumbers(asConfigured.reading) ? asConfigured.reading.numbers
-    : carriesNumbers(supplied.reading) ? supplied.reading.numbers : {};
+  const from = carriesNumbers(asConfigured.reading)
+    ? 'the product as configured'
+    : carriesNumbers(supplied.reading)
+      ? 'the run with the address supplied'
+      : 'nothing';
+  const read = carriesNumbers(asConfigured.reading)
+    ? asConfigured.reading.numbers
+    : carriesNumbers(supplied.reading)
+      ? supplied.reading.numbers
+      : {};
   say(`  ${D}read now: from ${from}. Recorded: the deployment record, which carries the${O}`);
   say(`  ${D}threshold and none of the other three.${O}`);
   const cmp = compareReadbacks(recorded, read);
   for (const k of ['threshold', 'signerCount', 'openProposals', 'movementCount'] as const) {
-    const a = recorded[k]; const b = (read as Partial<AccountNumbers>)[k];
-    const mark = cmp.perField[k] === 'agree' ? `${G}✓${O}`
-      : cmp.perField[k] === 'differ' ? `${R}✗${O}` : `${Y}?${O}`;
-    say(`    ${mark} ${k.padEnd(16)} recorded at deploy ${String(a ?? '-').padStart(6)}`
-      + `    read now ${String(b ?? '-').padStart(6)}    ${cmp.perField[k]}`);
+    const a = recorded[k];
+    const b = (read as Partial<AccountNumbers>)[k];
+    const mark = cmp.perField[k] === 'agree' ? `${G}✓${O}` : cmp.perField[k] === 'differ' ? `${R}✗${O}` : `${Y}?${O}`;
+    say(
+      `    ${mark} ${k.padEnd(16)} recorded at deploy ${String(a ?? '-').padStart(6)}` +
+        `    read now ${String(b ?? '-').padStart(6)}    ${cmp.perField[k]}`
+    );
   }
   if (cmp.overall === 'incomparable') {
     say(`  ${Y}!${O} ${B}NOT COMPARED.${O} One side is missing, and a comparison with a missing`);
@@ -378,18 +419,20 @@ async function main(): Promise<number> {
   clock.print('finished');
   printRefusals();
 
-  return sayVerdict(verdict({
-    deploymentResolved: true,
-    asConfigured: asConfigured.reading,
-    withAddressSupplied: supplied.reading,
-  }));
+  return sayVerdict(
+    verdict({
+      deploymentResolved: true,
+      asConfigured: asConfigured.reading,
+      withAddressSupplied: supplied.reading
+    })
+  );
 
   /* ---------------- helpers that need the closure ---------------- */
 
   async function runOne(
     recordedFor: (id: string) => RecordedContract | null,
     ids: string[],
-    resolvable: (id: string) => boolean,
+    resolvable: (id: string) => boolean
   ): Promise<{ reading: Reading; ms: number }> {
     /*
      * **THE PRODUCT'S OWN RULE RUNS HERE, WHICH IS THE POINT OF THE
@@ -425,8 +468,7 @@ async function main(): Promise<number> {
     let last: { reading: Reading; ms: number } = { reading: { kind: 'never-asked' }, ms: 0 };
     for (const id of ids) {
       last = await readThrough(ledger, id, resolvable(id));
-      say(`  ${last.reading.kind === 'answered' ? `${G}✓${O}` : `${Y}!${O}`} `
-        + `${sayReading(last.reading)}`);
+      say(`  ${last.reading.kind === 'answered' ? `${G}✓${O}` : `${Y}!${O}`} ` + `${sayReading(last.reading)}`);
       say(`    ${D}the read took ${took(last.ms)}${O}`);
       if (carriesNumbers(last.reading)) {
         const n = last.reading.numbers;
@@ -474,8 +516,7 @@ function neighbourOf(address: string): string {
  */
 function recordedNumbers(root: string, network: NetworkName): Partial<AccountNumbers> {
   try {
-    const rec: any = JSON.parse(
-      readFileSync(deploymentRecordPath(root, network), 'utf8'));
+    const rec: any = JSON.parse(readFileSync(deploymentRecordPath(root, network), 'utf8'));
     return typeof rec?.threshold === 'number' ? { threshold: rec.threshold } : {};
   } catch {
     return {};
@@ -506,8 +547,11 @@ async function readVault(d: Deployment, network: NetworkName): Promise<void> {
    */
   const named = process.env.VAULT_NAME?.trim();
   if (!named) {
-    refuse('a vault reading', 'no vault was named, and there is deliberately no default: a '
-      + 'guessed name would report one vault\'s counters as another\'s');
+    refuse(
+      'a vault reading',
+      'no vault was named, and there is deliberately no default: a ' +
+        "guessed name would report one vault's counters as another's"
+    );
     return;
   }
 
@@ -528,10 +572,11 @@ async function readVault(d: Deployment, network: NetworkName): Promise<void> {
    * not wrong numbers about that vault -- they are numbers about something else.
    */
   const aPostMortem = (process.env.VAULT_DISPOSED_OK ?? '').trim() === 'yes';
-  let name: string | undefined; let address: string | undefined; let retired = false;
+  let name: string | undefined;
+  let address: string | undefined;
+  let retired = false;
   try {
-    const registry = parseVaultRegistry(
-      JSON.parse(readFileSync(vaultsFile, 'utf8')), network);
+    const registry = parseVaultRegistry(JSON.parse(readFileSync(vaultsFile, 'utf8')), network);
     const entry = theVault(registry, named, { aReadOnlyPostMortem: aPostMortem });
     name = entry.name || named;
     address = entry.contractAddress;
@@ -547,37 +592,42 @@ async function readVault(d: Deployment, network: NetworkName): Promise<void> {
   secret.push({ what: "the vault's contract address", value: address });
   say(`  ${G}✓${O} vault ${B}${name}${O}`);
   if (retired) {
-    say(`  ${Y}!${O} this vault is recorded as DISPOSED OF, and it is being read anyway because `
-      + 'VAULT_DISPOSED_OK=yes was set. Every number below is read off a ledger this build may '
-      + 'not be able to read correctly, so treat each one as a question rather than an answer.');
+    say(
+      `  ${Y}!${O} this vault is recorded as DISPOSED OF, and it is being read anyway because ` +
+        'VAULT_DISPOSED_OK=yes was set. Every number below is read off a ledger this build may ' +
+        'not be able to read correctly, so treat each one as a question rather than an answer.'
+    );
   }
 
   const started = Date.now();
   let state: any;
   try {
-    state = await (await publicDataProviderAt(d))
-      .queryContractState(address as any);
+    state = await (await publicDataProviderAt(d)).queryContractState(address as any);
   } catch (e) {
-    refuse("the vault's counters",
-      `this machine could not reach the indexer: ${scrubbed(e)}. That is a fact about this `
-      + 'machine and rules on nothing about the vault');
+    refuse(
+      "the vault's counters",
+      `this machine could not reach the indexer: ${scrubbed(e)}. That is a fact about this ` +
+        'machine and rules on nothing about the vault'
+    );
     return;
   }
   if (!state) {
-    refuse("the vault's counters",
-      'the indexer carried no state for this vault. That is not an empty vault, and an '
-      + 'indexer that has not caught up answers exactly the same way');
+    refuse(
+      "the vault's counters",
+      'the indexer carried no state for this vault. That is not an empty vault, and an ' +
+        'indexer that has not caught up answers exactly the same way'
+    );
     return;
   }
 
   const forced: { payments?: string; notes?: string } = {};
   try {
-    const { ledger: readVaultState } =
-      await import('../contracts/managed-vault/contract/index.js');
+    const { ledger: readVaultState } = await import('../contracts/managed-vault/contract/index.js');
     const parsed: any = (readVaultState as any)(state.data);
     const notes = String(parsed.notes.size());
     const payments = String(parsed.payments);
-    forced.notes = notes; forced.payments = payments;
+    forced.notes = notes;
+    forced.payments = payments;
   } catch (e) {
     refuse("the vault's counters", `the state did not decode: ${scrubbed(e).slice(0, 300)}`);
     return;
@@ -585,8 +635,11 @@ async function readVault(d: Deployment, network: NetworkName): Promise<void> {
 
   const numbers = vaultNumbers(forced);
   if (!numbers.reportable) {
-    refuse("the vault's counters", 'the state decoded only in part, so neither number is a '
-      + 'measurement of the vault rather than of how far the decoding got');
+    refuse(
+      "the vault's counters",
+      'the state decoded only in part, so neither number is a ' +
+        'measurement of the vault rather than of how far the decoding got'
+    );
     return;
   }
   say(`    ${B}note commitments${O}  ${numbers.notes}`);
@@ -598,14 +651,15 @@ async function readVault(d: Deployment, network: NetworkName): Promise<void> {
  * Guarded, so the rules next door and everything importable from here can be
  * exercised by a test without this file reaching a network or exiting.
  */
-const RUN_DIRECTLY = process.argv[1] !== undefined
-  && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+const RUN_DIRECTLY = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (RUN_DIRECTLY) {
   /* Without the network named, nothing is read. */
   standDownWhenMissing('The chain read', whatIsMissing(thisRun(), {}, ROOT));
   main()
-    .then((code) => { process.exit(code); })
+    .then((code) => {
+      process.exit(code);
+    })
     .catch((e) => {
       /*
        * **THE HANDLER MAY NOT THROW, AND THIS IS WHY IT IS WRAPPED.** The
@@ -621,8 +675,10 @@ if (RUN_DIRECTLY) {
         say(`  ${scrubbed(e)}`);
         say();
       } catch {
-        process.stdout.write('\n  THE READ STOPPED, and the line saying why could not be '
-          + 'printed without showing a contract address.\n\n');
+        process.stdout.write(
+          '\n  THE READ STOPPED, and the line saying why could not be ' +
+            'printed without showing a contract address.\n\n'
+        );
       }
       process.exit(2);
     });

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  Algorithms, PasskeyError, derToRawEcdsa, fromBase64Url, signCountLooksCloned, toBase64Url,
-  verifyAssertion, verifyRegistration,
+  Algorithms,
+  PasskeyError,
+  derToRawEcdsa,
+  fromBase64Url,
+  signCountLooksCloned,
+  toBase64Url,
+  verifyAssertion,
+  verifyRegistration
 } from './verify.js';
 import { sameBytes } from './bytes.js';
 import type { AssertionInput, Expectations, Passkey, RegistrationInput } from './verify.js';
@@ -50,7 +56,7 @@ const registrationOf = (f: RegFixture): RegistrationInput => ({
   authenticatorData: b(f.authenticatorData),
   publicKeySpki: b(f.publicKeySpki),
   publicKeyAlgorithm: f.publicKeyAlgorithm,
-  transports: f.transports,
+  transports: f.transports
 });
 
 const signInOf = (f: SignInFixture): AssertionInput => ({
@@ -58,11 +64,13 @@ const signInOf = (f: SignInFixture): AssertionInput => ({
   userHandle: f.userHandle,
   clientDataJSON: b(f.clientDataJSON),
   authenticatorData: b(f.authenticatorData),
-  signature: b(f.signature),
+  signature: b(f.signature)
 });
 
 const at = (site: Site, challenge: string): Expectations => ({
-  rpId: site.rpId, origin: site.origin, challenge,
+  rpId: site.rpId,
+  origin: site.origin,
+  challenge
 });
 
 const enrol = (site: Site & { registration: RegFixture }): Promise<Passkey> =>
@@ -92,23 +100,26 @@ describe('a registration a browser actually produced', () => {
     expect((await enrol(deviceBound)).provenBySignIn).toBe(false);
   });
 
-  it('accepts a registration carrying somebody ELSE\'s public key — which is why this check exists',
-    async () => {
-      const swapped = await verifyRegistration({
+  it("accepts a registration carrying somebody ELSE's public key — which is why this check exists", async () => {
+    const swapped = await verifyRegistration(
+      {
         ...registrationOf(deviceBound.registration),
-        publicKeySpki: b(deviceBound.otherRegistration.publicKeySpki),
-      }, regExpect);
-      expect(swapped.provenBySignIn).toBe(false);
+        publicKeySpki: b(deviceBound.otherRegistration.publicKeySpki)
+      },
+      regExpect
+    );
+    expect(swapped.provenBySignIn).toBe(false);
 
-      /* And the person's own real sign-in is then refused, for ever. */
-      await expect(verifyAssertion(signInOf(deviceBound.signIn), swapped, getExpect))
-        .rejects.toMatchObject({ code: 'bad-signature' });
+    /* And the person's own real sign-in is then refused, for ever. */
+    await expect(verifyAssertion(signInOf(deviceBound.signIn), swapped, getExpect)).rejects.toMatchObject({
+      code: 'bad-signature'
     });
+  });
 
   it('refuses a registration that does not say whose it is', async () => {
-    await expect(verifyRegistration(
-      { ...registrationOf(deviceBound.registration), personHandle: '' }, regExpect,
-    )).rejects.toMatchObject({ code: 'malformed' });
+    await expect(
+      verifyRegistration({ ...registrationOf(deviceBound.registration), personHandle: '' }, regExpect)
+    ).rejects.toMatchObject({ code: 'malformed' });
   });
 
   it('reads the two backup flags separately, including when they disagree', async () => {
@@ -133,134 +144,150 @@ describe('a registration a browser actually produced', () => {
   });
 
   it('refuses an assertion presented as a registration', async () => {
-    await expect(verifyRegistration({
-      ...registrationOf(deviceBound.registration),
-      clientDataJSON: b(deviceBound.signIn.clientDataJSON),
-    }, getExpect)).rejects.toMatchObject({ code: 'wrong-ceremony' });
+    await expect(
+      verifyRegistration(
+        {
+          ...registrationOf(deviceBound.registration),
+          clientDataJSON: b(deviceBound.signIn.clientDataJSON)
+        },
+        getExpect
+      )
+    ).rejects.toMatchObject({ code: 'wrong-ceremony' });
   });
 
   it('refuses a different challenge', async () => {
-    await expect(verifyRegistration(
-      registrationOf(deviceBound.registration),
-      { ...regExpect, challenge: deviceBound.signIn.challenge },
-    )).rejects.toMatchObject({ code: 'challenge-mismatch' });
+    await expect(
+      verifyRegistration(registrationOf(deviceBound.registration), {
+        ...regExpect,
+        challenge: deviceBound.signIn.challenge
+      })
+    ).rejects.toMatchObject({ code: 'challenge-mismatch' });
   });
 
   it('refuses a ceremony that happened on another origin — the phishing check', async () => {
-    await expect(verifyRegistration(
-      registrationOf(deviceBound.registration),
-      { ...regExpect, origin: 'https://midnight-identity.example' },
-    )).rejects.toMatchObject({ code: 'origin-mismatch' });
+    await expect(
+      verifyRegistration(registrationOf(deviceBound.registration), {
+        ...regExpect,
+        origin: 'https://midnight-identity.example'
+      })
+    ).rejects.toMatchObject({ code: 'origin-mismatch' });
   });
 
   it('accepts an origin from a list, and still refuses one that is absent', async () => {
-    await expect(verifyRegistration(
-      registrationOf(deviceBound.registration),
-      { ...regExpect, origin: ['https://a.example', deviceBound.origin] },
-    )).resolves.toBeTruthy();
-    await expect(verifyRegistration(
-      registrationOf(deviceBound.registration),
-      { ...regExpect, origin: ['https://a.example', 'https://b.example'] },
-    )).rejects.toMatchObject({ code: 'origin-mismatch' });
+    await expect(
+      verifyRegistration(registrationOf(deviceBound.registration), {
+        ...regExpect,
+        origin: ['https://a.example', deviceBound.origin]
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      verifyRegistration(registrationOf(deviceBound.registration), {
+        ...regExpect,
+        origin: ['https://a.example', 'https://b.example']
+      })
+    ).rejects.toMatchObject({ code: 'origin-mismatch' });
   });
 
-  it('refuses a ceremony framed by a page that is not ours, and can be told to allow one',
-    async () => {
-      /*
-       * The origin check proves the ceremony ran ON our origin. It does not
-       * prove our origin was the page the person was looking at: a cross-origin
-       * iframe of our page carries our origin here and passes everything else.
-       * `crossOrigin` is what reveals it.
-       *
-       * This is built by editing a registration's clientDataJSON, which is
-       * honest because a registration carries no signature over it — see above
-       * above. An assertion could not be tested this way and does not need to
-       * be: the same code runs for both.
-       */
-      const framed = new TextEncoder().encode(JSON.stringify({
+  it('refuses a ceremony framed by a page that is not ours, and can be told to allow one', async () => {
+    /*
+     * The origin check proves the ceremony ran ON our origin. It does not
+     * prove our origin was the page the person was looking at: a cross-origin
+     * iframe of our page carries our origin here and passes everything else.
+     * `crossOrigin` is what reveals it.
+     *
+     * This is built by editing a registration's clientDataJSON, which is
+     * honest because a registration carries no signature over it — see above
+     * above. An assertion could not be tested this way and does not need to
+     * be: the same code runs for both.
+     */
+    const framed = new TextEncoder().encode(
+      JSON.stringify({
         type: 'webauthn.create',
         challenge: deviceBound.registration.challenge,
         origin: deviceBound.origin,
         crossOrigin: true,
-        topOrigin: 'https://attacker.example',
-      }));
-      const input = { ...registrationOf(deviceBound.registration), clientDataJSON: framed };
+        topOrigin: 'https://attacker.example'
+      })
+    );
+    const input = { ...registrationOf(deviceBound.registration), clientDataJSON: framed };
 
-      await expect(verifyRegistration(input, regExpect))
-        .rejects.toMatchObject({ code: 'origin-mismatch' });
-      await expect(verifyRegistration(
-        input, { ...regExpect, allowFramedBy: ['https://somebody-else.example'] },
-      )).rejects.toMatchObject({ code: 'origin-mismatch' });
-      await expect(verifyRegistration(
-        input, { ...regExpect, allowFramedBy: ['https://attacker.example'] },
-      )).resolves.toBeTruthy();
+    await expect(verifyRegistration(input, regExpect)).rejects.toMatchObject({ code: 'origin-mismatch' });
+    await expect(
+      verifyRegistration(input, { ...regExpect, allowFramedBy: ['https://somebody-else.example'] })
+    ).rejects.toMatchObject({ code: 'origin-mismatch' });
+    await expect(
+      verifyRegistration(input, { ...regExpect, allowFramedBy: ['https://attacker.example'] })
+    ).resolves.toBeTruthy();
 
-      /*
-       * MORE THAN ONE ALLOWED FRAME, matching the SECOND. Without this, an
-       * implementation that only ever compared the first entry passed
-       * everything — every other case here has a list of one, and a list of one
-       * cannot tell "any of these" from "the first of these".
-       */
-      await expect(verifyRegistration(
-        input,
-        { ...regExpect, allowFramedBy: ['https://first.example', 'https://attacker.example'] },
-      )).resolves.toBeTruthy();
-      await expect(verifyRegistration(
-        input,
-        { ...regExpect, allowFramedBy: ['https://first.example', 'https://second.example'] },
-      )).rejects.toMatchObject({ code: 'origin-mismatch' });
-    });
+    /*
+     * MORE THAN ONE ALLOWED FRAME, matching the SECOND. Without this, an
+     * implementation that only ever compared the first entry passed
+     * everything — every other case here has a list of one, and a list of one
+     * cannot tell "any of these" from "the first of these".
+     */
+    await expect(
+      verifyRegistration(input, { ...regExpect, allowFramedBy: ['https://first.example', 'https://attacker.example'] })
+    ).resolves.toBeTruthy();
+    await expect(
+      verifyRegistration(input, { ...regExpect, allowFramedBy: ['https://first.example', 'https://second.example'] })
+    ).rejects.toMatchObject({ code: 'origin-mismatch' });
+  });
 
   it('refuses a credential registered for a different site', async () => {
-    await expect(verifyRegistration(
-      registrationOf(deviceBound.registration), { ...regExpect, rpId: 'example.com' },
-    )).rejects.toMatchObject({ code: 'rp-mismatch' });
+    await expect(
+      verifyRegistration(registrationOf(deviceBound.registration), { ...regExpect, rpId: 'example.com' })
+    ).rejects.toMatchObject({ code: 'rp-mismatch' });
   });
 
   it('refuses when the browser handed back no public key, rather than guessing', async () => {
     for (const spki of [null, new Uint8Array(0)]) {
-      await expect(verifyRegistration(
-        { ...registrationOf(deviceBound.registration), publicKeySpki: spki }, regExpect,
-      )).rejects.toMatchObject({ code: 'no-public-key' });
+      await expect(
+        verifyRegistration({ ...registrationOf(deviceBound.registration), publicKeySpki: spki }, regExpect)
+      ).rejects.toMatchObject({ code: 'no-public-key' });
     }
   });
 
   it('refuses an algorithm it cannot verify — at REGISTRATION, not at first sign-in', async () => {
-    await expect(verifyRegistration(
-      { ...registrationOf(deviceBound.registration), publicKeyAlgorithm: -65535 }, regExpect,
-    )).rejects.toMatchObject({ code: 'unsupported-algorithm' });
+    await expect(
+      verifyRegistration({ ...registrationOf(deviceBound.registration), publicKeyAlgorithm: -65535 }, regExpect)
+    ).rejects.toMatchObject({ code: 'unsupported-algorithm' });
   });
 
   it('refuses a key that is not the algorithm it claims to be', async () => {
-    await expect(verifyRegistration(
-      { ...registrationOf(deviceBound.registration), publicKeyAlgorithm: Algorithms.RS256 },
-      regExpect,
-    )).rejects.toMatchObject({ code: 'no-public-key' });
+    await expect(
+      verifyRegistration(
+        { ...registrationOf(deviceBound.registration), publicKeyAlgorithm: Algorithms.RS256 },
+        regExpect
+      )
+    ).rejects.toMatchObject({ code: 'no-public-key' });
   });
 
   it('refuses authenticator data too short to hold what it must hold', async () => {
-    await expect(verifyRegistration({
-      ...registrationOf(deviceBound.registration),
-      authenticatorData: b(deviceBound.registration.authenticatorData).slice(0, 36),
-    }, regExpect)).rejects.toMatchObject({ code: 'malformed' });
+    await expect(
+      verifyRegistration(
+        {
+          ...registrationOf(deviceBound.registration),
+          authenticatorData: b(deviceBound.registration.authenticatorData).slice(0, 36)
+        },
+        regExpect
+      )
+    ).rejects.toMatchObject({ code: 'malformed' });
   });
 
   it('refuses a ceremony nobody touched the authenticator for', async () => {
     const data = b(deviceBound.registration.authenticatorData);
     data[32] = (data[32] as number) & ~0x01;
-    await expect(verifyRegistration(
-      { ...registrationOf(deviceBound.registration), authenticatorData: data }, regExpect,
-    )).rejects.toMatchObject({ code: 'user-not-present' });
+    await expect(
+      verifyRegistration({ ...registrationOf(deviceBound.registration), authenticatorData: data }, regExpect)
+    ).rejects.toMatchObject({ code: 'user-not-present' });
   });
 
   it('refuses a touch with no face, fingerprint or PIN — and can be told not to', async () => {
     const data = b(deviceBound.registration.authenticatorData);
     data[32] = (data[32] as number) & ~0x04;
     const input = { ...registrationOf(deviceBound.registration), authenticatorData: data };
-    await expect(verifyRegistration(input, regExpect))
-      .rejects.toMatchObject({ code: 'user-not-verified' });
-    await expect(verifyRegistration(input, { ...regExpect, requireUserVerification: false }))
-      .resolves.toBeTruthy();
+    await expect(verifyRegistration(input, regExpect)).rejects.toMatchObject({ code: 'user-not-verified' });
+    await expect(verifyRegistration(input, { ...regExpect, requireUserVerification: false })).resolves.toBeTruthy();
   });
 });
 
@@ -286,8 +313,9 @@ describe('a sign-in a browser actually produced', () => {
      */
     const decoded = new TextDecoder().decode(b(deviceBound.signIn.clientDataJSON));
     expect(decoded).toContain('other_keys_can_be_added_here');
-    await expect(verifyAssertion(signInOf(deviceBound.signIn), await enrol(deviceBound), getExpect))
-      .resolves.toBeTruthy();
+    await expect(
+      verifyAssertion(signInOf(deviceBound.signIn), await enrol(deviceBound), getExpect)
+    ).resolves.toBeTruthy();
   });
 
   it('REFUSES A SIGN-IN CLAIMED FOR THE WRONG PERSON', async () => {
@@ -299,10 +327,12 @@ describe('a sign-in a browser actually produced', () => {
      */
     const passkey = await enrol(deviceBound);
     const claimedAsSomebodyElse: Passkey = {
-      ...passkey, personHandle: synced.registration.personHandle,
+      ...passkey,
+      personHandle: synced.registration.personHandle
     };
-    await expect(verifyAssertion(signInOf(deviceBound.signIn), claimedAsSomebodyElse, getExpect))
-      .rejects.toMatchObject({ code: 'wrong-person' });
+    await expect(verifyAssertion(signInOf(deviceBound.signIn), claimedAsSomebodyElse, getExpect)).rejects.toMatchObject(
+      { code: 'wrong-person' }
+    );
   });
 
   it('refuses a sign-in that names nobody at all — null OR empty', async () => {
@@ -310,9 +340,9 @@ describe('a sign-in a browser actually produced', () => {
     /* Both, because the type allows a string and an empty one names nobody
      * exactly as much as null does. */
     for (const userHandle of [null, '']) {
-      await expect(verifyAssertion(
-        { ...signInOf(deviceBound.signIn), userHandle }, passkey, getExpect,
-      )).rejects.toMatchObject({ code: 'no-user-handle' });
+      await expect(
+        verifyAssertion({ ...signInOf(deviceBound.signIn), userHandle }, passkey, getExpect)
+      ).rejects.toMatchObject({ code: 'no-user-handle' });
     }
   });
 
@@ -326,66 +356,87 @@ describe('a sign-in a browser actually produced', () => {
      */
     const passkey = await enrol(deviceBound);
     const bothWrong: Passkey = {
-      ...passkey, personHandle: synced.registration.personHandle, signCount: 99,
+      ...passkey,
+      personHandle: synced.registration.personHandle,
+      signCount: 99
     };
-    await expect(verifyAssertion(signInOf(deviceBound.signIn), bothWrong, getExpect))
-      .rejects.toMatchObject({ code: 'wrong-person' });
+    await expect(verifyAssertion(signInOf(deviceBound.signIn), bothWrong, getExpect)).rejects.toMatchObject({
+      code: 'wrong-person'
+    });
   });
 
-  it('checks who it is only AFTER the signature, so it cannot be used to fish for handles',
-    async () => {
-      /*
-       * A wrong-person answer given before the signature is checked would let
-       * anybody test which handles exist by sending noise. The order matters
-       * and it is asserted rather than assumed.
-       */
-      const passkey = await enrol(deviceBound);
-      const wrongEverything: Passkey = {
-        ...passkey, personHandle: synced.registration.personHandle,
-        publicKeySpki: b(deviceBound.otherRegistration.publicKeySpki),
-      };
-      await expect(verifyAssertion(signInOf(deviceBound.signIn), wrongEverything, getExpect))
-        .rejects.toMatchObject({ code: 'bad-signature' });
+  it('checks who it is only AFTER the signature, so it cannot be used to fish for handles', async () => {
+    /*
+     * A wrong-person answer given before the signature is checked would let
+     * anybody test which handles exist by sending noise. The order matters
+     * and it is asserted rather than assumed.
+     */
+    const passkey = await enrol(deviceBound);
+    const wrongEverything: Passkey = {
+      ...passkey,
+      personHandle: synced.registration.personHandle,
+      publicKeySpki: b(deviceBound.otherRegistration.publicKeySpki)
+    };
+    await expect(verifyAssertion(signInOf(deviceBound.signIn), wrongEverything, getExpect)).rejects.toMatchObject({
+      code: 'bad-signature'
     });
+  });
 
   it('refuses a signature that belongs to another credential', async () => {
     const passkey = await enrol(deviceBound);
-    await expect(verifyAssertion({
-      ...signInOf(deviceBound.signIn), signature: b(synced.signIn.signature),
-    }, passkey, getExpect)).rejects.toMatchObject({ code: 'bad-signature' });
+    await expect(
+      verifyAssertion(
+        {
+          ...signInOf(deviceBound.signIn),
+          signature: b(synced.signIn.signature)
+        },
+        passkey,
+        getExpect
+      )
+    ).rejects.toMatchObject({ code: 'bad-signature' });
   });
 
   it('refuses a sign-in checked against the wrong stored passkey', async () => {
     const other = await verifyRegistration(
       registrationOf(deviceBound.otherRegistration),
-      at(deviceBound, deviceBound.otherRegistration.challenge));
-    await expect(verifyAssertion(signInOf(deviceBound.signIn), other, getExpect))
-      .rejects.toMatchObject({ code: 'wrong-credential' });
+      at(deviceBound, deviceBound.otherRegistration.challenge)
+    );
+    await expect(verifyAssertion(signInOf(deviceBound.signIn), other, getExpect)).rejects.toMatchObject({
+      code: 'wrong-credential'
+    });
   });
 
   it('refuses a signature over data that was altered afterwards', async () => {
     const passkey = await enrol(deviceBound);
     const data = b(deviceBound.signIn.authenticatorData);
     data[36] = (data[36] as number) + 1;
-    await expect(verifyAssertion(
-      { ...signInOf(deviceBound.signIn), authenticatorData: data }, passkey, getExpect,
-    )).rejects.toMatchObject({ code: 'bad-signature' });
+    await expect(
+      verifyAssertion({ ...signInOf(deviceBound.signIn), authenticatorData: data }, passkey, getExpect)
+    ).rejects.toMatchObject({ code: 'bad-signature' });
   });
 
   it('refuses a registration presented as a sign-in', async () => {
     const passkey = await enrol(deviceBound);
-    await expect(verifyAssertion({
-      ...signInOf(deviceBound.signIn),
-      clientDataJSON: b(deviceBound.registration.clientDataJSON),
-    }, passkey, regExpect)).rejects.toMatchObject({ code: 'wrong-ceremony' });
+    await expect(
+      verifyAssertion(
+        {
+          ...signInOf(deviceBound.signIn),
+          clientDataJSON: b(deviceBound.registration.clientDataJSON)
+        },
+        passkey,
+        regExpect
+      )
+    ).rejects.toMatchObject({ code: 'wrong-ceremony' });
   });
 
   it('refuses a challenge that was already answered', async () => {
     const passkey = await enrol(deviceBound);
-    await expect(verifyAssertion(
-      signInOf(deviceBound.signIn), passkey,
-      { ...getExpect, challenge: deviceBound.registration.challenge },
-    )).rejects.toMatchObject({ code: 'challenge-mismatch' });
+    await expect(
+      verifyAssertion(signInOf(deviceBound.signIn), passkey, {
+        ...getExpect,
+        challenge: deviceBound.registration.challenge
+      })
+    ).rejects.toMatchObject({ code: 'challenge-mismatch' });
   });
 });
 
@@ -395,36 +446,46 @@ describe('the sign counter, which is a clone detector that is off for most peopl
   it('accepts two real sign-ins in the order they happened', async () => {
     const passkey = await registered();
     const first = await verifyAssertion(
-      signInOf(twoSignIns.firstSignIn), passkey, at(twoSignIns, twoSignIns.firstSignIn.challenge));
+      signInOf(twoSignIns.firstSignIn),
+      passkey,
+      at(twoSignIns, twoSignIns.firstSignIn.challenge)
+    );
     expect(first.signCount).toBe(2);
 
     const second = await verifyAssertion(
-      signInOf(twoSignIns.secondSignIn), first.passkey,
-      at(twoSignIns, twoSignIns.secondSignIn.challenge));
+      signInOf(twoSignIns.secondSignIn),
+      first.passkey,
+      at(twoSignIns, twoSignIns.secondSignIn.challenge)
+    );
     expect(second.signCount).toBe(3);
   });
 
-  it('refuses the FIRST sign-in replayed after the second — real, valid, correctly signed',
-    async () => {
-      /*
-       * Every other refusal in this file is triggered by data somebody
-       * corrupted. This one is genuine browser output whose signature verifies,
-       * refused purely because the counter says it has already been used. That
-       * is the whole clone detector.
-       */
-      const passkey = await registered();
-      await expect(verifyAssertion(
-        signInOf(twoSignIns.firstSignIn), { ...passkey, signCount: 3 },
-        at(twoSignIns, twoSignIns.firstSignIn.challenge),
-      )).rejects.toMatchObject({ code: 'sign-count-went-backwards' });
-    });
+  it('refuses the FIRST sign-in replayed after the second — real, valid, correctly signed', async () => {
+    /*
+     * Every other refusal in this file is triggered by data somebody
+     * corrupted. This one is genuine browser output whose signature verifies,
+     * refused purely because the counter says it has already been used. That
+     * is the whole clone detector.
+     */
+    const passkey = await registered();
+    await expect(
+      verifyAssertion(
+        signInOf(twoSignIns.firstSignIn),
+        { ...passkey, signCount: 3 },
+        at(twoSignIns, twoSignIns.firstSignIn.challenge)
+      )
+    ).rejects.toMatchObject({ code: 'sign-count-went-backwards' });
+  });
 
   it('refuses a counter that stood still', async () => {
     const passkey = await registered();
-    await expect(verifyAssertion(
-      signInOf(twoSignIns.firstSignIn), { ...passkey, signCount: 2 },
-      at(twoSignIns, twoSignIns.firstSignIn.challenge),
-    )).rejects.toMatchObject({ code: 'sign-count-went-backwards' });
+    await expect(
+      verifyAssertion(
+        signInOf(twoSignIns.firstSignIn),
+        { ...passkey, signCount: 2 },
+        at(twoSignIns, twoSignIns.firstSignIn.challenge)
+      )
+    ).rejects.toMatchObject({ code: 'sign-count-went-backwards' });
   });
 
   it('treats a reported zero as the counter being switched OFF, not as a clone', () => {
@@ -489,8 +550,12 @@ describe('base64url, and the DER unpacking', () => {
   });
 
   it('unpacks real DER signatures to sixty-four bytes', () => {
-    for (const der of [deviceBound.signIn.signature, synced.signIn.signature,
-      twoSignIns.firstSignIn.signature, twoSignIns.secondSignIn.signature]) {
+    for (const der of [
+      deviceBound.signIn.signature,
+      synced.signIn.signature,
+      twoSignIns.firstSignIn.signature,
+      twoSignIns.secondSignIn.signature
+    ]) {
       expect(derToRawEcdsa(b(der))).toHaveLength(64);
     }
   });
@@ -504,8 +569,7 @@ describe('base64url, and the DER unpacking', () => {
       good.slice(0, 6),
       /* Outer length CORRECT, with a third INTEGER inside it. The length check
        * cannot see this one; only the "nothing after s" check can. */
-      Uint8Array.from(
-        [good[0] as number, (good[1] as number) + 3, ...good.slice(2), 0x02, 0x01, 0x00]),
+      Uint8Array.from([good[0] as number, (good[1] as number) + 3, ...good.slice(2), 0x02, 0x01, 0x00])
     ];
     for (const bytes of cases) expect(() => derToRawEcdsa(bytes)).toThrow(PasskeyError);
   });

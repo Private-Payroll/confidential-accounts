@@ -37,20 +37,28 @@ export const sameGovernance = (a: RoundChangeOnTheWire, b: RoundChangeOnTheWire)
       const o = b as typeof a;
       return same(a.address, o.address) && same(a.scope, o.scope) && sameRemovalThreshold(a.threshold, o.threshold);
     }
-    case 'remove-signer': return same(a.leaf, (b as typeof a).leaf) && sameRemovalThreshold(a.threshold, (b as typeof a).threshold);
-    case 'vault-threshold': return same(a.vault, (b as typeof a).vault) && sameNumber(a.threshold, (b as typeof a).threshold);
+    case 'remove-signer':
+      return same(a.leaf, (b as typeof a).leaf) && sameRemovalThreshold(a.threshold, (b as typeof a).threshold);
+    case 'vault-threshold':
+      return same(a.vault, (b as typeof a).vault) && sameNumber(a.threshold, (b as typeof a).threshold);
     case 'adopt-vault':
-    case 'retire-vault': return same(a.vault, (b as typeof a).vault);
-    case 'pay-key': return same(a.commitment, (b as typeof a).commitment);
+    case 'retire-vault':
+      return same(a.vault, (b as typeof a).vault);
+    case 'pay-key':
+      return same(a.commitment, (b as typeof a).commitment);
     case 'spending-policy': {
       const o = b as typeof a;
       return same(a.vault, o.vault) && same(a.assetKey, o.assetKey) && same(a.commitment, o.commitment);
     }
-    case 'policy-bar': return sameNumber(a.bar, (b as typeof a).bar);
-    case 'threshold': return sameNumber(a.threshold, (b as typeof a).threshold);
+    case 'policy-bar':
+      return sameNumber(a.bar, (b as typeof a).bar);
+    case 'threshold':
+      return sameNumber(a.threshold, (b as typeof a).threshold);
     case 'recover-anchor': {
       const o = b as typeof a;
-      return same(a.resumesFrom, o.resumesFrom) && sameNumber(a.latest, o.latest) && same(a.lastRecovery, o.lastRecovery);
+      return (
+        same(a.resumesFrom, o.resumesFrom) && sameNumber(a.latest, o.latest) && same(a.lastRecovery, o.lastRecovery)
+      );
     }
   }
 };

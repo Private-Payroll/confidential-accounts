@@ -12,20 +12,49 @@
  * payee or currency.
  */
 import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
-import { assetIdBytes, assets as theAssets, sumChangeAmount, type AssetId, type LedgerForm } from '../../../src/core/assets.js';
+import {
+  assetIdBytes,
+  assets as theAssets,
+  sumChangeAmount,
+  type AssetId,
+  type LedgerForm
+} from '../../../src/core/assets.js';
 import { randomBytes, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
-import { batchDigestOf, paysCommitmentOf, raiseByOf, sealPayrollProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
+import {
+  batchDigestOf,
+  paysCommitmentOf,
+  raiseByOf,
+  sealPayrollProposal,
+  signProposalFiling
+} from '../../../src/core/proposal-filing.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import type { Filed, RecordsEntered } from './record-entered-here.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
 import {
-  receiptsOf, refuseARetryOfALegNeverOnChain, refuseARetryOfNobody, refuseARunNoVaultCanPay, refuseMaterialThatIsNotThisLeg,
-  refuseRetryMaterialThatIsNotItsPeople,
+  receiptsOf,
+  refuseARetryOfALegNeverOnChain,
+  refuseARetryOfNobody,
+  refuseARunNoVaultCanPay,
+  refuseMaterialThatIsNotThisLeg,
+  refuseRetryMaterialThatIsNotItsPeople
 } from '../../../src/core/run-raising.js';
 import {
-  assetOfLeg, formOfLeg, legChoiceOf, legEmployees, legName, legOf, payRecordsOf, runIdForLeg, sealedRunOf,
+  assetOfLeg,
+  formOfLeg,
+  legChoiceOf,
+  legEmployees,
+  legName,
+  legOf,
+  payRecordsOf,
+  runIdForLeg,
+  sealedRunOf
 } from '../../../src/core/run-legs.js';
-import { DEVICE_RAISE_VERSION, paymentChecked, paymentsOnTheWire, type PaymentChecked } from '../../../src/core/device-raise.js';
+import {
+  DEVICE_RAISE_VERSION,
+  paymentChecked,
+  paymentsOnTheWire,
+  type PaymentChecked
+} from '../../../src/core/device-raise.js';
 import { refuseWhatTheVaultCannotPay } from '../../../src/core/vault-holdings.js';
 import type { Employee, PayrollRun, RunLeg, SealedProposal, ShieldedEntry } from '../../../src/core/types.js';
 import type { buildRetryRun, buildRun, rootOfPayments, DetailsOfKind } from '../../../src/midnight/payout-tree.js';
@@ -39,9 +68,19 @@ import { theRoundAsked, type RoundOnThePage } from './governed-call-on-device.js
 import type { RaiseDoors } from './payroll-run-on-device.js';
 import { handedOver } from './hand-over.js';
 import {
-  checkedAgainstTheRecordsAndTheWallet, keptRunHere, payableFactsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere,
+  checkedAgainstTheRecordsAndTheWallet,
+  keptRunHere,
+  payableFactsHere,
+  proposalsListedHere,
+  signedStateHere,
+  type CompanyRecordsHere
 } from './run-rebuilt-here.js';
-import { RoundRefusedHere, refuseWhatNoRoundMay, type ReadForTheRound, type RoundToCheck } from './raise-checks-here.js';
+import {
+  RoundRefusedHere,
+  refuseWhatNoRoundMay,
+  type ReadForTheRound,
+  type RoundToCheck
+} from './raise-checks-here.js';
 import { policyForARunHere, type PolicyForARun } from './spending-policy-read-here.js';
 
 /** Why this device did not raise a leg. Nothing was written down, built or sent. */
@@ -63,7 +102,13 @@ interface RunIdentityDeps {
   readonly buildRun: typeof buildRun;
   readonly buildRetryRun: typeof buildRetryRun;
   readonly rootOfPayments: typeof rootOfPayments;
-  readonly runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint) => Uint8Array;
+  readonly runPayload: (
+    root: Uint8Array,
+    payees: bigint,
+    opensAt: bigint,
+    closesAt: bigint,
+    required: bigint
+  ) => Uint8Array;
   readonly proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => Uint8Array;
   /** A run's salt: the leg it pays again (none for a leg of the run) and its fresh half (`vouchedFreshOf`). */
   readonly retrySaltOf: (legRoot: Uint8Array, fresh: Uint8Array) => Uint8Array;
@@ -78,7 +123,12 @@ export interface LegRaiseDoors extends RaiseDoors {
    * the head this device checked last, and the fresh half of its proposal's
    * salt, `retrySaltOf(leg, fresh)`, is made from the two (`vouchedFreshOf`).
    */
-  readonly filing: { readonly seat: string; readonly keyEpoch: number; readonly salt: () => string; readonly newId: () => string };
+  readonly filing: {
+    readonly seat: string;
+    readonly keyEpoch: number;
+    readonly salt: () => string;
+    readonly newId: () => string;
+  };
   /** The company's account and label, which each payslip's receipt names. */
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
   readonly runs: RunIdentityDeps;
@@ -113,11 +163,24 @@ const raised = <T>(make: () => T): T => {
  * that can no longer pay its people and names nobody another retry can. They
  * decide on what this raise already read (`read`), never on a second read.
  */
-const checkedHere = async (doors: LegRaiseDoors, key: KeysHeld, round: Omit<RoundToCheck, 'filedBy'>, read: ReadForTheRound): Promise<void> => {
+const checkedHere = async (
+  doors: LegRaiseDoors,
+  key: KeysHeld,
+  round: Omit<RoundToCheck, 'filedBy'>,
+  read: ReadForTheRound
+): Promise<void> => {
   try {
-    await refuseWhatNoRoundMay(doors.records, doors.accountId, key, {
-      ...round, filedBy: signingPublicKeyOf(doors.material.signingSecret as Hex),
-    }, (doors.now ?? (() => new Date()))(), read);
+    await refuseWhatNoRoundMay(
+      doors.records,
+      doors.accountId,
+      key,
+      {
+        ...round,
+        filedBy: signingPublicKeyOf(doors.material.signingSecret as Hex)
+      },
+      (doors.now ?? (() => new Date()))(),
+      read
+    );
   } catch (e) {
     if (e instanceof RoundRefusedHere) throw new LegNotRaisedHere(e.message);
     throw e;
@@ -133,11 +196,19 @@ const checkedHere = async (doors: LegRaiseDoors, key: KeysHeld, round: Omit<Roun
  * the policy, which is returned with it.
  */
 export const approvalsItsBandNeeds = async (
-  doors: { readonly records: CompanyRecordsHere; readonly accountId: string }, key: KeysHeld, round: { vault: Hex; asset: AssetId; total: bigint; window: { opensAt: bigint; closesAt: bigint } },
+  doors: { readonly records: CompanyRecordsHere; readonly accountId: string },
+  key: KeysHeld,
+  round: { vault: Hex; asset: AssetId; total: bigint; window: { opensAt: bigint; closesAt: bigint } }
 ): Promise<{ readonly required: string; readonly policy: PolicyForARun }> => {
-  const policy = await policyForARunHere({ records: doors.records, accountId: doors.accountId, viewingKey: key }, {
-    vault: round.vault, asset: round.asset, total: round.total, ...round.window,
-  });
+  const policy = await policyForARunHere(
+    { records: doors.records, accountId: doors.accountId, viewingKey: key },
+    {
+      vault: round.vault,
+      asset: round.asset,
+      total: round.total,
+      ...round.window
+    }
+  );
   return { required: policy.state === 'set' && policy.required !== null ? policy.required.toString() : '0', policy };
 };
 
@@ -151,7 +222,15 @@ export const approvalsItsBandNeeds = async (
  */
 export async function raiseLegHere(
   doors: LegRaiseDoors,
-  input: { runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
+  input: {
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+    vault: string;
+    opensAt: string;
+    closesAt: string;
+  }
 ): Promise<RoundOnThePage> {
   const key = input.viewingKey;
   const { records, accountId, service } = doors;
@@ -159,7 +238,8 @@ export async function raiseLegHere(
   if (!DIGITS.test(input.opensAt) || !DIGITS.test(input.closesAt)) {
     throw new LegNotRaisedHere('a window bound is whole seconds since the Unix epoch');
   }
-  if (!service.file) throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
+  if (!service.file)
+    throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
   const window = { opensAt: BigInt(input.opensAt), closesAt: BigInt(input.closesAt) };
   const vault = input.vault.toLowerCase() as Hex;
   const now = (doors.now ?? (() => new Date()))();
@@ -168,60 +248,145 @@ export async function raiseLegHere(
   if (run.status !== 'draft' && run.status !== 'proposed') throw new LegNotRaisedHere(`this run is ${run.status}`);
   const leg = raised(() => legOf(run, legChoiceOf(input), registry));
   const paid = legEmployees(run, leg);
-  const facts = await payableFactsHere(records, run, paid, 'Leave this run unraised until their record is put right.',
-    'This device will not raise a run it would not pay.');
+  const facts = await payableFactsHere(
+    records,
+    run,
+    paid,
+    'Leave this run unraised until their record is put right.',
+    'This device will not raise a run it would not pay.'
+  );
 
   const state = await signedStateHere(records, accountId, key);
   const asset = assetOfLeg(leg) as AssetId;
   const identity = { accountId, runId: runIdForLeg(run, leg), epoch: currentPayoutSeed([...state.seeds]).epoch };
   const payRecords = payRecordsOf(run, paid);
-  const built = raised(() => doors.runs.buildRun([...state.seeds], identity, [...facts], doors.runs.detailsOf,
-    { key: state.payKey as Hex, records: payRecords }, asset));
+  const built = raised(() =>
+    doors.runs.buildRun(
+      [...state.seeds],
+      identity,
+      [...facts],
+      doors.runs.detailsOf,
+      { key: state.payKey as Hex, records: payRecords },
+      asset
+    )
+  );
   const root = built.tree.root;
   const payees = built.tree.payees;
-  raised(() => refuseARunNoVaultCanPay({ root, vault, ...window }, hex(doors.runs.noVault()), BigInt(Math.floor(now.getTime() / 1000))));
-  raised(() => refuseMaterialThatIsNotThisLeg(run, leg, paid, { run: { root, payees }, leaves: built.tree.leaves, facts, identity },
-    doors.runs.rootOfPayments as never, registry));
+  raised(() =>
+    refuseARunNoVaultCanPay(
+      { root, vault, ...window },
+      hex(doors.runs.noVault()),
+      BigInt(Math.floor(now.getTime() / 1000))
+    )
+  );
+  raised(() =>
+    refuseMaterialThatIsNotThisLeg(
+      run,
+      leg,
+      paid,
+      { run: { root, payees }, leaves: built.tree.leaves, facts, identity },
+      doors.runs.rootOfPayments as never,
+      registry
+    )
+  );
 
   /* What the raise is decided on is read once: the company's proposals, and the vault's policy for this proposal. */
   const proposals = await proposalsListedHere(records);
-  const { required, policy } = await approvalsItsBandNeeds(doors, key, { vault, asset, total: facts.reduce((a, f) => a + f.amount, 0n), window });
+  const { required, policy } = await approvalsItsBandNeeds(doors, key, {
+    vault,
+    asset,
+    total: facts.reduce((a, f) => a + f.amount, 0n),
+    window
+  });
   /* What the proposal's salt is made from: a leg pays nobody again, so its salt names no leg. */
   const vouched = await vouchedHere(doors);
-  const made = await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, key, {
-    kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts, records: payRecords, asset,
-    opensAt: input.opensAt, closesAt: input.closesAt, required,
-  }, proposals);
+  const made = await checkedAgainstTheRecordsAndTheWallet(
+    records,
+    accountId,
+    run,
+    key,
+    {
+      kind: 'payroll',
+      seeds: state.seeds,
+      payKey: state.payKey,
+      identity,
+      facts,
+      records: payRecords,
+      asset,
+      opensAt: input.opensAt,
+      closesAt: input.closesAt,
+      required
+    },
+    proposals
+  );
   await checkedHere(doors, key, { run, leg, made, vault }, { proposals, spendingPolicy: policy });
 
   const total = facts.reduce((a, f) => a + f.amount, 0n);
   doors.progress?.('checking-the-vault');
   const payments = facts.map(paymentChecked);
-  await refuseWhatTheVaultCannotPay(doors.holdings, {
-    vault, asset: registry.require(asset), total, payees, payments: payments.map((p) => ({ payee: { kind: p.kind }, token: p.token, amount: p.amount })),
-  }, ['shielded', 'unshielded']);
+  await refuseWhatTheVaultCannotPay(
+    doors.holdings,
+    {
+      vault,
+      asset: registry.require(asset),
+      total,
+      payees,
+      payments: payments.map((p) => ({ payee: { kind: p.kind }, token: p.token, amount: p.amount }))
+    },
+    ['shielded', 'unshielded']
+  );
 
   return writtenProvedAndFiled(doors, key, {
-    run, leg, entries: paid.map((e) => ({ e, at: now.toISOString() })), root, payees, window, vault, asset,
-    summary: `Payroll ${run.period}, ${paid.length} recipients`, payments, vouched, legRoot: hex(NO_LEG()),
+    run,
+    leg,
+    entries: paid.map((e) => ({ e, at: now.toISOString() })),
+    root,
+    payees,
+    window,
+    vault,
+    asset,
+    summary: `Payroll ${run.period}, ${paid.length} recipients`,
+    payments,
+    vouched,
+    legRoot: hex(NO_LEG()),
     raisedRun: (proposalId) => ({
       ...run,
-      payslips: receiptsOf(run, [...state.seeds], state.payKey as Hex, {
-        leg, leaves: built.tree.leaves, closesAt: window.closesAt, company: doors.company.account, identity, records: payRecords,
-      }, { company: doors.company.account, label: doors.company.label }),
+      payslips: receiptsOf(
+        run,
+        [...state.seeds],
+        state.payKey as Hex,
+        {
+          leg,
+          leaves: built.tree.leaves,
+          closesAt: window.closesAt,
+          company: doors.company.account,
+          identity,
+          records: payRecords
+        },
+        { company: doors.company.account, label: doors.company.label }
+      ),
       payout: {
         ...(run.payout ?? {}),
         [leg]: {
-          root, payees, opensAt: window.opensAt, closesAt: window.closesAt, vault, required: BigInt(made.required),
-          leaves: built.tree.leaves, facts: [...facts],
-          records: payRecords, runId: identity.runId, epoch: identity.epoch, company: doors.company.account,
-        },
+          root,
+          payees,
+          opensAt: window.opensAt,
+          closesAt: window.closesAt,
+          vault,
+          required: BigInt(made.required),
+          leaves: built.tree.leaves,
+          facts: [...facts],
+          records: payRecords,
+          runId: identity.runId,
+          epoch: identity.epoch,
+          company: doors.company.account
+        }
       },
       status: 'proposed',
-      proposalIds: { ...run.proposalIds, [leg]: proposalId },
+      proposalIds: { ...run.proposalIds, [leg]: proposalId }
     }),
     made,
-    assetBlinding: state.assetBlinding,
+    assetBlinding: state.assetBlinding
   });
 }
 
@@ -234,12 +399,16 @@ export async function raiseLegHere(
  */
 const vouchedHere = async (doors: LegRaiseDoors): Promise<VouchedHere> => {
   if (doors.records.checked === undefined) {
-    throw new LegNotRaisedHere('This page cannot read which of the company\'s records this device has checked. Reload the page to get the current version');
+    throw new LegNotRaisedHere(
+      "This page cannot read which of the company's records this device has checked. Reload the page to get the current version"
+    );
   }
   const kept = await doors.records.checked();
   if (kept === null || kept.latest.seq < 0) {
-    throw new LegNotRaisedHere('this device has not checked the company\'s records against the anchor on the chain yet. Reload the page, '
-      + 'wait for the company\'s records to be read, and raise it again');
+    throw new LegNotRaisedHere(
+      "this device has not checked the company's records against the anchor on the chain yet. Reload the page, " +
+        "wait for the company's records to be read, and raise it again"
+    );
   }
   const vouched = { head: kept.latest.head.toLowerCase() as Hex, r: doors.filing.salt().toLowerCase() as Hex };
   const why = vouchedRefusal(vouched);
@@ -253,96 +422,175 @@ const vouchedHere = async (doors: LegRaiseDoors): Promise<VouchedHere> => {
  * run built again where it is proved and checked against the chain; and the
  * three filed and relayed in one request.
  */
-async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
-  readonly run: PayrollRun; readonly leg: RunLeg; readonly entries: ReadonlyArray<{ readonly e: Employee; readonly at: string }>;
-  readonly root: Hex; readonly payees: bigint; readonly window: { readonly opensAt: bigint; readonly closesAt: bigint };
-  readonly vault: Hex; readonly asset: AssetId; readonly summary: string;
-  readonly payments: ReadonlyArray<ReturnType<typeof paymentChecked>>;
-  readonly retry?: readonly number[];
-  /** What the proposal's salt is made from, and the root of the leg it pays again: none for a leg of the run. */
-  readonly vouched: VouchedHere;
-  readonly legRoot: Hex;
-  readonly raisedRun: (proposalId: string) => PayrollRun;
-  /** The proposal as made here, with what it was checked against before anything was written down. */
-  readonly made: RunMadeHere;
-  readonly assetBlinding: string;
-}): Promise<RoundOnThePage> {
+async function writtenProvedAndFiled(
+  doors: LegRaiseDoors,
+  key: KeysHeld,
+  r: {
+    readonly run: PayrollRun;
+    readonly leg: RunLeg;
+    readonly entries: ReadonlyArray<{ readonly e: Employee; readonly at: string }>;
+    readonly root: Hex;
+    readonly payees: bigint;
+    readonly window: { readonly opensAt: bigint; readonly closesAt: bigint };
+    readonly vault: Hex;
+    readonly asset: AssetId;
+    readonly summary: string;
+    readonly payments: ReadonlyArray<ReturnType<typeof paymentChecked>>;
+    readonly retry?: readonly number[];
+    /** What the proposal's salt is made from, and the root of the leg it pays again: none for a leg of the run. */
+    readonly vouched: VouchedHere;
+    readonly legRoot: Hex;
+    readonly raisedRun: (proposalId: string) => PayrollRun;
+    /** The proposal as made here, with what it was checked against before anything was written down. */
+    readonly made: RunMadeHere;
+    readonly assetBlinding: string;
+  }
+): Promise<RoundOnThePage> {
   const { accountId, service } = doors;
   /* The key the run and its proposal are both sealed under: the one in force, refused while sealing is paused. */
   const sealing = sealingWith(key, doors.filing.keyEpoch);
   doors.progress?.('writing-down');
   const entries: ShieldedEntry[] = r.entries.map(({ e, at }) => ({
-    id: entryId(), kind: 'payroll', asset: e.asset, amount: e.amount, counterparty: e.name, memo: `${r.run.period} salary`,
-    at, runId: r.run.id, recipientId: e.id,
+    id: entryId(),
+    kind: 'payroll',
+    asset: e.asset,
+    amount: e.amount,
+    counterparty: e.name,
+    memo: `${r.run.period} salary`,
+    at,
+    runId: r.run.id,
+    recipientId: e.id
   }));
   /* Every run's salt names the leg it pays again, or none, so the id every signer approves says which it is. */
   const salt = hex(doors.runs.retrySaltOf(bytes(r.legRoot), bytes(vouchedFreshOf(r.vouched.head, r.vouched.r))));
   /* What the salt is made from, sealed beside it: the proposal is the one record that holds both. */
   const change = {
-    asset: r.asset, amount: sumChangeAmount(entries.map((e) => e.amount), 'this run\'s change'), batchDigest: batchDigestOf(entries), salt,
-    vouched: { head: r.vouched.head, r: r.vouched.r },
+    asset: r.asset,
+    amount: sumChangeAmount(
+      entries.map((e) => e.amount),
+      "this run's change"
+    ),
+    batchDigest: batchDigestOf(entries),
+    salt,
+    vouched: { head: r.vouched.head, r: r.vouched.r }
   };
   /* The approvals the run was made needing, which its band under its vault's spending policy may require, bound into its identity. */
   const required = r.made.required;
   if (!DIGITS.test(required)) throw new LegNotRaisedHere('the approvals this run needs are not a whole number');
-  const digest = hex(doors.runs.runPayload(bytes(r.root), r.payees, r.window.opensAt, r.window.closesAt, BigInt(required)));
+  const digest = hex(
+    doors.runs.runPayload(bytes(r.root), r.payees, r.window.opensAt, r.window.closesAt, BigInt(required))
+  );
   const chainId = hex(doors.runs.proposalIdOf(bytes(digest), bytes(r.vault), bytes(salt)));
   const proposalId = doors.filing.newId();
   const createdAt = (doors.now ?? (() => new Date()))().toISOString();
   /* What the proposal pays, committed to under a key the service is not given: the salt and the company's asset blinding. */
-  const pays = { vault: r.vault, asset: r.asset, payments: paymentsOnTheWire(r.payments as ReadonlyArray<PaymentChecked<'shielded' | 'unshielded'>>) };
-  const proposal = signProposalFiling(accountId, {
-    id: proposalId, digest, chainId, keyEpoch: sealing.epoch, createdAt, pays: paysCommitmentOf(pays, salt, r.assetBlinding),
-    sealed: sealPayrollProposal({
-      accountId, viewingKey: sealing.key, vault: r.vault, summary: r.summary,
-      payload: {
-        runId: r.run.id, form: formOfLeg(r.leg), entries, ...(r.retry === undefined ? {} : { retry: [...r.retry] }),
-        /* The run's own window, beside what its identity is made from with it: read back only as that identity holds it. */
-        window: { root: r.root, payees: String(r.payees), opensAt: String(r.window.opensAt), closesAt: String(r.window.closesAt) },
-      }, change,
-      /*
-       * The approvals bound into its identity, sealed beside its change; a
-       * device reads them from the run's record, written below from the same
-       * value.
-       */
-      required: BigInt(required),
-      proposedBy: doors.filing.seat,
-    }),
-  }, doors.material.signingSecret as Hex);
-  const runFiling = signRunFiling(accountId, sealedRunOf(r.raisedRun(proposalId), sealing.key, sealing.epoch), doors.material.signingSecret as Hex);
+  const pays = {
+    vault: r.vault,
+    asset: r.asset,
+    payments: paymentsOnTheWire(r.payments as ReadonlyArray<PaymentChecked<'shielded' | 'unshielded'>>)
+  };
+  const proposal = signProposalFiling(
+    accountId,
+    {
+      id: proposalId,
+      digest,
+      chainId,
+      keyEpoch: sealing.epoch,
+      createdAt,
+      pays: paysCommitmentOf(pays, salt, r.assetBlinding),
+      sealed: sealPayrollProposal({
+        accountId,
+        viewingKey: sealing.key,
+        vault: r.vault,
+        summary: r.summary,
+        payload: {
+          runId: r.run.id,
+          form: formOfLeg(r.leg),
+          entries,
+          ...(r.retry === undefined ? {} : { retry: [...r.retry] }),
+          /* The run's own window, beside what its identity is made from with it: read back only as that identity holds it. */
+          window: {
+            root: r.root,
+            payees: String(r.payees),
+            opensAt: String(r.window.opensAt),
+            closesAt: String(r.window.closesAt)
+          }
+        },
+        change,
+        /*
+         * The approvals bound into its identity, sealed beside its change; a
+         * device reads them from the run's record, written below from the same
+         * value.
+         */
+        required: BigInt(required),
+        proposedBy: doors.filing.seat
+      })
+    },
+    doors.material.signingSecret as Hex
+  );
+  const runFiling = signRunFiling(
+    accountId,
+    sealedRunOf(r.raisedRun(proposalId), sealing.key, sealing.epoch),
+    doors.material.signingSecret as Hex
+  );
   /* The account's own name for the asset, which is what the asset witness answers with. */
   const named = { assetId: assetIdBytes(r.asset) };
   const opened: OpenedRound = {
-    chainId, digest, vault: r.vault, salt, vouched: r.vouched, summary: r.summary,
+    chainId,
+    digest,
+    vault: r.vault,
+    salt,
+    vouched: r.vouched,
+    summary: r.summary,
     half: { assetId: hex(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
-    made: r.made, raiseBy: raiseByOf(createdAt),
+    made: r.made,
+    raiseBy: raiseByOf(createdAt)
   };
   const order: RaiseRunOrder = {
     circuit: 'propose',
     run: {
-      root: r.root, payees: String(r.payees), opensAt: String(r.window.opensAt), closesAt: String(r.window.closesAt), vault: r.vault, required,
+      root: r.root,
+      payees: String(r.payees),
+      opensAt: String(r.window.opensAt),
+      closesAt: String(r.window.closesAt),
+      vault: r.vault,
+      required
     },
     half: {
-      assetId: opened.half!.assetId, assetBlinding: r.assetBlinding, proposalSalt: salt,
-      changeAmount: opened.half!.changeAmount, changeBatchDigest: opened.half!.changeBatchDigest,
+      assetId: opened.half!.assetId,
+      assetBlinding: r.assetBlinding,
+      proposalSalt: salt,
+      changeAmount: opened.half!.changeAmount,
+      changeBatchDigest: opened.half!.changeBatchDigest
     },
-    proposal: chainId,
+    proposal: chainId
   };
   doors.progress?.('reading-the-chain');
   const chain = await service.callState(accountId);
   doors.progress?.('building');
-  const { tx } = await doors.builder.governedCall({ account: chain.account, material: doors.material, chain, opened, order });
+  const { tx } = await doors.builder.governedCall({
+    account: chain.account,
+    material: doors.material,
+    chain,
+    opened,
+    order
+  });
   doors.progress?.('sending');
   const filed: readonly Filed[] = [{ store: 'run', run: runFiling }, proposalEntry(accountId, proposal)];
   let round: RoundOnThePage;
   try {
     const file = service.file!;
-    round = theRoundAsked(await handedOver(doors.handOver, {
-      tx, call: { kind: 'account-call', contract: chain.account, circuit: order.circuit },
-      viaService: () => file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling }),
-      before: () => file(accountId, { proposal, salt, run: runFiling }),
-      after: () => service.standing(proposal.id),
-    }), proposal.id, chainId);
+    round = theRoundAsked(
+      await handedOver(doors.handOver, {
+        tx,
+        call: { kind: 'account-call', contract: chain.account, circuit: order.circuit },
+        viaService: () => file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, run: runFiling }),
+        before: () => file(accountId, { proposal, salt, run: runFiling }),
+        after: () => service.standing(proposal.id)
+      }),
+      proposal.id,
+      chainId
+    );
   } catch (e) {
     /*
      * **WRITTEN DOWN AND NOT SENT IS STILL WRITTEN DOWN.** A send that failed
@@ -365,7 +613,11 @@ async function writtenProvedAndFiled(doors: LegRaiseDoors, key: KeysHeld, r: {
  * Neither undoes the raise, which the chain already holds: a filing not
  * entered or not anchored stays not yet anchored, and the raise says why.
  */
-export async function enteredAndAnchored(doors: Pick<LegRaiseDoors, 'recorded'>, round: RoundOnThePage, filed: readonly Filed[]): Promise<RoundOnThePage> {
+export async function enteredAndAnchored(
+  doors: Pick<LegRaiseDoors, 'recorded'>,
+  round: RoundOnThePage,
+  filed: readonly Filed[]
+): Promise<RoundOnThePage> {
   try {
     await doors.recorded.entered.enter(filed);
     await doors.recorded.anchor();
@@ -388,9 +640,15 @@ export async function enteredAndAnchored(doors: Pick<LegRaiseDoors, 'recorded'>,
 export async function raiseRetryHere(
   doors: LegRaiseDoors,
   input: {
-    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; indices: readonly number[];
-    vault: string; opensAt: string; closesAt: string;
-  },
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+    indices: readonly number[];
+    vault: string;
+    opensAt: string;
+    closesAt: string;
+  }
 ): Promise<RoundOnThePage> {
   const key = input.viewingKey;
   const { records, accountId, service } = doors;
@@ -398,7 +656,8 @@ export async function raiseRetryHere(
   if (!DIGITS.test(input.opensAt) || !DIGITS.test(input.closesAt)) {
     throw new LegNotRaisedHere('a window bound is whole seconds since the Unix epoch');
   }
-  if (!service.file) throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
+  if (!service.file)
+    throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
   const window = { opensAt: BigInt(input.opensAt), closesAt: BigInt(input.closesAt) };
   const vault = input.vault.toLowerCase() as Hex;
   const now = (doors.now ?? (() => new Date()))();
@@ -418,44 +677,97 @@ export async function raiseRetryHere(
    * until its window closes: its proof may still be sent, so withdrawing it on the service's word frees nobody.
    */
   const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
-  const unsent = (recorded.retries ?? []).find((r) => r.proposalId !== undefined && nowInSeconds < BigInt(r.closesAt)
-    && r.originalIndices.length === indices.length && r.originalIndices.every((i, at) => i === indices[at])
-    && proposals.some((p) => p.id === r.proposalId && p.status === 'open' && !p.raisedAt));
+  const unsent = (recorded.retries ?? []).find(
+    (r) =>
+      r.proposalId !== undefined &&
+      nowInSeconds < BigInt(r.closesAt) &&
+      r.originalIndices.length === indices.length &&
+      r.originalIndices.every((i, at) => i === indices[at]) &&
+      proposals.some((p) => p.id === r.proposalId && p.status === 'open' && !p.raisedAt)
+  );
   if (unsent !== undefined) {
-    throw new LegNotRaisedHere(`a retry of these people is already written down, as ${unsent.proposalId}, and the chain has never `
-      + `held it. Send that one; until its window closes at ${new Date(Number(unsent.closesAt) * 1000).toISOString()} it may still `
-      + 'be sent, so no other retry of them is raised');
+    throw new LegNotRaisedHere(
+      `a retry of these people is already written down, as ${unsent.proposalId}, and the chain has never ` +
+        `held it. Send that one; until its window closes at ${new Date(Number(unsent.closesAt) * 1000).toISOString()} it may still ` +
+        'be sent, so no other retry of them is raised'
+    );
   }
   const onTheLeg = legEmployees(run, leg);
   if (onTheLeg.length !== recorded.leaves.length) {
-    throw new LegNotRaisedHere(`the ${legName(leg, registry)} leg of run ${run.id} lists ${onTheLeg.length} people and was raised `
-      + `over ${recorded.leaves.length} leaves, so which person each leaf belongs to cannot be said`);
+    throw new LegNotRaisedHere(
+      `the ${legName(leg, registry)} leg of run ${run.id} lists ${onTheLeg.length} people and was raised ` +
+        `over ${recorded.leaves.length} leaves, so which person each leaf belongs to cannot be said`
+    );
   }
   /* The leg built again from its own record; whether this device would pay the people it names is a raise check, below. */
   const state = await signedStateHere(records, accountId, key);
   const asset = assetOfLeg(leg) as AssetId;
   const identity = { accountId, runId: recorded.runId, epoch: recorded.epoch };
   const payRecords = recorded.records ?? payRecordsOf(run, onTheLeg);
-  const whole = raised(() => doors.runs.buildRun([...state.seeds], identity, [...recorded.facts], doors.runs.detailsOf,
-    { key: state.payKey as Hex, records: [...payRecords] }, asset));
+  const whole = raised(() =>
+    doors.runs.buildRun(
+      [...state.seeds],
+      identity,
+      [...recorded.facts],
+      doors.runs.detailsOf,
+      { key: state.payKey as Hex, records: [...payRecords] },
+      asset
+    )
+  );
   if (whole.tree.leaves.some((l, i) => l.toLowerCase() !== String(recorded.leaves[i]).toLowerCase())) {
-    throw new LegNotRaisedHere(`the ${legName(leg, registry)} leg of run ${run.id} does not build its own leaves again from its record `
-      + 'here, so a retry built from it would pay these people at other leaves, which the chain does not refuse');
+    throw new LegNotRaisedHere(
+      `the ${legName(leg, registry)} leg of run ${run.id} does not build its own leaves again from its record ` +
+        'here, so a retry built from it would pay these people at other leaves, which the chain does not refuse'
+    );
   }
   const retry = raised(() => doors.runs.buildRetryRun(whole, indices));
   const root = retry.tree.root;
   const payees = retry.tree.payees;
-  raised(() => refuseARunNoVaultCanPay({ root, vault, ...window }, hex(doors.runs.noVault()), BigInt(Math.floor(now.getTime() / 1000))));
-  raised(() => refuseRetryMaterialThatIsNotItsPeople(run, leg, indices, { run: { root, payees }, leaves: retry.tree.leaves, identity },
-    doors.runs.rootOfPayments as never));
+  raised(() =>
+    refuseARunNoVaultCanPay(
+      { root, vault, ...window },
+      hex(doors.runs.noVault()),
+      BigInt(Math.floor(now.getTime() / 1000))
+    )
+  );
+  raised(() =>
+    refuseRetryMaterialThatIsNotItsPeople(
+      run,
+      leg,
+      indices,
+      { run: { root, payees }, leaves: retry.tree.leaves, identity },
+      doors.runs.rootOfPayments as never
+    )
+  );
 
-  const { required, policy } = await approvalsItsBandNeeds(doors, key, { vault, asset, total: retry.facts.reduce((a, f) => a + f.amount, 0n), window });
+  const { required, policy } = await approvalsItsBandNeeds(doors, key, {
+    vault,
+    asset,
+    total: retry.facts.reduce((a, f) => a + f.amount, 0n),
+    window
+  });
   /* What the proposal's salt is made from, beside the root of the leg it pays again. */
   const vouched = await vouchedHere(doors);
-  const made = await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, key, {
-    kind: 'payroll', seeds: state.seeds, payKey: state.payKey, identity, facts: recorded.facts, records: payRecords, asset,
-    opensAt: input.opensAt, closesAt: input.closesAt, required, retry: indices,
-  }, proposals);
+  const made = await checkedAgainstTheRecordsAndTheWallet(
+    records,
+    accountId,
+    run,
+    key,
+    {
+      kind: 'payroll',
+      seeds: state.seeds,
+      payKey: state.payKey,
+      identity,
+      facts: recorded.facts,
+      records: payRecords,
+      asset,
+      opensAt: input.opensAt,
+      closesAt: input.closesAt,
+      required,
+      retry: indices
+    },
+    proposals
+  );
   await checkedHere(doors, key, { run, leg, made, vault }, { proposals, spendingPolicy: policy });
 
   const facts = retry.facts;
@@ -463,15 +775,33 @@ export async function raiseRetryHere(
 
   doors.progress?.('checking-the-vault');
   const payments = facts.map(paymentChecked);
-  await refuseWhatTheVaultCannotPay(doors.holdings, {
-    vault, asset: registry.require(asset), total, payees, payments: payments.map((p) => ({ payee: { kind: p.kind }, token: p.token, amount: p.amount })),
-  }, ['shielded', 'unshielded']);
+  await refuseWhatTheVaultCannotPay(
+    doors.holdings,
+    {
+      vault,
+      asset: registry.require(asset),
+      total,
+      payees,
+      payments: payments.map((p) => ({ payee: { kind: p.kind }, token: p.token, amount: p.amount }))
+    },
+    ['shielded', 'unshielded']
+  );
 
   const at = now.toISOString();
   return writtenProvedAndFiled(doors, key, {
-    run, leg, entries: indices.map((i) => ({ e: onTheLeg[i]!, at })), root, payees, window, vault, asset,
-    summary: `Payroll ${run.period}, retry for ${indices.length} recipients`, payments, retry: indices,
-    vouched, legRoot: whole.tree.root.toLowerCase() as Hex,
+    run,
+    leg,
+    entries: indices.map((i) => ({ e: onTheLeg[i]!, at })),
+    root,
+    payees,
+    window,
+    vault,
+    asset,
+    summary: `Payroll ${run.period}, retry for ${indices.length} recipients`,
+    payments,
+    retry: indices,
+    vouched,
+    legRoot: whole.tree.root.toLowerCase() as Hex,
     raisedRun: (proposalId) => {
       const withRetry: PayrollRun = {
         ...run,
@@ -479,16 +809,33 @@ export async function raiseRetryHere(
           ...run.payout!,
           [leg]: {
             ...recorded,
-            retries: [...(recorded.retries ?? []), {
-              originalIndices: [...indices], root, payees, opensAt: window.opensAt, closesAt: window.closesAt, vault,
-              required: BigInt(made.required), proposalId, proposedBy: doors.filing.seat, at,
-            }],
-          },
-        },
+            retries: [
+              ...(recorded.retries ?? []),
+              {
+                originalIndices: [...indices],
+                root,
+                payees,
+                opensAt: window.opensAt,
+                closesAt: window.closesAt,
+                vault,
+                required: BigInt(made.required),
+                proposalId,
+                proposedBy: doors.filing.seat,
+                at
+              }
+            ]
+          }
+        }
       };
-      return { ...withRetry, payslips: receiptsOf(withRetry, [...state.seeds], state.payKey as Hex, undefined, { company: doors.company.account, label: doors.company.label }) };
+      return {
+        ...withRetry,
+        payslips: receiptsOf(withRetry, [...state.seeds], state.payKey as Hex, undefined, {
+          company: doors.company.account,
+          label: doors.company.label
+        })
+      };
     },
     made,
-    assetBlinding: state.assetBlinding,
+    assetBlinding: state.assetBlinding
   });
 }

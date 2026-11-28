@@ -9,7 +9,8 @@
  * refused, and so is an amount, which refuses to become a number at all.
  */
 export function formatNumber(value: number, tag: string, options?: Intl.NumberFormatOptions): string {
-  if (typeof value !== 'number') throw new TypeError(`a plain number is a number, and this is a ${typeof value}; an amount is shown by Amount`);
+  if (typeof value !== 'number')
+    throw new TypeError(`a plain number is a number, and this is a ${typeof value}; an amount is shown by Amount`);
   return new Intl.NumberFormat(tag, options).format(value);
 }
 
@@ -21,7 +22,11 @@ export function formatDate(value: Date, tag: string, options?: Intl.DateTimeForm
 const UNIT = { second: 'second', minute: 'minute', hour: 'hour', day: 'day' } as const;
 
 /** Below each number of seconds, the unit a time ago is said in: seconds under a minute, minutes under an hour, hours under a day. */
-const STEPS = [[60, UNIT.second], [3_600, UNIT.minute], [86_400, UNIT.hour]] as const;
+const STEPS = [
+  [60, UNIT.second],
+  [3_600, UNIT.minute],
+  [86_400, UNIT.hour]
+] as const;
 
 /**
  * HOW LONG AGO `since` WAS, AT `now`, in the person's language: in seconds

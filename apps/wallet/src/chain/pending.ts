@@ -77,25 +77,32 @@ const KEY = 'midnight-identity:pending-sends';
  * patience; settling early costs a double send. */
 export const TTL_SETTLE_MARGIN_MS = 5 * 60_000;
 
-interface StoredRecord extends PendingSend { readonly fingerprint: string }
+interface StoredRecord extends PendingSend {
+  readonly fingerprint: string;
+}
 
 const isRecord = (value: unknown): value is StoredRecord => {
   if (typeof value !== 'object' || value === null) return false;
   const r = value as Partial<StoredRecord>;
-  return typeof r.fingerprint === 'string'
-    && typeof r.key === 'string' && r.key.length > 0
-    && Array.isArray(r.identifiers) && r.identifiers.every((id) => typeof id === 'string')
-    && typeof r.account === 'number'
-    && (r.kind === 'shielded' || r.kind === 'unshielded')
-    && typeof r.recipientBech32 === 'string'
-    && typeof r.stars === 'string' && /^\d+$/u.test(r.stars)
-    && typeof r.feeSpecks === 'string'
-    && typeof r.submittedAt === 'number'
-    && typeof r.ttlAt === 'number'
-    && (r.outcome === null
-      || (typeof r.outcome === 'object' && r.outcome !== null
-        && ((r.outcome as PendingOutcome).name === 'sent'
-          || (r.outcome as PendingOutcome).name === 'failed')));
+  return (
+    typeof r.fingerprint === 'string' &&
+    typeof r.key === 'string' &&
+    r.key.length > 0 &&
+    Array.isArray(r.identifiers) &&
+    r.identifiers.every((id) => typeof id === 'string') &&
+    typeof r.account === 'number' &&
+    (r.kind === 'shielded' || r.kind === 'unshielded') &&
+    typeof r.recipientBech32 === 'string' &&
+    typeof r.stars === 'string' &&
+    /^\d+$/u.test(r.stars) &&
+    typeof r.feeSpecks === 'string' &&
+    typeof r.submittedAt === 'number' &&
+    typeof r.ttlAt === 'number' &&
+    (r.outcome === null ||
+      (typeof r.outcome === 'object' &&
+        r.outcome !== null &&
+        ((r.outcome as PendingOutcome).name === 'sent' || (r.outcome as PendingOutcome).name === 'failed')))
+  );
 };
 
 /** Every stored record, all accounts — damaged entries are skipped (they
@@ -132,10 +139,8 @@ export const unresolvedPendingSends = (secret: Secret): PendingSend[] =>
 
 /** The double-send question: is THIS payment — same recipient, same exact
  * amount — already handed to the network with its outcome unknown? */
-export const duplicateUnresolved = (
-  secret: Secret, recipientBech32: string, stars: bigint,
-): boolean => unresolvedPendingSends(secret)
-  .some((r) => r.recipientBech32 === recipientBech32 && r.stars === String(stars));
+export const duplicateUnresolved = (secret: Secret, recipientBech32: string, stars: bigint): boolean =>
+  unresolvedPendingSends(secret).some((r) => r.recipientBech32 === recipientBech32 && r.stars === String(stars));
 
 export interface PendingDraft {
   readonly identifiers: readonly string[];
@@ -165,7 +170,7 @@ export function writePendingSend(secret: Secret, draft: PendingDraft): PendingSe
     feeSpecks: String(draft.feeSpecks),
     submittedAt: Date.now(),
     ttlAt: draft.ttlAt,
-    outcome: null,
+    outcome: null
   };
   const rest = readAll().filter((r) => r.key !== record.key);
   writeAll([...rest, record]);
@@ -175,14 +180,11 @@ export function writePendingSend(secret: Secret, draft: PendingDraft): PendingSe
 
 /** Settles one record. Settled records STAY until a person dismisses them —
  * the answer has to find somebody, not just exist. */
-export function settlePendingSend(
-  secret: Secret, key: string, outcome: PendingOutcome,
-): void {
+export function settlePendingSend(secret: Secret, key: string, outcome: PendingOutcome): void {
   const print = printOf(secret);
-  writeAll(readAll().map((r) => (
-    r.fingerprint === print && r.key === key && r.outcome === null
-      ? { ...r, outcome }
-      : r)));
+  writeAll(
+    readAll().map((r) => (r.fingerprint === print && r.key === key && r.outcome === null ? { ...r, outcome } : r))
+  );
 }
 
 /** A person saw the answer — the record's work is done. */
@@ -194,15 +196,21 @@ export function dismissPendingSend(secret: Secret, key: string): void {
 /** The engine-facing shape (`SendDoors.pending` — send.ts): the store,
  * bound to one account of one secret. The send screen builds this; the
  * engine never sees storage. */
-export const pendingGuardFor = (secret: Secret, account: number): {
+export const pendingGuardFor = (
+  secret: Secret,
+  account: number
+): {
   duplicateUnresolved: (recipientBech32: string, stars: bigint) => boolean;
   write: (draft: Omit<PendingDraft, 'account'>) => void;
   settle: (key: string, outcome: PendingOutcome) => void;
 } => ({
-  duplicateUnresolved: (recipientBech32, stars) =>
-    duplicateUnresolved(secret, recipientBech32, stars),
-  write: (draft) => { writePendingSend(secret, { ...draft, account }); },
-  settle: (key, outcome) => { settlePendingSend(secret, key, outcome); },
+  duplicateUnresolved: (recipientBech32, stars) => duplicateUnresolved(secret, recipientBech32, stars),
+  write: (draft) => {
+    writePendingSend(secret, { ...draft, account });
+  },
+  settle: (key, outcome) => {
+    settlePendingSend(secret, key, outcome);
+  }
 });
 
 /** What a run watching its own pending record is told. The record handed to
@@ -232,12 +240,13 @@ export interface PendingObserver {
  * that refusal instead of into a forgotten middle.
  */
 export const observedPendingGuard = (
-  secret: Secret, account: number, observer: PendingObserver,
+  secret: Secret,
+  account: number,
+  observer: PendingObserver
 ): ReturnType<typeof pendingGuardFor> => {
   const guard = pendingGuardFor(secret, account);
   return {
-    duplicateUnresolved: (recipientBech32, stars) =>
-      guard.duplicateUnresolved(recipientBech32, stars),
+    duplicateUnresolved: (recipientBech32, stars) => guard.duplicateUnresolved(recipientBech32, stars),
     write: (draftIn) => {
       /* `writePendingSend` RETURNS the record it built, key and all, and the
        * key is the store's to decide — `identifiers[0]` when there is one and
@@ -249,15 +258,17 @@ export const observedPendingGuard = (
       const written = writePendingSend(secret, { ...draftIn, account });
       const stored = loadPendingSends(secret).find((r) => r.key === written.key);
       if (!stored) {
-        throw new Error('the pending record is NOT on disk after writing it — a payment '
-          + 'this wallet cannot remember must not be submitted');
+        throw new Error(
+          'the pending record is NOT on disk after writing it — a payment ' +
+            'this wallet cannot remember must not be submitted'
+        );
       }
       observer.wrote(stored);
     },
     settle: (key, outcome) => {
       guard.settle(key, outcome);
       observer.settled(key, outcome);
-    },
+    }
   };
 };
 
@@ -270,18 +281,21 @@ export const observedPendingGuard = (
 export const throwawayPendingGuard = (): ReturnType<typeof pendingGuardFor> => {
   const records = new Map<string, { recipientBech32: string; stars: string; outcome: PendingOutcome | null }>();
   return {
-    duplicateUnresolved: (recipientBech32, stars) => [...records.values()]
-      .some((r) => r.recipientBech32 === recipientBech32
-        && r.stars === String(stars) && r.outcome === null),
+    duplicateUnresolved: (recipientBech32, stars) =>
+      [...records.values()].some(
+        (r) => r.recipientBech32 === recipientBech32 && r.stars === String(stars) && r.outcome === null
+      ),
     write: (draft) => {
       records.set(draft.identifiers[0] ?? '', {
-        recipientBech32: draft.recipientBech32, stars: String(draft.stars), outcome: null,
+        recipientBech32: draft.recipientBech32,
+        stars: String(draft.stars),
+        outcome: null
       });
     },
     settle: (key, outcome) => {
       const record = records.get(key);
       if (record) record.outcome = outcome;
-    },
+    }
   };
 };
 
@@ -311,18 +325,17 @@ export interface ChainSegment {
 export const KNOWN_STATUSES = ['SUCCESS', 'FAILURE', 'PARTIAL_SUCCESS'] as const;
 
 /** Whether an answer is one this wallet is entitled to act on. */
-export const isKnownStatus = (status: string): boolean =>
-  (KNOWN_STATUSES as readonly string[]).includes(status);
+export const isKnownStatus = (status: string): boolean => (KNOWN_STATUSES as readonly string[]).includes(status);
 
 export type ChainAnswer =
   | { readonly found: false }
   | {
-    readonly found: true;
-    readonly status: string;
-    /** Absent when the chain reported none — which is not the same as an
-     * empty list, and neither is the same as "the parts all succeeded". */
-    readonly segments?: readonly ChainSegment[] | undefined;
-  };
+      readonly found: true;
+      readonly status: string;
+      /** Absent when the chain reported none — which is not the same as an
+       * empty list, and neither is the same as "the parts all succeeded". */
+      readonly segments?: readonly ChainSegment[] | undefined;
+    };
 
 /**
  * One identifier, asked of the indexer. The SDK's own query, run the way the
@@ -341,20 +354,22 @@ export type ChainAnswer =
  * TEST CAN SEE IT is what stops the field being quietly dropped again, which
  * a mutation proved could happen unnoticed.
  */
-export function answerFromTransactions(transactions: readonly {
-  readonly __typename?: string;
-  readonly transactionResult?: {
-    readonly status: string;
-    readonly segments?: readonly { readonly id: number; readonly success: boolean }[] | null;
-  };
-}[]): ChainAnswer {
+export function answerFromTransactions(
+  transactions: readonly {
+    readonly __typename?: string;
+    readonly transactionResult?: {
+      readonly status: string;
+      readonly segments?: readonly { readonly id: number; readonly success: boolean }[] | null;
+    };
+  }[]
+): ChainAnswer {
   for (const tx of transactions) {
     if (tx.__typename === 'RegularTransaction' && tx.transactionResult) {
       const segments = tx.transactionResult.segments ?? undefined;
       return {
         found: true,
         status: tx.transactionResult.status,
-        segments: segments?.map((seg) => ({ id: seg.id, success: seg.success })),
+        segments: segments?.map((seg) => ({ id: seg.id, success: seg.success }))
       };
     }
   }
@@ -365,7 +380,8 @@ export async function transactionStatusOnChain(identifier: string): Promise<Chai
   const result = await QueryRunner.runPromise(
     TransactionStatus,
     { transactionId: identifier },
-    { url: INDEXER_HTTP_URL });
+    { url: INDEXER_HTTP_URL }
+  );
   return answerFromTransactions(result.transactions);
 }
 
@@ -373,7 +389,8 @@ export async function transactionStatusOnChain(identifier: string): Promise<Chai
  * Whether any of these identifiers is on the chain, in any outcome, read from this wallet's own indexer. It throws
  * when the indexer cannot be read, so a caller deciding whether to send a call again never takes silence as absence.
  */
-export const landedOnTheChain = (status: (identifier: string) => Promise<ChainAnswer> = transactionStatusOnChain) =>
+export const landedOnTheChain =
+  (status: (identifier: string) => Promise<ChainAnswer> = transactionStatusOnChain) =>
   async (identifiers: readonly string[]): Promise<boolean> => {
     for (const identifier of identifiers) if ((await status(identifier)).found) return true;
     return false;
@@ -388,7 +405,7 @@ export interface ResolutionDoors {
 
 export const liveResolutionDoors = (): ResolutionDoors => ({
   status: transactionStatusOnChain,
-  now: Date.now,
+  now: Date.now
 });
 
 /** The outcome one chain answer (or its absence) implies — or null: keep
@@ -398,7 +415,7 @@ export function outcomeOfAnswer(
   record: Pick<PendingSend, 'ttlAt'>,
   answer: ChainAnswer | null,
   now: number,
-  settleMarginMs: number = TTL_SETTLE_MARGIN_MS,
+  settleMarginMs: number = TTL_SETTLE_MARGIN_MS
 ): PendingOutcome | null {
   /* NO answer decides NOTHING — not even past the TTL. Silence from the
    * indexer says nothing about the chain, and a "failed" built on silence
@@ -428,22 +445,22 @@ export function outcomeOfAnswer(
     const segments = answer.segments ?? [];
     const failed = segments.filter((seg) => !seg.success).map((seg) => seg.id);
     const succeeded = segments.filter((seg) => seg.success).map((seg) => seg.id);
-    const parts = segments.length === 0
-      ? 'The chain did not say which part of it failed, so this wallet does not know '
-        + 'which — and it is not going to guess.'
-      : `The chain says ${failed.length === 0
-        ? 'no part of it failed'
-        : `part ${failed.join(', ')} failed`}${succeeded.length === 0
-        ? ''
-        : ` and part ${succeeded.join(', ')} succeeded`}.`;
+    const parts =
+      segments.length === 0
+        ? 'The chain did not say which part of it failed, so this wallet does not know ' +
+          'which — and it is not going to guess.'
+        : `The chain says ${failed.length === 0 ? 'no part of it failed' : `part ${failed.join(', ')} failed`}${
+            succeeded.length === 0 ? '' : ` and part ${succeeded.join(', ')} succeeded`
+          }.`;
 
     return {
       name: 'failed',
       at: now,
-      reason: `the chain included the transaction and reports ${answer.status} — `
-        + `the payment did not go through as a success. ${parts} The fee's DUST `
-        + 'may have been spent. Check this payment on a block explorer before '
-        + 'sending it again.',
+      reason:
+        `the chain included the transaction and reports ${answer.status} — ` +
+        `the payment did not go through as a success. ${parts} The fee's DUST ` +
+        'may have been spent. Check this payment on a block explorer before ' +
+        'sending it again.'
     };
   }
   if (now > record.ttlAt + settleMarginMs) {
@@ -467,12 +484,13 @@ export function outcomeOfAnswer(
     return {
       name: 'failed',
       at: now,
-      reason: 'the transaction\'s own deadline has passed and it never appeared on '
-        + 'the chain as far as this wallet could see, so it can no longer be '
-        + 'included and this payment is over. Whether it went through BEFORE the '
-        + 'deadline and was simply never visible from here is NOT known — the only '
-        + 'thing that said no was a silence. Check this payment on a block explorer '
-        + 'before sending it again.',
+      reason:
+        "the transaction's own deadline has passed and it never appeared on " +
+        'the chain as far as this wallet could see, so it can no longer be ' +
+        'included and this payment is over. Whether it went through BEFORE the ' +
+        'deadline and was simply never visible from here is NOT known — the only ' +
+        'thing that said no was a silence. Check this payment on a block explorer ' +
+        'before sending it again.'
     };
   }
   return null;
@@ -485,7 +503,8 @@ export function outcomeOfAnswer(
  * from the network must never become an answer.
  */
 export async function resolvePendingSends(
-  secret: Secret, doors: ResolutionDoors = liveResolutionDoors(),
+  secret: Secret,
+  doors: ResolutionDoors = liveResolutionDoors()
 ): Promise<PendingSend[]> {
   const settled: PendingSend[] = [];
   for (const record of unresolvedPendingSends(secret)) {
@@ -493,7 +512,10 @@ export async function resolvePendingSends(
     for (const identifier of record.identifiers) {
       try {
         const found = await doors.status(identifier);
-        if (found.found) { answer = found; break; }
+        if (found.found) {
+          answer = found;
+          break;
+        }
         answer ??= found;
       } catch {
         /* No answer is NOT "not found": without one, this identifier says

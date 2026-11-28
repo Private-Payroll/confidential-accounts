@@ -20,7 +20,19 @@ export interface PressRefs {
  * The press: adds this wallet's coins to the page's transaction and hands it back, keeping the screen's refs
  * and stage true while it runs and when it ends.
  */
-export function startPaying({ tx, leaves, pays, channel, doors, request, now, refs, setStage, setBusy, setHeld }: {
+export function startPaying({
+  tx,
+  leaves,
+  pays,
+  channel,
+  doors,
+  request,
+  now,
+  refs,
+  setStage,
+  setBusy,
+  setHeld
+}: {
   readonly tx: UnboundTransactionLike;
   readonly leaves: LeavesTheWallet[];
   readonly pays: PageAskPays;
@@ -54,7 +66,10 @@ export function startPaying({ tx, leaves, pays, channel, doors, request, now, re
     channel.progress(next);
   };
   const unwatch = pressedWith.watchProofs?.((event) => {
-    if (pays === 'public' || event.op !== 'prove') { say('reading'); return; }
+    if (pays === 'public' || event.op !== 'prove') {
+      say('reading');
+      return;
+    }
     say('proving');
     if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false, proving: true } : was));
   });
@@ -64,56 +79,73 @@ export function startPaying({ tx, leaves, pays, channel, doors, request, now, re
     unwatch?.();
     pressing.current.delete(pressedWith);
     if (booked) booking.current -= 1;
-    if (mounted.current) { setBusy(pressing.current.size > 0); setHeld(booking.current > 0); }
+    if (mounted.current) {
+      setBusy(pressing.current.size > 0);
+      setHeld(booking.current > 0);
+    }
     if (!mounted.current || !stillThisWallet()) void pressedWith.stop?.();
   };
   setStage({ of: 'paying', reading: false, proving: false, leaves, pays });
-  void payForThePage(pressedWith, tx, { pays, leaves }, {
-    onReading: () => { if (!declined.current && stillThisWallet()) setStage({ of: 'paying', reading: true, proving: false, leaves, pays }); },
-    onRead: () => say('reading'),
-    onBalancing: () => {
-      booked = true;
-      booking.current += 1;
-      if (mounted.current) setHeld(true);
-      say('reading');
-      if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false } : was));
+  void payForThePage(
+    pressedWith,
+    tx,
+    { pays, leaves },
+    {
+      onReading: () => {
+        if (!declined.current && stillThisWallet())
+          setStage({ of: 'paying', reading: true, proving: false, leaves, pays });
+      },
+      onRead: () => say('reading'),
+      onBalancing: () => {
+        booked = true;
+        booking.current += 1;
+        if (mounted.current) setHeld(true);
+        say('reading');
+        if (stillThisWallet()) setStage((was) => (was.of === 'paying' ? { ...was, reading: false } : was));
+      },
+      /* **ASKED LAST BEFORE ANY COIN IS SET ASIDE**: not if the person said no, left, or picked another wallet. */
+      stillWanted: () => !declined.current && mounted.current && stillThisWallet(),
+      /*
+       * **HANDED OVER ONLY IF THE PAGE HAS NOT ALREADY BEEN ANSWERED.** A "no"
+       * that landed in the moment before the button went down was sent then; a
+       * press made with another wallet may have answered first. Either way this
+       * one is not handed over, and what it set aside is let go.
+       */
+      handOver: (finished) => {
+        sentAt = now();
+        return !declined.current && channel.answer(balancedAnswerFor(request, finished, leaves, sentAt));
+      }
+    }
+  ).then(
+    () => {
+      over();
+      setStage({ of: 'sent', at: sentAt, leaves, pays });
     },
-    /* **ASKED LAST BEFORE ANY COIN IS SET ASIDE**: not if the person said no, left, or picked another wallet. */
-    stillWanted: () => !declined.current && mounted.current && stillThisWallet(),
-    /*
-     * **HANDED OVER ONLY IF THE PAGE HAS NOT ALREADY BEEN ANSWERED.** A "no"
-     * that landed in the moment before the button went down was sent then; a
-     * press made with another wallet may have answered first. Either way this
-     * one is not handed over, and what it set aside is let go.
-     */
-    handOver: (finished) => {
-      sentAt = now();
-      return !declined.current && channel.answer(balancedAnswerFor(request, finished, leaves, sentAt));
-    },
-  }).then(() => {
-    over();
-    setStage({ of: 'sent', at: sentAt, leaves, pays });
-  }, (e: unknown) => {
-    over();
-    /* The person said no, and the page was told so then. */
-    if (declined.current) return;
-    /* Stopped before anything was set aside because another wallet was picked: that wallet's screen stands. */
-    if (!booked && !stillThisWallet()) return;
-    /*
-     * **THE PERSON APPROVED, SO THE PAGE IS TOLD IT FAILED, NEVER THAT THEY
-     * DECLINED** - and only now, after what was set aside has been let go.
-     * If the page was already answered, nothing more crosses, and a press
-     * made with a wallet no longer on screen leaves that screen as it is.
-     */
-    const told = channel.refuse('failed', whyThePaymentFailed(e));
-    if (!told && !stillThisWallet()) return;
-    setStage({
-      of: 'failed', leaves, pays,
-      says: e instanceof NotHandedOver
-        ? e.message
-        : pays === 'public'
-          ? `${e instanceof Error ? e.message : String(e)} The page was given nothing and has been told this payment failed.`
-          : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`,
-    });
-  });
+    (e: unknown) => {
+      over();
+      /* The person said no, and the page was told so then. */
+      if (declined.current) return;
+      /* Stopped before anything was set aside because another wallet was picked: that wallet's screen stands. */
+      if (!booked && !stillThisWallet()) return;
+      /*
+       * **THE PERSON APPROVED, SO THE PAGE IS TOLD IT FAILED, NEVER THAT THEY
+       * DECLINED** - and only now, after what was set aside has been let go.
+       * If the page was already answered, nothing more crosses, and a press
+       * made with a wallet no longer on screen leaves that screen as it is.
+       */
+      const told = channel.refuse('failed', whyThePaymentFailed(e));
+      if (!told && !stillThisWallet()) return;
+      setStage({
+        of: 'failed',
+        leaves,
+        pays,
+        says:
+          e instanceof NotHandedOver
+            ? e.message
+            : pays === 'public'
+              ? `${e instanceof Error ? e.message : String(e)} The page was given nothing and has been told this payment failed.`
+              : `${e instanceof Error ? e.message : String(e)} Anything this wallet set aside for it has been let go. The page was given nothing and has been told this payment failed.`
+      });
+    }
+  );
 }

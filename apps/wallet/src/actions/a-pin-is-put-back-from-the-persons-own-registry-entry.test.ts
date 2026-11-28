@@ -4,7 +4,16 @@ import { drawCompanyLabel, type AccountAddress } from 'midnight-identity/profile
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { registryEntriesFound, type RegistryFinder, type RegistryReads } from '../chain/private-registry-on-chain.js';
-import { ACCOUNT_STATE, NETWORK, REGISTRY_STATE, SECOND_REGISTRY_STATE, entryFor, leafOf, registryWorld, type Held } from '../chain/registry-entries.test-support.js';
+import {
+  ACCOUNT_STATE,
+  NETWORK,
+  REGISTRY_STATE,
+  SECOND_REGISTRY_STATE,
+  entryFor,
+  leafOf,
+  registryWorld,
+  type Held
+} from '../chain/registry-entries.test-support.js';
 import { companyReachHead } from './company-reach-head.js';
 import { pinnedFor } from './company-pin.js';
 import type { StepContext } from './definition.js';
@@ -23,7 +32,11 @@ import { pinnedIn } from './seats-the-words-make.test-support.js';
 const live: { reads: RegistryReads | null } = { reads: null };
 vi.mock('../chain/private-registry-on-chain.js', async (real) => {
   const actual = await real<typeof import('../chain/private-registry-on-chain.js')>();
-  return { ...actual, liveRegistryReads: (...a: Parameters<typeof actual.liveRegistryReads>) => live.reads ?? actual.liveRegistryReads(...a) };
+  return {
+    ...actual,
+    liveRegistryReads: (...a: Parameters<typeof actual.liveRegistryReads>) =>
+      live.reads ?? actual.liveRegistryReads(...a)
+  };
 });
 
 const identity = identityFromSecret(newSecret());
@@ -34,34 +47,45 @@ const FIRST = 'e1'.repeat(32);
 const SECOND = 'e2'.repeat(32);
 const INDEXER = { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' };
 
-const worldOver = (held: Held, seats: { readonly a?: readonly string[]; readonly b?: readonly string[] } = {}) => registryWorld(identity, {
-  registries: { [FIRST]: { state: REGISTRY_STATE, held } },
-  accounts: {
-    [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seats.a ?? [leafOf(identity, LABEL, 0)] },
-    [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seats.b ?? [leafOf(identity, LABEL, 0)] },
-  },
-});
+const worldOver = (held: Held, seats: { readonly a?: readonly string[]; readonly b?: readonly string[] } = {}) =>
+  registryWorld(identity, {
+    registries: { [FIRST]: { state: REGISTRY_STATE, held } },
+    accounts: {
+      [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seats.a ?? [leafOf(identity, LABEL, 0)] },
+      [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seats.b ?? [leafOf(identity, LABEL, 0)] }
+    }
+  });
 const finderOver = (held: Held, seats: { readonly a?: readonly string[]; readonly b?: readonly string[] } = {}) => {
   const w = worldOver(held, seats);
   const asked: string[] = [];
-  const find: RegistryFinder = (who) => { asked.push('find'); return registryEntriesFound(who, NETWORK, w.reads); };
+  const find: RegistryFinder = (who) => {
+    asked.push('find');
+    return registryEntriesFound(who, NETWORK, w.reads);
+  };
   return { find, asked };
 };
 
 /* A step whose saved keys are open, and whose company's service and fee payer answer nothing: our service is stopped. */
 const stepOver = (kept: Keyring, page: string = A) => {
   let keys = kept;
-  const stopped = async (): Promise<never> => { throw new Error('our service is stopped'); };
+  const stopped = async (): Promise<never> => {
+    throw new Error('our service is stopped');
+  };
   const ctx = {
     intent: { name: 'give-vault-keys', fields: { record: 'acc_1', company: LABEL, account: page } } as ActIntent,
     held: { identity, secret: newSecret() },
-    keyring: { open: () => ({ read: () => structuredClone(keys) }), keep: async (change: (k: Keyring) => Keyring) => { keys = change(structuredClone(keys)); } },
-    fees: { fee: stopped, feeDone: stopped },
+    keyring: {
+      open: () => ({ read: () => structuredClone(keys) }),
+      keep: async (change: (k: Keyring) => Keyring) => {
+        keys = change(structuredClone(keys));
+      }
+    },
+    fees: { fee: stopped, feeDone: stopped }
   } as unknown as StepContext;
   return { ctx, keys: () => keys };
 };
 
-describe('a pin put back from the person\'s own registry entry', () => {
+describe("a pin put back from the person's own registry entry", () => {
   it('with our service stopped, finds the company and pins it restored', async () => {
     const { find } = finderOver({ 0: entryFor(LABEL, A) });
     const step = stepOver({ accounts: {} });
@@ -97,16 +121,25 @@ describe('a pin put back from the person\'s own registry entry', () => {
 
   it('pins nothing while a registry the network lists could not be read, or the find could not finish', async () => {
     const w = registryWorld(identity, {
-      registries: { [FIRST]: { state: REGISTRY_STATE, held: {} }, [SECOND]: { state: SECOND_REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } } },
+      registries: {
+        [FIRST]: { state: REGISTRY_STATE, held: {} },
+        [SECOND]: { state: SECOND_REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } }
+      },
       accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] } },
-      unread: [FIRST],
+      unread: [FIRST]
     });
     const step = stepOver({ accounts: {} });
     /* RED WHEN: one account is pinned from a find that could not see a registry where a second account could sit. */
-    expect(await pinRestoredFor(step.ctx, LABEL, (who) => registryEntriesFound(who, NETWORK, w.reads))).toEqual({ of: 'unread' });
+    expect(await pinRestoredFor(step.ctx, LABEL, (who) => registryEntriesFound(who, NETWORK, w.reads))).toEqual({
+      of: 'unread'
+    });
     expect(pinnedFor(step.ctx, LABEL)).toEqual({ of: 'none' });
     /* RED WHEN: a find that throws midway is thrown on, or pins anything. */
-    expect(await pinRestoredFor(step.ctx, LABEL, async () => { throw new Error('the builder stopped'); })).toEqual({ of: 'unread' });
+    expect(
+      await pinRestoredFor(step.ctx, LABEL, async () => {
+        throw new Error('the builder stopped');
+      })
+    ).toEqual({ of: 'unread' });
     expect(pinnedFor(step.ctx, LABEL)).toEqual({ of: 'none' });
   });
 
@@ -115,20 +148,25 @@ describe('a pin put back from the person\'s own registry entry', () => {
       registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A), 1: entryFor(LABEL, B) } } },
       accounts: {
         [A]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] },
-        [B]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] },
+        [B]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] }
       },
-      unread: [B],
+      unread: [B]
     });
     const step = stepOver({ accounts: {} });
     /* RED WHEN the account that could be read is pinned alone because the other one's read failed. */
-    expect(await pinRestoredFor(step.ctx, LABEL, (who) => registryEntriesFound(who, NETWORK, w.reads))).toEqual({ of: 'unread' });
+    expect(await pinRestoredFor(step.ctx, LABEL, (who) => registryEntriesFound(who, NETWORK, w.reads))).toEqual({
+      of: 'unread'
+    });
     expect(pinnedFor(step.ctx, LABEL)).toEqual({ of: 'none' });
   });
 
-  it('pins nothing while a registry\'s state does not decode, and files it as unread, not as an unreleased registry', async () => {
+  it("pins nothing while a registry's state does not decode, and files it as unread, not as an unreleased registry", async () => {
     const w = registryWorld(identity, {
-      registries: { [FIRST]: { state: '00ff00ff', held: {} }, [SECOND]: { state: SECOND_REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } } },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] } },
+      registries: {
+        [FIRST]: { state: '00ff00ff', held: {} },
+        [SECOND]: { state: SECOND_REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } }
+      },
+      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] } }
     });
     const find: RegistryFinder = (who) => registryEntriesFound(who, NETWORK, w.reads);
     /* RED WHEN: bytes that are no contract state are filed as a registry that is merely not released, which is passed over and lets the other registry's entry be pinned. */
@@ -139,19 +177,33 @@ describe('a pin put back from the person\'s own registry entry', () => {
   });
 
   it('a reach with no pin puts it back over its own chain, with our service stopped, and refuses a clash and an unread registry by their own names', async () => {
-    const chain = { indexer: INDEXER, registryEntry: { network: NETWORK, build: () => { throw new Error('the find asks the builder only through its reads'); } } };
+    const chain = {
+      indexer: INDEXER,
+      registryEntry: {
+        network: NETWORK,
+        build: () => {
+          throw new Error('the find asks the builder only through its reads');
+        }
+      }
+    };
     const headOver = async (held: Held, unread: readonly string[] = []) => {
       const w = registryWorld(identity, {
         registries: { [FIRST]: { state: REGISTRY_STATE, held }, [SECOND]: { state: SECOND_REGISTRY_STATE, held: {} } },
         accounts: {
           [A]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] },
-          [B]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] },
+          [B]: { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] }
         },
-        unread,
+        unread
       });
       live.reads = w.reads;
       try {
-        return await companyReachHead(stepOver({ accounts: {} }).ctx, (key: string): never => { throw new Error(key); }, { seats: async () => [], leafOf: async () => '', chain });
+        return await companyReachHead(
+          stepOver({ accounts: {} }).ctx,
+          (key: string): never => {
+            throw new Error(key);
+          },
+          { seats: async () => [], leafOf: async () => '', chain }
+        );
       } finally {
         live.reads = null;
       }
@@ -166,8 +218,10 @@ describe('a pin put back from the person\'s own registry entry', () => {
     await expect(headOver({})).rejects.toThrow('no-pin');
   });
 
-  it('finds over a chain that carries the registry\'s doors, and over one that carries none restores nothing', () => {
-    const build = () => { throw new Error('nothing is built until the find runs'); };
+  it("finds over a chain that carries the registry's doors, and over one that carries none restores nothing", () => {
+    const build = () => {
+      throw new Error('nothing is built until the find runs');
+    };
     /* RED WHEN: a chain with the registry's doors gives the head no way to put a pin back. */
     expect(restoreFinderOf({ indexer: INDEXER, registryEntry: { network: NETWORK, build } })).toBeTypeOf('function');
     /* RED WHEN: a chain with none (a reader's) restores. */

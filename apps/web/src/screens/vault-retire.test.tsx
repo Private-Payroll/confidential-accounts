@@ -13,69 +13,134 @@ import { accountBalancesFrom } from '../adapters/account-balances.js';
  * the wallet are stood in; the page is drawn whole, so the presses are read where a person would find them.
  */
 const state = vi.hoisted(() => ({
-  company: null as unknown, publicReads: 0, companyReads: 0, privateReads: 0, priv: { of: 'nothing-yet' } as unknown, pub: { amounts: [], unrecognised: 0 } as unknown,
+  company: null as unknown,
+  publicReads: 0,
+  companyReads: 0,
+  privateReads: 0,
+  priv: { of: 'nothing-yet' } as unknown,
+  pub: { amounts: [], unrecognised: 0 } as unknown,
   /* What the chain itself holds in the retired vault, read with no record and no company key; null keeps the read running. */
   chain: { notes: 'none', public: 'none' } as unknown,
   /* Who is told when the person's wallet releases a company's key to this tab. */
-  released: new Set<(accountId: string) => void>(),
+  released: new Set<(accountId: string) => void>()
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  watchCompanyKeyReleased: (watch: (accountId: string) => void) => { state.released.add(watch); return () => { state.released.delete(watch); }; },
+  watchCompanyKeyReleased: (watch: (accountId: string) => void) => {
+    state.released.add(watch);
+    return () => {
+      state.released.delete(watch);
+    };
+  }
 }));
 const dp = vi.hoisted(() => ({
-  now: null as unknown, watchers: new Set<() => void>(), put: [] as unknown[][], checks: [] as unknown[][], checkGate: null as Promise<unknown> | null, checkAnswer: null as unknown, keyHeld: true,
-  set(now: unknown) { this.now = now; for (const w of [...this.watchers]) w(); },
+  now: null as unknown,
+  watchers: new Set<() => void>(),
+  put: [] as unknown[][],
+  checks: [] as unknown[][],
+  checkGate: null as Promise<unknown> | null,
+  checkAnswer: null as unknown,
+  keyHeld: true,
+  set(now: unknown) {
+    this.now = now;
+    for (const w of [...this.watchers]) w();
+  }
 }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
-  creationOf: async () => ({ company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null }),
+  creationOf: async () => ({
+    company: 'c-1',
+    standing: null,
+    awaitingSecondPress: false,
+    kept: false,
+    confirmedFinished: false,
+    mark: null
+  })
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
-  readCompany: async () => { state.companyReads += 1; return state.company; },
+  readCompany: async () => {
+    state.companyReads += 1;
+    return state.company;
+  }
 }));
 vi.mock('../adapters/company-vaults-read.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
-  readVaultPublicMoney: async () => { state.publicReads += 1; return state.pub; },
-  readVaultName: async () => null,
+  readVaultPublicMoney: async () => {
+    state.publicReads += 1;
+    return state.pub;
+  },
+  readVaultName: async () => null
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
-  readHandover: async () => ({ of: 'held' }),
+  readHandover: async () => ({ of: 'held' })
 }));
 vi.mock('../adapters/vault-private-money.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-private-money.js')>()),
-  readVaultPrivateMoney: async () => { state.privateReads += 1; return state.priv; },
+  readVaultPrivateMoney: async () => {
+    state.privateReads += 1;
+    return state.priv;
+  }
 }));
 vi.mock('../adapters/retired-vault-on-chain.js', async (real) => ({
   ...(await real<typeof import('../adapters/retired-vault-on-chain.js')>()),
-  readRetiredVaultOnChain: () => (state.chain === null ? new Promise(() => {}) : Promise.resolve(state.chain)),
+  readRetiredVaultOnChain: () => (state.chain === null ? new Promise(() => {}) : Promise.resolve(state.chain))
 }));
-vi.mock('../adapters/vault-rows.js', async (real) => ({ ...(await real<typeof import('../adapters/vault-rows.js')>()), readVaultRows: async () => [] }));
-vi.mock('../adapters/session.js', async (real) => ({ ...(await real<typeof import('../adapters/session.js')>()), companyNamesFor: async () => new Map() }));
+vi.mock('../adapters/vault-rows.js', async (real) => ({
+  ...(await real<typeof import('../adapters/vault-rows.js')>()),
+  readVaultRows: async () => []
+}));
+vi.mock('../adapters/session.js', async (real) => ({
+  ...(await real<typeof import('../adapters/session.js')>()),
+  companyNamesFor: async () => new Map()
+}));
 vi.mock('../adapters/account-balances.js', async (real) => ({
   ...(await real<typeof import('../adapters/account-balances.js')>()),
-  askForAccountBalances: async () => accountBalancesFrom(
-    {
-      addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
-      balances: [{ token: 'ab'.repeat(32), amount: '2500000', visibility: 'private' }],
-      read: { private: Date.now(), public: Date.now() },
-    },
-    Date.now(), new StaticAssetRegistry([{ code: 'ab'.repeat(32), symbol: 'PRV', name: 'Private token', decimals: 6, ledger: { shielded: 'ab'.repeat(32), unshielded: null }, enabled: true, sortOrder: 60 }]),
-  ),
+  askForAccountBalances: async () =>
+    accountBalancesFrom(
+      {
+        addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
+        balances: [{ token: 'ab'.repeat(32), amount: '2500000', visibility: 'private' }],
+        read: { private: Date.now(), public: Date.now() }
+      },
+      Date.now(),
+      new StaticAssetRegistry([
+        {
+          code: 'ab'.repeat(32),
+          symbol: 'PRV',
+          name: 'Private token',
+          decimals: 6,
+          ledger: { shielded: 'ab'.repeat(32), unshielded: null },
+          enabled: true,
+          sortOrder: 60
+        }
+      ])
+    )
 }));
 vi.mock('../adapters/deposit.js', async (real) => ({
   ...(await real<typeof import('../adapters/deposit.js')>()),
-  putMoneyIn: (...args: unknown[]) => { dp.put.push(args); return { of: 'vault-refused', standing: args[7] }; },
+  putMoneyIn: (...args: unknown[]) => {
+    dp.put.push(args);
+    return { of: 'vault-refused', standing: args[7] };
+  },
   depositNow: () => dp.now,
-  watchDeposit: (_vault: string, watcher: () => void) => { dp.watchers.add(watcher); return () => { dp.watchers.delete(watcher); }; },
+  watchDeposit: (_vault: string, watcher: () => void) => {
+    dp.watchers.add(watcher);
+    return () => {
+      dp.watchers.delete(watcher);
+    };
+  },
   companyKeyHeldHere: () => dp.keyHeld,
-  checkMyLastDeposit: async (...args: unknown[]) => { dp.checks.push(args); if (dp.checkGate !== null) await dp.checkGate; return dp.checkAnswer; },
+  checkMyLastDeposit: async (...args: unknown[]) => {
+    dp.checks.push(args);
+    if (dp.checkGate !== null) await dp.checkGate;
+    return dp.checkAnswer;
+  }
 }));
 
 const { PageView } = await import('../app.js');
@@ -85,60 +150,137 @@ const { DEFAULT_PREFERENCES } = await import('../preferences.js');
 const { addressOf } = await import('../router.js');
 const { VIEWS } = await import('../pages.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const VAULT = 'ab'.repeat(32);
 const RETIRE = {
-  id: 'prp_retire', kind: 'retire-vault', status: 'executed', raisedBy: 's1', approvals: 1, needed: 1, raisedAt: '2026-10-01T00:00:00.000Z', pays: null,
-  asks: { kind: 'retire-vault', vault: VAULT },
+  id: 'prp_retire',
+  kind: 'retire-vault',
+  status: 'executed',
+  raisedBy: 's1',
+  approvals: 1,
+  needed: 1,
+  raisedAt: '2026-10-01T00:00:00.000Z',
+  pays: null,
+  asks: { kind: 'retire-vault', vault: VAULT }
 };
-const company = (row: Record<string, unknown>, proposals: unknown[] = []): Company => ({
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
-  proposals: { of: 'read', value: proposals }, runs: { of: 'read', value: [] }, people: { of: 'read', value: [] },
-  vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', ...row }] },
-  invitations: { of: 'read', value: [] },
-} as Company);
+const company = (row: Record<string, unknown>, proposals: unknown[] = []): Company =>
+  ({
+    of: 'open',
+    id: 'c-1',
+    name: 'Northwind',
+    signers: [{ id: 's1', name: 'Priya' }],
+    approvalsNeeded: { of: 'read', value: 1 },
+    proposals: { of: 'read', value: proposals },
+    runs: { of: 'read', value: [] },
+    people: { of: 'read', value: [] },
+    vaults: {
+      of: 'read',
+      value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', ...row }]
+    },
+    invitations: { of: 'read', value: [] }
+  }) as Company;
 
 async function draw(page: 'vault' | 'vaults' = 'vault') {
-  window.history.replaceState(null, '', page === 'vault' ? addressOf('vault', { vault: VAULT }) : addressOf('vaults', {}));
+  window.history.replaceState(
+    null,
+    '',
+    page === 'vault' ? addressOf('vault', { vault: VAULT }) : addressOf('vaults', {})
+  );
   const session = {
-    person: { id: 'u1', name: 'Priya' }, companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }], company: 'c-1',
-    chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-    choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+    person: { id: 'u1', name: 'Priya' },
+    companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }],
+    company: 'c-1',
+    chooseCompany: vi.fn(),
+    viewer: { signedIn: true, view: VIEWS.company, signs: true },
+    chooseView: vi.fn(),
+    preferences: DEFAULT_PREFERENCES,
+    choose: vi.fn(),
+    signOut: vi.fn(),
+    mac: true,
+    companiesChanged: vi.fn(async () => {})
   };
   const view = render(
     <KitProvider languages={LANGUAGES} pick="en">
-      <SessionProvider session={session}><Shell current={page}><PageView id={page} params={page === 'vault' ? { vault: VAULT } : {}} /></Shell></SessionProvider>
-    </KitProvider>,
+      <SessionProvider session={session}>
+        <Shell current={page}>
+          <PageView id={page} params={page === 'vault' ? { vault: VAULT } : {}} />
+        </Shell>
+      </SessionProvider>
+    </KitProvider>
   );
   await untilPageShown(view.container);
-  await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 5));
+  });
   return view.container;
 }
 const q = (c: ParentNode, sel: string) => c.querySelector<HTMLElement>(sel);
-const button = (c: ParentNode, action: string) => q(c, `[data-screen=vault] [data-action=${action}]`) as HTMLButtonElement;
-const settle = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 5)); }); };
+const button = (c: ParentNode, action: string) =>
+  q(c, `[data-screen=vault] [data-action=${action}]`) as HTMLButtonElement;
+const settle = async () => {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 5));
+  });
+};
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.company = company({ adopted: true }); state.publicReads = 0; state.companyReads = 0; state.privateReads = 0; state.priv = { of: 'nothing-yet' }; state.pub = { amounts: [], unrecognised: 0 };
+  state.company = company({ adopted: true });
+  state.publicReads = 0;
+  state.companyReads = 0;
+  state.privateReads = 0;
+  state.priv = { of: 'nothing-yet' };
+  state.pub = { amounts: [], unrecognised: 0 };
   state.chain = { notes: 'none', public: 'none' };
-  dp.now = null; dp.watchers.clear(); dp.put = []; dp.checks = []; dp.checkGate = null; dp.keyHeld = true;
-  dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null, earlier: [] };
+  dp.now = null;
+  dp.watchers.clear();
+  dp.put = [];
+  dp.checks = [];
+  dp.checkGate = null;
+  dp.keyHeld = true;
+  dp.checkAnswer = {
+    of: 'checked',
+    deposit: 'none',
+    until: null,
+    notYetSpendable: false,
+    named: 0,
+    unnamed: 0,
+    toName: 0,
+    forSupport: '',
+    deposited: null,
+    unshown: null,
+    earlier: []
+  };
   window.sessionStorage.clear();
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('a vault retired and adopted again from its page', () => {
-  it('a vault the company\'s account holds offers Retire, and pressing it opens the retire panel for that vault', async () => {
+  it("a vault the company's account holds offers Retire, and pressing it opens the retire panel for that vault", async () => {
     const c = await draw();
     const retire = button(c, 'retire-vault');
     /* RED WHEN: the wallet proves a retire but the vault page still draws Retire as an action not built yet, so a company cannot retire an empty vault. */
-    expect([retire.textContent, retire.disabled, retire.hasAttribute('data-soon')]).toEqual([EN['vault.retire'], false, false]);
-    await act(async () => { fireEvent.click(retire); });
+    expect([retire.textContent, retire.disabled, retire.hasAttribute('data-soon')]).toEqual([
+      EN['vault.retire'],
+      false,
+      false
+    ]);
+    await act(async () => {
+      fireEvent.click(retire);
+    });
     await settle();
     /* RED WHEN: pressing Retire opens no panel, or a panel for another vault, or the page offers Adopt again on a vault that is not retired. */
     expect(document.querySelector('[data-panel] [data-retire-vault]')?.getAttribute('data-retire-vault')).toBe(VAULT);
@@ -173,7 +315,8 @@ describe('a vault retired and adopted again from its page', () => {
     /* RED WHEN: a note that reached a retired vault after its retire is hidden because this device's note record does not name it, so the money has no way out. */
     await untilShown(() => q(c, '[data-screen=vault] [data-action=adopt-again]'), 'Adopt again');
     /* RED WHEN: a retired vault's page offers paying from it, putting money in or checking a deposit, which the wallet refuses for a vault the account no longer holds. */
-    for (const action of ['pay-someone', 'deposit', 'check-last-deposit']) expect(q(c, `[data-screen=vault] [data-action=${action}]`), action).toBeNull();
+    for (const action of ['pay-someone', 'deposit', 'check-last-deposit'])
+      expect(q(c, `[data-screen=vault] [data-action=${action}]`), action).toBeNull();
     cleanup();
     c = await draw('vaults');
     /* RED WHEN: the vaults list drops a retired vault the chain shows holding a note. */

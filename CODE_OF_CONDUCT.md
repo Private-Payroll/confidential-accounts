@@ -22,8 +22,8 @@ and what they are.
   and asking a small project to re-argue a settled decision from scratch is how its attention gets
   exhausted.
 - Treating a refusal as a verdict on the person who tripped it. The checks here refuse rather than
-  warn, deliberately, and a review that reads *this is wrong and here is why* is doing its job. One
-  that reads *you always do this* is not.
+  warn, deliberately, and a review that reads _this is wrong and here is why_ is doing its job. One
+  that reads _you always do this_ is not.
 - Anything a reasonable person would read as an attempt to make somebody unwelcome here.
 
 ## Reporting

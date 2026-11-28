@@ -10,8 +10,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  CREATED, NOT_CREATED, PARTLY_CREATED, PRECONDITIONS, refuseIncompleteSetup, refuseUnprovenCompany,
-  refuseUnseatableCompany, type CreatePreconditions,
+  CREATED,
+  NOT_CREATED,
+  PARTLY_CREATED,
+  PRECONDITIONS,
+  refuseIncompleteSetup,
+  refuseUnprovenCompany,
+  refuseUnseatableCompany,
+  type CreatePreconditions
 } from './create-company-rules.js';
 
 const ready = (over: Partial<CreatePreconditions> = {}): CreatePreconditions => ({
@@ -20,7 +26,7 @@ const ready = (over: Partial<CreatePreconditions> = {}): CreatePreconditions => 
   maintenanceAuthority: true,
   compiledContract: true,
   proofServer: true,
-  ...over,
+  ...over
 });
 
 describe('what has to be arranged before anything is spent', () => {
@@ -37,9 +43,13 @@ describe('what has to be arranged before anything is spent', () => {
      * RED WHEN: the filter is replaced by a `find`, or the loop returns inside
      * its first iteration.
      */
-    const said = refuseIncompleteSetup(ready({
-      maintenanceAuthority: false, fundedSeed: false, proofServer: false,
-    }))!;
+    const said = refuseIncompleteSetup(
+      ready({
+        maintenanceAuthority: false,
+        fundedSeed: false,
+        proofServer: false
+      })
+    )!;
     expect(said).toMatch(/who may change which proofs/);
     expect(said).toMatch(/no proof server is reachable/);
     expect(said).toMatch(/holds no funded wallet/);
@@ -55,8 +65,7 @@ describe('what has to be arranged before anything is spent', () => {
      * wallet for a contract they have not compiled.
      */
     expect(PRECONDITIONS[0]).toBe('maintenanceAuthority');
-    expect(PRECONDITIONS.indexOf('compiledContract'))
-      .toBeLessThan(PRECONDITIONS.indexOf('fundedSeed'));
+    expect(PRECONDITIONS.indexOf('compiledContract')).toBeLessThan(PRECONDITIONS.indexOf('fundedSeed'));
   });
 
   it('says plainly that nothing was spent', () => {
@@ -67,8 +76,9 @@ describe('what has to be arranged before anything is spent', () => {
      *
      * RED WHEN: the closing sentence is dropped.
      */
-    expect(refuseIncompleteSetup(ready({ fundedSeed: false }))!)
-      .toMatch(/nothing has been deployed and nothing has been spent/i);
+    expect(refuseIncompleteSetup(ready({ fundedSeed: false }))!).toMatch(
+      /nothing has been deployed and nothing has been spent/i
+    );
   });
 
   it('does not send a reader to a file or a command', () => {
@@ -76,8 +86,7 @@ describe('what has to be arranged before anything is spent', () => {
     // RED WHEN: a path, a door name or a command line is put into a reason.
     for (const p of PRECONDITIONS) {
       const said = refuseIncompleteSetup(ready({ [p]: false } as Partial<CreatePreconditions>))!;
-      expect(said, `the reason for ${p} names something to type`)
-        .not.toMatch(/\.command|\.json|npm run|npx |\.seed\b/);
+      expect(said, `the reason for ${p} names something to type`).not.toMatch(/\.command|\.json|npm run|npx |\.seed\b/);
     }
   });
 });
@@ -133,8 +142,10 @@ describe('what this path can seat', () => {
 
 describe('what counts as proof that a company was created', () => {
   const created = {
-    accountId: 'acc_one', recordedAddress: '00'.repeat(32),
-    addressSource: 'chain', wiring: 'chain',
+    accountId: 'acc_one',
+    recordedAddress: '00'.repeat(32),
+    addressSource: 'chain',
+    wiring: 'chain'
   };
 
   it('accepts a company a chain assigned an address to', () => {
@@ -148,8 +159,7 @@ describe('what counts as proof that a company was created', () => {
      *
      * RED WHEN: the address check is removed.
      */
-    expect(refuseUnprovenCompany({ ...created, recordedAddress: null }))
-      .toMatch(/no contract address was recorded/);
+    expect(refuseUnprovenCompany({ ...created, recordedAddress: null })).toMatch(/no contract address was recorded/);
   });
 
   it('refuses an address no chain assigned, which is the whole point of the check', () => {
@@ -163,10 +173,8 @@ describe('what counts as proof that a company was created', () => {
      * RED WHEN: the `addressSource` check is removed, or loosened to a
      * truthiness test - the value below is truthy.
      */
-    expect(refuseUnprovenCompany({ ...created, addressSource: 'simulated' }))
-      .toMatch(/no chain assigned/);
-    expect(refuseUnprovenCompany({ ...created, addressSource: null }))
-      .toMatch(/no chain assigned/);
+    expect(refuseUnprovenCompany({ ...created, addressSource: 'simulated' })).toMatch(/no chain assigned/);
+    expect(refuseUnprovenCompany({ ...created, addressSource: null })).toMatch(/no chain assigned/);
   });
 
   it('refuses a record another boundary wrote', () => {
@@ -177,8 +185,7 @@ describe('what counts as proof that a company was created', () => {
      *
      * RED WHEN: the `wiring` check is removed.
      */
-    expect(refuseUnprovenCompany({ ...created, wiring: 'simulated' }))
-      .toMatch(/rather than by the chain boundary/);
+    expect(refuseUnprovenCompany({ ...created, wiring: 'simulated' })).toMatch(/rather than by the chain boundary/);
   });
 
   it('has a third answer for a company that WAS created and then something failed', () => {
@@ -195,10 +202,8 @@ describe('what counts as proof that a company was created', () => {
      */
     expect(PARTLY_CREATED).toMatch(/was created/i);
     expect(PARTLY_CREATED).toMatch(/spent/i);
-    expect(PARTLY_CREATED, 'the middle answer reads as the failing one')
-      .not.toContain(NOT_CREATED);
-    expect(PARTLY_CREATED, 'the middle answer reads as the succeeding one')
-      .not.toContain(CREATED);
+    expect(PARTLY_CREATED, 'the middle answer reads as the failing one').not.toContain(NOT_CREATED);
+    expect(PARTLY_CREATED, 'the middle answer reads as the succeeding one').not.toContain(CREATED);
   });
 
   it('and the two verdict lines cannot be mistaken for each other', () => {

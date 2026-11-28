@@ -15,11 +15,18 @@ export const LANDED_EVERY_MS = 5 * 1000;
  * nothing more to wait for, after one more read; null when it never answered.
  */
 export async function watchedOnTheChain<T>(
-  doors: Pick<FromTheChainDoors, 'watch'>, went: () => Promise<T | null>, over: () => boolean = () => false,
+  doors: Pick<FromTheChainDoors, 'watch'>,
+  went: () => Promise<T | null>,
+  over: () => boolean = () => false
 ): Promise<T | null> {
   const everyMs = doors.watch?.everyMs ?? LANDED_EVERY_MS;
   const withinMs = doors.watch?.withinMs ?? LANDED_WITHIN_MS;
-  const sleep = doors.watch?.sleep ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
+  const sleep =
+    doors.watch?.sleep ??
+    ((ms: number) =>
+      new Promise<void>((r) => {
+        setTimeout(r, ms);
+      }));
   for (let waited = 0; ; waited += everyMs) {
     const seen = await went();
     if (seen !== null) return seen;

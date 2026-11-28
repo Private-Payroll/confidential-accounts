@@ -42,19 +42,29 @@ import { customerWalletOver, sponsorWalletOver } from './funded-wallets.js';
 import { testEnvironmentFor } from './test-environment.js';
 import { explainNodeError } from './node-errors.js';
 import { sleep } from '../src/midnight/retry.js';
-import {
-  previewSignersFile, readOrCreatePreviewSigners, signerBytes,
-} from './preview-signers.js';
+import { previewSignersFile, readOrCreatePreviewSigners, signerBytes } from './preview-signers.js';
 import { deploymentRecordPath, storeDir } from '../src/wiring/deployment.js';
 import { standDownWhenMissing, thisRun, whatIsMissing } from './end-to-end-waits.js';
 import type { NetworkName } from '../src/midnight/network.js';
 
 /* Without the network named and the sponsor's funded seed on this machine, nothing below runs. */
-standDownWhenMissing('The sponsored-fee check', whatIsMissing(thisRun(), {
-  fundedSeedFor: (n) => join(storeDir(process.cwd(), n as NetworkName), 'wallet.seed'),
-}, process.cwd()));
+standDownWhenMissing(
+  'The sponsored-fee check',
+  whatIsMissing(
+    thisRun(),
+    {
+      fundedSeedFor: (n) => join(storeDir(process.cwd(), n as NetworkName), 'wallet.seed')
+    },
+    process.cwd()
+  )
+);
 
-const BOLD = '\x1b[1m', DIM = '\x1b[2m', RED = '\x1b[31m', GREEN = '\x1b[32m', YEL = '\x1b[33m', OFF = '\x1b[0m';
+const BOLD = '\x1b[1m',
+  DIM = '\x1b[2m',
+  RED = '\x1b[31m',
+  GREEN = '\x1b[32m',
+  YEL = '\x1b[33m',
+  OFF = '\x1b[0m';
 const good = (m: string) => console.log(`  ${GREEN}✓${OFF} ${m}`);
 const note = (m: string) => console.log(`  ${DIM}${m}${OFF}`);
 const warn = (m: string) => console.log(`  ${YEL}!${OFF} ${m}`);
@@ -77,8 +87,7 @@ const ACCOUNT_ID = 'default';
  * substitute nobody chose; every circuit the contract still carries writes state.
  */
 const SPONSORED_CIRCUIT = 'attestSolvency';
-const PRIVATE_STATE_PASSWORD =
-  process.env.MIDNIGHT_PRIVATE_STATE_PASSWORD || 'ConfidentialAccounts-Dev-2026';
+const PRIVATE_STATE_PASSWORD = process.env.MIDNIGHT_PRIVATE_STATE_PASSWORD || 'ConfidentialAccounts-Dev-2026';
 const PRIVATE_STATE_KEY = privateStateKey(PRIVATE_STATE_ID, ACCOUNT_ID);
 
 /**
@@ -98,11 +107,10 @@ if (!existsSync(previewSignersPath)) {
   throw new Error(
     `there is no demo signer material for "${ACCOUNT_ID}" on ${NETWORK}: ` +
       `${previewSignersPath.replace(ROOT + '/', '')} does not exist.\n` +
-      'Deploy an account from this machine on this network, which writes it, then run this again.',
+      'Deploy an account from this machine on this network, which writes it, then run this again.'
   );
 }
 const PREVIEW_SIGNERS = readOrCreatePreviewSigners(STATE_DIR, NETWORK, ACCOUNT_ID).signers;
-
 
 const seededBytes = (seed: number): Uint8Array => {
   const out = new Uint8Array(32);
@@ -171,7 +179,14 @@ async function main() {
   const PROVER_PORT = Number(process.env.MIDNIGHT_PROVER_PORT ?? 6301);
   const proofServer = `http://localhost:${PROVER_PORT}`;
 
-  const logger: any = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, trace: () => {}, child: () => logger };
+  const logger: any = {
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+    trace: () => {},
+    child: () => logger
+  };
   const { env, how } = testEnvironmentFor(NETWORK, logger);
   note(how);
 
@@ -208,7 +223,7 @@ async function main() {
    */
   const sponsorLive = await bringUpWallet(logger, cfg, sponsorSeed, NETWORK, ROOT, {
     withDust: true,
-    onNote: note,
+    onNote: note
   });
   const sponsorWallet = sponsorLive.wallet;
 
@@ -219,21 +234,23 @@ async function main() {
    */
   const customerLive = await bringUpWallet(logger, cfg, custSeed, NETWORK, ROOT, {
     withDust: false,
-    onNote: note,
+    onNote: note
   });
   const customerWallet = customerLive.wallet;
 
   const sponsorFunds = { night: sponsorLive.night(), dust: sponsorLive.dust() };
   const customerFunds = { night: customerLive.night(), dust: customerLive.dust() };
 
-  good(`sponsor  NIGHT ${sponsorFunds.night}  DUST ${sponsorFunds.dust}  ${sponsorLive.synced() ? 'synced' : 'still syncing'}`);
+  good(
+    `sponsor  NIGHT ${sponsorFunds.night}  DUST ${sponsorFunds.dust}  ${sponsorLive.synced() ? 'synced' : 'still syncing'}`
+  );
   good(`customer NIGHT ${customerFunds.night}  DUST ${customerFunds.dust}`);
 
   if (sponsorFunds.dust === 0n) {
     throw new Error(
       'the sponsor has no DUST, so it cannot pay for anything. Either the wallet needs ' +
         'funding and DUST registration, or it never finished syncing — both produce ' +
-        'node rejection 170 at submission.',
+        'node rejection 170 at submission.'
     );
   }
 
@@ -241,19 +258,20 @@ async function main() {
     throw new Error(
       `the customer wallet holds ${customerFunds.dust} DUST, so this test cannot tell ` +
         'sponsorship from self-payment. Delete ' +
-        CUSTOMER_SEED_FILE.replace(ROOT + '/', '') + ' and run again with a fresh, unfunded seed.',
+        CUSTOMER_SEED_FILE.replace(ROOT + '/', '') +
+        ' and run again with a fresh, unfunded seed.'
     );
   }
   good('the customer holds no DUST — anything that settles was paid for by the sponsor');
 
   /* -------------------------------------------------- 2 */
-  begin(2, 5, 'Wiring the customer to balance its own legs, and nobody else\'s');
+  begin(2, 5, "Wiring the customer to balance its own legs, and nobody else's");
 
   // Built the same way run-preview.ts builds it, because a second construction
   // of the same object is a place for the two to disagree.
   const compiled = CompiledContract.make('ConfidentialAccount', Contract as any).pipe(
     CompiledContract.withWitnesses(witnesses as any),
-    CompiledContract.withCompiledFileAssets(ARTIFACTS as never),
+    CompiledContract.withCompiledFileAssets(ARTIFACTS as never)
   ) as any;
 
   /*
@@ -288,9 +306,9 @@ async function main() {
         provider: sponsorWallet,
         facade,
         dust: () => sponsorLive.dust(),
-        night: () => sponsorLive.night(),
+        night: () => sponsorLive.night()
       },
-      async () => null,
+      async () => null
     ),
     ceiling,
     /*
@@ -300,7 +318,7 @@ async function main() {
      * an operator alarming on a number needs to know it is a snapshot, and a
      * capacity check belongs on its own schedule, not on the pay path.
      */
-    ({ remaining }) => note(`sponsor DUST immediately after submitting: ${remaining} (lags; not a capacity reading)`),
+    ({ remaining }) => note(`sponsor DUST immediately after submitting: ${remaining} (lags; not a capacity reading)`)
   );
 
   let customerBalanced = false;
@@ -319,18 +337,18 @@ async function main() {
       nodeUrl: E.nodeUrl,
       zkConfigPath: ARTIFACTS,
       networkId: NETWORK,
-      privateStateId: PRIVATE_STATE_ID,
+      privateStateId: PRIVATE_STATE_ID
     },
     customer: customerWalletOver({
       provider: customerWallet,
       facade: customerWallet.wallet,
       dust: () => customerLive.dust(),
-      night: () => customerLive.night(),
+      night: () => customerLive.night()
     }),
     sponsor,
     artifactsPath: ARTIFACTS,
     privateStateId: PRIVATE_STATE_ID,
-    storagePassword: async () => PRIVATE_STATE_PASSWORD,
+    storagePassword: async () => PRIVATE_STATE_PASSWORD
   });
 
   /*
@@ -351,7 +369,7 @@ async function main() {
         customerBalanced = true;
         good(`customer balanced ${CUSTOMER_BALANCES.join(' + ')} and signed; the fee payer added the fee`);
         return balanced;
-      },
+      }
     },
     midnightProvider: {
       supportedEras: submitting.supportedEras,
@@ -360,10 +378,9 @@ async function main() {
         sponsorPaid = true;
         good(`sponsor submitted: ${ref}`);
         return ref;
-      },
-    },
+      }
+    }
   };
-
 
   /* -------------------------------------------------- 3 */
   begin(3, 5, 'Acting as signer A, from a wallet that owns nothing');
@@ -395,7 +412,7 @@ async function main() {
       throw new Error(
         `${VIEW_FILE.replace(ROOT + '/', '')} has no "${field}", so it predates the ` +
           'multi-asset change and cannot say which asset it describes. ' +
-          'Redeploy, or run the proposal script once, to write a current view.',
+          'Redeploy, or run the proposal script once, to write a current view.'
       );
     }
   }
@@ -421,7 +438,7 @@ async function main() {
     proposalSalt: seededBytes(301),
     changeAmount: 0n,
     changeBatchDigest: seededBytes(601),
-    pinnedPath: null,
+    pinnedPath: null
   };
   await providers.privateStateProvider.forContract(contractAddress).set(PRIVATE_STATE_KEY, signerA);
 
@@ -452,7 +469,7 @@ async function main() {
   const found: any = await findDeployedPartialContract(providers, {
     compiledContract: compiled,
     contractAddress,
-    privateStateId: PRIVATE_STATE_KEY,
+    privateStateId: PRIVATE_STATE_KEY
   });
   good('found on chain, the deployed verifier keys match, the deferred circuits are absent');
 
@@ -523,5 +540,5 @@ main().then(
     console.log();
     console.log('  Send this whole output back.');
     process.exit(1);
-  },
+  }
 );

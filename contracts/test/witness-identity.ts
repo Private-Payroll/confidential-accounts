@@ -20,10 +20,7 @@ export type WitnessName = keyof typeof witnesses;
 
 /** The shape every witness in this contract returns. */
 export type WitnessResult = readonly [AccountPrivateState, unknown];
-export type WitnessFn = (
-  context: WitnessContext<unknown, AccountPrivateState>,
-  ...rest: any[]
-) => WitnessResult;
+export type WitnessFn = (context: WitnessContext<unknown, AccountPrivateState>, ...rest: any[]) => WitnessResult;
 
 /**
  * A path a device already holds, so `signerPath` answers without a tree.
@@ -47,8 +44,9 @@ export const PINNED_PATH: SignerPath = { leaf: VACANT_SLOT, path: [] };
  * The shape is the one `signerPath` asks for and nothing more: what is under
  * test is which object comes back beside the answer, not what the answer is.
  */
-export const aTreeThatFindsAPath = (found: SignerPath = PINNED_PATH): unknown =>
-  ({ signers: { findPathForLeaf: () => found } });
+export const aTreeThatFindsAPath = (found: SignerPath = PINNED_PATH): unknown => ({
+  signers: { findPathForLeaf: () => found }
+});
 
 /**
  * What each witness takes after the context.
@@ -78,7 +76,7 @@ export const EXTRA_ARGUMENTS: Record<WitnessName, readonly unknown[]> = {
   withdrawSecret: [new Uint8Array(32).fill(0x2a)],
   policyOpening: [],
   periodSpent: [],
-  legTaken: [],
+  legTaken: []
 };
 
 /**
@@ -96,13 +94,13 @@ export const EXTRA_ARGUMENTS: Record<WitnessName, readonly unknown[]> = {
 export const witnessesThatDidNotHandBackWhatTheyWereGiven = (
   map: Readonly<Record<string, WitnessFn>>,
   state: AccountPrivateState,
-  ledger: unknown = {},
+  ledger: unknown = {}
 ): string[] => {
   const context = {
     ledger,
     privateState: state,
     /* The withdraw witnesses read it: 32 bytes of hex, as an account's address is. */
-    contractAddress: 'c0'.repeat(32),
+    contractAddress: 'c0'.repeat(32)
   } as unknown as WitnessContext<unknown, AccountPrivateState>;
 
   const wrong: string[] = [];

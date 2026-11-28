@@ -11,19 +11,30 @@ const WIDE = 'cc'.repeat(32);
 const SEATS = ['e1', 'e2', 'e3'];
 
 /** A wallet's reach into a company of three seats on the chain, its directory believing each with `rights`. */
-const reachWith = (rights: ReadonlyArray<SeatRights | undefined>) => ({
-  accountId: 'acc_1', label: 'co_1', account: 'ac'.repeat(32), companyKeys: {},
-  roster: async () => ({ notBelieved: [], signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf })) }),
-  holders: async () => ({ seats: SEATS, approvals: 1, vaultThresholds: [], adoptedVaults: [PAYROLL, TREASURY] }),
-  builder: { companyWide: async () => WIDE },
-  judges: {
-    directoryHereFor: () => async () => ({
-      dir: { seats: SEATS.flatMap((seat, i) => (rights[i] === undefined ? [] : [{ seat, retired: null, rights: rights[i] }])) },
+const reachWith = (rights: ReadonlyArray<SeatRights | undefined>) =>
+  ({
+    accountId: 'acc_1',
+    label: 'co_1',
+    account: 'ac'.repeat(32),
+    companyKeys: {},
+    roster: async () => ({
+      notBelieved: [],
+      signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf }))
     }),
-  },
-}) as never;
+    holders: async () => ({ seats: SEATS, approvals: 1, vaultThresholds: [], adoptedVaults: [PAYROLL, TREASURY] }),
+    builder: { companyWide: async () => WIDE },
+    judges: {
+      directoryHereFor: () => async () => ({
+        dir: {
+          seats: SEATS.flatMap((seat, i) =>
+            rights[i] === undefined ? [] : [{ seat, retired: null, rights: rights[i] }]
+          )
+        }
+      })
+    }
+  }) as never;
 
-describe('who may approve each vault is counted from each seat\'s own rights', () => {
+describe("who may approve each vault is counted from each seat's own rights", () => {
   it('a seat scoped to one vault is counted on that vault only, and an initiator on none', async () => {
     /* RED WHEN: a seat's count is not read from its directory entry's rights, or a seat with none is counted on every vault. */
     const onPayroll = invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL] }, scopeOfRole('approver', [PAYROLL]));

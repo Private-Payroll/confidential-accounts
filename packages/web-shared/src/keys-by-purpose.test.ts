@@ -10,7 +10,13 @@ import { purposeWrapsHeldFrom } from './purpose-wraps.js';
 import { grantEntryOf, purposeWrapsFor, readerIdOf } from '../../../src/midnight/grants-record.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { newSigningKeypair, signingPublicKeyOf, wrapKey, type Hex } from '../../../src/core/crypto.js';
-import { keyForThePurpose, openRecord, purposeKey, PURPOSES, type PurposeKeys } from '../../../src/core/sealed-records.js';
+import {
+  keyForThePurpose,
+  openRecord,
+  purposeKey,
+  PURPOSES,
+  type PurposeKeys
+} from '../../../src/core/sealed-records.js';
 import { openPerson, PERSON_PURPOSE, sealPerson } from '../../../src/core/person-record.js';
 import { openRoster, sealRoster } from '../../../src/core/roster-record.js';
 import { openSeatProof, sealSeatProof } from '../../../src/core/seat-opening.js';
@@ -26,12 +32,29 @@ const KEYS = { epoch: 0, newest: 0, key: KEY, keyAt: () => KEY, sealing: () => (
 const SEAT = newSigningKeypair().secret;
 
 /** A holder given only the roster's key of the company, as a read grant would hand it over. */
-const rosterAlone: PurposeKeys = { keyFor: (purpose, company) => (purpose === 'roster' ? purposeKey(KEY, company, 'roster') : null) };
+const rosterAlone: PurposeKeys = {
+  keyFor: (purpose, company) => (purpose === 'roster' ? purposeKey(KEY, company, 'roster') : null)
+};
 
 const bo: RosterEmployee = {
-  id: 'emp_0123456789abcdef0123', accountId: CO, name: 'Bo', email: null, title: 'Designer', asset: 'NIGHT', baseAmount: 1n,
-  startDate: '2026-02-01', status: 'active', invitedAddress: null, address: null, wrappingPublicKey: null, handedOverBy: null,
-  payeeCode: null, admittedBy: null, admittedAt: null, madeBy: signingPublicKeyOf(SEAT), madeAt: '2026-09-01T00:00:00Z',
+  id: 'emp_0123456789abcdef0123',
+  accountId: CO,
+  name: 'Bo',
+  email: null,
+  title: 'Designer',
+  asset: 'NIGHT',
+  baseAmount: 1n,
+  startDate: '2026-02-01',
+  status: 'active',
+  invitedAddress: null,
+  address: null,
+  wrappingPublicKey: null,
+  handedOverBy: null,
+  payeeCode: null,
+  admittedBy: null,
+  admittedAt: null,
+  madeBy: signingPublicKeyOf(SEAT),
+  madeAt: '2026-09-01T00:00:00Z'
 } as never;
 const person = sealPerson(bo, 1, 0, KEY);
 const roster = sealRoster(CO, { name: 'Acme', signers: [] }, 1, 0, KEY);
@@ -59,7 +82,7 @@ describe('a record opened with the key its reader holds for its purpose', () => 
   });
 
   /* RED WHEN: the one check cannot open a seat's proof for a holder of the roster key alone. */
-  it('opens a seat\'s proof in the one check for a holder of the roster key alone', () => {
+  it("opens a seat's proof in the one check for a holder of the roster key alone", () => {
     const wallet = { tag: 'schnorr', value: 'cd'.repeat(32) } as const;
     const { opening } = seatOpenedFor(wallet, 1);
     const proof = { committeeKey: wallet, signature: 'ab'.repeat(64), opening };
@@ -75,8 +98,10 @@ describe('a reader holding the purpose keys its grant wraps to it', () => {
   const reader = recordsKeypairFrom(new Uint8Array(32).fill(4));
   const entry = grantEntryOf({ recipient: reader.publicKey, person: 'rhea', role: 'limited' });
   const grants = {
-    sequence: 1, entries: [entry], signatures: [],
-    wraps: purposeWrapsFor([entry], (_epoch, purpose) => purposeKey(KEY, CO, purpose), 0),
+    sequence: 1,
+    entries: [entry],
+    signatures: [],
+    wraps: purposeWrapsFor([entry], (_epoch, purpose) => purposeKey(KEY, CO, purpose), 0)
   };
   const held = purposeWrapsHeldFrom(CO, grants, { recipient: reader.publicKey, wrappingSecret: reader.secret })!;
 
@@ -89,22 +114,36 @@ describe('a reader holding the purpose keys its grant wraps to it', () => {
     expect(keysByPurpose(held).at(1).keyFor('roster', CO)).toBeNull();
   });
 
-  it('names a wrap that does not open with the reader\'s key where its key is asked for, and keeps every wrap that opens', () => {
+  it("names a wrap that does not open with the reader's key where its key is asked for, and keeps every wrap that opens", () => {
     const someoneElse = recordsKeypairFrom(new Uint8Array(32).fill(9));
-    const wraps = grants.wraps[readerIdOf(reader.publicKey)]!.map((w) => (w.purpose === 'roster' ? { ...w, wrap: wrapKey(purposeKey(KEY, CO, 'roster'), someoneElse.publicKey) } : w));
-    const bad = purposeWrapsHeldFrom(CO, { ...grants, wraps: { [readerIdOf(reader.publicKey)]: wraps } }, { recipient: reader.publicKey, wrappingSecret: reader.secret })!;
+    const wraps = grants.wraps[readerIdOf(reader.publicKey)]!.map((w) =>
+      w.purpose === 'roster' ? { ...w, wrap: wrapKey(purposeKey(KEY, CO, 'roster'), someoneElse.publicKey) } : w
+    );
+    const bad = purposeWrapsHeldFrom(
+      CO,
+      { ...grants, wraps: { [readerIdOf(reader.publicKey)]: wraps } },
+      { recipient: reader.publicKey, wrappingSecret: reader.secret }
+    )!;
     /* RED WHEN: a wrap that does not open is dropped without a word, so the reader is told only that no grant names the purpose. */
     expect(bad.unopened).toEqual([{ epoch: 0, purpose: 'roster' }]);
-    expect(() => keyForThePurpose(keysByPurpose(bad).at(0), CO, 'roster')).toThrow(/wrap this device a key for the "roster" records .* does not open with this device's key/u);
+    expect(() => keyForThePurpose(keysByPurpose(bad).at(0), CO, 'roster')).toThrow(
+      /wrap this device a key for the "roster" records .* does not open with this device's key/u
+    );
     /* RED WHEN: one wrap that does not open costs the reader the purposes whose wraps do. */
     expect(keysByPurpose(bad).at(0).keyFor('policy', CO)).toBe(purposeKey(KEY, CO, 'policy'));
-    expect(() => keyForThePurpose(keysByPurpose(bad).at(0), CO, 'people')).toThrow(/holds no key for the "people" records/u);
+    expect(() => keyForThePurpose(keysByPurpose(bad).at(0), CO, 'people')).toThrow(
+      /holds no key for the "people" records/u
+    );
   });
 
   /* RED WHEN: a reader's keys answer the one fallback for people sealed under payroll, which only the company key may. */
   it('answers no former key', () => {
     expect(keysByPurpose(held).at(0).formerKeyFor).toBeUndefined();
-    expect(keysByPurpose(held).everyEpoch().every((k) => k.formerKeyFor === undefined)).toBe(true);
+    expect(
+      keysByPurpose(held)
+        .everyEpoch()
+        .every((k) => k.formerKeyFor === undefined)
+    ).toBe(true);
   });
 });
 
@@ -120,12 +159,12 @@ describe('the purposes, held once', () => {
 
 describe('what a read grant names for each reader role', () => {
   /* RED WHEN: an accountant is not given the people, the runs, the signers, the policies and the proposals' summaries, or is given more. */
-  it('gives an accountant the people, the runs, the signers, the policies and each proposal\'s summary', () => {
+  it("gives an accountant the people, the runs, the signers, the policies and each proposal's summary", () => {
     expect([...grantPurposes('accountant')].sort()).toEqual(['payroll', 'people', 'policy', 'proposals', 'roster']);
   });
 
   /* RED WHEN: a limited seat is given the people or the runs. */
-  it('gives a limited seat the signers, the policies and each proposal\'s summary, and never the people or the runs', () => {
+  it("gives a limited seat the signers, the policies and each proposal's summary, and never the people or the runs", () => {
     expect([...grantPurposes('limited')].sort()).toEqual(['policy', 'proposals', 'roster']);
   });
 

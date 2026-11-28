@@ -15,7 +15,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -52,16 +52,20 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 const PLACEMENTS: readonly Placement[] = [
   { label: 'My Google account', holder: 'google:me' },
-  { label: 'Printed card', holder: 'paper' },
+  { label: 'Printed card', holder: 'paper' }
 ];
 
 const mount = (): void => {
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
 };
 
 beforeEach(() => {
@@ -164,8 +168,7 @@ describe('the recover route refuses to open over a live wallet', () => {
     savePasskey(passkeyFixture('cred-1'), ORIGINAL_SLOT);
     await saveSecret(newSecret());
     vi.mocked(usePasskey).mockResolvedValue({ credentialId: 'cred-1' } as never);
-    vi.mocked(verifyAssertion).mockResolvedValue(
-      { passkey: passkeyFixture('cred-1') } as never);
+    vi.mocked(verifyAssertion).mockResolvedValue({ passkey: passkeyFixture('cred-1') } as never);
     mount();
     fireEvent.click(screen.getByText('Unlock with your passkey'));
     expect(await screen.findByText('Every wallet')).toBeTruthy();
@@ -193,18 +196,22 @@ describe('recovery is resumable across navigation — §7.11', () => {
     const { splitSecret: split } = await import('midnight-identity/recovery/pieces');
     const { toBase64Url: b64 } = await import('midnight-identity/passkey/bytes');
     const secret = newSecret();
-    const set = await split(secret, [
-      { label: 'A', holder: 'holder-a' },
-      { label: 'B', holder: 'holder-b' },
-    ], 2);
+    const set = await split(
+      secret,
+      [
+        { label: 'A', holder: 'holder-a' },
+        { label: 'B', holder: 'holder-b' }
+      ],
+      2
+    );
     window.location.hash = '#/recover';
     mount();
     expect(await screen.findByText('Recover an account.')).toBeTruthy();
     fireEvent.change(screen.getByLabelText("The piece's letters, from its card"), {
-      target: { value: b64(set.pieces[0]?.bytes ?? new Uint8Array()) },
+      target: { value: b64(set.pieces[0]?.bytes ?? new Uint8Array()) }
     });
     fireEvent.change(screen.getByLabelText('Where this piece came from'), {
-      target: { value: 'holder-a' },
+      target: { value: 'holder-a' }
     });
     fireEvent.click(screen.getByText('Add this piece'));
     expect(screen.getByText('1 of 2 pieces.')).toBeTruthy();

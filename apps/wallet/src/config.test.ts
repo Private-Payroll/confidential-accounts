@@ -13,9 +13,14 @@ import { LOCALHOST_FLAG } from 'midnight-identity/profile/origin';
  * that frames it. **Put the host back and it goes red.**
  */
 
-const load = async () => { vi.resetModules(); return import('./config.js'); };
+const load = async () => {
+  vi.resetModules();
+  return import('./config.js');
+};
 
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('the relying party the wallet makes passkeys for', () => {
   it('is the SITE shared with the embedder - never `identity.`, which the application is refused', async () => {

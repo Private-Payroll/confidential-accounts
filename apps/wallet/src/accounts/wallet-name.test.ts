@@ -4,9 +4,7 @@ import { Buffer as PolyfillBuffer } from 'buffer/';
 import { newSecret } from 'midnight-identity';
 import { fingerprintOf } from 'midnight-identity/recovery/pieces';
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
-import {
-  forgetEverything, saveWalletName, walletNameOf, walletNameOnRecord,
-} from './storage.js';
+import { forgetEverything, saveWalletName, walletNameOf, walletNameOnRecord } from './storage.js';
 import { ORIGINAL_SLOT, forgetOpenWallet, openWallet } from './wallets-held.js';
 
 /*
@@ -64,17 +62,20 @@ describe('the wallet name is stored against the secret', () => {
   it('is null for a record with a stripped or forged fingerprint', () => {
     const secret = newSecret();
     saveWalletName(secret, 'Rent money');
-    const record = JSON.parse(localStorage.getItem(WALLET_NAME_KEY) as string) as
-      Record<string, unknown>;
+    const record = JSON.parse(localStorage.getItem(WALLET_NAME_KEY) as string) as Record<string, unknown>;
 
     const stripped = { ...record };
     delete stripped['fingerprint'];
     localStorage.setItem(WALLET_NAME_KEY, JSON.stringify(stripped));
     expect(walletNameOf(secret)).toBeNull();
 
-    localStorage.setItem(WALLET_NAME_KEY, JSON.stringify({
-      ...record, fingerprint: toBase64Url(fingerprintOf(newSecret())),
-    }));
+    localStorage.setItem(
+      WALLET_NAME_KEY,
+      JSON.stringify({
+        ...record,
+        fingerprint: toBase64Url(fingerprintOf(newSecret()))
+      })
+    );
     expect(walletNameOf(secret)).toBeNull();
   });
 
@@ -90,8 +91,7 @@ describe('the wallet name is stored against the secret', () => {
   it('reader and writer do not share a blind spot', () => {
     /* If `fingerprintOf` collapsed to a constant, writer and reader would
      * agree and every refusal above would be green and wrong. */
-    expect(toBase64Url(fingerprintOf(newSecret())))
-      .not.toBe(toBase64Url(fingerprintOf(newSecret())));
+    expect(toBase64Url(fingerprintOf(newSecret()))).not.toBe(toBase64Url(fingerprintOf(newSecret())));
   });
 });
 

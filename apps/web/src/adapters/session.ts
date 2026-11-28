@@ -1,5 +1,18 @@
-import { askWalletToSignIn, openWalletDialog, US_TO_A_WALLET, WalletClosed, type WalletDialog } from 'vaults-web-shared/wallet-sign-in.js';
-import { closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown, walletInThisPage, WALLET_FRAME_ALLOW } from 'vaults-web-shared/wallet-frame.js';
+import {
+  askWalletToSignIn,
+  openWalletDialog,
+  US_TO_A_WALLET,
+  WalletClosed,
+  type WalletDialog
+} from 'vaults-web-shared/wallet-sign-in.js';
+import {
+  closeWalletFrame,
+  mountWalletFrame,
+  onWalletFrame,
+  walletFrameShown,
+  walletInThisPage,
+  WALLET_FRAME_ALLOW
+} from 'vaults-web-shared/wallet-frame.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import type { ActRefusal } from './refusals.js';
 import { readsAnswered, serviceRead, SIGN_OUT_WAITS_MS } from 'vaults-web-shared/read-bound.js';
@@ -56,7 +69,11 @@ export const companiesReadThisVisit = async (): Promise<readonly string[]> =>
 
 /** Loads `warmTheProving` only once somebody is signed in, so the first download does not carry it; never fails the sign-in it follows. */
 const startWarmingTheProving = (): void => {
-  void import('./proving-warmed.js').then((m) => { m.warmTheProving(); }).catch(() => {});
+  void import('./proving-warmed.js')
+    .then((m) => {
+      m.warmTheProving();
+    })
+    .catch(() => {});
 };
 
 /** The service's addresses and the words of its protocol, never shown. */
@@ -64,7 +81,7 @@ const SERVICE = {
   anotherPerson: 'another-person',
   mixedRecords: 'records-from-more-than-one-ledger',
   staleChallenge: 'stale-challenge',
-  expiredClaim: 'expired-claim',
+  expiredClaim: 'expired-claim'
 } as const;
 
 /** Where the person's account is served, set when the page is built. Empty when it is not set. */
@@ -96,17 +113,34 @@ export interface Company {
  * cannot sign anyone in; the service could not be reached.
  */
 export const REFUSAL = {
-  notSetUp: 'not-set-up', noWindow: 'no-window', windowGone: 'window-gone', declined: 'declined', expired: 'expired', ranOut: 'ran-out', answeredTooLate: 'answered-too-late', unreadable: 'unreadable',
-  silent: 'silent', gaveUp: 'gave-up', didNotFinish: 'did-not-finish', refused: 'refused', tooMany: 'too-many',
-  unavailable: 'unavailable', unreachable: 'unreachable',
+  notSetUp: 'not-set-up',
+  noWindow: 'no-window',
+  windowGone: 'window-gone',
+  declined: 'declined',
+  expired: 'expired',
+  ranOut: 'ran-out',
+  answeredTooLate: 'answered-too-late',
+  unreadable: 'unreadable',
+  silent: 'silent',
+  gaveUp: 'gave-up',
+  didNotFinish: 'did-not-finish',
+  refused: 'refused',
+  tooMany: 'too-many',
+  unavailable: 'unavailable',
+  unreachable: 'unreachable'
 } as const;
 
 export type SignInRefusal = (typeof REFUSAL)[keyof typeof REFUSAL];
 
 /** What an answer from this file is. */
 export const OF = {
-  signedIn: 'signed-in', refused: 'refused', recordsApart: 'records-apart', nobody: 'nobody', unreachable: 'unreachable',
-  signedOut: 'signed-out', notConfirmed: 'not-confirmed',
+  signedIn: 'signed-in',
+  refused: 'refused',
+  recordsApart: 'records-apart',
+  nobody: 'nobody',
+  unreachable: 'unreachable',
+  signedOut: 'signed-out',
+  notConfirmed: 'not-confirmed'
 } as const;
 
 export type SignedIn =
@@ -135,12 +169,16 @@ const asks = personAnsweredOnPage(() => prepared);
 
 /** Ask the service; a failure to reach it is `null`. A read (`reads`) is bounded as every read of the service is. */
 async function ask(
-  asked: (signal?: AbortSignal) => Promise<{ readonly status: number; readonly body: unknown }>, reads = false,
+  asked: (signal?: AbortSignal) => Promise<{ readonly status: number; readonly body: unknown }>,
+  reads = false
 ): Promise<{ status: number; body: Record<string, unknown> } | null> {
   const once = async (signal?: AbortSignal): Promise<{ status: number; body: Record<string, unknown> }> => {
     const r = await asked(signal);
     const answer = r.body;
-    return { status: r.status, body: (answer !== null && typeof answer === 'object' ? answer : {}) as Record<string, unknown> };
+    return {
+      status: r.status,
+      body: (answer !== null && typeof answer === 'object' ? answer : {}) as Record<string, unknown>
+    };
   };
   try {
     return await (reads ? serviceRead(WHO_IS_SIGNED_IN, once) : once());
@@ -176,7 +214,10 @@ export function companiesFrom(rows: unknown): Company[] {
  * signed in now, and is prepared for them.
  */
 export async function whoIsSignedIn(
-  wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => { setTimeout(done, ms); }),
+  wait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((done) => {
+      setTimeout(done, ms);
+    })
 ): Promise<WhoIsSignedIn> {
   let r = await whoIsSignedInNow();
   for (const ms of CHECK_AGAIN_AFTER_MS) {
@@ -184,9 +225,17 @@ export async function whoIsSignedIn(
     await wait(ms);
     r = await whoIsSignedInNow();
   }
-  if (r !== null && r.status === 409 && r.body.code === SERVICE.anotherPerson) { prepared = null; r = await whoIsSignedInNow(); }
+  if (r !== null && r.status === 409 && r.body.code === SERVICE.anotherPerson) {
+    prepared = null;
+    r = await whoIsSignedInNow();
+  }
   if (r === null) return { of: OF.unreachable };
-  if (r.status === 401) { prepared = null; keepSignIn(tabStorage(), null); (await keyring()).forgetLocally(); return { of: OF.nobody }; }
+  if (r.status === 401) {
+    prepared = null;
+    keepSignIn(tabStorage(), null);
+    (await keyring()).forgetLocally();
+    return { of: OF.nobody };
+  }
   if (r.status === 409 && r.body.code === SERVICE.mixedRecords) return { of: OF.recordsApart };
   const person = r.status === 200 ? personFrom(r.body.user) : null;
   if (person === null) return { of: OF.unreachable };
@@ -194,7 +243,7 @@ export async function whoIsSignedIn(
   /* The keyring holds keys for one person; a tab now signed in as somebody else drops them. */
   const { currentUser, forgetLocally } = await keyring();
   if (currentUser()?.id !== person.id) forgetLocally();
-  listed = { person: person.id, rows: Array.isArray(r.body.accounts) ? r.body.accounts as unknown[] : [] };
+  listed = { person: person.id, rows: Array.isArray(r.body.accounts) ? (r.body.accounts as unknown[]) : [] };
   approvalsRead = null;
   listedReads.clear();
   startWarmingTheProving();
@@ -211,9 +260,13 @@ async function withCreationsKeptHere(personId: string, rows: Company[]): Promise
     const { companiesBeingCreated } = await creation();
     if (currentUser()?.id !== personId) return rows;
     const have = new Set(rows.map((c) => c.id));
-    const unlisted = companiesBeingCreated().filter((id) => !have.has(id)).map((id): Company => ({ id, createdAt: '', signers: 1 }));
+    const unlisted = companiesBeingCreated()
+      .filter((id) => !have.has(id))
+      .map((id): Company => ({ id, createdAt: '', signers: 1 }));
     return unlisted.length === 0 ? rows : [...rows, ...unlisted];
-  } catch { return rows; }
+  } catch {
+    return rows;
+  }
 }
 
 /** The service's rows of the one list of companies, as last asked for, and whom they were listed for. Each row's name is sealed. */
@@ -223,14 +276,19 @@ let listed: { person: string; rows: readonly unknown[] } = { person: '', rows: [
 export type CompanyNames = ReadonlyMap<string, string> & { readonly whyNot: ReadonlyMap<string, ActRefusal> };
 
 /** No names, and no reasons: what a list shows before its names are read. */
-export const NO_NAMES: CompanyNames = Object.assign(new Map<string, string>(), { whyNot: new Map<string, ActRefusal>() });
-
+export const NO_NAMES: CompanyNames = Object.assign(new Map<string, string>(), {
+  whyNot: new Map<string, ActRefusal>()
+});
 
 /** One listed company as one read of it found it: how its roster opened here (or why it did not), and who holds it (null when the wallet could not say). */
 interface ListedRead {
   readonly opened: { readonly id: string; readonly name?: unknown } | null;
   readonly whyNot: unknown;
-  readonly holders: { readonly approvals: number } & Parameters<typeof import('../../../../src/core/change-costs.js').changeHoldersOf>[0] | null;
+  readonly holders:
+    | ({ readonly approvals: number } & Parameters<
+        typeof import('../../../../src/core/change-costs.js').changeHoldersOf
+      >[0])
+    | null;
 }
 
 /* Each listed company's read for the list as last asked for, by id, and whether it is done; dropped when the list is asked for again. */
@@ -248,16 +306,33 @@ async function listedRead(row: unknown, id: string, afresh: boolean): Promise<Li
   if (kept !== undefined && !(afresh && kept.done)) return kept.read;
   const { openedQuietly, readThroughAViewOf } = await import('./filing-judge.js');
   /* The row already names where the company is on the chain, so its view reads no account to find it. */
-  const mine = { done: false, read: readThroughAViewOf(id, async (view): Promise<ListedRead> => {
-    let opened: ListedRead['opened'] = null;
-    let whyNot: unknown = null;
-    try { opened = await openedQuietly(view, row as SealedAccount); } catch (e) { whyNot = e; }
-    let holders: ListedRead['holders'] = null;
-    try { holders = await view.holders(); } catch { /* a company the wallet cannot read, or with no account on the chain yet, has no holders read */ }
-    return { opened, whyNot, holders };
-  }, row) };
+  const mine = {
+    done: false,
+    read: readThroughAViewOf(
+      id,
+      async (view): Promise<ListedRead> => {
+        let opened: ListedRead['opened'] = null;
+        let whyNot: unknown = null;
+        try {
+          opened = await openedQuietly(view, row as SealedAccount);
+        } catch (e) {
+          whyNot = e;
+        }
+        let holders: ListedRead['holders'] = null;
+        try {
+          holders = await view.holders();
+        } catch {
+          /* a company the wallet cannot read, or with no account on the chain yet, has no holders read */
+        }
+        return { opened, whyNot, holders };
+      },
+      row
+    )
+  };
   listedReads.set(id, mine);
-  const over = (): void => { mine.done = true; };
+  const over = (): void => {
+    mine.done = true;
+  };
   void mine.read.then(over, over);
   return mine.read;
 }
@@ -278,7 +353,9 @@ export async function companyNamesFor(personId: string): Promise<CompanyNames> {
   const whyNot = new Map<string, ActRefusal>();
   const names = (): CompanyNames => Object.assign(out, { whyNot });
   if (listed.person !== personId) return names();
-  const ids = listed.rows.map((row) => (row as { id?: unknown } | null)?.id).filter((id): id is string => typeof id === 'string');
+  const ids = listed.rows
+    .map((row) => (row as { id?: unknown } | null)?.id)
+    .filter((id): id is string => typeof id === 'string');
   let modules: [typeof import('./keyring-person.js'), typeof import('./filing-judge.js')];
   try {
     modules = await Promise.all([import('./keyring-person.js'), import('./filing-judge.js')]);
@@ -303,7 +380,10 @@ export async function companyNamesFor(personId: string): Promise<CompanyNames> {
       const { opened, whyNot: why } = await listedRead(row, id, true);
       if (why !== null) whyNot.set(id, refusalOf(why));
       else if (opened === null) whyNot.set(id, ACT_REFUSAL.noKeysHere);
-      if (opened !== null && typeof opened.name === 'string' && opened.name.trim() !== '') { out.set(opened.id, opened.name); continue; }
+      if (opened !== null && typeof opened.name === 'string' && opened.name.trim() !== '') {
+        out.set(opened.id, opened.name);
+        continue;
+      }
       /* A company not finished has no sealed record to open yet: it is named by the creation this device kept, never by the service's own field. */
       const kept = companyNameKeptHere(id);
       if (kept !== null) out.set(id, kept);
@@ -316,7 +396,10 @@ export async function companyNamesFor(personId: string): Promise<CompanyNames> {
 }
 
 /** The one read of the approvals each company needs, for the list as last asked for; dropped when the list is asked for again. */
-export interface SeatBarRead { readonly needed: number; readonly because: ChangeCost['because'] }
+export interface SeatBarRead {
+  readonly needed: number;
+  readonly because: ChangeCost['because'];
+}
 
 let approvalsRead: { person: string; map: Promise<ReadonlyMap<string, SeatBarRead>> } | null = null;
 
@@ -335,25 +418,38 @@ export function approvalsNeededFor(personId: string): Promise<ReadonlyMap<string
   const map = (async (): Promise<ReadonlyMap<string, SeatBarRead>> => {
     const out = new Map<string, SeatBarRead>();
     try {
-      const [{ keyringFor }, { changeHoldersOf, whatAChangeCosts }] = await Promise.all([import('./keyring-person.js'), import('../../../../src/core/change-costs.js')]);
+      const [{ keyringFor }, { changeHoldersOf, whatAChangeCosts }] = await Promise.all([
+        import('./keyring-person.js'),
+        import('../../../../src/core/change-costs.js')
+      ]);
       if (!(await keyringFor(personId))) return out;
       /* One company at a time: each read opens a wallet frame of its own, so a long list never has more than one open. */
       for (const row of rows) {
         const r = (row ?? {}) as { id?: unknown; companyLabel?: unknown; contractAddress?: unknown };
-        if (typeof r.id !== 'string' || typeof r.companyLabel !== 'string' || typeof r.contractAddress !== 'string') continue;
+        if (typeof r.id !== 'string' || typeof r.companyLabel !== 'string' || typeof r.contractAddress !== 'string')
+          continue;
         try {
           const { holders } = await listedRead(row, r.id, false);
           if (holders === null || !Number.isSafeInteger(holders.approvals) || holders.approvals < 1) continue;
-          const { needed, because } = whatAChangeCosts(changeHoldersOf(holders), { kind: CHANGE_ASKED.seating, seat: SEAT_CHANGE.remove });
+          const { needed, because } = whatAChangeCosts(changeHoldersOf(holders), {
+            kind: CHANGE_ASKED.seating,
+            seat: SEAT_CHANGE.remove
+          });
           if (Number.isSafeInteger(needed) && needed >= 1) out.set(r.id, { needed, because });
-        } catch { /* a company the wallet cannot read has no figure shown */ }
+        } catch {
+          /* a company the wallet cannot read has no figure shown */
+        }
       }
-    } catch { /* no figure is shown */ }
+    } catch {
+      /* no figure is shown */
+    }
     return out;
   })();
   approvalsRead = { person: personId, map };
   /* Nothing read is not kept, so a list read while the keys were still locked is read again. */
-  void map.then((m) => { if (m.size === 0 && approvalsRead?.map === map) approvalsRead = null; });
+  void map.then((m) => {
+    if (m.size === 0 && approvalsRead?.map === map) approvalsRead = null;
+  });
   return map;
 }
 
@@ -366,12 +462,17 @@ export interface Asking {
 /** The dialog open for a sign-in in flight, so the person can stop waiting for it. */
 let inFlight: WalletDialog | null = null;
 const waiting = new Set<(waitingNow: boolean) => void>();
-const nowWaiting = (dialog: WalletDialog | null): void => { inFlight = dialog; for (const w of waiting) w(dialog !== null); };
+const nowWaiting = (dialog: WalletDialog | null): void => {
+  inFlight = dialog;
+  for (const w of waiting) w(dialog !== null);
+};
 
 /** Follow whether a sign-in is waiting on the person's account; returns the way to stop. */
 export function onWaiting(watch: (waitingNow: boolean) => void): () => void {
   waiting.add(watch);
-  return () => { waiting.delete(watch); };
+  return () => {
+    waiting.delete(watch);
+  };
 }
 
 /** Stop waiting: the account is put away and the sign-in in flight refuses. With nothing in flight, the account is put away. */
@@ -383,14 +484,22 @@ export function stopWaiting(): void {
 const refusalOf = (e: unknown): SignInRefusal => {
   if (!(e instanceof WalletClosed)) return REFUSAL.didNotFinish;
   switch (e.refusal.of) {
-    case 'declined': return REFUSAL.declined;
-    case 'expired': return e.refusal.while === 'open' ? REFUSAL.ranOut : REFUSAL.expired;
-    case 'unreadable': return REFUSAL.unreadable;
-    case 'no-wallet-tab': return REFUSAL.noWindow;
-    case 'window-gone': return REFUSAL.windowGone;
-    case 'gave-up': return REFUSAL.gaveUp;
-    case 'silent': return REFUSAL.silent;
-    default: return REFUSAL.didNotFinish;
+    case 'declined':
+      return REFUSAL.declined;
+    case 'expired':
+      return e.refusal.while === 'open' ? REFUSAL.ranOut : REFUSAL.expired;
+    case 'unreadable':
+      return REFUSAL.unreadable;
+    case 'no-wallet-tab':
+      return REFUSAL.noWindow;
+    case 'window-gone':
+      return REFUSAL.windowGone;
+    case 'gave-up':
+      return REFUSAL.gaveUp;
+    case 'silent':
+      return REFUSAL.silent;
+    default:
+      return REFUSAL.didNotFinish;
   }
 };
 
@@ -406,14 +515,19 @@ const refusalOf = (e: unknown): SignInRefusal => {
  */
 export async function signIn(asking: Asking): Promise<SignedIn> {
   if (ACCOUNT_ORIGIN === '') return { of: OF.refused, why: REFUSAL.notSetUp, retryAfterSeconds: null };
-  const refused = (why: SignInRefusal, retryAfterSeconds: number | null = null): SignedIn => ({ of: OF.refused, why, retryAfterSeconds });
+  const refused = (why: SignInRefusal, retryAfterSeconds: number | null = null): SignedIn => ({
+    of: OF.refused,
+    why,
+    retryAfterSeconds
+  });
   prepared = null;
   const challenge = await ask(() => asks.challenge());
   if (challenge === null) return refused(REFUSAL.unreachable);
   if (challenge.status === 429) return refused(REFUSAL.tooMany, retryAfter(challenge.body));
   if (challenge.status !== 200) return refused(REFUSAL.unavailable);
   const { handle, nonce, expiresAt } = challenge.body as { handle?: unknown; nonce?: unknown; expiresAt?: unknown };
-  if (typeof handle !== 'string' || typeof nonce !== 'string' || typeof expiresAt !== 'string') return refused(REFUSAL.unavailable);
+  if (typeof handle !== 'string' || typeof nonce !== 'string' || typeof expiresAt !== 'string')
+    return refused(REFUSAL.unavailable);
 
   const view = walletInThisPage(window);
   const dialog = openWalletDialog(view, ACCOUNT_ORIGIN);
@@ -421,16 +535,30 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
   try {
     let response: unknown;
     try {
-      response = await askWalletToSignIn(view, ACCOUNT_ORIGIN, {
-        nonce, expiresAt: Date.parse(expiresAt), name: asking.name, rdns: US_TO_A_WALLET.rdns, purpose: asking.purpose,
-      }, dialog);
+      response = await askWalletToSignIn(
+        view,
+        ACCOUNT_ORIGIN,
+        {
+          nonce,
+          expiresAt: Date.parse(expiresAt),
+          name: asking.name,
+          rdns: US_TO_A_WALLET.rdns,
+          purpose: asking.purpose
+        },
+        dialog
+      );
     } catch (e) {
       return refused(refusalOf(e));
     }
     const answer = await ask(() => asks.signIn({ handle, nonce, response }));
     if (answer === null) return refused(REFUSAL.unreachable);
     if (answer.status === 429) return refused(REFUSAL.tooMany, retryAfter(answer.body));
-    if (answer.status === 401) return refused(answer.body.code === SERVICE.staleChallenge || answer.body.code === SERVICE.expiredClaim ? REFUSAL.answeredTooLate : REFUSAL.refused);
+    if (answer.status === 401)
+      return refused(
+        answer.body.code === SERVICE.staleChallenge || answer.body.code === SERVICE.expiredClaim
+          ? REFUSAL.answeredTooLate
+          : REFUSAL.refused
+      );
     const person = answer.status === 200 ? personFrom(answer.body.user) : null;
     if (person === null) return refused(REFUSAL.unavailable);
     prepared = person.id;
@@ -449,7 +577,9 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
       signedInByAnotherScreen(answer.body);
       /* Kept only once the keyring has taken it, so what is kept is what the keyring holds. */
       keepSignIn(tabStorage(), { personId: person.id, address: answer.body.address as string });
-    } catch { forgetLocally(); }
+    } catch {
+      forgetLocally();
+    }
     startWarmingTheProving();
     return { of: OF.signedIn, person, firstTime: answer.body.created === true };
   } finally {
@@ -460,7 +590,7 @@ export async function signIn(asking: Asking): Promise<SignedIn> {
 }
 
 const retryAfter = (body: Record<string, unknown>): number | null =>
-  Number.isSafeInteger(body.retryAfterSeconds) ? body.retryAfterSeconds as number : null;
+  Number.isSafeInteger(body.retryAfterSeconds) ? (body.retryAfterSeconds as number) : null;
 
 /** Whether signing out worked: the service ended the sign-in, or could not be reached and the sign-in may still be live. */
 export type SignedOut = { of: typeof OF.signedOut } | { of: typeof OF.notConfirmed };
@@ -483,12 +613,11 @@ export async function signOut(): Promise<SignedOut> {
   return r !== null && (r.status === 200 || r.status === 401) ? { of: OF.signedOut } : { of: OF.notConfirmed };
 }
 
-
 /** THE FRAME THE PERSON'S ACCOUNT IS SHOWN IN, handed to the shared code once, when it is on the page. */
 export const accountFrame = {
   mount: mountWalletFrame,
   close: closeWalletFrame,
   onShown: onWalletFrame,
   shown: walletFrameShown,
-  allow: WALLET_FRAME_ALLOW,
+  allow: WALLET_FRAME_ALLOW
 } as const;

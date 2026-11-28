@@ -14,11 +14,11 @@ import { viewOverItsApi } from './step-views.test-support.js';
 const t = vi.hoisted(() => ({ opens: 'removal' as 'removal' | 'fails', opened: 0 }));
 vi.mock('../../../../packages/web-shared/src/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-page-doors.js')>()),
-  listedHere: (_dir: unknown, _kind: unknown, served: unknown) => served,
+  listedHere: (_dir: unknown, _kind: unknown, served: unknown) => served
 }));
 vi.mock('../../../../packages/web-shared/src/run-rebuilt-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/run-rebuilt-here.js')>()),
-  standingOnChainHere: async (_records: unknown, listed: unknown) => listed,
+  standingOnChainHere: async (_records: unknown, listed: unknown) => listed
 }));
 vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/round-opened-here.js')>()),
@@ -27,9 +27,12 @@ vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real)
     if (t.opens === 'fails') throw new Error('this proposal is sealed under a company key this wallet does not hold');
     /* The removal's filer is judged on the directory the read is given, as the real opening judges it: a raiser whose records key is not attested there is refused. */
     const here = await (a[5] as { directory: () => Promise<{ another?: ReadonlySet<string> }> }).directory();
-    if (here.another?.has(RAISER)) throw new Error('This device does not believe the company\'s record of this proposal (it is signed by a seat whose own wallet has not attested the records key its directory entry names). Do not act on it.');
+    if (here.another?.has(RAISER))
+      throw new Error(
+        "This device does not believe the company's record of this proposal (it is signed by a seat whose own wallet has not attested the records key its directory entry names). Do not act on it."
+      );
     return { chainId: 'c1'.repeat(32), governance: { kind: 'remove-signer', leaf: LEAF } };
-  },
+  }
 }));
 
 /*
@@ -49,7 +52,12 @@ const MINE = signingPublicKeyOf(SECRET).toLowerCase();
 const ENTRY = { store: 'company', kind: 'person', id: 'per_1', version: 1, digest: 'ab'.repeat(32) } as const;
 
 /** A company of two seats, this one at `LEAF`; its removal holds `approvals`, and the seat bar is `bar` (absent: unread). */
-const companyOf = (o: { readonly approvals: number; readonly bar?: number; readonly roster?: () => Promise<unknown>; readonly notAttested?: true }) => {
+const companyOf = (o: {
+  readonly approvals: number;
+  readonly bar?: number;
+  readonly roster?: () => Promise<unknown>;
+  readonly notAttested?: true;
+}) => {
   const sent: string[] = [];
   const api = async (path: string, init?: RequestInit) => {
     if (path === '/api/accounts/acc_1/proposals') return [{ id: 'prp_9', accountId: 'acc_1', status: 'open' }];
@@ -57,22 +65,43 @@ const companyOf = (o: { readonly approvals: number; readonly bar?: number; reado
     return null;
   };
   const directory = async () => ({
-    dir: { seats: [{ seat: LEAF, signingKey: MINE, retired: null }, { seat: 'e2'.repeat(32), signingKey: 'ff'.repeat(32), retired: null }] },
+    dir: {
+      seats: [
+        { seat: LEAF, signingKey: MINE, retired: null },
+        { seat: 'e2'.repeat(32), signingKey: 'ff'.repeat(32), retired: null }
+      ]
+    },
     holders: { seats: [LEAF, 'e2'.repeat(32)], ...(o.bar === undefined ? {} : { seatBar: o.bar }) },
     records: { history: new Map(), notYetAnchored: [] },
-    another: new Set(o.notAttested === true ? [RAISER] : []),
+    another: new Set(o.notAttested === true ? [RAISER] : [])
   });
   const r = viewOverItsApi({
-    accountId: 'acc_1', label: drawCompanyLabel(), account: 'c0'.repeat(32), api,
-    seat: { signerId: 's1', signingSecret: SECRET, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) },
+    accountId: 'acc_1',
+    label: drawCompanyLabel(),
+    account: 'c0'.repeat(32),
+    api,
+    seat: {
+      signerId: 's1',
+      signingSecret: SECRET,
+      wrappingSecret: '02'.repeat(32),
+      blinding: '03'.repeat(32),
+      scope: '04'.repeat(32)
+    },
     companyKeys: { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32) },
     judges: {
-      directoryHereFor: (...a: unknown[]) => async () => { await (a[4] as () => Promise<unknown>)(); return directory(); },
-      leavesFor: () => async () => [],
+      directoryHereFor:
+        (...a: unknown[]) =>
+        async () => {
+          await (a[4] as () => Promise<unknown>)();
+          return directory();
+        },
+      leavesFor: () => async () => []
     },
     roster: o.roster ?? (async () => ({ signers: [] })),
-    builder: { roundsOnChain: async () => ({ ['c1'.repeat(32)]: { held: 'open', approvals: o.approvals, raisedAt: 1 } }) },
-    chain: { indexer: {} },
+    builder: {
+      roundsOnChain: async () => ({ ['c1'.repeat(32)]: { held: 'open', approvals: o.approvals, raisedAt: 1 } })
+    },
+    chain: { indexer: {} }
   }) as never;
   return { r, api, sent };
 };
@@ -115,7 +144,13 @@ describe('A SIGNER ON THEIR WAY OUT ENTERS NOTHING MORE FROM THEIR OWN WALLET', 
 
   it('a roster this seat filed and has not yet entered is entered: its own entry is never held up by the read it would answer', async () => {
     t.opens = 'removal';
-    const c = companyOf({ approvals: 1, bar: 2, roster: async () => { throw new RosterNotBelieved('no entry in the company\'s records names it'); } });
+    const c = companyOf({
+      approvals: 1,
+      bar: 2,
+      roster: async () => {
+        throw new RosterNotBelieved("no entry in the company's records names it");
+      }
+    });
     await enteredFor(c.r).enter([ENTRY]);
     /* RED WHEN: a roster filed and not yet entered can never be entered, because reading who is leaving needs the roster believed first. */
     expect(c.sent).toEqual(['/api/accounts/acc_1/manifest/entries']);
@@ -123,15 +158,28 @@ describe('A SIGNER ON THEIR WAY OUT ENTERS NOTHING MORE FROM THEIR OWN WALLET', 
 
   it('a read of who is leaving that fails for any other reason refuses the entry with what clears it, sending nothing', async () => {
     t.opens = 'removal';
-    const c = companyOf({ approvals: 1, bar: 2, roster: async () => { throw new Error('the service did not answer'); } });
+    const c = companyOf({
+      approvals: 1,
+      bar: 2,
+      roster: async () => {
+        throw new Error('the service did not answer');
+      }
+    });
     /* RED WHEN: a failed read reaches the act as a bare error, so the page cannot say the record was filed and what to do. */
     await expect(enteredFor(c.r).enter([ENTRY])).rejects.toBeInstanceOf(FiledNotEntered);
     expect(c.sent).toEqual([]);
   });
 
-  it('a removal approved at the seat bar stops the leaver even while the raiser\'s records key is not attested to this wallet', async () => {
+  it("a removal approved at the seat bar stops the leaver even while the raiser's records key is not attested to this wallet", async () => {
     t.opens = 'removal';
-    const c = companyOf({ approvals: 2, bar: 2, notAttested: true, roster: async () => { throw new RosterNotBelieved('a seat the chain holds has no entry'); } });
+    const c = companyOf({
+      approvals: 2,
+      bar: 2,
+      notAttested: true,
+      roster: async () => {
+        throw new RosterNotBelieved('a seat the chain holds has no entry');
+      }
+    });
     /* RED WHEN: a wallet that does not believe the roster reads an approved removal it can open as one it cannot, and lets the leaver enter. */
     await expect(enteredFor(c.r).enter([ENTRY])).rejects.toThrow(/removal of this signer's seat is approved/u);
     expect(c.sent).toEqual([]);
@@ -155,13 +203,15 @@ describe('A SIGNER ON THEIR WAY OUT ENTERS NOTHING MORE FROM THEIR OWN WALLET', 
   });
 });
 
-describe('THE ANCHOR READS WHO IS LEAVING ON THE WALLET\'S OWN READS', () => {
+describe("THE ANCHOR READS WHO IS LEAVING ON THE WALLET'S OWN READS", () => {
   it('names the approved leaver with its boundary, and when it cannot read who is leaving binds nobody new and says so', async () => {
     t.opens = 'removal';
     const approved = companyOf({ approvals: 2, bar: 2 });
     const unread: string[] = [];
     /* RED WHEN: the anchor in the wallet is not told of an approved removal, so it anchors what the leaver files after it. */
-    expect([...(await leavingForTheAnchor(approved.r, '11'.repeat(32), (why) => unread.push(why))()).keys()]).toEqual([MINE]);
+    expect([...(await leavingForTheAnchor(approved.r, '11'.repeat(32), (why) => unread.push(why))()).keys()]).toEqual([
+      MINE
+    ]);
     const notRead = companyOf({ approvals: 2 });
     expect((await leavingForTheAnchor(notRead.r, '11'.repeat(32), (why) => unread.push(why))()).size).toBe(0);
     /* RED WHEN: who is leaving goes unread and the act still reads as done in full. */

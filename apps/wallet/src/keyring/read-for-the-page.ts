@@ -2,7 +2,13 @@ import type { Identity } from 'midnight-identity/keys/derivation';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
 import { keyringHolderFor, type KeysRead } from 'midnight-identity/profile/unlock';
 import {
-  metadataOf, sealedDigestOf, seatsOf, tidiedWith, servedKeysOpenedFrom, type Keyring, type ServedKeys,
+  metadataOf,
+  sealedDigestOf,
+  seatsOf,
+  tidiedWith,
+  servedKeysOpenedFrom,
+  type Keyring,
+  type ServedKeys
 } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { openHeldKeyring, type HeldKeyring, type KeyringMarks } from './held-keyring.js';
 
@@ -22,12 +28,17 @@ import { openHeldKeyring, type HeldKeyring, type KeyringMarks } from './held-key
  * this device opens no copy under the old key again. If the page then fails to keep it, this device refuses the old
  * copy from then on and says so; the copy the page was handed is the one to keep.
  */
-export function readFor(identity: Identity, request: Pick<KeyringRequest, 'requester' | 'person' | 'served'>, k: Keyring, extra: readonly ServedKeys[] = []): Omit<KeysRead, 'resealed'> {
+export function readFor(
+  identity: Identity,
+  request: Pick<KeyringRequest, 'requester' | 'person' | 'served'>,
+  k: Keyring,
+  extra: readonly ServedKeys[] = []
+): Omit<KeysRead, 'resealed'> {
   return Object.freeze({
     seats: seatsOf(k),
     viewing: servedKeysOpenedFrom(k, [...(request.served ?? []), ...extra]),
     metadata: metadataOf(k) as unknown as Readonly<Record<string, unknown>>,
-    holder: keyringHolderFor(identity, request),
+    holder: keyringHolderFor(identity, request)
   });
 }
 
@@ -47,7 +58,10 @@ export function keysReadForThePage(input: {
   const { identity, request } = input;
   if (request.keyring === undefined) return null;
   const held: HeldKeyring = openHeldKeyring({
-    identity, ask: { requester: request.requester, person: request.person }, handedIn: request.keyring, marks: input.marks,
+    identity,
+    ask: { requester: request.requester, person: request.person },
+    handedIn: request.keyring,
+    marks: input.marks
   });
   try {
     const before = held.read();
@@ -58,8 +72,10 @@ export function keysReadForThePage(input: {
     const fromTheOldKey = held.underTheOldKey === true;
     const again = after === before && !fromTheOldKey ? null : held.seal((current) => tidiedWith(current, tidy));
     const resealed = again === null ? null : Object.freeze({ sealed: again.sealed, ifVersion: again.ifVersion });
-    const mark = again === null || !fromTheOldKey ? null
-      : Object.freeze({ counter: again.counter, digest: sealedDigestOf(again.sealed), under: 2 as const });
+    const mark =
+      again === null || !fromTheOldKey
+        ? null
+        : Object.freeze({ counter: again.counter, digest: sealedDigestOf(again.sealed), under: 2 as const });
     let handed = false;
     return Object.freeze({
       read: Object.freeze({ ...readFor(identity, request, after), resealed }),
@@ -67,7 +83,7 @@ export function keysReadForThePage(input: {
         if (handed || mark === null) return;
         handed = true;
         input.marks.raise(request.person, mark);
-      },
+      }
     });
   } finally {
     held.letGo();

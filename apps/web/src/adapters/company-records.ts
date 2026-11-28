@@ -3,11 +3,25 @@ import { reviveBigints } from '../../../../src/core/crypto.js';
 import { assets, type AssetRegistry } from '../../../../src/core/assets.js';
 import { classificationOn, payLineOn, payLinesOf } from '../../../../src/core/person-record.js';
 import { typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
-import type { Account, PayrollRun, Proposal, RosterEmployee, SealedAccount, SealedProposal, SealedRun } from '../../../../src/core/types.js';
+import type {
+  Account,
+  PayrollRun,
+  Proposal,
+  RosterEmployee,
+  SealedAccount,
+  SealedProposal,
+  SealedRun
+} from '../../../../src/core/types.js';
 import { ROSTER_ID, type RefusedEntry, type RosterEntryRefusal } from '../../../../src/core/roster-record.js';
 import { canOpenCompanies, openKeysWithWallet } from 'vaults-web-shared/keyring.js';
 import { companyKeysQuietlyFor, directoryHereFor, openedQuietly, sealedIn, type PageView } from './filing-judge.js';
-import { KIND_FIELD, NEVER_WITHDRAWN, RUN_FORM, RUN_LIST, WALLET_KIND } from 'vaults-web-shared/proposal-in-the-wallet.js';
+import {
+  KIND_FIELD,
+  NEVER_WITHDRAWN,
+  RUN_FORM,
+  RUN_LIST,
+  WALLET_KIND
+} from 'vaults-web-shared/proposal-in-the-wallet.js';
 import { PROPOSAL_STANDING, type ProposalStanding } from './proposal-standing-on-chain.js';
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { theVaultBuilder } from './vault-builder.js';
@@ -25,10 +39,30 @@ import { openRun } from './runs-and-proposals-opened.js';
 import { NETWORK } from 'midnight-identity/network';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { addSignerByAddressIn, type AddSignerByAddress } from '../../../../src/core/proposal-filing.js';
-import { ASKS_UNREAD, NOT_READ, proposalAsksHere, type Asked, type AsksReads } from 'vaults-web-shared/proposal-asks-here.js';
-import { approvalsForSigners, signerStandings, signersInvitedIn, type SignerInvited, type SignerStanding, type SignersApprovals } from './signers.js';
+import {
+  ASKS_UNREAD,
+  NOT_READ,
+  proposalAsksHere,
+  type Asked,
+  type AsksReads
+} from 'vaults-web-shared/proposal-asks-here.js';
+import {
+  approvalsForSigners,
+  signerStandings,
+  signersInvitedIn,
+  type SignerInvited,
+  type SignerStanding,
+  type SignersApprovals
+} from './signers.js';
 import { chainOfTheCompany } from './company-vaults-read.js';
-import { chainReadIn, oneOffHereFor, oneOffsPaidFromTheChain, proposalsHere, runsPaidFromTheChain, seatsTakenOnChain } from './company-proposals.js';
+import {
+  chainReadIn,
+  oneOffHereFor,
+  oneOffsPaidFromTheChain,
+  proposalsHere,
+  runsPaidFromTheChain,
+  seatsTakenOnChain
+} from './company-proposals.js';
 
 export { OPENED, READ, type Read };
 
@@ -77,7 +111,26 @@ export { OPENED, READ, type Read };
  * what may not be.
  */
 
-import { SERVICE, PAID, PAID_STATE, STANDING, ADMIT_BY, type Paid, type SignerRow, type ProposalRow, type RunPays, type RunCurrency, type RunPayee, type RunLeg, type RunLegRetry, type RunRow, type PersonStanding, type AdmitBy, type PersonRow, type VaultRow } from './company-rows.js';
+import {
+  SERVICE,
+  PAID,
+  PAID_STATE,
+  STANDING,
+  ADMIT_BY,
+  type Paid,
+  type SignerRow,
+  type ProposalRow,
+  type RunPays,
+  type RunCurrency,
+  type RunPayee,
+  type RunLeg,
+  type RunLegRetry,
+  type RunRow,
+  type PersonStanding,
+  type AdmitBy,
+  type PersonRow,
+  type VaultRow
+} from './company-rows.js';
 
 /** Who an invitation is for: somebody to sign, or somebody to be paid (an employee or a vendor). Another kind of invitation is not listed. */
 export const INVITED = { signer: 'signer', employee: 'employee', vendor: 'vendor' } as const;
@@ -92,7 +145,10 @@ export interface InvitationRow {
 }
 
 /** A person this device read and would not show as payable: their row and why. */
-interface PersonNotPayable { person: PersonRow; why: string }
+interface PersonNotPayable {
+  person: PersonRow;
+  why: string;
+}
 
 /**
  * What this device's belief check left out of `people`, and why. `notBelieved` are record ids it does not believe (no
@@ -156,8 +212,10 @@ export const walletKindOf = (row: ProposalRow): string | undefined => WALLET_KIN
  * paying it does not close it: the same press, and the wallet, finding it at the bar, pays it without approving again. Never one shown paid or not read.
  */
 export const canApprove = (row: ProposalRow): boolean =>
-  (row.status === 'open' || (row.status === PROPOSAL_STANDING.approved && row.kind === 'transfer' && row.paidOnChain === false))
-  && walletKindOf(row) !== undefined && (row.kind === 'pay-key' || Object.keys(row.asks ?? {}).some((k) => k !== KIND_FIELD));
+  (row.status === 'open' ||
+    (row.status === PROPOSAL_STANDING.approved && row.kind === 'transfer' && row.paidOnChain === false)) &&
+  walletKindOf(row) !== undefined &&
+  (row.kind === 'pay-key' || Object.keys(row.asks ?? {}).some((k) => k !== KIND_FIELD));
 
 /**
  * Whether Withdraw is offered on a proposal. A change to the company, and a one-off payment, only to the seat that filed
@@ -181,24 +239,48 @@ export function canWithdraw(row: ProposalRow): boolean {
  * not read for, never. Whether the people are already on a retry that can still pay them is the wallet's to say.
  */
 export function canRetry(
-  leg: Pick<RunLeg, 'proposal' | 'form' | 'paidOnChain' | 'unpaid' | 'amounts' | 'leaves' | 'closesAt'>, proposals: Read<readonly ProposalRow[]>, nowMs: number,
+  leg: Pick<RunLeg, 'proposal' | 'form' | 'paidOnChain' | 'unpaid' | 'amounts' | 'leaves' | 'closesAt'>,
+  proposals: Read<readonly ProposalRow[]>,
+  nowMs: number
 ): boolean {
-  if (leg.proposal === null || leg.form === null || leg.paidOnChain === undefined || leg.paidOnChain === PAID_STATE.all) return false;
-  if (leg.unpaid === undefined || leg.unpaid.length === 0 || leg.amounts === undefined || leg.amounts.length !== leg.leaves?.length || leg.closesAt === undefined) return false;
+  if (leg.proposal === null || leg.form === null || leg.paidOnChain === undefined || leg.paidOnChain === PAID_STATE.all)
+    return false;
+  if (
+    leg.unpaid === undefined ||
+    leg.unpaid.length === 0 ||
+    leg.amounts === undefined ||
+    leg.amounts.length !== leg.leaves?.length ||
+    leg.closesAt === undefined
+  )
+    return false;
   const row = proposals.of === READ.read ? proposals.value.find((p) => p.id === leg.proposal) : undefined;
-  return row !== undefined && (row.status === 'cancelled' || row.status === 'blocked' || row.status === 'expired'
-    || row.status === 'closed' || BigInt(nowMs) >= leg.closesAt * 1000n);
+  return (
+    row !== undefined &&
+    (row.status === 'cancelled' ||
+      row.status === 'blocked' ||
+      row.status === 'expired' ||
+      row.status === 'closed' ||
+      BigInt(nowMs) >= leg.closesAt * 1000n)
+  );
 }
 
 /** A vendor a one-off payment can be made to from the vendor list: active, with an address in their entry, and nothing this device holds against paying them. */
-interface PayableVendor { id: string; name: string; address: string }
+interface PayableVendor {
+  id: string;
+  name: string;
+  address: string;
+}
 
 /**
  * The vendors the payee select offers: those a signer could pay now. A vendor with no address, one who has left or not yet joined, and
  * one this device will not pay are left out, so choosing one never ends in the wallet's refusal for a reason the list already knew.
  */
 export function payableVendors(vendors: readonly VendorRow[]): readonly PayableVendor[] {
-  return vendors.flatMap((v) => (v.standing === STANDING.active && v.notPayable === null && v.address !== null ? [{ id: v.id, name: v.name, address: v.address }] : []));
+  return vendors.flatMap((v) =>
+    v.standing === STANDING.active && v.notPayable === null && v.address !== null
+      ? [{ id: v.id, name: v.name, address: v.address }]
+      : []
+  );
 }
 
 /**
@@ -206,13 +288,25 @@ export function payableVendors(vendors: readonly VendorRow[]): readonly PayableV
  * in units of the currency. `null` when the address is not one the page can place as private or public, so no screen says what such a
  * payment makes public.
  */
-export function oneOffLegOf(one: { vault: string; token: string; units: bigint; address: string; name: string }, registry: AssetRegistry = assets): RunLeg | null {
+export function oneOffLegOf(
+  one: { vault: string; token: string; units: bigint; address: string; name: string },
+  registry: AssetRegistry = assets
+): RunLeg | null {
   const paid = paidTo(one.address);
   if (paid === PAID.notKnown) return null;
   return {
-    code: one.token, asset: one.token, symbol: registry.find(one.token)?.symbol ?? null, paid, vault: one.vault, payees: 1, proposal: null,
-    form: paid === PAID.privately ? RUN_FORM.shielded : RUN_FORM.unshielded, list: RUN_LIST.vendors, people: 1, total: one.units,
-    pays: [{ name: one.name, address: one.address, amount: amountOf(one.units, one.token, paid, registry) }],
+    code: one.token,
+    asset: one.token,
+    symbol: registry.find(one.token)?.symbol ?? null,
+    paid,
+    vault: one.vault,
+    payees: 1,
+    proposal: null,
+    form: paid === PAID.privately ? RUN_FORM.shielded : RUN_FORM.unshielded,
+    list: RUN_LIST.vendors,
+    people: 1,
+    total: one.units,
+    pays: [{ name: one.name, address: one.address, amount: amountOf(one.units, one.token, paid, registry) }]
   };
 }
 
@@ -236,18 +330,40 @@ export interface OneOffRow {
  * raised with, else by its address. The amount is made here, private or public by the address's own kind, null for a currency this app
  * does not know.
  */
-export function openOneOffsOf(proposals: readonly ProposalRow[], vault: string, registry: AssetRegistry = assets): readonly OneOffRow[] {
+export function openOneOffsOf(
+  proposals: readonly ProposalRow[],
+  vault: string,
+  registry: AssetRegistry = assets
+): readonly OneOffRow[] {
   return proposals.flatMap((p) => {
     if (p.kind !== 'transfer' || !canApprove(p) || p.asks === undefined) return [];
     const { vault: from, token, amount, payee, payeeName, reason } = p.asks;
     if (typeof from !== 'string' || from.toLowerCase() !== vault.toLowerCase() || typeof payee !== 'string') return [];
-    const units = typeof amount === 'bigint' ? amount : typeof amount === 'string' && /^[0-9]+$/u.test(amount) ? BigInt(amount) : null;
-    return [{
-      id: p.id, amount: units === null || typeof token !== 'string' ? null : amountOf(units, token, markOf(paidTo(payee)), registry),
-      leg: units === null || typeof token !== 'string' ? null : oneOffLegOf({ vault: from, token, units, address: payee, name: typeof payeeName === 'string' ? payeeName : '' }, registry),
-      payee: typeof payeeName === 'string' && payeeName !== '' ? payeeName : payee,
-      reason: typeof reason === 'string' ? reason : '', approvals: p.approvals, needed: p.needed, proposal: p,
-    }];
+    const units =
+      typeof amount === 'bigint'
+        ? amount
+        : typeof amount === 'string' && /^[0-9]+$/u.test(amount)
+          ? BigInt(amount)
+          : null;
+    return [
+      {
+        id: p.id,
+        amount:
+          units === null || typeof token !== 'string' ? null : amountOf(units, token, markOf(paidTo(payee)), registry),
+        leg:
+          units === null || typeof token !== 'string'
+            ? null
+            : oneOffLegOf(
+                { vault: from, token, units, address: payee, name: typeof payeeName === 'string' ? payeeName : '' },
+                registry
+              ),
+        payee: typeof payeeName === 'string' && payeeName !== '' ? payeeName : payee,
+        reason: typeof reason === 'string' ? reason : '',
+        approvals: p.approvals,
+        needed: p.needed,
+        proposal: p
+      }
+    ];
   });
 }
 
@@ -257,8 +373,12 @@ export function openOneOffsOf(proposals: readonly ProposalRow[], vault: string, 
  * the chain was not read for, and a leg with no proposal or no form the wallet knows are never offered. The wallet
  * decides again, on the window and on what the chain holds, before it pays.
  */
-export function canPay(leg: Pick<RunLeg, 'proposal' | 'form' | 'paidOnChain'>, proposals: Read<readonly ProposalRow[]>): boolean {
-  if (leg.proposal === null || leg.form === null || leg.paidOnChain === undefined || leg.paidOnChain === PAID_STATE.all) return false;
+export function canPay(
+  leg: Pick<RunLeg, 'proposal' | 'form' | 'paidOnChain'>,
+  proposals: Read<readonly ProposalRow[]>
+): boolean {
+  if (leg.proposal === null || leg.form === null || leg.paidOnChain === undefined || leg.paidOnChain === PAID_STATE.all)
+    return false;
   return proposals.of === READ.read && proposals.value.some((p) => p.id === leg.proposal && p.status === 'approved');
 }
 
@@ -303,7 +423,8 @@ export type Company =
   | { of: typeof OPENED.refused; why: ActRefusal };
 
 /** One of the company's lists as its view read it, with its whole numbers read back as whole numbers (`reviveBigints`). */
-const listed = async (view: PageView, kind: Parameters<PageView['list']>[0]): Promise<unknown> => reviveBigints(await view.list(kind));
+const listed = async (view: PageView, kind: Parameters<PageView['list']>[0]): Promise<unknown> =>
+  reviveBigints(await view.list(kind));
 
 /** How a private address is written: its type, then the network if any, then the separator. */
 const PRIVATE_ADDRESS = /^mn_shield-addr(?:_[a-z0-9]+)?1/;
@@ -324,7 +445,9 @@ export function paidTo(address: string | undefined): Paid {
 function amountOf(units: bigint, code: string, paid: Paid, registry: AssetRegistry): TokenAmount | null {
   const asset = registry.find(code);
   if (asset === null) return null;
-  return paid === PAID.privately ? privateAmount(units, asset.decimals, asset.symbol) : publicAmount(units, asset.decimals, asset.symbol);
+  return paid === PAID.privately
+    ? privateAmount(units, asset.decimals, asset.symbol)
+    : publicAmount(units, asset.decimals, asset.symbol);
 }
 
 /**
@@ -336,7 +459,10 @@ function legOf(key: string): { asset: string; paid: Paid } {
   const at = key.indexOf(':');
   if (at < 0) return { asset: key, paid: PAID.notKnown };
   const form = key.slice(at + 1);
-  return { asset: key.slice(0, at), paid: form === 'shielded' ? PAID.privately : form === 'unshielded' ? PAID.publicly : PAID.notKnown };
+  return {
+    asset: key.slice(0, at),
+    paid: form === 'shielded' ? PAID.privately : form === 'unshielded' ? PAID.publicly : PAID.notKnown
+  };
 }
 
 /** A run for a screen: its people and amounts, each token split by how it is paid. */
@@ -351,40 +477,71 @@ export function runRow(run: PayrollRun, registry: AssetRegistry = assets): RunRo
     payees.push({ id: e.id, name: e.name, amount, paid });
     if (amount === null) continue;
     const s = sums.get(e.asset) ?? { privately: 0n, publicly: 0n, anyPrivately: false, anyPublicly: false };
-    if (paid === PAID.privately) { s.privately += e.amount; s.anyPrivately = true; } else { s.publicly += e.amount; s.anyPublicly = true; }
+    if (paid === PAID.privately) {
+      s.privately += e.amount;
+      s.anyPrivately = true;
+    } else {
+      s.publicly += e.amount;
+      s.anyPublicly = true;
+    }
     sums.set(e.asset, s);
   }
   const currencies: RunCurrency[] = [...sums].map(([code, s]) => ({
     code,
     symbol: registry.require(code).symbol,
     privately: s.anyPrivately ? amountOf(s.privately, code, PAID.privately, registry) : null,
-    publicly: s.anyPublicly ? amountOf(s.publicly, code, PAID.publicly, registry) : null,
+    publicly: s.anyPublicly ? amountOf(s.publicly, code, PAID.publicly, registry) : null
   }));
   /* A leg's payees are counted by its leaves, one a payee. */
   const legs: RunLeg[] = Object.entries(run.payout ?? {}).map(([code, leg]) => {
     const { asset, paid } = legOf(code);
     const form = paid === PAID.privately ? RUN_FORM.shielded : paid === PAID.publicly ? RUN_FORM.unshielded : null;
     /* The people on a leg are those the wallet counts for it: their token and form, a form not named being private. */
-    const onLeg = form === null ? [] : (run.employees ?? []).filter((e) => e.asset === asset && (e.form === RUN_FORM.unshielded) === (form === RUN_FORM.unshielded));
+    const onLeg =
+      form === null
+        ? []
+        : (run.employees ?? []).filter(
+            (e) => e.asset === asset && (e.form === RUN_FORM.unshielded) === (form === RUN_FORM.unshielded)
+          );
     const leaves = (leg.leaves ?? []).map((l) => l.toLowerCase());
     const payForm = form === RUN_FORM.unshielded ? PAID.publicly : PAID.privately;
     const retries = (leg.retries ?? []).map((r): RunLegRetry => {
       const people = r.originalIndices.flatMap((i) => (onLeg[i] === undefined ? [] : [onLeg[i]!]));
       const theirs = r.originalIndices.flatMap((i) => (leaves[i] === undefined ? [] : [leaves[i]!]));
       return {
-        proposal: r.proposalId ?? null, vault: r.vault, people: people.length, total: people.reduce((sum, e) => sum + e.amount, 0n),
-        pays: people.map((e) => ({ name: e.name, address: e.paidTo ?? null, amount: amountOf(e.amount, e.asset, payForm, registry) })),
-        ...(theirs.length === r.originalIndices.length ? { leaves: theirs } : {}),
+        proposal: r.proposalId ?? null,
+        vault: r.vault,
+        people: people.length,
+        total: people.reduce((sum, e) => sum + e.amount, 0n),
+        pays: people.map((e) => ({
+          name: e.name,
+          address: e.paidTo ?? null,
+          amount: amountOf(e.amount, e.asset, payForm, registry)
+        })),
+        ...(theirs.length === r.originalIndices.length ? { leaves: theirs } : {})
       };
     });
     return {
-      code, asset, symbol: registry.find(asset)?.symbol ?? null, paid, vault: leg.vault, payees: (leg.leaves ?? []).length,
-      ...(leaves.length === 0 ? {} : { leaves }), ...(retries.length === 0 ? {} : { retries }),
+      code,
+      asset,
+      symbol: registry.find(asset)?.symbol ?? null,
+      paid,
+      vault: leg.vault,
+      payees: (leg.leaves ?? []).length,
+      ...(leaves.length === 0 ? {} : { leaves }),
+      ...(retries.length === 0 ? {} : { retries }),
       ...(leg.closesAt === undefined ? {} : { closesAt: BigInt(leg.closesAt) }),
       ...(leaves.length === 0 || onLeg.length !== leaves.length ? {} : { amounts: onLeg.map((e) => e.amount) }),
-      proposal: run.proposalIds?.[code] ?? null, form, list: run.list ?? RUN_LIST.employees, people: onLeg.length,
+      proposal: run.proposalIds?.[code] ?? null,
+      form,
+      list: run.list ?? RUN_LIST.employees,
+      people: onLeg.length,
       total: onLeg.reduce((sum, e) => sum + e.amount, 0n),
-      pays: onLeg.map((e) => ({ name: e.name, address: e.paidTo ?? null, amount: amountOf(e.amount, e.asset, form === RUN_FORM.unshielded ? PAID.publicly : PAID.privately, registry) })),
+      pays: onLeg.map((e) => ({
+        name: e.name,
+        address: e.paidTo ?? null,
+        amount: amountOf(e.amount, e.asset, form === RUN_FORM.unshielded ? PAID.publicly : PAID.privately, registry)
+      }))
     };
   });
   return { id: run.id, period: run.period, payees, currencies, legs, unrecognised };
@@ -394,13 +551,18 @@ export function runRow(run: PayrollRun, registry: AssetRegistry = assets): RunRo
 /** A retry on a leg, as a leg of its own for the same run: the same token and form, the retry's proposal, vault, people and total. */
 export const legOfRetry = (leg: RunLeg, retry: RunLegRetry): RunLeg => {
   const { retries: _retries, leaves: _leaves, unpaid: _unpaid, amounts: _amounts, closesAt: _closesAt, ...same } = leg;
-  return { ...same, vault: retry.vault, payees: retry.people, proposal: retry.proposal, people: retry.people, total: retry.total, pays: retry.pays, ...(retry.leaves === undefined ? {} : { leaves: retry.leaves }), ...(retry.paidOnChain === undefined ? {} : { paidOnChain: retry.paidOnChain }) };
+  return {
+    ...same,
+    vault: retry.vault,
+    payees: retry.people,
+    proposal: retry.proposal,
+    people: retry.people,
+    total: retry.total,
+    pays: retry.pays,
+    ...(retry.leaves === undefined ? {} : { leaves: retry.leaves }),
+    ...(retry.paidOnChain === undefined ? {} : { paidOnChain: retry.paidOnChain })
+  };
 };
-
-
-
-
-
 
 function paysOf(run: PayrollRun, leg: string, registry: AssetRegistry): RunPays {
   const { asset, paid } = legOf(leg);
@@ -416,37 +578,63 @@ const namedThoughNotBelieved = (why: RosterEntryRefusal): boolean =>
 
 /** A proposal for a screen. */
 export function proposalRow(
-  p: Proposal, standing: ProposalStanding, signers: readonly (SignerRow & { readonly signingPublicKey?: string })[], runs: readonly PayrollRun[],
-  registry: AssetRegistry = assets, refused: readonly RefusedEntry[] = [],
+  p: Proposal,
+  standing: ProposalStanding,
+  signers: readonly (SignerRow & { readonly signingPublicKey?: string })[],
+  runs: readonly PayrollRun[],
+  registry: AssetRegistry = assets,
+  refused: readonly RefusedEntry[] = []
 ): ProposalRow {
-  const retryOf = (r: PayrollRun): string | undefined => Object.entries(r.payout ?? {}).find(([, l]) => (l.retries ?? []).some((x) => x.proposalId === p.id))?.[0];
+  const retryOf = (r: PayrollRun): string | undefined =>
+    Object.entries(r.payout ?? {}).find(([, l]) => (l.retries ?? []).some((x) => x.proposalId === p.id))?.[0];
   const run = runs.find((r) => Object.values(r.proposalIds ?? {}).includes(p.id) || retryOf(r) !== undefined);
-  const filer = standing.filer === null ? undefined : signers.find((s) => typeof s.signingPublicKey === 'string' && s.signingPublicKey.toLowerCase() === standing.filer);
+  const filer =
+    standing.filer === null
+      ? undefined
+      : signers.find(
+          (s) => typeof s.signingPublicKey === 'string' && s.signingPublicKey.toLowerCase() === standing.filer
+        );
   /* A filer no believed entry holds the key of: the entry the record names for the raiser, if this device refused it, says why. */
   const notBelieved = filer !== undefined ? undefined : refused.find((r) => r.signerId === p.proposedBy);
-  const leg = run === undefined ? undefined : Object.entries(run.proposalIds ?? {}).find(([, id]) => id === p.id)?.[0] ?? retryOf(run);
+  const leg =
+    run === undefined
+      ? undefined
+      : (Object.entries(run.proposalIds ?? {}).find(([, id]) => id === p.id)?.[0] ?? retryOf(run));
   return {
-    id: p.id, kind: p.kind, status: standing.shown,
-    raisedBy: filer?.name ?? (notBelieved !== undefined && namedThoughNotBelieved(notBelieved.why) ? notBelieved.name : null),
+    id: p.id,
+    kind: p.kind,
+    status: standing.shown,
+    raisedBy:
+      filer?.name ?? (notBelieved !== undefined && namedThoughNotBelieved(notBelieved.why) ? notBelieved.name : null),
     raiserNotBelieved: notBelieved?.why ?? null,
     approvals: standing.approvals,
     needed: standing.needed,
     raisedAt: standing.raisedAt,
-    pays: run === undefined || leg === undefined ? null : paysOf(run, leg, registry),
+    pays: run === undefined || leg === undefined ? null : paysOf(run, leg, registry)
   };
 }
 
-
-
-
 interface RosterRow {
-  id: string; name: string; title: string; asset: string; baseAmount: bigint; startDate: string;
-  pay?: RosterEmployee['pay']; status: string; address: { kind: string } | null; handedOver?: boolean;
-  classifications?: RosterEmployee['classifications']; endDate?: string | null; leavingDate?: string | null; admittedAt?: string | null; invitedAddress?: string | null;
+  id: string;
+  name: string;
+  title: string;
+  asset: string;
+  baseAmount: bigint;
+  startDate: string;
+  pay?: RosterEmployee['pay'];
+  status: string;
+  address: { kind: string } | null;
+  handedOver?: boolean;
+  classifications?: RosterEmployee['classifications'];
+  endDate?: string | null;
+  leavingDate?: string | null;
+  admittedAt?: string | null;
+  invitedAddress?: string | null;
 }
 
 /** How a payee is paid, read from the address their record holds: not set up while it holds none. */
-const paidOf = (address: { readonly kind: string } | null): Paid => (address === null ? PAID.notSetUp : address.kind === SERVICE.shielded ? PAID.privately : PAID.publicly);
+const paidOf = (address: { readonly kind: string } | null): Paid =>
+  address === null ? PAID.notSetUp : address.kind === SERVICE.shielded ? PAID.privately : PAID.publicly;
 
 /**
  * WHETHER AN ADDRESS DECIDES HOW A PAYMENT IS MADE: only a payee whose record holds the address says whether their payments are private or
@@ -459,46 +647,82 @@ export const visibilityKnown = (paid: Paid): boolean => paid === PAID.privately 
 const markOf = (paid: Paid): Paid => (paid === PAID.privately ? PAID.privately : PAID.publicly);
 
 /** Where a person or vendor stands, from their record's status and whether a hand-over waits. */
-const standingOfRecord = (status: string, handedOver: boolean | undefined): PersonStanding => (status === SERVICE.active ? STANDING.active
-  : status === SERVICE.leaver ? STANDING.leaver : handedOver === true ? STANDING.waitingForCheck : STANDING.invited);
+const standingOfRecord = (status: string, handedOver: boolean | undefined): PersonStanding =>
+  status === SERVICE.active
+    ? STANDING.active
+    : status === SERVICE.leaver
+      ? STANDING.leaver
+      : handedOver === true
+        ? STANDING.waitingForCheck
+        : STANDING.invited;
 
 /** How a signer admits them: on their wallet's signed claim when they were added by an unshielded address, on the fingerprint they read out otherwise. */
-const admitByOf = (invitedAddress: string | null | undefined): AdmitBy => (invitedAddress != null && !typedAddressIsShielded(invitedAddress) ? ADMIT_BY.claim : ADMIT_BY.fingerprint);
+const admitByOf = (invitedAddress: string | null | undefined): AdmitBy =>
+  invitedAddress != null && !typedAddressIsShielded(invitedAddress) ? ADMIT_BY.claim : ADMIT_BY.fingerprint;
 
 /** A person on the payroll for a screen. Their pay is the salary line in force on `today`, or, before they start, their first; every line and the classification history are kept for their panel. */
-export function personRow(p: RosterRow, registry: AssetRegistry = assets, today: string = new Date().toISOString().slice(0, 10)): PersonRow {
+export function personRow(
+  p: RosterRow,
+  registry: AssetRegistry = assets,
+  today: string = new Date().toISOString().slice(0, 10)
+): PersonRow {
   const paid = paidOf(p.address);
   /* A person with no address yet is paid however they set up: their pay is marked public until then, never private, and shown without a visibility (`visibilityKnown`). */
   const form = markOf(paid);
   return {
-    id: p.id, name: p.name, title: p.title, standing: standingOfRecord(p.status, p.handedOver), pay: amountOf((payLineOn(p, today) ?? payLinesOf(p)[0]!).amount, p.asset, form, registry), paid, startedAt: p.startDate,
+    id: p.id,
+    name: p.name,
+    title: p.title,
+    standing: standingOfRecord(p.status, p.handedOver),
+    pay: amountOf((payLineOn(p, today) ?? payLinesOf(p)[0]!).amount, p.asset, form, registry),
+    paid,
+    startedAt: p.startDate,
     asset: p.asset,
     classification: classificationOn(p, today) ?? p.classifications?.[0]?.classification ?? null,
-    endDate: p.endDate ?? null, leavingDate: p.leavingDate ?? null,
-    pays: payLinesOf(p).map((l) => ({ amount: amountOf(l.amount, p.asset, form, registry), from: l.from, madeAt: l.madeAt })),
-    classifications: (p.classifications ?? []).map((l) => ({ classification: l.classification, from: l.from, madeAt: l.madeAt })),
+    endDate: p.endDate ?? null,
+    leavingDate: p.leavingDate ?? null,
+    pays: payLinesOf(p).map((l) => ({
+      amount: amountOf(l.amount, p.asset, form, registry),
+      from: l.from,
+      madeAt: l.madeAt
+    })),
+    classifications: (p.classifications ?? []).map((l) => ({
+      classification: l.classification,
+      from: l.from,
+      madeAt: l.madeAt
+    })),
     admittedAt: p.admittedAt ?? null,
     admitBy: admitByOf(p.invitedAddress),
-    notPayable: null,
+    notPayable: null
   };
 }
 
-interface InviteRow { kind: string; name?: string; createdAt: string; expiresAt?: string; revokedAt?: string; acceptedAt?: string }
+interface InviteRow {
+  kind: string;
+  name?: string;
+  createdAt: string;
+  expiresAt?: string;
+  revokedAt?: string;
+  acceptedAt?: string;
+}
 
 /** The invitations still waiting to be used, at `now`. */
 export function invitationRows(rows: readonly InviteRow[], now: number): InvitationRow[] {
   return rows
-    .filter((i) => (i.kind === INVITED.signer || i.kind === INVITED.employee || i.kind === INVITED.vendor) && !i.acceptedAt && !i.revokedAt && (i.expiresAt === undefined || Date.parse(i.expiresAt) > now))
-    .map((i) => ({ kind: i.kind as InvitationRow['kind'], name: typeof i.name === 'string' && i.name !== '' ? i.name : null, sentAt: i.createdAt, expiresAt: i.expiresAt ?? null }));
+    .filter(
+      (i) =>
+        (i.kind === INVITED.signer || i.kind === INVITED.employee || i.kind === INVITED.vendor) &&
+        !i.acceptedAt &&
+        !i.revokedAt &&
+        (i.expiresAt === undefined || Date.parse(i.expiresAt) > now)
+    )
+    .map((i) => ({
+      kind: i.kind as InvitationRow['kind'],
+      name: typeof i.name === 'string' && i.name !== '' ? i.name : null,
+      sentAt: i.createdAt,
+      expiresAt: i.expiresAt ?? null
+    }));
 }
-
-
-
-
-
-
-
-
 
 /** The name of the ask a retire's record carries the vault it retired under, read by the code and never shown. */
 const RETIRE_ASKS = 'vault';
@@ -514,11 +738,15 @@ export const retiredBy = (p: ProposalRow): string | null => {
  * records hold carried out. Only these, of the vaults the account no longer holds, are listed, so a vault the service
  * calls the company's that the company never retired is still never shown.
  */
-const retiredInTheRecords = (proposals: Read<readonly ProposalRow[]>): ReadonlySet<string> => new Set(proposals.of !== READ.read ? []
-  : proposals.value.flatMap((p) => { const vault = retiredBy(p); return vault === null ? [] : [vault]; }));
-
-
-
+const retiredInTheRecords = (proposals: Read<readonly ProposalRow[]>): ReadonlySet<string> =>
+  new Set(
+    proposals.of !== READ.read
+      ? []
+      : proposals.value.flatMap((p) => {
+          const vault = retiredBy(p);
+          return vault === null ? [] : [vault];
+        })
+  );
 
 /* The companies whose pages are open, newest last: the newest is the one opening the saved keys opens too. */
 const pagesOpen: string[] = [];
@@ -540,16 +768,22 @@ function vendorRow(h: VendorHere, notPayable: string | null = null, registry: As
   const v = h.vendor;
   const paid = paidOf(v.address);
   return {
-    id: v.id, name: v.name, address: v.address?.bech32 ?? null, standing: standingOfRecord(v.status, h.handedOver),
-    handedOver: h.handedOver === true, termsKind: v.terms.kind,
+    id: v.id,
+    name: v.name,
+    address: v.address?.bech32 ?? null,
+    standing: standingOfRecord(v.status, h.handedOver),
+    handedOver: h.handedOver === true,
+    termsKind: v.terms.kind,
     asset: v.terms.kind === 'monthly' ? v.terms.asset : null,
     monthly: v.terms.kind === 'monthly' ? amountOf(v.terms.amount, v.terms.asset, markOf(paid), registry) : null,
-    paid, startedAt: v.startDate, endDate: v.endDate ?? null, admittedAt: v.admittedAt,
+    paid,
+    startedAt: v.startDate,
+    endDate: v.endDate ?? null,
+    admittedAt: v.admittedAt,
     admitBy: admitByOf(v.invitedAddress),
-    notPayable,
+    notPayable
   };
 }
-
 
 /**
  * What reading a company proves of its records, named before the first read so one read of what its anchor holds
@@ -558,9 +792,11 @@ function vendorRow(h: VendorHere, notPayable: string | null = null, registry: As
 const READ_BY_EVERY_PAGE = {
   records: [{ store: PROVEN.company, kind: PROVEN.roster, id: ROSTER_ID }],
   kinds: [
-    { store: PROVEN.company, kind: PROVEN.grants }, { store: PROVEN.company, kind: PROVEN.person }, { store: PROVEN.company, kind: PROVEN.vendor },
-    { store: SERVICE.proposalKind, kind: SERVICE.proposalKind },
-  ],
+    { store: PROVEN.company, kind: PROVEN.grants },
+    { store: PROVEN.company, kind: PROVEN.person },
+    { store: PROVEN.company, kind: PROVEN.vendor },
+    { store: SERVICE.proposalKind, kind: SERVICE.proposalKind }
+  ]
 } as const;
 
 /**
@@ -577,7 +813,8 @@ export async function readCompany(personId: string, view: PageView): Promise<Com
 }
 
 /** Whether the read opened the company, rather than saying why it did not: only an opening carries this seat. */
-const openedHere = (o: OpenedForTheRead | Company): o is OpenedForTheRead => (o as Partial<OpenedForTheRead>).ownSeat !== undefined;
+const openedHere = (o: OpenedForTheRead | Company): o is OpenedForTheRead =>
+  (o as Partial<OpenedForTheRead>).ownSeat !== undefined;
 
 /** What reading a company opens first, with the person's keys: its record, its roster as this device believes it, its keys and this seat. */
 interface OpenedForTheRead {
@@ -599,7 +836,12 @@ async function openedForTheRead(personId: string, view: PageView): Promise<Opene
     const account = await openedQuietly(view, sealed);
     if (account === null) return { of: OPENED.noKeysHere };
     const viewingKey = await companyKeysQuietlyFor(view, sealed, { signingPublicKey: keys.signingPublicKey });
-    return { sealed, account, viewingKey, ownSeat: { signerId: keys.signerId, signingPublicKey: keys.signingPublicKey } };
+    return {
+      sealed,
+      account,
+      viewingKey,
+      ownSeat: { signerId: keys.signerId, signingPublicKey: keys.signingPublicKey }
+    };
   } catch (e) {
     return { of: OPENED.refused, why: refusalOf(e) };
   }
@@ -610,12 +852,22 @@ async function openedForTheRead(personId: string, view: PageView): Promise<Opene
  * seats the company's directory holds an entry for, as that read's own directory read found them. Null for a company
  * with no account on the chain.
  */
-function peopleReaderOf(view: PageView, { sealed, account, viewingKey }: OpenedForTheRead, found: { entries: ReadonlySet<string> | null }): PeopleReader | null {
+function peopleReaderOf(
+  view: PageView,
+  { sealed, account, viewingKey }: OpenedForTheRead,
+  found: { entries: ReadonlySet<string> | null }
+): PeopleReader | null {
   const companyId = view.company;
   const label = sealed.companyLabel ?? null;
   const address = sealed.contractAddress ?? null;
   if (label === null || address === null) return null;
-  const directory = directoryHereFor(view, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account);
+  const directory = directoryHereFor(
+    view,
+    label as CompanyLabel,
+    address as AccountAddress,
+    viewingKey,
+    async () => account
+  );
   return {
     company: { id: companyId, label: label as CompanyLabel, viewingKey },
     view,
@@ -623,7 +875,12 @@ function peopleReaderOf(view: PageView, { sealed, account, viewingKey }: OpenedF
       const here = await directory(asked);
       const seats = (here as { dir?: { seats?: unknown } } | null)?.dir?.seats;
       if (found.entries === null && Array.isArray(seats)) {
-        found.entries = new Set(seats.flatMap((x) => { const seat = (x as { seat?: unknown } | null)?.seat; return typeof seat === 'string' ? [seat.toLowerCase()] : []; }));
+        found.entries = new Set(
+          seats.flatMap((x) => {
+            const seat = (x as { seat?: unknown } | null)?.seat;
+            return typeof seat === 'string' ? [seat.toLowerCase()] : [];
+          })
+        );
       }
       return here;
     },
@@ -633,7 +890,7 @@ function peopleReaderOf(view: PageView, { sealed, account, viewingKey }: OpenedF
       /* A builder that cannot check a claim fails the read: nobody added by an unshielded address is read unchecked. */
       if (addressClaimRefusal === undefined) throw new Fault(FAULT.noClaimCheckInTheBuilder);
       return addressClaimRefusal(claim, f);
-    },
+    }
   };
 }
 
@@ -647,68 +904,110 @@ interface ProposalsReadWith {
 }
 
 /** The company's proposals as their rows, with each believed proposal's filing for the signers it invites. */
-async function proposalsReadOf(view: PageView, { sealed, account, viewingKey }: OpenedForTheRead, { opened, paidAt, reader, reads, ownKey }: ProposalsReadWith) {
+async function proposalsReadOf(
+  view: PageView,
+  { sealed, account, viewingKey }: OpenedForTheRead,
+  { opened, paidAt, reader, reads, ownKey }: ProposalsReadWith
+) {
   const read = await opened;
-  const served = await listed(view, LIST.proposals) as SealedProposal[];
+  const served = (await listed(view, LIST.proposals)) as SealedProposal[];
   const here = await proposalsHere(paidAt, sealed, served, reader?.directory ?? null, viewingKey);
   const runsRead = read.of === READ.read ? read.value : [];
   const oneOffLeaves = new Map<string, string>();
-  const believedRows = await Promise.all(here.believed.map(async (p): Promise<ProposalRow> => {
-    const row: ProposalRow = {
-      ...proposalRow(p.opened, p.standing, account.signers, runsRead, assets, account.refused ?? []),
-      raisedByYou: p.standing.filer !== null && p.standing.filer === ownKey,
-    };
-    const approvedOneOff = p.standing.status === PROPOSAL_STANDING.approved && row.kind === 'transfer';
-    if (p.standing.status !== PROPOSAL_STANDING.open && !approvedOneOff) return row;
-    const got = await proposalAsksHere(p, viewingKey, runsRead, reads).catch((): Asked => NOT_READ);
-    if (got === null) return row;
-    if (got.unread !== null) return { ...row, asksUnread: got.unread };
-    if (approvedOneOff && got.leaf !== undefined) oneOffLeaves.set(row.id, got.leaf);
-    /* The chain has never held it, so there is nothing on the chain to approve yet. */
-    return p.standing.raised ? { ...row, asks: got.asks } : { ...row, asksUnread: ASKS_UNREAD.notRaised };
-  }));
-  return { rows: [...await oneOffsPaidFromTheChain(paidAt, sealed, believedRows, oneOffLeaves), ...here.unreadable], served: here.believed };
+  const believedRows = await Promise.all(
+    here.believed.map(async (p): Promise<ProposalRow> => {
+      const row: ProposalRow = {
+        ...proposalRow(p.opened, p.standing, account.signers, runsRead, assets, account.refused ?? []),
+        raisedByYou: p.standing.filer !== null && p.standing.filer === ownKey
+      };
+      const approvedOneOff = p.standing.status === PROPOSAL_STANDING.approved && row.kind === 'transfer';
+      if (p.standing.status !== PROPOSAL_STANDING.open && !approvedOneOff) return row;
+      const got = await proposalAsksHere(p, viewingKey, runsRead, reads).catch((): Asked => NOT_READ);
+      if (got === null) return row;
+      if (got.unread !== null) return { ...row, asksUnread: got.unread };
+      if (approvedOneOff && got.leaf !== undefined) oneOffLeaves.set(row.id, got.leaf);
+      /* The chain has never held it, so there is nothing on the chain to approve yet. */
+      return p.standing.raised ? { ...row, asks: got.asks } : { ...row, asksUnread: ASKS_UNREAD.notRaised };
+    })
+  );
+  return {
+    rows: [...(await oneOffsPaidFromTheChain(paidAt, sealed, believedRows, oneOffLeaves)), ...here.unreadable],
+    served: here.believed
+  };
 }
 
 /** The people and vendors as the screens show them, from what their reads found. */
 function peopleAndVendorsShown(
-  peopleHere: Read<Awaited<ReturnType<typeof readPeopleHere>>>, vendorsHere: Read<Awaited<ReturnType<typeof readVendorsHere>>>,
+  peopleHere: Read<Awaited<ReturnType<typeof readPeopleHere>>>,
+  vendorsHere: Read<Awaited<ReturnType<typeof readVendorsHere>>>
 ) {
-  const peopleLeftOut = peopleHere.of === READ.read && (peopleHere.value.notBelieved.length > 0 || (peopleHere.value.refused ?? []).length > 0
-    || peopleHere.value.notPayable.some((n) => n.here.person.status === SERVICE.active));
+  const peopleLeftOut =
+    peopleHere.of === READ.read &&
+    (peopleHere.value.notBelieved.length > 0 ||
+      (peopleHere.value.refused ?? []).length > 0 ||
+      peopleHere.value.notPayable.some((n) => n.here.person.status === SERVICE.active));
   /* An active person the check will not pay is a row too, marked with why: a pending or former person it lists without that mark is shown as they are. */
-  const whyNotPaid = new Map(peopleHere.of === READ.read ? peopleHere.value.notPayable.filter((n) => n.here.person.status === SERVICE.active).map((n) => [n.here.person.id, n.why] as const) : []);
-  const shownPeople: readonly PersonRow[] = peopleHere.of !== READ.read ? [] : [
-    ...peopleHere.value.people.map((here) => ({ ...here.person, handedOver: here.handedOver })),
-    ...peopleHere.value.notPayable.map((n) => ({ ...n.here.person, handedOver: n.here.handedOver })),
-  ].sort((a, b) => a.name.localeCompare(b.name)).map((p) => ({ ...personRow(p), notPayable: whyNotPaid.get(p.id) ?? null }));
-  const people: Read<readonly PersonRow[]> = peopleHere.of !== READ.read || peopleLeftOut ? { of: READ.unreadable } : { of: READ.read, value: shownPeople };
-  const peopleBelief: Read<PeopleBelief> = peopleHere.of !== READ.read ? peopleHere : {
-    of: READ.read,
-    value: {
-      rows: shownPeople,
-      notBelieved: peopleHere.value.notBelieved.filter((id) => !(peopleHere.value.refused ?? []).some((r) => r.id === id)),
-      notPayable: peopleHere.value.notPayable.filter((n) => n.here.person.status === SERVICE.active)
-        .map((n) => ({ person: personRow({ ...n.here.person, handedOver: n.here.handedOver }), why: n.why })),
-      refused: peopleHere.value.refused ?? [],
-    },
-  };
+  const whyNotPaid = new Map(
+    peopleHere.of === READ.read
+      ? peopleHere.value.notPayable
+          .filter((n) => n.here.person.status === SERVICE.active)
+          .map((n) => [n.here.person.id, n.why] as const)
+      : []
+  );
+  const shownPeople: readonly PersonRow[] =
+    peopleHere.of !== READ.read
+      ? []
+      : [
+          ...peopleHere.value.people.map((here) => ({ ...here.person, handedOver: here.handedOver })),
+          ...peopleHere.value.notPayable.map((n) => ({ ...n.here.person, handedOver: n.here.handedOver }))
+        ]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((p) => ({ ...personRow(p), notPayable: whyNotPaid.get(p.id) ?? null }));
+  const people: Read<readonly PersonRow[]> =
+    peopleHere.of !== READ.read || peopleLeftOut ? { of: READ.unreadable } : { of: READ.read, value: shownPeople };
+  const peopleBelief: Read<PeopleBelief> =
+    peopleHere.of !== READ.read
+      ? peopleHere
+      : {
+          of: READ.read,
+          value: {
+            rows: shownPeople,
+            notBelieved: peopleHere.value.notBelieved.filter(
+              (id) => !(peopleHere.value.refused ?? []).some((r) => r.id === id)
+            ),
+            notPayable: peopleHere.value.notPayable
+              .filter((n) => n.here.person.status === SERVICE.active)
+              .map((n) => ({ person: personRow({ ...n.here.person, handedOver: n.here.handedOver }), why: n.why })),
+            refused: peopleHere.value.refused ?? []
+          }
+        };
   /* Only an active vendor the check will not pay is marked and named, as an active person is: a vendor not yet admitted, or who has left, is listed as they are, with the admit control (the wallet checks their address when they are admitted). */
-  const activeNotPayable = vendorsHere.of === READ.read ? vendorsHere.value.notPayable.filter((n) => n.here.vendor.status === SERVICE.active) : [];
-  const vendorsBelief: Read<VendorsRead> = vendorsHere.of !== READ.read ? vendorsHere : {
-    of: READ.read,
-    value: {
-      vendors: vendorsHere.value.vendors.map((h) => vendorRow(h)),
-      notBelieved: vendorsHere.value.notBelieved,
-      notPayable: activeNotPayable.map((n) => ({ vendor: vendorRow(n.here, n.why), why: n.why })),
-      rows: [
-        ...vendorsHere.value.vendors.map((h) => vendorRow(h)),
-        ...vendorsHere.value.notPayable.map((n) => vendorRow(n.here, n.here.vendor.status === SERVICE.active ? n.why : null)),
-      ].sort((a, b) => a.name.localeCompare(b.name)),
-    },
-  };
-  const vendors: Read<VendorsRead> = vendorsBelief.of === READ.read && (vendorsBelief.value.notBelieved.length > 0 || vendorsBelief.value.notPayable.length > 0)
-    ? { of: READ.unreadable } : vendorsBelief;
+  const activeNotPayable =
+    vendorsHere.of === READ.read
+      ? vendorsHere.value.notPayable.filter((n) => n.here.vendor.status === SERVICE.active)
+      : [];
+  const vendorsBelief: Read<VendorsRead> =
+    vendorsHere.of !== READ.read
+      ? vendorsHere
+      : {
+          of: READ.read,
+          value: {
+            vendors: vendorsHere.value.vendors.map((h) => vendorRow(h)),
+            notBelieved: vendorsHere.value.notBelieved,
+            notPayable: activeNotPayable.map((n) => ({ vendor: vendorRow(n.here, n.why), why: n.why })),
+            rows: [
+              ...vendorsHere.value.vendors.map((h) => vendorRow(h)),
+              ...vendorsHere.value.notPayable.map((n) =>
+                vendorRow(n.here, n.here.vendor.status === SERVICE.active ? n.why : null)
+              )
+            ].sort((a, b) => a.name.localeCompare(b.name))
+          }
+        };
+  const vendors: Read<VendorsRead> =
+    vendorsBelief.of === READ.read &&
+    (vendorsBelief.value.notBelieved.length > 0 || vendorsBelief.value.notPayable.length > 0)
+      ? { of: READ.unreadable }
+      : vendorsBelief;
   return { people, peopleBelief, vendors, vendorsBelief };
 }
 
@@ -718,49 +1017,98 @@ async function companyReadFrom(view: PageView, o: OpenedForTheRead): Promise<Com
   const { sealed, account, viewingKey, ownSeat } = o;
   const signers: SignerRow[] = account.signers.map((s) => ({ id: s.id, name: s.name }));
   const paidAt = chainReadIn(view);
-  const opened = alone(async () => (await listed(view, LIST.runs) as SealedRun[]).map((r) => openRun(r, viewingKey)));
+  const opened = alone(async () => ((await listed(view, LIST.runs)) as SealedRun[]).map((r) => openRun(r, viewingKey)));
   /* Each run is made into its row inside the read, so a run that cannot be made fails the runs alone. */
-  const runs = opened.then((read) => (read.of === READ.read
-    ? alone(async () => runsPaidFromTheChain(paidAt, sealed, read.value.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period))))
-    : read));
+  const runs = opened.then((read) =>
+    read.of === READ.read
+      ? alone(async () =>
+          runsPaidFromTheChain(
+            paidAt,
+            sealed,
+            read.value.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period))
+          )
+        )
+      : read
+  );
   /* The seats the company's directory holds an entry for, as the people read's own directory read found them: no read more. */
   const found: { entries: ReadonlySet<string> | null } = { entries: null };
   const reader = peopleReaderOf(view, o, found);
-  const peopleRead: Promise<Read<Awaited<ReturnType<typeof readPeopleHere>>>> = reader === null
-    ? Promise.resolve({ of: READ.unreadable }) : alone(async () => readPeopleHere(reader));
+  const peopleRead: Promise<Read<Awaited<ReturnType<typeof readPeopleHere>>>> =
+    reader === null ? Promise.resolve({ of: READ.unreadable }) : alone(async () => readPeopleHere(reader));
   /* Each invitation is opened once, whether for what its row asks the wallet to check or for the signers it invites. */
   const byAddressOpened = new Map<string, AddSignerByAddress | null>();
   const byAddress = (rec: SealedProposal): AddSignerByAddress | null => {
     if (!byAddressOpened.has(rec.id)) byAddressOpened.set(rec.id, addSignerByAddressIn(rec, companyId, viewingKey));
     return byAddressOpened.get(rec.id)!;
   };
-  const reads: AsksReads = { byAddress, oneOff: (id) => oneOffHereFor(view, sealed, account, viewingKey, reader?.directory ?? null, id) };
+  const reads: AsksReads = {
+    byAddress,
+    oneOff: (id) => oneOffHereFor(view, sealed, account, viewingKey, reader?.directory ?? null, id)
+  };
   const ownKey = ownSeat.signingPublicKey.toLowerCase();
   const [rows, proposalsRead, peopleHere, chain, invitations, vendorsHere] = await Promise.all([
     runs,
     alone(() => proposalsReadOf(view, o, { opened, paidAt, reader, reads, ownKey })),
     peopleRead,
     chainOfTheCompany(view, sealed),
-    alone(async () => invitationRows(await listed(view, LIST.invites) as InviteRow[], Date.now())),
-    reader === null ? Promise.resolve({ of: READ.unreadable } as const) : alone(async () => readVendorsHere(reader, undefined, { handedOver: true })),
+    alone(async () => invitationRows((await listed(view, LIST.invites)) as InviteRow[], Date.now())),
+    reader === null
+      ? Promise.resolve({ of: READ.unreadable } as const)
+      : alone(async () => readVendorsHere(reader, undefined, { handedOver: true }))
   ]);
-  const proposals: Read<readonly ProposalRow[]> = proposalsRead.of === READ.read ? { of: READ.read, value: proposalsRead.value.rows } : proposalsRead;
+  const proposals: Read<readonly ProposalRow[]> =
+    proposalsRead.of === READ.read ? { of: READ.read, value: proposalsRead.value.rows } : proposalsRead;
   const { people, peopleBelief, vendors, vendorsBelief } = peopleAndVendorsShown(peopleHere, vendorsHere);
-  const taken = proposalsRead.of === READ.read ? await seatsTakenOnChain(view, sealed, proposalsRead.value.served) : { of: READ.read, value: {} } as const;
-  const standings: Read<readonly SignerStanding[]> = chain.holders.of !== READ.read ? chain.holders : taken.of !== READ.read ? taken
-    : { of: READ.read, value: signerStandings(account.signers, chain.holders.value.seats, {
-      own: ownSeat, entries: found.entries, waited: account.waited ?? [], shown: Object.values(taken.value).flatMap((x) => (x === null ? [] : [x])),
-    }) };
-  const forSigners: Read<SignersApprovals> = chain.holders.of === READ.read ? approvalsForSigners(chain.holders.value) : chain.holders;
-  const signersInvited: Read<readonly SignerInvited[]> = proposalsRead.of !== READ.read ? proposalsRead : taken.of !== READ.read ? taken
-    : await alone(async () => signersInvitedIn(proposalsRead.value.served, byAddress, {
-      taken: taken.value,
-      waiting: account.signers.filter((s) => s.status === 'pending'), seated: account.signers.filter((s) => s.status === 'active'),
-    }));
+  const taken =
+    proposalsRead.of === READ.read
+      ? await seatsTakenOnChain(view, sealed, proposalsRead.value.served)
+      : ({ of: READ.read, value: {} } as const);
+  const standings: Read<readonly SignerStanding[]> =
+    chain.holders.of !== READ.read
+      ? chain.holders
+      : taken.of !== READ.read
+        ? taken
+        : {
+            of: READ.read,
+            value: signerStandings(account.signers, chain.holders.value.seats, {
+              own: ownSeat,
+              entries: found.entries,
+              waited: account.waited ?? [],
+              shown: Object.values(taken.value).flatMap((x) => (x === null ? [] : [x]))
+            })
+          };
+  const forSigners: Read<SignersApprovals> =
+    chain.holders.of === READ.read ? approvalsForSigners(chain.holders.value) : chain.holders;
+  const signersInvited: Read<readonly SignerInvited[]> =
+    proposalsRead.of !== READ.read
+      ? proposalsRead
+      : taken.of !== READ.read
+        ? taken
+        : await alone(async () =>
+            signersInvitedIn(proposalsRead.value.served, byAddress, {
+              taken: taken.value,
+              waiting: account.signers.filter((s) => s.status === 'pending'),
+              seated: account.signers.filter((s) => s.status === 'active')
+            })
+          );
   return {
-    of: OPENED.open, id: companyId, name: account.name, notOpened: viewingKey.notOpened ?? [], signers, approvalsNeeded: chain.approvals,
-    proposals, runs: rows, people, vaults: chain.retiredToo?.(retiredInTheRecords(proposals)) ?? chain.vaults, invitations,
-    peopleBelief, vendors, vendorsBelief, signerStandings: standings, approvalsForSigners: forSigners, signersInvited,
+    of: OPENED.open,
+    id: companyId,
+    name: account.name,
+    notOpened: viewingKey.notOpened ?? [],
+    signers,
+    approvalsNeeded: chain.approvals,
+    proposals,
+    runs: rows,
+    people,
+    vaults: chain.retiredToo?.(retiredInTheRecords(proposals)) ?? chain.vaults,
+    invitations,
+    peopleBelief,
+    vendors,
+    vendorsBelief,
+    signerStandings: standings,
+    approvalsForSigners: forSigners,
+    signersInvited
   };
 }
 
@@ -773,7 +1121,8 @@ async function companyReadFrom(view: PageView, o: OpenedForTheRead): Promise<Com
  * Nothing is signed or sent but that approval.
  */
 export async function openWithYourAccount(
-  personId: string, companyId: string | null = pagesOpen.at(-1) ?? null,
+  personId: string,
+  companyId: string | null = pagesOpen.at(-1) ?? null
 ): Promise<{ of: typeof ACTED.done } | { of: typeof ACTED.refused; why: ActRefusal }> {
   if (ACCOUNT_ORIGIN === '') return { of: ACTED.refused, why: ACT_REFUSAL.notSetUp };
   try {
@@ -784,6 +1133,3 @@ export async function openWithYourAccount(
     return { of: ACTED.refused, why: refusalOf(e) };
   }
 }
-
-
-

@@ -6,14 +6,39 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { identityFromSecret } from '../keys/derivation.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
-import { MOST_ENTRIES_ASKED, MOST_READER_NAME, MOST_ROLES_ASKED, MOST_SECRET_READERS, parseAsk, type HoldersRequest, type RecordsKeyRequest } from './request.js';
+import {
+  MOST_ENTRIES_ASKED,
+  MOST_READER_NAME,
+  MOST_ROLES_ASKED,
+  MOST_SECRET_READERS,
+  parseAsk,
+  type HoldersRequest,
+  type RecordsKeyRequest
+} from './request.js';
 import { unlockKeyFor } from './unlock.js';
 import type { UnlockRequest } from './request.js';
 import {
-  DIRECTORY_ENTRY_STATEMENT_TAG, HOLDERS_ANSWER_SCHEMA, RECORDS_KEY_ANSWER_SCHEMA, RECORDS_KEY_STATEMENT_TAG, RecordsKeyRefused,
-  directoryEntrySignedBy, directoryEntryStatementBytes, holdersAnswerFor, readHoldersAnswer, readRecordsKeyAnswer, recordsKeyAnswerFor,
-  recordsKeySignedBy, recordsKeyStatementBytes, recordsPublicKeyOf, seatBlinding, signDirectoryEntry, signRecordsKey, walletKeyProvedBy,
-  SEAT_BLINDING_DOMAIN, type LeafOf, type SeatOpening,
+  DIRECTORY_ENTRY_STATEMENT_TAG,
+  HOLDERS_ANSWER_SCHEMA,
+  RECORDS_KEY_ANSWER_SCHEMA,
+  RECORDS_KEY_STATEMENT_TAG,
+  RecordsKeyRefused,
+  directoryEntrySignedBy,
+  directoryEntryStatementBytes,
+  holdersAnswerFor,
+  readHoldersAnswer,
+  readRecordsKeyAnswer,
+  recordsKeyAnswerFor,
+  recordsKeySignedBy,
+  recordsKeyStatementBytes,
+  recordsPublicKeyOf,
+  seatBlinding,
+  signDirectoryEntry,
+  signRecordsKey,
+  walletKeyProvedBy,
+  SEAT_BLINDING_DOMAIN,
+  type LeafOf,
+  type SeatOpening
 } from './records-key.js';
 
 /*
@@ -37,14 +62,21 @@ const flip = (h: string, at = 0): string => h.slice(0, at) + (h[at] === '0' ? '1
  */
 const leafOf: LeafOf = (o) => hex(sha256(new TextEncoder().encode(`${o.publicKey}:${o.blinding}:${o.scope}`)));
 /** A seat made for `walletKey` under `salt`, as a seating device makes one, with the leaf `leafOf` makes of it. */
-const seatMadeFor = (walletKey: { tag: string; value: string }, salt: string): { seat: string; opening: SeatOpening } => {
+const seatMadeFor = (
+  walletKey: { tag: string; value: string },
+  salt: string
+): { seat: string; opening: SeatOpening } => {
   const opening: SeatOpening = {
-    publicKey: '2c'.repeat(32), scope: '3d'.repeat(32), blinding: seatBlinding(walletKey, salt), walletKey: { tag: 'schnorr', value: walletKey.value }, salt,
+    publicKey: '2c'.repeat(32),
+    scope: '3d'.repeat(32),
+    blinding: seatBlinding(walletKey, salt),
+    walletKey: { tag: 'schnorr', value: walletKey.value },
+    salt
   };
   return { seat: leafOf(opening)!, opening };
 };
 
-describe('A SEAT\'S OPENING PROVES THE WALLET KEY ITS LEAF WAS MADE FOR, AND NO OTHER', () => {
+describe("A SEAT'S OPENING PROVES THE WALLET KEY ITS LEAF WAS MADE FOR, AND NO OTHER", () => {
   const mine = committeeKeyFor(me, CO) as { tag: string; value: string };
   const theirs = committeeKeyFor(somebodyElse, CO) as { tag: string; value: string };
   const { seat, opening } = seatMadeFor(mine, '11'.repeat(32));
@@ -52,8 +84,14 @@ describe('A SEAT\'S OPENING PROVES THE WALLET KEY ITS LEAF WAS MADE FOR, AND NO 
   it('the blinding is the hash of the key and the salt, under its own domain', () => {
     /* RED WHEN: the blinding is made any other way: without the domain, the key or the salt. */
     const enc = new TextEncoder();
-    const bytes = new Uint8Array([...enc.encode(SEAT_BLINDING_DOMAIN), 0, ...enc.encode('schnorr'), 0,
-      ...Buffer.from(mine.value, 'hex'), ...Buffer.from('11'.repeat(32), 'hex')]);
+    const bytes = new Uint8Array([
+      ...enc.encode(SEAT_BLINDING_DOMAIN),
+      0,
+      ...enc.encode('schnorr'),
+      0,
+      ...Buffer.from(mine.value, 'hex'),
+      ...Buffer.from('11'.repeat(32), 'hex')
+    ]);
     expect(opening.blinding).toBe(hex(sha256(bytes)));
     /* RED WHEN: two salts, or two keys, give one blinding. */
     expect(seatBlinding(mine, '12'.repeat(32))).not.toBe(opening.blinding);
@@ -75,7 +113,11 @@ describe('A SEAT\'S OPENING PROVES THE WALLET KEY ITS LEAF WAS MADE FOR, AND NO 
     /* RED WHEN: an opening proves anything with no leaf worked out, or with a leaf that could not be. */
     expect(walletKeyProvedBy(opening, seat, null)).toBeNull();
     expect(walletKeyProvedBy(opening, seat, () => null)).toBeNull();
-    expect(walletKeyProvedBy(opening, seat, () => { throw new Error('no'); })).toBeNull();
+    expect(
+      walletKeyProvedBy(opening, seat, () => {
+        throw new Error('no');
+      })
+    ).toBeNull();
     /* RED WHEN: something that is not an opening proves anything. */
     expect(walletKeyProvedBy({ ...opening, salt: 'zz' }, seat, leafOf)).toBeNull();
     expect(walletKeyProvedBy(null, seat, leafOf)).toBeNull();
@@ -86,9 +128,15 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
   const statement = signRecordsKey(me, CO, ACCOUNT, companyKey, SEAT);
   const mine = committeeKeyFor(me, CO);
 
-  it('signs the records key the company key opens, worked out in the records\' own domain', () => {
+  it("signs the records key the company key opens, worked out in the records' own domain", () => {
     /* RED WHEN: the key signed for is derived any other way than the company's records are sealed to it. */
-    const secret = hkdf(sha256, companyKey, new TextEncoder().encode('confidential-accounts/company-records-wrapping/v1'), new Uint8Array(0), 32);
+    const secret = hkdf(
+      sha256,
+      companyKey,
+      new TextEncoder().encode('confidential-accounts/company-records-wrapping/v1'),
+      new Uint8Array(0),
+      32
+    );
     expect(statement.recordsKey).toBe(hex(x25519.getPublicKey(secret)));
     expect(recordsPublicKeyOf(companyKey)).toBe(statement.recordsKey);
     expect(statement.seat).toBe(SEAT);
@@ -97,7 +145,7 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
     expect(() => recordsPublicKeyOf(new Uint8Array(31).fill(1))).toThrow(/Nothing was derived/);
   });
 
-  it('checks against the signer\'s committee key for that company, and against nothing else', () => {
+  it("checks against the signer's committee key for that company, and against nothing else", () => {
     /* RED WHEN: the check passes nothing, or the signing key is not the committee key. */
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, statement)).toBe(true);
     /* RED WHEN: another person's committee key, or this person's for another company, passes. */
@@ -111,7 +159,9 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
     /* RED WHEN: the seat is not part of what is signed - a statement from a seat somebody left passes for another. */
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, seat: ANOTHER_SEAT })).toBe(false);
     /* RED WHEN: a signature with one bit changed passes. */
-    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: flip(statement.signature, 70) })).toBe(false);
+    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: flip(statement.signature, 70) })).toBe(
+      false
+    );
   });
 
   it('never throws on what is not a statement, a committee key or a label', () => {
@@ -120,12 +170,14 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
     expect(recordsKeySignedBy('co_nope' as CompanyLabel, ACCOUNT, mine, statement)).toBe(false);
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: 'zz' })).toBe(false);
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, null as never)).toBe(false);
-    expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, recordsKey: statement.recordsKey.toUpperCase() })).toBe(false);
+    expect(
+      recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, recordsKey: statement.recordsKey.toUpperCase() })
+    ).toBe(false);
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, seat: 'ab' })).toBe(false);
     expect(() => signRecordsKey(me, CO, ACCOUNT, companyKey, 'not a seat')).toThrow(/no records key was signed/);
   });
 
-  it('IS NEVER A CHANGE TO A CONTRACT\'S RULES, AND NO SUCH CHANGE IS EVER A STATEMENT', () => {
+  it("IS NEVER A CHANGE TO A CONTRACT'S RULES, AND NO SUCH CHANGE IS EVER A STATEMENT", () => {
     const bytes = recordsKeyStatementBytes(CO, ACCOUNT, statement.recordsKey, SEAT)!;
     const tag = new TextEncoder().encode(RECORDS_KEY_STATEMENT_TAG);
     /* RED WHEN: what is signed does not begin with the statement's own tag. */
@@ -134,16 +186,23 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
     expect(bytes).toHaveLength(tag.length + 1 + CO.length + 1 + 32 + 32 + 32);
     expect(hex(bytes.subarray(tag.length + 1 + CO.length + 1, tag.length + 1 + CO.length + 1 + 32))).toBe(ACCOUNT);
     /* The ledger's own signatures are made a different way: it does not take the statement's as one of its own even over these bytes. */
-    expect(L.verifySignature(mine as never, bytes, { tag: 'schnorr', value: statement.signature } as never)).toBe(false);
+    expect(L.verifySignature(mine as never, bytes, { tag: 'schnorr', value: statement.signature } as never)).toBe(
+      false
+    );
     /* A maintenance update this key would sign begins with the ledger's own tag, which is not the statement's. */
-    const update = new L.MaintenanceUpdate(L.sampleContractAddress(), [
-      new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([mine as never], 1, 1n)) as never,
-    ], 0n);
+    const update = new L.MaintenanceUpdate(
+      L.sampleContractAddress(),
+      [new L.ReplaceAuthority(new L.ContractMaintenanceAuthority([mine as never], 1, 1n)) as never],
+      0n
+    );
     const data = update.dataToSign;
     expect(hex(data.subarray(0, tag.length))).not.toBe(hex(tag));
     /* RED WHEN: the statement's signature would pass as the maintenance update's, or the reverse. */
     expect(L.verifySignature(mine as never, data, { tag: 'schnorr', value: statement.signature } as never)).toBe(false);
-    const maintenance = L.signData(committeeSigningKeyFor(me, CO) as never, data) as unknown as { tag: string; value: string };
+    const maintenance = L.signData(committeeSigningKeyFor(me, CO) as never, data) as unknown as {
+      tag: string;
+      value: string;
+    };
     expect(L.verifySignature(mine as never, data, maintenance as never)).toBe(true);
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, { ...statement, signature: maintenance.value })).toBe(false);
   });
@@ -152,18 +211,42 @@ describe('A RECORDS KEY AND A SEAT, SIGNED BY THE WALLET WITH THE COMMITTEE KEY'
 describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND READ BACK BY THE PAGE THAT ASKED', () => {
   const PAGE = 'https://payroll.example';
   const NOW = 1_755_000_000_000;
-  const ask = (over: Record<string, unknown> = {}) => parseAsk({
-    schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key',
-    requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'To check your records key.',
-    nonce: 'r1', expiresAt: NOW + 60_000, company: CO, account: ACCOUNT, seat: SEAT, ...over,
-  }, PAGE, NOW) as RecordsKeyRequest;
-  const seats = { committee: [committeeKeyFor(me, CO) as { tag: string; value: string }], threshold: 1, seats: [ANOTHER_SEAT, SEAT] };
+  const ask = (over: Record<string, unknown> = {}) =>
+    parseAsk(
+      {
+        schema: 'midnight-identity/disclosure-request/v1',
+        kind: 'records-key',
+        requester: { name: 'Payroll', rdns: 'example.payroll' },
+        purpose: 'To check your records key.',
+        nonce: 'r1',
+        expiresAt: NOW + 60_000,
+        company: CO,
+        account: ACCOUNT,
+        seat: SEAT,
+        ...over
+      },
+      PAGE,
+      NOW
+    ) as RecordsKeyRequest;
+  const seats = {
+    committee: [committeeKeyFor(me, CO) as { tag: string; value: string }],
+    threshold: 1,
+    seats: [ANOTHER_SEAT, SEAT]
+  };
   const expecting = { atOrigin: PAGE, expectingNonce: 'r1', company: CO, account: ACCOUNT, seat: SEAT };
 
   it('SIGNS ONLY FOR THE ACCOUNT THIS WALLET PINNED FOR THE COMPANY WHEN IT CREATED IT, WHERE IT PINNED ONE', () => {
     /* RED WHEN: a wallet that pinned the company's account signs a records key or an entry for another account carrying the label. */
-    expect(() => recordsKeyAnswerFor(me, ask({ signingKey: '3c'.repeat(32) }), seats, NOW, undefined, 'a8'.repeat(32) as AccountAddress))
-      .toThrow(/other than the one this wallet kept as its account/);
+    expect(() =>
+      recordsKeyAnswerFor(
+        me,
+        ask({ signingKey: '3c'.repeat(32) }),
+        seats,
+        NOW,
+        undefined,
+        'a8'.repeat(32) as AccountAddress
+      )
+    ).toThrow(/other than the one this wallet kept as its account/);
     const answer = recordsKeyAnswerFor(me, ask({ signingKey: '3c'.repeat(32) }), seats, NOW, undefined, ACCOUNT);
     expect(recordsKeySignedBy(CO, ACCOUNT, answer.committeeKey, answer.statement)).toBe(true);
     expect(answer.entry?.account).toBe(ACCOUNT);
@@ -173,29 +256,59 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     /* The inviting signer: their wallet key, the entry their wallet signed and their own seat's opening, as the invitation carries them. */
     const inviterKey = committeeKeyFor(somebodyElse, CO) as { tag: 'schnorr'; value: string };
     const { seat: INVITER_SEAT, opening } = seatMadeFor(inviterKey, '7a'.repeat(32));
-    const entry = signDirectoryEntry(somebodyElse, CO, ACCOUNT, new Uint8Array(32).fill(6), '2b'.repeat(32), INVITER_SEAT);
+    const entry = signDirectoryEntry(
+      somebodyElse,
+      CO,
+      ACCOUNT,
+      new Uint8Array(32).fill(6),
+      '2b'.repeat(32),
+      INVITER_SEAT
+    );
     const invitedBy = { committeeKey: inviterKey, statement: entry, opening };
     const onChain = { committee: seats.committee, threshold: 1, seats: [...seats.seats, INVITER_SEAT] };
     /* RED WHEN: a wallet with no account kept signs for an account the page named, with or without an invitation. */
-    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, null)).toThrow(/has not kept an account for this company/);
-    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW, undefined, null)).toThrow(/has not kept an account for this company/);
+    expect(() => recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, null)).toThrow(
+      /has not kept an account for this company/
+    );
+    expect(() => recordsKeyAnswerFor(me, ask(), onChain, NOW, undefined, null)).toThrow(
+      /has not kept an account for this company/
+    );
     const signed = recordsKeyAnswerFor(me, ask({ invitedBy }), onChain, NOW, undefined, ACCOUNT);
     expect(recordsKeySignedBy(CO, ACCOUNT, signed.committeeKey, signed.statement)).toBe(true);
     /* RED WHEN: an invitation is read anywhere but on a records-key ask, or a malformed one is taken. */
-    expect(() => ask({ invitedBy: { ...invitedBy, statement: { ...entry, signature: 'zz' } } })).toThrow(/is not a signer's committee key/);
+    expect(() => ask({ invitedBy: { ...invitedBy, statement: { ...entry, signature: 'zz' } } })).toThrow(
+      /is not a signer's committee key/
+    );
     /* RED WHEN: an invitation without the inviter's own opening, or with one of another shape, is read. */
     const { opening: _none, ...noOpening } = invitedBy;
     expect(() => ask({ invitedBy: noOpening })).toThrow(/their own seat's opening/);
-    expect(() => ask({ invitedBy: { ...invitedBy, opening: { ...opening, walletKey: { tag: 'ecdsa', value: inviterKey.value } } } })).toThrow(/their own seat's opening/);
+    expect(() =>
+      ask({
+        invitedBy: { ...invitedBy, opening: { ...opening, walletKey: { tag: 'ecdsa', value: inviterKey.value } } }
+      })
+    ).toThrow(/their own seat's opening/);
     /* RED WHEN: the opening is read and not handed on to the check whole. */
     expect(ask({ invitedBy }).invitedBy?.opening).toEqual(opening);
-    expect(() => parseAsk({
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'holders', requester: { name: 'Payroll', rdns: 'example.payroll' },
-      purpose: 'x', nonce: 'h1', expiresAt: NOW + 60_000, company: CO, account: ACCOUNT, invitedBy,
-    }, PAGE, NOW)).toThrow(/an invitation/);
+    expect(() =>
+      parseAsk(
+        {
+          schema: 'midnight-identity/disclosure-request/v1',
+          kind: 'holders',
+          requester: { name: 'Payroll', rdns: 'example.payroll' },
+          purpose: 'x',
+          nonce: 'h1',
+          expiresAt: NOW + 60_000,
+          company: CO,
+          account: ACCOUNT,
+          invitedBy
+        },
+        PAGE,
+        NOW
+      )
+    ).toThrow(/an invitation/);
   });
 
-  it('signs the records key of this company\'s key for the seat asked about, and hands back the seats it read', () => {
+  it("signs the records key of this company's key for the seat asked about, and hands back the seats it read", () => {
     const answer = recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT);
     expect(answer.schema).toBe(RECORDS_KEY_ANSWER_SCHEMA);
     const companyKeyHere = unlockKeyFor(me, { ...ask(), kind: 'unlock' } as unknown as UnlockRequest);
@@ -215,8 +328,12 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
 
   it('A SEAT THE ACCOUNT DOES NOT HOLD NOW IS REFUSED, AND NOTHING IS SIGNED', () => {
     /* RED WHEN: the wallet signs a seat somebody has left. */
-    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [ANOTHER_SEAT] }, NOW, undefined, ACCOUNT)).toThrow(RecordsKeyRefused);
-    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [] }, NOW, undefined, ACCOUNT)).toThrow(/not one this company's account holds now/);
+    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [ANOTHER_SEAT] }, NOW, undefined, ACCOUNT)).toThrow(
+      RecordsKeyRefused
+    );
+    expect(() => recordsKeyAnswerFor(me, ask(), { ...seats, seats: [] }, NOW, undefined, ACCOUNT)).toThrow(
+      /not one this company's account holds now/
+    );
   });
 
   it('the ask is read whole: a seat that is not one, or a seat on any other kind, is refused', () => {
@@ -224,10 +341,21 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     expect(() => ask({ seat: undefined })).toThrow(/not one/);
     expect(() => ask({ wants: [] })).toThrow(/two different powers/);
     /* RED WHEN: a seat rides along on another kind of ask and is ignored. */
-    expect(() => parseAsk({
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
-      requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Sign in.', nonce: 'n', expiresAt: NOW + 60_000, seat: SEAT,
-    }, PAGE, NOW)).toThrow(/names a seat/);
+    expect(() =>
+      parseAsk(
+        {
+          schema: 'midnight-identity/disclosure-request/v1',
+          kind: 'sign-in',
+          requester: { name: 'Payroll', rdns: 'example.payroll' },
+          purpose: 'Sign in.',
+          nonce: 'n',
+          expiresAt: NOW + 60_000,
+          seat: SEAT
+        },
+        PAGE,
+        NOW
+      )
+    ).toThrow(/names a seat/);
   });
 
   it('THE PAGE REFUSES AN ANSWER TO ANY OTHER QUESTION, OR ONE NOT SIGNED FOR ITS SEAT', () => {
@@ -258,15 +386,30 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
     it('the ask names one vault by its address, never the account itself, and nothing else of a payment', () => {
       expect(ask({ vault: VAULT.toUpperCase() }).vault).toBe(VAULT);
       /* RED WHEN: a vault that is not an address, or the company's account named as its own vault, is taken. */
-      expect(() => ask({ vault: 'co_x' })).toThrow(/names one of its vaults by something that is not a vault's address/);
-      expect(() => ask({ vault: ACCOUNT })).toThrow(/names one of its vaults by something that is not a vault's address/);
+      expect(() => ask({ vault: 'co_x' })).toThrow(
+        /names one of its vaults by something that is not a vault's address/
+      );
+      expect(() => ask({ vault: ACCOUNT })).toThrow(
+        /names one of its vaults by something that is not a vault's address/
+      );
       /* RED WHEN: a transaction rides along on a records-key ask and is ignored. */
       expect(() => ask({ vault: VAULT, transaction: 'AAAA' })).toThrow(/carries a transaction or names a vault/);
       /* RED WHEN: a vault is let through on a kind that does not read it. */
-      expect(() => parseAsk({
-        schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
-        requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Sign in.', nonce: 'n', expiresAt: NOW + 60_000, vault: VAULT,
-      }, PAGE, NOW)).toThrow(/carries a transaction or names a vault/);
+      expect(() =>
+        parseAsk(
+          {
+            schema: 'midnight-identity/disclosure-request/v1',
+            kind: 'sign-in',
+            requester: { name: 'Payroll', rdns: 'example.payroll' },
+            purpose: 'Sign in.',
+            nonce: 'n',
+            expiresAt: NOW + 60_000,
+            vault: VAULT
+          },
+          PAGE,
+          NOW
+        )
+      ).toThrow(/carries a transaction or names a vault/);
     });
 
     it('the answer carries who holds the vault as the wallet read it, and the wallet signs nothing without that read', () => {
@@ -274,12 +417,16 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
       /* RED WHEN: the vault the wallet read does not travel with the answer, or travels changed. */
       expect(answer.vault).toEqual(held);
       /* RED WHEN: the wallet signs for a vault it did not read, or read another vault in its place. */
-      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, undefined, ACCOUNT)).toThrow(/has not read the vault the page names/);
-      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, vault: '9b'.repeat(32) }, ACCOUNT))
-        .toThrow(/has not read the vault the page names/);
+      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, undefined, ACCOUNT)).toThrow(
+        /has not read the vault the page names/
+      );
+      expect(() =>
+        recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, vault: '9b'.repeat(32) }, ACCOUNT)
+      ).toThrow(/has not read the vault the page names/);
       /* RED WHEN: the wallet signs while the vault it read is pinned to another company's account. */
-      expect(() => recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, account: 'ad'.repeat(32) }, ACCOUNT))
-        .toThrow(/belongs to a different company account/);
+      expect(() =>
+        recordsKeyAnswerFor(me, ask({ vault: VAULT }), seats, NOW, { ...held, account: 'ad'.repeat(32) }, ACCOUNT)
+      ).toThrow(/belongs to a different company account/);
       /* An ask that names no vault is answered with none. */
       expect('vault' in recordsKeyAnswerFor(me, ask(), seats, NOW, held, ACCOUNT)).toBe(false);
     });
@@ -304,12 +451,13 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
       expect(none.ok && none.vault).toBeNull();
     });
 
-    describe('WHEN THE ASK IS MADE FOR THE VAULT\'S FIRST SECRET', () => {
+    describe("WHEN THE ASK IS MADE FOR THE VAULT'S FIRST SECRET", () => {
       const ADA = { key: 'a1'.repeat(32), name: 'Ada' };
       const UNNAMED = { key: 'b2'.repeat(32) };
-      const forFirst = (firstSecret: unknown, over: Record<string, unknown> = {}) => ask({ vault: VAULT, firstSecret, ...over });
+      const forFirst = (firstSecret: unknown, over: Record<string, unknown> = {}) =>
+        ask({ vault: VAULT, firstSecret, ...over });
 
-      it('carries the vault\'s readers, each by the key its copy is sealed to and the name the page holds, and an ask without them is unchanged', () => {
+      it("carries the vault's readers, each by the key its copy is sealed to and the name the page holds, and an ask without them is unchanged", () => {
         const read = forFirst({ readers: [{ key: ADA.key.toUpperCase(), name: 'Ada' }, UNNAMED] });
         /* RED WHEN: the readers the page sends are dropped, renamed, or their keys are kept in another spelling. */
         expect(read.firstSecret).toEqual({ readers: [ADA, UNNAMED] });
@@ -325,23 +473,47 @@ describe('THE RECORDS-KEY ASK: SIGNED ONLY FOR A SEAT THE ACCOUNT HOLDS NOW, AND
         expect(() => forFirst({ readers: [{ key: 'not-a-key', name: 'Ada' }] })).toThrow(malformed);
         expect(() => forFirst({ readers: [{ key: ADA.key, name: '' }] })).toThrow(malformed);
         expect(() => forFirst({ readers: [{ key: ADA.key, name: 7 }] })).toThrow(malformed);
-        expect(() => forFirst({ readers: [{ key: ADA.key, name: 'x'.repeat(MOST_READER_NAME + 1) }] })).toThrow(malformed);
-        expect(forFirst({ readers: [{ key: ADA.key, name: 'x'.repeat(MOST_READER_NAME) }] }).firstSecret?.readers[0]?.name).toHaveLength(MOST_READER_NAME);
+        expect(() => forFirst({ readers: [{ key: ADA.key, name: 'x'.repeat(MOST_READER_NAME + 1) }] })).toThrow(
+          malformed
+        );
+        expect(
+          forFirst({ readers: [{ key: ADA.key, name: 'x'.repeat(MOST_READER_NAME) }] }).firstSecret?.readers[0]?.name
+        ).toHaveLength(MOST_READER_NAME);
         /* RED WHEN: an empty list, or not a list, is read as nobody holding the secret. */
         expect(() => forFirst({ readers: [] })).toThrow(malformed);
         expect(() => forFirst({ readers: 'Ada' })).toThrow(malformed);
         expect(() => forFirst(null)).toThrow(malformed);
-        expect(() => forFirst({ readers: Array.from({ length: MOST_SECRET_READERS + 1 }, (_, i) => ({ key: i.toString(16).padStart(64, '0') })) })).toThrow(malformed);
+        expect(() =>
+          forFirst({
+            readers: Array.from({ length: MOST_SECRET_READERS + 1 }, (_, i) => ({
+              key: i.toString(16).padStart(64, '0')
+            }))
+          })
+        ).toThrow(malformed);
         /* RED WHEN: one key is listed twice, so the screen would show one person as two. */
-        expect(() => forFirst({ readers: [ADA, { key: ADA.key.toUpperCase(), name: 'Ada again' }] })).toThrow(malformed);
+        expect(() => forFirst({ readers: [ADA, { key: ADA.key.toUpperCase(), name: 'Ada again' }] })).toThrow(
+          malformed
+        );
         /* RED WHEN: readers arrive with no vault to say whose secret they will hold. */
-        expect(() => ask({ firstSecret: { readers: [ADA] } })).toThrow(/names who will hold a vault's secret but no vault/);
+        expect(() => ask({ firstSecret: { readers: [ADA] } })).toThrow(
+          /names who will hold a vault's secret but no vault/
+        );
         /* RED WHEN: readers are let through on an ask that does not show them. */
-        expect(() => parseAsk({
-          schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
-          requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Sign in.', nonce: 'n', expiresAt: NOW + 60_000,
-          firstSecret: { readers: [ADA] },
-        }, PAGE, NOW)).toThrow(/who will hold a vault's secret, or a filing key/);
+        expect(() =>
+          parseAsk(
+            {
+              schema: 'midnight-identity/disclosure-request/v1',
+              kind: 'sign-in',
+              requester: { name: 'Payroll', rdns: 'example.payroll' },
+              purpose: 'Sign in.',
+              nonce: 'n',
+              expiresAt: NOW + 60_000,
+              firstSecret: { readers: [ADA] }
+            },
+            PAGE,
+            NOW
+          )
+        ).toThrow(/who will hold a vault's secret, or a filing key/);
       });
     });
   });
@@ -356,7 +528,9 @@ describe('A STATEMENT AND AN ENTRY ARE FOR ONE ACCOUNT: ANOTHER ACCOUNT CARRYING
     expect(recordsKeySignedBy(CO, ACCOUNT, mine, statement)).toBe(true);
     expect(recordsKeySignedBy(CO, OTHER, mine, statement)).toBe(false);
     expect(recordsKeySignedBy(CO, 'not an account' as AccountAddress, mine, statement)).toBe(false);
-    expect(recordsKeyStatementBytes(CO, OTHER, statement.recordsKey, SEAT)).not.toEqual(recordsKeyStatementBytes(CO, ACCOUNT, statement.recordsKey, SEAT));
+    expect(recordsKeyStatementBytes(CO, OTHER, statement.recordsKey, SEAT)).not.toEqual(
+      recordsKeyStatementBytes(CO, ACCOUNT, statement.recordsKey, SEAT)
+    );
   });
   it('AN ENTRY IS FALSE FOR ANY ACCOUNT BUT THE ONE IT NAMES AND WAS SIGNED FOR', () => {
     const entry = signDirectoryEntry(me, CO, ACCOUNT, companyKey, '3c'.repeat(32), SEAT);
@@ -393,17 +567,39 @@ describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE
     expect(DIRECTORY_ENTRY_STATEMENT_TAG).not.toBe(RECORDS_KEY_STATEMENT_TAG);
     const statement = signRecordsKey(me, CO, ACCOUNT, companyKey, SEAT);
     /* RED WHEN: the two statements share a domain, so one signature passes as the other. */
-    expect(directoryEntrySignedBy(CO, ACCOUNT, mine, { account: ACCOUNT, signingKey: statement.recordsKey, wrappingKey: statement.recordsKey, seat: SEAT, signature: statement.signature })).toBe(false);
-    expect(Buffer.from(directoryEntryStatementBytes(CO, ACCOUNT, FILING, entry.wrappingKey, SEAT)!).toString('utf8')).toContain(DIRECTORY_ENTRY_STATEMENT_TAG);
+    expect(
+      directoryEntrySignedBy(CO, ACCOUNT, mine, {
+        account: ACCOUNT,
+        signingKey: statement.recordsKey,
+        wrappingKey: statement.recordsKey,
+        seat: SEAT,
+        signature: statement.signature
+      })
+    ).toBe(false);
+    expect(
+      Buffer.from(directoryEntryStatementBytes(CO, ACCOUNT, FILING, entry.wrappingKey, SEAT)!).toString('utf8')
+    ).toContain(DIRECTORY_ENTRY_STATEMENT_TAG);
     expect(directoryEntryStatementBytes(CO, ACCOUNT, 'nope', entry.wrappingKey, SEAT)).toBeNull();
   });
 
   it('THE RECORDS-KEY ANSWER CARRIES THE ENTRY EXACTLY WHEN THE ASK NAMED A FILING KEY, AND THE PAGE REFUSES ONE THAT IS NOT FOR IT', () => {
-    const ask = (over: Record<string, unknown> = {}) => parseAsk({
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'records-key',
-      requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'To check your records key.',
-      nonce: 'r1', expiresAt: NOW + 60_000, company: CO, account: ACCOUNT, seat: SEAT, ...over,
-    }, PAGE, NOW) as RecordsKeyRequest;
+    const ask = (over: Record<string, unknown> = {}) =>
+      parseAsk(
+        {
+          schema: 'midnight-identity/disclosure-request/v1',
+          kind: 'records-key',
+          requester: { name: 'Payroll', rdns: 'example.payroll' },
+          purpose: 'To check your records key.',
+          nonce: 'r1',
+          expiresAt: NOW + 60_000,
+          company: CO,
+          account: ACCOUNT,
+          seat: SEAT,
+          ...over
+        },
+        PAGE,
+        NOW
+      ) as RecordsKeyRequest;
     const seats = { committee: [mine as { tag: string; value: string }], threshold: 1, seats: [SEAT] };
     const expecting = { atOrigin: PAGE, expectingNonce: 'r1', company: CO, account: ACCOUNT, seat: SEAT };
     /* RED WHEN: an entry is signed when the page asked for none. */
@@ -411,29 +607,55 @@ describe('A DIRECTORY ENTRY, SIGNED BY THE WALLET WITH THE COMMITTEE KEY, IN THE
     const answer = recordsKeyAnswerFor(me, ask({ signingKey: FILING }), seats, NOW, undefined, ACCOUNT);
     /* RED WHEN: the entry is for another filing key, records key or seat than the ask's, or does not verify. */
     const companyKeyHere = unlockKeyFor(me, { ...ask(), kind: 'unlock' } as unknown as UnlockRequest);
-    expect({ ...answer.entry, signature: '' }).toEqual({ account: ACCOUNT, signingKey: FILING, wrappingKey: recordsPublicKeyOf(companyKeyHere), seat: SEAT, signature: '' });
+    expect({ ...answer.entry, signature: '' }).toEqual({
+      account: ACCOUNT,
+      signingKey: FILING,
+      wrappingKey: recordsPublicKeyOf(companyKeyHere),
+      seat: SEAT,
+      signature: ''
+    });
     expect(directoryEntrySignedBy(CO, ACCOUNT, answer.committeeKey, answer.entry!)).toBe(true);
     const read = readRecordsKeyAnswer(answer, { ...expecting, signingKey: FILING });
     expect(read.ok && read.entry).toEqual(answer.entry);
     /* RED WHEN: the page takes an entry for another filing key, or an answer with no entry, as the one it asked for. */
     const other = readRecordsKeyAnswer(answer, { ...expecting, signingKey: '4d'.repeat(32) });
     expect(other.ok ? 'accepted' : other.code).toBe('not-signed');
-    const none = readRecordsKeyAnswer(recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT), { ...expecting, signingKey: FILING });
+    const none = readRecordsKeyAnswer(recordsKeyAnswerFor(me, ask(), seats, NOW, undefined, ACCOUNT), {
+      ...expecting,
+      signingKey: FILING
+    });
     expect(none.ok ? 'accepted' : none.code).toBe('not-signed');
     /* RED WHEN: the page takes an entry whose signature does not verify against the wallet's committee key. */
-    const forged = { ...answer, entry: { ...answer.entry!, signature: answer.entry!.signature.replace(/^./u, (c) => (c === '0' ? '1' : '0')) } };
+    const forged = {
+      ...answer,
+      entry: { ...answer.entry!, signature: answer.entry!.signature.replace(/^./u, (c) => (c === '0' ? '1' : '0')) }
+    };
     const unsigned = readRecordsKeyAnswer(forged, { ...expecting, signingKey: FILING });
     expect(unsigned.ok ? 'accepted' : unsigned.code).toBe('not-signed');
     /* RED WHEN: the page takes an entry whose wrapping key is not the records key the same answer signed, even one the wallet signed. */
-    const otherWrapping = { ...answer, entry: signDirectoryEntry(me, CO, ACCOUNT, new Uint8Array(32).fill(0x5e), FILING, SEAT) };
+    const otherWrapping = {
+      ...answer,
+      entry: signDirectoryEntry(me, CO, ACCOUNT, new Uint8Array(32).fill(0x5e), FILING, SEAT)
+    };
     const moved = readRecordsKeyAnswer(otherWrapping, { ...expecting, signingKey: FILING });
     expect(moved.ok ? 'accepted' : moved.code).toBe('not-signed');
     /* RED WHEN: a filing key rides along on another kind of ask and is ignored, or is not a key. */
     expect(() => ask({ signingKey: 'zz' })).toThrow(/key your filings are signed with/);
-    expect(() => parseAsk({
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
-      requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Sign in.', nonce: 'n', expiresAt: NOW + 60_000, signingKey: FILING,
-    }, PAGE, NOW)).toThrow(/or a filing key/);
+    expect(() =>
+      parseAsk(
+        {
+          schema: 'midnight-identity/disclosure-request/v1',
+          kind: 'sign-in',
+          requester: { name: 'Payroll', rdns: 'example.payroll' },
+          purpose: 'Sign in.',
+          nonce: 'n',
+          expiresAt: NOW + 60_000,
+          signingKey: FILING
+        },
+        PAGE,
+        NOW
+      )
+    ).toThrow(/or a filing key/);
   });
 });
 
@@ -443,15 +665,33 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
   const VAULT = '9a'.repeat(32);
   /* A founding seat no longer held: the deploy's seat is answered whoever holds the account now. */
   const FOUNDING = '5f'.repeat(32);
-  const ask = (over: Record<string, unknown> = {}) => parseAsk({
-    schema: 'midnight-identity/disclosure-request/v1', kind: 'holders',
-    requester: { name: 'Payroll', rdns: 'example.payroll' }, purpose: 'Who holds the company.',
-    nonce: 'h1', expiresAt: NOW + 60_000, company: CO, account: ACCOUNT, ...over,
-  }, PAGE, NOW) as HoldersRequest;
+  const ask = (over: Record<string, unknown> = {}) =>
+    parseAsk(
+      {
+        schema: 'midnight-identity/disclosure-request/v1',
+        kind: 'holders',
+        requester: { name: 'Payroll', rdns: 'example.payroll' },
+        purpose: 'Who holds the company.',
+        nonce: 'h1',
+        expiresAt: NOW + 60_000,
+        company: CO,
+        account: ACCOUNT,
+        ...over
+      },
+      PAGE,
+      NOW
+    ) as HoldersRequest;
   const holders = {
-    committee: [committeeKeyFor(me, CO) as { tag: string; value: string }], threshold: 1, seats: [SEAT], approvals: 2, adoptedVaults: [VAULT],
-    vaultThresholds: [{ vault: VAULT, threshold: 3 }], policyBar: 3, seatBar: 3,
-    founding: FOUNDING, foundingCommittee: [committeeKeyFor(me, CO) as { tag: string; value: string }],
+    committee: [committeeKeyFor(me, CO) as { tag: string; value: string }],
+    threshold: 1,
+    seats: [SEAT],
+    approvals: 2,
+    adoptedVaults: [VAULT],
+    vaultThresholds: [{ vault: VAULT, threshold: 3 }],
+    policyBar: 3,
+    seatBar: 3,
+    founding: FOUNDING,
+    foundingCommittee: [committeeKeyFor(me, CO) as { tag: string; value: string }]
   };
   const expecting = { atOrigin: PAGE, expectingNonce: 'h1', company: CO, account: ACCOUNT };
 
@@ -460,16 +700,40 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(answer.schema).toBe(HOLDERS_ANSWER_SCHEMA);
     /* RED WHEN: the answer carries any field but the public chain facts and the echo of the ask. */
     expect(Object.keys(answer).sort()).toEqual(['account', 'at', 'company', 'holders', 'nonce', 'origin', 'schema']);
-    expect(Object.keys(answer.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'policyBar', 'seatBar', 'seats', 'threshold', 'vaultThresholds']);
+    expect(Object.keys(answer.holders).sort()).toEqual([
+      'adoptedVaults',
+      'approvals',
+      'committee',
+      'founding',
+      'foundingCommittee',
+      'policyBar',
+      'seatBar',
+      'seats',
+      'threshold',
+      'vaultThresholds'
+    ]);
     /* RED WHEN: the founding seat the wallet read from the deploy is not handed on as read. */
     expect(answer.holders.founding).toBe(FOUNDING);
     /* RED WHEN: whatever else the wallet's read carries is passed on rather than only the five facts named. */
     const carrying = holdersAnswerFor(ask(), { ...holders, companyKey: 'aa'.repeat(32) } as typeof holders, NOW);
-    expect(Object.keys(carrying.holders).sort()).toEqual(['adoptedVaults', 'approvals', 'committee', 'founding', 'foundingCommittee', 'policyBar', 'seatBar', 'seats', 'threshold', 'vaultThresholds']);
+    expect(Object.keys(carrying.holders).sort()).toEqual([
+      'adoptedVaults',
+      'approvals',
+      'committee',
+      'founding',
+      'foundingCommittee',
+      'policyBar',
+      'seatBar',
+      'seats',
+      'threshold',
+      'vaultThresholds'
+    ]);
     /* RED WHEN: a key the wallet holds crosses: no committee secret, no company key, no signature. */
     const said = JSON.stringify(answer);
     expect(said).not.toContain(committeeSigningKeyFor(me, CO).value);
-    expect(said).not.toContain(hex(unlockKeyFor(me, { ...ask(), seat: SEAT, kind: 'unlock' } as unknown as UnlockRequest)));
+    expect(said).not.toContain(
+      hex(unlockKeyFor(me, { ...ask(), seat: SEAT, kind: 'unlock' } as unknown as UnlockRequest))
+    );
     expect(said).not.toMatch(/signature/);
     const read = readHoldersAnswer(answer, expecting);
     /* RED WHEN: who holds an account is read without the account the wallet read it for. */
@@ -488,7 +752,9 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(code({ ...answer, company: OTHER_CO }, expecting)).toBe('other-company');
     /* RED WHEN: holders in a shape no wallet writes are taken. */
     expect(code({ ...answer, holders: { ...holders, approvals: 0 } }, expecting)).toBe('not-an-answer');
-    expect(code({ ...answer, holders: { ...holders, adoptedVaults: [VAULT, VAULT] } }, expecting)).toBe('not-an-answer');
+    expect(code({ ...answer, holders: { ...holders, adoptedVaults: [VAULT, VAULT] } }, expecting)).toBe(
+      'not-an-answer'
+    );
     /* RED WHEN: holders with no founding seat, or one that is not a seat, are taken: a page would anchor to nothing. */
     const { founding: _f, ...noFounding } = holders;
     expect(code({ ...answer, holders: noFounding }, expecting)).toBe('not-an-answer');
@@ -504,10 +770,16 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     expect(code({ ...answer, holders: { ...holders, policyBar: null, seatBar: 1 } }, expecting)).toBe('not-an-answer');
     expect(code({ ...answer, holders: { ...holders, policyBar: null, seatBar: 2 } }, expecting)).toBe('accepted');
     /* RED WHEN: a vault's own approvals in a shape no wallet writes are taken. */
-    expect(code({ ...answer, holders: { ...holders, vaultThresholds: [{ vault: VAULT }] } }, expecting)).toBe('not-an-answer');
+    expect(code({ ...answer, holders: { ...holders, vaultThresholds: [{ vault: VAULT }] } }, expecting)).toBe(
+      'not-an-answer'
+    );
     /* RED WHEN: a wallet whose read carries no seat bar answers anyway. */
-    expect(() => holdersAnswerFor(ask(), noBar as typeof holders, NOW)).toThrow(/did not read the approvals the account asks for/);
-    expect(code({ ...answer, holders: { ...holders, foundingCommittee: [{ tag: 'schnorr' }] } }, expecting)).toBe('not-an-answer');
+    expect(() => holdersAnswerFor(ask(), noBar as typeof holders, NOW)).toThrow(
+      /did not read the approvals the account asks for/
+    );
+    expect(code({ ...answer, holders: { ...holders, foundingCommittee: [{ tag: 'schnorr' }] } }, expecting)).toBe(
+      'not-an-answer'
+    );
   });
 
   it('A PAGE ABOUT TO APPROVE A RUN ASKS ABOUT ITS PAYMENTS, AND IS TOLD ONLY ABOUT THE ENTRIES IT ASKED', () => {
@@ -519,11 +791,17 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     const payments = { payKeyCommitment: 'cc'.repeat(32), held: [asked[2]!, asked[0]!], openRounds: OPEN, entries: 6 };
     const answer = holdersAnswerFor(request, holders, NOW, payments);
     /* RED WHEN: what is held is not answered in the order asked, the commitment, the open rounds or the count of entries is not passed on as read. */
-    expect(answer.payments).toEqual({ payKeyCommitment: 'cc'.repeat(32), held: [asked[0], asked[2]], openRounds: [...OPEN].sort(), entries: 6 });
+    expect(answer.payments).toEqual({
+      payKeyCommitment: 'cc'.repeat(32),
+      held: [asked[0], asked[2]],
+      openRounds: [...OPEN].sort(),
+      entries: 6
+    });
     const exp = { ...expecting, movements: asked };
     const read = readHoldersAnswer(answer, exp);
     expect(read.ok && read.payments).toEqual(answer.payments);
-    const refuses = (message: unknown, e: Parameters<typeof readHoldersAnswer>[1] = exp) => readHoldersAnswer(message, e).ok;
+    const refuses = (message: unknown, e: Parameters<typeof readHoldersAnswer>[1] = exp) =>
+      readHoldersAnswer(message, e).ok;
     /* RED WHEN: a page that asked about payments takes an answer that says nothing about them as nobody paid. */
     expect(refuses({ ...answer, payments: undefined })).toBe(false);
     /* RED WHEN: an entry the page did not ask about is taken as held, or one entry twice, or a commitment in no wallet's shape. */
@@ -539,16 +817,29 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
       expect(refuses({ ...answer, payments: { ...payments, entries } }), JSON.stringify(entries)).toBe(false);
     }
     /* RED WHEN: an account that committed to no pay-record key is read as one that did. */
-    expect(readHoldersAnswer(holdersAnswerFor(request, holders, NOW, { payKeyCommitment: null, held: [], openRounds: [], entries: 0 }), exp)).toMatchObject({ ok: true, payments: { payKeyCommitment: null, held: [], openRounds: [], entries: 0 } });
+    expect(
+      readHoldersAnswer(
+        holdersAnswerFor(request, holders, NOW, { payKeyCommitment: null, held: [], openRounds: [], entries: 0 }),
+        exp
+      )
+    ).toMatchObject({ ok: true, payments: { payKeyCommitment: null, held: [], openRounds: [], entries: 0 } });
     /* RED WHEN: a page that asked nothing about payments takes an answer that volunteers them. */
     expect(refuses(answer, expecting)).toBe(false);
     /* RED WHEN: a wallet answers an ask about payments without reading them, or answers payments nobody asked about. */
     expect(() => holdersAnswerFor(request, holders, NOW)).toThrow(/did not read the payments/);
     expect(() => holdersAnswerFor(ask(), holders, NOW, payments)).toThrow(/did not read the payments/);
     /* RED WHEN: a wallet answers as held an entry the page did not ask about. */
-    expect(() => holdersAnswerFor(request, holders, NOW, { ...payments, held: ['dd'.repeat(32)] })).toThrow(/did not read the payments/);
+    expect(() => holdersAnswerFor(request, holders, NOW, { ...payments, held: ['dd'.repeat(32)] })).toThrow(
+      /did not read the payments/
+    );
     /* RED WHEN: an ask names no entries, an entry in no shape, one twice, or more than the most allowed, and is answered. */
-    for (const bad of [[], ['zz'], [asked[0], asked[0]], Array.from({ length: MOST_ENTRIES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')), 'a1']) {
+    for (const bad of [
+      [],
+      ['zz'],
+      [asked[0], asked[0]],
+      Array.from({ length: MOST_ENTRIES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')),
+      'a1'
+    ]) {
       expect(() => ask({ movements: bad }), JSON.stringify(bad).slice(0, 40)).toThrow(/between 1 and/);
     }
   });
@@ -558,7 +849,10 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     const request = ask({ roles: asked });
     /* RED WHEN: the entries a page asked about are dropped from the ask, or reordered. */
     expect(request.roles).toEqual(asked);
-    const roles = [{ key: asked[0]!, value: 'ee'.repeat(32) }, { key: asked[1]!, value: null }];
+    const roles = [
+      { key: asked[0]!, value: 'ee'.repeat(32) },
+      { key: asked[1]!, value: null }
+    ];
     const answer = holdersAnswerFor(request, holders, NOW, undefined, undefined, roles);
     /* RED WHEN: what the wallet read under each entry is not passed on as read, in the order asked. */
     expect(answer.roles).toEqual(roles);
@@ -566,34 +860,62 @@ describe('THE HOLDERS ASK: PUBLIC CHAIN FACTS, NO PRESS, AND NOTHING ELSE', () =
     const exp = { ...expecting, roles: asked };
     const read = readHoldersAnswer(answer, exp);
     expect(read.ok && read.roles).toEqual(roles);
-    const takes = (message: unknown, e: Parameters<typeof readHoldersAnswer>[1] = exp) => readHoldersAnswer(message, e).ok;
+    const takes = (message: unknown, e: Parameters<typeof readHoldersAnswer>[1] = exp) =>
+      readHoldersAnswer(message, e).ok;
     /* RED WHEN: a page that asked takes an answer that says nothing of the entries - a vault's marker would read as absent. */
     expect(takes({ ...answer, roles: undefined })).toBe(false);
     /* RED WHEN: an answer that leaves one out, answers another, reorders them, or holds a value in no wallet's shape is taken. */
-    for (const bad of [[roles[0]], [roles[1], roles[0]], [roles[0], { key: 'ff'.repeat(32), value: null }], [roles[0], { key: asked[1], value: 'EE'.repeat(32) }],
-      [roles[0], { key: asked[1] }], [...roles, roles[1]], 'x']) {
+    for (const bad of [
+      [roles[0]],
+      [roles[1], roles[0]],
+      [roles[0], { key: 'ff'.repeat(32), value: null }],
+      [roles[0], { key: asked[1], value: 'EE'.repeat(32) }],
+      [roles[0], { key: asked[1] }],
+      [...roles, roles[1]],
+      'x'
+    ]) {
       expect(takes({ ...answer, roles: bad }), JSON.stringify(bad).slice(0, 60)).toBe(false);
     }
     /* RED WHEN: a page that asked nothing about entries takes an answer that volunteers them. */
     expect(takes(answer, expecting)).toBe(false);
     /* RED WHEN: a wallet answers an ask about entries without reading them, answers entries nobody asked about, or answers others. */
     expect(() => holdersAnswerFor(request, holders, NOW)).toThrow(/did not read the entries of the account/);
-    expect(() => holdersAnswerFor(ask(), holders, NOW, undefined, undefined, roles)).toThrow(/did not read the entries of the account/);
-    expect(() => holdersAnswerFor(request, holders, NOW, undefined, undefined, [roles[1]!, roles[0]!])).toThrow(/did not read the entries of the account/);
+    expect(() => holdersAnswerFor(ask(), holders, NOW, undefined, undefined, roles)).toThrow(
+      /did not read the entries of the account/
+    );
+    expect(() => holdersAnswerFor(request, holders, NOW, undefined, undefined, [roles[1]!, roles[0]!])).toThrow(
+      /did not read the entries of the account/
+    );
     /* RED WHEN: an ask names no entries, an entry in no shape, one twice, or more than the most allowed, and is answered. */
-    for (const bad of [[], ['zz'], [asked[0], asked[0]], Array.from({ length: MOST_ROLES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')), 'a1']) {
+    for (const bad of [
+      [],
+      ['zz'],
+      [asked[0], asked[0]],
+      Array.from({ length: MOST_ROLES_ASKED + 1 }, (_, i) => i.toString(16).padStart(64, '0')),
+      'a1'
+    ]) {
       expect(() => ask({ roles: bad }), JSON.stringify(bad).slice(0, 40)).toThrow(/between 1 and/);
     }
     /* An ask may name payments and entries together, and is answered about both. */
     const bothAsk = ask({ movements: ['c3'.repeat(32)], roles: asked });
     const payments = { payKeyCommitment: null, held: [], openRounds: [], entries: 0 };
-    const both = readHoldersAnswer(holdersAnswerFor(bothAsk, holders, NOW, payments, undefined, roles), { ...exp, movements: ['c3'.repeat(32)] });
+    const both = readHoldersAnswer(holdersAnswerFor(bothAsk, holders, NOW, payments, undefined, roles), {
+      ...exp,
+      movements: ['c3'.repeat(32)]
+    });
     expect(both.ok && [both.payments, both.roles]).toEqual([payments, roles]);
   });
 
   it('THE ASK REFUSES ANY FIELD BUT THE LABEL AND THE ACCOUNT', () => {
     /* RED WHEN: a holders ask carries a seat, a filing key, a vault, details to hand over, a key to seal to, or anything else, and is answered with no press. */
-    for (const extra of [{ seat: SEAT }, { signingKey: '3c'.repeat(32) }, { vault: VAULT }, { wants: [] }, { inboxPublicKey: '11'.repeat(32) }, { anything: 1 }]) {
+    for (const extra of [
+      { seat: SEAT },
+      { signingKey: '3c'.repeat(32) },
+      { vault: VAULT },
+      { wants: [] },
+      { inboxPublicKey: '11'.repeat(32) },
+      { anything: 1 }
+    ]) {
       expect(() => ask(extra), JSON.stringify(extra)).toThrow();
     }
     expect(() => ask({ anything: 1 })).toThrow(/'anything'/);

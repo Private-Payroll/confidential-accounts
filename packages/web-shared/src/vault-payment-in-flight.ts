@@ -76,18 +76,23 @@ export interface PayoutDoors extends PoolDoors {
 export class PaymentStillInFlight extends Error {
   readonly unread: boolean;
   constructor(
-    readonly vault: Hex, readonly txRef: string, readonly until: number, why?: string,
-    held: { readonly unread?: boolean } = {},
+    readonly vault: Hex,
+    readonly txRef: string,
+    readonly until: number,
+    why?: string,
+    held: { readonly unread?: boolean } = {}
   ) {
     const at = timeShown(until);
-    super(`an earlier payment out of this vault from this browser${txRef === '' ? '' : ` (${txRef})`} is not in the `
-      + `vault's record yet${why === undefined ? '' : ` (${why})`}, so no other payment is made from here until it is. `
-      + `Nothing new was prepared or sent. Try again in a minute: once the chain shows it, it is recorded first. `
-      + (held.unread === true
-        ? 'The chain could not be read just now. This payment stays held, and no other payment leaves this vault from '
-          + 'here, until it can be.'
-        : `If the chain has not shown it by ${at}, it never will, and after then payments go ahead as soon as this `
-          + 'vault\'s history can be read.'));
+    super(
+      `an earlier payment out of this vault from this browser${txRef === '' ? '' : ` (${txRef})`} is not in the ` +
+        `vault's record yet${why === undefined ? '' : ` (${why})`}, so no other payment is made from here until it is. ` +
+        `Nothing new was prepared or sent. Try again in a minute: once the chain shows it, it is recorded first. ` +
+        (held.unread === true
+          ? 'The chain could not be read just now. This payment stays held, and no other payment leaves this vault from ' +
+            'here, until it can be.'
+          : `If the chain has not shown it by ${at}, it never will, and after then payments go ahead as soon as this ` +
+            "vault's history can be read.")
+    );
     this.name = 'PaymentStillInFlight';
     this.unread = held.unread === true;
   }
@@ -99,9 +104,11 @@ export class PaymentStillInFlight extends Error {
  */
 export class PaymentStartedElsewhere extends Error {
   constructor(readonly vault: Hex) {
-    super('another payment out of this vault started in another tab or window of this browser a moment ago, so this one '
-      + 'was not sent. No money moved. When the other one has finished, open the run again, and pay this person only if '
-      + 'it still shows them unpaid.');
+    super(
+      'another payment out of this vault started in another tab or window of this browser a moment ago, so this one ' +
+        'was not sent. No money moved. When the other one has finished, open the run again, and pay this person only if ' +
+        'it still shows them unpaid.'
+    );
     this.name = 'PaymentStartedElsewhere';
   }
 }
@@ -113,12 +120,18 @@ export class PaymentStartedElsewhere extends Error {
  * happen.
  */
 export class PaymentNotYetSeen extends Error {
-  constructor(readonly vault: Hex, readonly txRef: string, why?: string) {
-    super(`the payment may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has not seen it land`
-      + `${why === undefined ? '' : ` (${why})`}, so it may still land. Do not pay this person again: open the run `
-      + 'later, and it shows them paid once the chain does. This browser keeps a locked record of the payment, and the '
-      + 'next payment out of this vault from here, or "Check my last deposit" on the vault, adds it to the vault\'s '
-      + 'record once the chain shows it. Until then, no other payment leaves this vault from this browser.');
+  constructor(
+    readonly vault: Hex,
+    readonly txRef: string,
+    why?: string
+  ) {
+    super(
+      `the payment may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has not seen it land` +
+        `${why === undefined ? '' : ` (${why})`}, so it may still land. Do not pay this person again: open the run ` +
+        'later, and it shows them paid once the chain does. This browser keeps a locked record of the payment, and the ' +
+        'next payment out of this vault from here, or "Check my last deposit" on the vault, adds it to the vault\'s ' +
+        'record once the chain shows it. Until then, no other payment leaves this vault from this browser.'
+    );
     this.name = 'PaymentNotYetSeen';
   }
 }
@@ -129,11 +142,17 @@ export class PaymentNotYetSeen extends Error {
  * browser writes the record.
  */
 export class PaymentLandedUnrecorded extends Error {
-  constructor(readonly vault: Hex, readonly transactionHash: string, why: string) {
-    super(`the payment landed${transactionHash === '' ? '' : ` (${transactionHash})`} and the vault's record could not `
-      + `be written (${why}). The person is paid: do not pay them again. This browser keeps a locked record of the `
-      + 'payment, and the next payment out of this vault from here, or "Check my last deposit" on the vault, writes '
-      + 'the record.');
+  constructor(
+    readonly vault: Hex,
+    readonly transactionHash: string,
+    why: string
+  ) {
+    super(
+      `the payment landed${transactionHash === '' ? '' : ` (${transactionHash})`} and the vault's record could not ` +
+        `be written (${why}). The person is paid: do not pay them again. This browser keeps a locked record of the ` +
+        'payment, and the next payment out of this vault from here, or "Check my last deposit" on the vault, writes ' +
+        'the record.'
+    );
     this.name = 'PaymentLandedUnrecorded';
   }
 }
@@ -144,11 +163,17 @@ export class PaymentLandedUnrecorded extends Error {
  * change what it says.
  */
 export class PaymentNotAsBuilt extends Error {
-  constructor(readonly vault: Hex, readonly transactionHash: string, why: string) {
-    super(`the chain holds a transaction under this payment's name${transactionHash === '' ? '' : ` (${transactionHash})`} that is not the payment this `
-      + `device built: ${why}. The vault's record is not changed for it now. Do not pay this person again until the `
-      + 'run shows whether they were paid. If the vault\'s record still holds the note it spent once the chain no '
-      + 'longer does, the record has to be rebuilt from the company\'s records before this device spends that note.');
+  constructor(
+    readonly vault: Hex,
+    readonly transactionHash: string,
+    why: string
+  ) {
+    super(
+      `the chain holds a transaction under this payment's name${transactionHash === '' ? '' : ` (${transactionHash})`} that is not the payment this ` +
+        `device built: ${why}. The vault's record is not changed for it now. Do not pay this person again until the ` +
+        "run shows whether they were paid. If the vault's record still holds the note it spent once the chain no " +
+        "longer does, the record has to be rebuilt from the company's records before this device spends that note."
+    );
     this.name = 'PaymentNotAsBuilt';
   }
 }
@@ -159,25 +184,34 @@ export class PaymentNotAsBuilt extends Error {
  * left the vault by it. It is let go at once.
  */
 export class PaymentRefusedOnChain extends Error {
-  constructor(readonly vault: Hex, readonly transactionHash: string) {
-    super(`the chain refused the payment${transactionHash === '' ? '' : ` (${transactionHash})`}, so no money left the `
-      + 'vault by it and nobody was paid by it. The run shows whether this person is still owed: open it again before '
-      + 'paying them.');
+  constructor(
+    readonly vault: Hex,
+    readonly transactionHash: string
+  ) {
+    super(
+      `the chain refused the payment${transactionHash === '' ? '' : ` (${transactionHash})`}, so no money left the ` +
+        'vault by it and nobody was paid by it. The run shows whether this person is still owed: open it again before ' +
+        'paying them.'
+    );
     this.name = 'PaymentRefusedOnChain';
   }
 }
 
 /** A note as the page's vault worker is handed one: its value written as whole digits. */
 export const wireOf = (n: Note): NoteOnTheWire => ({
-  nonce: n.nonce, token: n.token, value: n.value.toString(),
-  ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
+  nonce: n.nonce,
+  token: n.token,
+  value: n.value.toString(),
+  ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn })
 });
 export type NoteAsHex = { readonly nonce: Hex; readonly token: Hex; readonly value: string; readonly createdIn?: Hex };
 export const noteOf = (wire: NoteOnTheWire): Note => {
   const n = wire as unknown as NoteAsHex;
   return {
-    nonce: n.nonce, token: n.token, value: BigInt(n.value),
-    ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
+    nonce: n.nonce,
+    token: n.token,
+    value: BigInt(n.value),
+    ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn })
   };
 };
 
@@ -198,5 +232,6 @@ export const A_PAYOUT: readonly string[] = ['payout'];
 export const paymentLandsBy = (p: PaymentInFlight): number => {
   const kept = p.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
   return typeof p.timeToLive === 'number' && Number.isFinite(p.timeToLive)
-    ? Math.max(kept, p.timeToLive + DEPOSIT_CLOCKS_MAY_DIFFER_MS) : kept;
+    ? Math.max(kept, p.timeToLive + DEPOSIT_CLOCKS_MAY_DIFFER_MS)
+    : kept;
 };

@@ -14,7 +14,10 @@
  * `a-private-payment-from-the-page.test.ts`'s.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import type {
+  PrivatePaymentOnTheWire,
+  PrivatePaymentOrderOnTheWire
+} from '../../../src/midnight/private-payment-wire.js';
 import { MemorySealedPoolStore, SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { newWrappingKeypair } from '../../../src/core/crypto.js';
@@ -38,9 +41,13 @@ let rebuilds = 0;
 let stopsAt: number | null = null;
 vi.mock('./payments-made-here.js', () => ({
   legToPayHere: async () => ({
-    order: { ...order, required: '2', payments: order.payments.map((p) => ({ ...p, paid: paidOnTheAccount.has(p.index) })) },
-    proposalId: 'prp_theLegAAAAAA',
-  }),
+    order: {
+      ...order,
+      required: '2',
+      payments: order.payments.map((p) => ({ ...p, paid: paidOnTheAccount.has(p.index) }))
+    },
+    proposalId: 'prp_theLegAAAAAA'
+  })
 }));
 /* Where the run stands under its vault's policy, as the charge answers it; every charge asked is kept, with what it was handed. */
 let charging: 'no-policy' | 'already-charged' | 'charged' | 'refused' = 'no-policy';
@@ -49,9 +56,10 @@ vi.mock('./run-charged-here.js', () => ({
   chargeTheRunHere: async (_d: unknown, run: { order: { vault: string; required?: string }; proposalId: string }) => {
     charges.push({ proposalId: run.proposalId, required: run.order.required, vault: run.order.vault });
     calls.push(`charge ${charging}`);
-    if (charging === 'refused') throw new Error('this run would take the vault past its limit for the period. Nothing was sent.');
+    if (charging === 'refused')
+      throw new Error('this run would take the vault past its limit for the period. Nothing was sent.');
     return charging === 'charged' ? { state: 'charged', spentBefore: 700n } : { state: charging };
-  },
+  }
 }));
 vi.mock('./vault-notes-here.js', async (real) => {
   const actual = await real<typeof import('./vault-notes-here.js')>();
@@ -61,7 +69,7 @@ vi.mock('./vault-notes-here.js', async (real) => {
       rebuilds += 1;
       if (rebuiltTo !== null) await poolOf!(rebuiltTo);
       return { of: rebuiltTo === null ? 'as-filed' : 'filed', notes: [], unexplained: 0, said: [] };
-    },
+    }
   };
 });
 vi.mock('./vault-pay-privately-and-merge.js', async (real) => {
@@ -73,34 +81,56 @@ vi.mock('./vault-pay-privately-and-merge.js', async (real) => {
     mergeNotesInCompanyVault: async (_d: unknown, i: { notes: Array<{ nonce: string; value: string }> }) => {
       calls.push(`merge ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`);
       const value = i.notes.reduce((t, n) => t + BigInt(n.value), 0n);
-      return { txRef: 'm', transactionHash: 'dc'.repeat(32), spent: i.notes.map((n) => n.nonce), kept: coin('e7'.repeat(32), value), seenAs: 'its-own-transaction' };
+      return {
+        txRef: 'm',
+        transactionHash: 'dc'.repeat(32),
+        spent: i.notes.map((n) => n.nonce),
+        kept: coin('e7'.repeat(32), value),
+        seenAs: 'its-own-transaction'
+      };
     },
-    payPrivatelyFromCompanyVault: async (_d: unknown, i: { payment: PrivatePaymentOnTheWire; notes: Array<{ nonce: string; value: string }> }) => {
+    payPrivatelyFromCompanyVault: async (
+      _d: unknown,
+      i: { payment: PrivatePaymentOnTheWire; notes: Array<{ nonce: string; value: string }> }
+    ) => {
       if (movesEveryTime-- > 0 || (moveOnce !== null && i.notes.some((n) => n.nonce === moveOnce))) {
         moveOnce = null;
         calls.push(`moved under ${i.payment.index}`);
         if (movedTo !== null) await poolOf!(movedTo);
-        throw new actual.NotesMovedUnderAStep('the chain no longer holds a note this vault\'s record would spend for this payment');
+        throw new actual.NotesMovedUnderAStep(
+          "the chain no longer holds a note this vault's record would spend for this payment"
+        );
       }
-      calls.push(`pay ${i.payment.index} ${i.payment.amount} from ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`);
+      calls.push(
+        `pay ${i.payment.index} ${i.payment.amount} from ${i.notes.map((n) => `${n.nonce.slice(0, 2)}:${n.value}`).join('+')}`
+      );
       if (stopsAt === i.payment.index) throw new PaymentNotYetSeen(VAULT as never, 'o', 'the wallet stopped waiting');
       if (!accountLags) paidOnTheAccount.add(i.payment.index);
       const left = i.notes.reduce((t, n) => t + BigInt(n.value), 0n) - BigInt(i.payment.amount);
       const named = !unnamed.has(i.payment.index);
-      return { txRef: 'o', transactionHash: named ? 'dd'.repeat(32) : '', spent: i.notes[0]!.nonce, change: left === 0n ? null : coin(`c${i.payment.index}`.padEnd(64, '0'), left), seenAs: named ? 'its-own-transaction' : 'by-what-it-left' };
-    },
+      return {
+        txRef: 'o',
+        transactionHash: named ? 'dd'.repeat(32) : '',
+        spent: i.notes[0]!.nonce,
+        change: left === 0n ? null : coin(`c${i.payment.index}`.padEnd(64, '0'), left),
+        seenAs: named ? 'its-own-transaction' : 'by-what-it-left'
+      };
+    }
   };
 });
 vi.mock('./vault-public-payout.js', async (real) => {
   const actual = await real<typeof import('./vault-public-payout.js')>();
   return {
     ...actual,
-    payPubliclyFromCompanyVault: async (d: { paidYet: () => Promise<boolean | null> }, i: { payment: PrivatePaymentOnTheWire }) => {
+    payPubliclyFromCompanyVault: async (
+      d: { paidYet: () => Promise<boolean | null> },
+      i: { payment: PrivatePaymentOnTheWire }
+    ) => {
       calls.push(`pay publicly ${i.payment.index} ${i.payment.amount} asking ${String(await d.paidYet())}`);
       if (stopsAt === i.payment.index) throw new actual.PublicPaymentNotYetSeen(VAULT as never, `u${i.payment.index}`);
       paidOnTheAccount.add(i.payment.index);
       return { txRef: `u${i.payment.index}` };
-    },
+    }
   };
 });
 /* Who raised the run's proposal, as a staying device asks before each payment: a seat whose removal is raised, where a test says so. */
@@ -111,14 +141,20 @@ vi.mock('./seats-leaving-here.js', () => ({
   refuseARunALeaverRaisedHere: async (_r: unknown, _a: string, _k: unknown, proposalId: string) => {
     if (askedInCalls) calls.push(`who raised ${proposalId}`);
     if (raisedByALeaver) throw new Error('This was raised by a signer whose removal is raised. Nothing was sent.');
-  },
+  }
 }));
 /* The run planner, the real one; a test may hand the plan it answers, and every input it was asked with is kept. */
 let planned: Array<{ units: Array<{ kind: string }> }> = [];
 let planAnswer: unknown = null;
 vi.mock('../../../src/midnight/payment-plan.js', async (real) => {
   const actual = await real<typeof import('../../../src/midnight/payment-plan.js')>();
-  return { ...actual, planRun: (i: Parameters<typeof actual.planRun>[0]) => { planned.push(i as never); return planAnswer ?? actual.planRun(i); } };
+  return {
+    ...actual,
+    planRun: (i: Parameters<typeof actual.planRun>[0]) => {
+      planned.push(i as never);
+      return planAnswer ?? actual.planRun(i);
+    }
+  };
 });
 const { payAnApprovedLeg, LegNotPayable, LegStopped } = await import('./leg-paid-here.js');
 type Leg = import('./leg-paid-here.js').LegHere;
@@ -130,43 +166,101 @@ const TOKEN = 'ab'.repeat(32);
 const VAULT = 'a1'.repeat(32);
 const wrapping = newWrappingKeypair();
 const signers = async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }];
-const aPayment = (index: number, amount: number, kind: 'shielded' | 'unshielded' = 'shielded'): PrivatePaymentOnTheWire => ({
-  index, kind, payee: `addr_${index}`, token: TOKEN as never, amount: String(amount), blinding: '0b'.repeat(32) as never,
-  nonce: `${index}`.padStart(2, '0').repeat(32) as never, leaf: '0d'.repeat(32) as never, path: [], paid: false,
+const aPayment = (
+  index: number,
+  amount: number,
+  kind: 'shielded' | 'unshielded' = 'shielded'
+): PrivatePaymentOnTheWire => ({
+  index,
+  kind,
+  payee: `addr_${index}`,
+  token: TOKEN as never,
+  amount: String(amount),
+  blinding: '0b'.repeat(32) as never,
+  nonce: `${index}`.padStart(2, '0').repeat(32) as never,
+  leaf: '0d'.repeat(32) as never,
+  path: [],
+  paid: false
 });
-const anOrder = (payments: PrivatePaymentOnTheWire[], form: 'shielded' | 'unshielded' = 'shielded'): PrivatePaymentOrderOnTheWire => ({
-  asset: TOKEN, form, symbol: 'T', vault: VAULT as never, proposal: '0f'.repeat(32) as never, salt: '5a'.repeat(32) as never,
-  root: '9a'.repeat(32) as never, payees: String(payments.length), opensAt: '0', closesAt: '9', payments,
+const anOrder = (
+  payments: PrivatePaymentOnTheWire[],
+  form: 'shielded' | 'unshielded' = 'shielded'
+): PrivatePaymentOrderOnTheWire => ({
+  asset: TOKEN,
+  form,
+  symbol: 'T',
+  vault: VAULT as never,
+  proposal: '0f'.repeat(32) as never,
+  salt: '5a'.repeat(32) as never,
+  root: '9a'.repeat(32) as never,
+  payees: String(payments.length),
+  opensAt: '0',
+  closesAt: '9',
+  payments
 });
 const aVault = async (notes: Array<{ nonce: string; value: bigint }>) => {
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
   const pool = () => new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: wrapping.secret }, signers);
-  const asNotes = (ns: Array<{ nonce: string; value: bigint }>) => ns.map((n) => ({ nonce: n.nonce, token: TOKEN, value: n.value, createdIn: '0e'.repeat(32) })) as never;
+  const asNotes = (ns: Array<{ nonce: string; value: bigint }>) =>
+    ns.map((n) => ({ nonce: n.nonce, token: TOKEN, value: n.value, createdIn: '0e'.repeat(32) })) as never;
   await pool().create(VAULT, { notes: asNotes(notes) });
-  poolOf = async (ns) => { const now = await pool().load(VAULT); await pool().save(VAULT, { notes: asNotes(ns) }, now.readAt); };
+  poolOf = async (ns) => {
+    const now = await pool().load(VAULT);
+    await pool().save(VAULT, { notes: asNotes(ns) }, now.readAt);
+  };
   /* The account's answer about a public payment, recorded with which payment it was asked about. */
-  const paidYet = async (p: PrivatePaymentOnTheWire) => { calls.push(`asked about ${p.index}`); return true; };
+  const paidYet = async (p: PrivatePaymentOnTheWire) => {
+    calls.push(`asked about ${p.index}`);
+    return true;
+  };
   return { me: { signerId: 'ada', wrappingSecret: wrapping.secret }, signers, records, paidYet } as unknown as Doors;
 };
-const leg: Leg = { records: {} as never, accountId: 'acc_1', runId: 'run_1', viewingKey: '00'.repeat(32) as never, deps: {} as never };
+const leg: Leg = {
+  records: {} as never,
+  accountId: 'acc_1',
+  runId: 'run_1',
+  viewingKey: '00'.repeat(32) as never,
+  deps: {} as never
+};
 
 beforeEach(() => {
-  calls.length = 0; paidOnTheAccount = new Set(); moveOnce = null; planned = []; planAnswer = null;
-  movedTo = null; movesEveryTime = 0; unnamed = new Set(); accountLags = false;
-  charging = 'no-policy'; charges.length = 0; raisedByALeaver = false; askedInCalls = false;
-  rebuiltTo = null; rebuilds = 0; stopsAt = null;
+  calls.length = 0;
+  paidOnTheAccount = new Set();
+  moveOnce = null;
+  planned = [];
+  planAnswer = null;
+  movedTo = null;
+  movesEveryTime = 0;
+  unnamed = new Set();
+  accountLags = false;
+  charging = 'no-policy';
+  charges.length = 0;
+  raisedByALeaver = false;
+  askedInCalls = false;
+  rebuiltTo = null;
+  rebuilds = 0;
+  stopsAt = null;
 });
 
 describe('PAYING AN APPROVED LEG', () => {
   it('PLANS THE LEG ONCE AND RUNS ITS STEPS IN ORDER: THE MERGE A PAYMENT NEEDS FIRST, THEN EACH PERSON, EACH SPENDING EXACTLY THE NOTES ITS STEP NAMES', async () => {
     order = anOrder([aPayment(0, 250), aPayment(1, 50)]);
     /* Three notes of 120, 100 and 90: no two cover 250, so the planner merges them first. */
-    const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 120n }, { nonce: 'a2'.repeat(32), value: 100n }, { nonce: 'a3'.repeat(32), value: 90n }]);
+    const doors = await aVault([
+      { nonce: 'a1'.repeat(32), value: 120n },
+      { nonce: 'a2'.repeat(32), value: 100n },
+      { nonce: 'a3'.repeat(32), value: 90n }
+    ]);
     const done: Paid = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: a payment is sent before the merge it needs, chooses its notes instead of the step's, or the merged coin
      * and a payment's change are not carried to the step that spends them. */
-    expect(calls).toEqual(['charge no-policy', 'merge a1:120+a2:100+a3:90', 'pay 0 250 from e7:310', 'pay 1 50 from c0:60']);
+    expect(calls).toEqual([
+      'charge no-policy',
+      'merge a1:120+a2:100+a3:90',
+      'pay 0 250 from e7:310',
+      'pay 1 50 from c0:60'
+    ]);
     expect(done).toMatchObject({ paid: [0, 1], alreadyPaid: [] });
     expect(done.steps.map((s) => s.kind)).toEqual(['merge', 'payment', 'payment']);
     /* RED WHEN: the leg is planned more than once without its notes moving, or the planner is asked for batches. */
@@ -178,7 +272,10 @@ describe('PAYING AN APPROVED LEG', () => {
     order = anOrder([aPayment(0, 150)]);
     /* This device's record holds one note of 100; the vault also holds a deposit another signer's device made. */
     const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
-    rebuiltTo = [{ nonce: 'a1'.repeat(32), value: 100n }, { nonce: 'a2'.repeat(32), value: 90n }];
+    rebuiltTo = [
+      { nonce: 'a1'.repeat(32), value: 100n },
+      { nonce: 'a2'.repeat(32), value: 90n }
+    ];
     const done = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: the leg is planned before the record is rebuilt, so the 90 is not seen and the leg is refused as unpayable. */
     expect(rebuilds).toBe(1);
@@ -189,7 +286,14 @@ describe('PAYING AN APPROVED LEG', () => {
   it('A BATCH STEP IS REFUSED BY NAME AS NOT BUILT YET, AND NOTHING IS SENT FOR IT', async () => {
     order = anOrder([aPayment(0, 30)]);
     const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
-    planAnswer = { ok: true, units: [], left: [], steps: [{ kind: 'batch', unit: 0, notes: [{ kind: 'held', id: 'a1'.repeat(32) }], pays: 30n, change: 70n, after: [] }] };
+    planAnswer = {
+      ok: true,
+      units: [],
+      left: [],
+      steps: [
+        { kind: 'batch', unit: 0, notes: [{ kind: 'held', id: 'a1'.repeat(32) }], pays: 30n, change: 70n, after: [] }
+      ]
+    };
     charging = 'charged';
     /* RED WHEN: a batch step is sent some other way - as a payment, say - rather than refused. */
     await expect(payAnApprovedLeg(doors, leg)).rejects.toThrow(/paying a batch is not built yet/);
@@ -245,7 +349,7 @@ describe('PAYING AN APPROVED LEG', () => {
     expect(done.steps[0]).toMatchObject({ kind: 'payment', index: 0, seenAs: 'by-what-it-left' });
   });
 
-  it('A LEG THE VAULT CANNOT PAY IS REFUSED BY THE PLANNER\'S OWN WORDS BEFORE ANY STEP IS SENT', async () => {
+  it("A LEG THE VAULT CANNOT PAY IS REFUSED BY THE PLANNER'S OWN WORDS BEFORE ANY STEP IS SENT", async () => {
     order = anOrder([aPayment(0, 500)]);
     const doors = await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]);
     /* RED WHEN: a leg the notes cannot cover sends a step anyway. */
@@ -271,14 +375,26 @@ describe('PAYING AN APPROVED LEG', () => {
   });
 
   it('A LEG PAID IN PUBLIC MONEY IS NOT PLANNED: EACH PERSON STILL OWED IS PAID PUBLICLY, ASKED OF THEIR OWN PAYMENT', async () => {
-    order = anOrder([aPayment(0, 30, 'unshielded'), aPayment(1, 40, 'unshielded'), aPayment(2, 50, 'unshielded')], 'unshielded');
+    order = anOrder(
+      [aPayment(0, 30, 'unshielded'), aPayment(1, 40, 'unshielded'), aPayment(2, 50, 'unshielded')],
+      'unshielded'
+    );
     paidOnTheAccount = new Set([1]);
     const doors = await aVault([]);
     const done = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: a public leg is planned over notes, or pays a person the account records paid. */
     /* RED WHEN: each payment is not asked about by itself. */
-    expect(calls).toEqual(['charge no-policy', 'asked about 0', 'pay publicly 0 30 asking true', 'asked about 2', 'pay publicly 2 50 asking true']);
-    const sent: StepSent[] = [{ kind: 'public-payment', index: 0, txRef: 'u0' }, { kind: 'public-payment', index: 2, txRef: 'u2' }];
+    expect(calls).toEqual([
+      'charge no-policy',
+      'asked about 0',
+      'pay publicly 0 30 asking true',
+      'asked about 2',
+      'pay publicly 2 50 asking true'
+    ]);
+    const sent: StepSent[] = [
+      { kind: 'public-payment', index: 0, txRef: 'u0' },
+      { kind: 'public-payment', index: 2, txRef: 'u2' }
+    ];
     expect(done.steps).toEqual(sent);
   });
   it('FROM A VAULT UNDER A POLICY THE RUN IS CHARGED TO ITS PERIOD BEFORE ANYTHING IS PAID, ONCE, AND NOT AGAIN WHEN THE LEG IS PLANNED AGAIN', async () => {
@@ -300,12 +416,16 @@ describe('PAYING AN APPROVED LEG', () => {
 
   it('A RUN THE CHAIN ALREADY HOLDS AS CHARGED, OR FROM A VAULT WITH NO POLICY, IS PAID WITH NO CHARGE SENT', async () => {
     for (const state of ['already-charged', 'no-policy'] as const) {
-      charging = state; calls.length = 0;
+      charging = state;
+      calls.length = 0;
       order = anOrder([aPayment(0, 30)]);
       paidOnTheAccount = new Set();
       const done = await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]), leg);
       /* RED WHEN: a charge is reported, or the payment is not made, for a run that needs none. */
-      expect(done.steps.map((x) => x.kind), state).toEqual(['payment']);
+      expect(
+        done.steps.map((x) => x.kind),
+        state
+      ).toEqual(['payment']);
       expect(calls, state).toEqual([`charge ${state}`, 'pay 0 30 from a1:100']);
     }
   });
@@ -313,20 +433,40 @@ describe('PAYING AN APPROVED LEG', () => {
   it('WHO RAISED THE RUN IS ASKED BEFORE EACH PAYMENT, AND A RUN RAISED BY A SEAT WHOSE REMOVAL IS RAISED IS NOT PAID', async () => {
     order = anOrder([aPayment(0, 30), aPayment(1, 40)]);
     askedInCalls = true;
-    await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 50n }, { nonce: 'a2'.repeat(32), value: 50n }]), leg);
+    await payAnApprovedLeg(
+      await aVault([
+        { nonce: 'a1'.repeat(32), value: 50n },
+        { nonce: 'a2'.repeat(32), value: 50n }
+      ]),
+      leg
+    );
     /* RED WHEN: a payment is sent without this device first asking whether the run was raised by a seat whose removal is raised. */
-    expect(calls.filter((c) => c.startsWith('who raised') || c.startsWith('pay')))
-      .toEqual(['who raised prp_theLegAAAAAA', 'pay 0 30 from a1:50', 'who raised prp_theLegAAAAAA', 'pay 1 40 from a2:50']);
-    calls.length = 0; paidOnTheAccount = new Set();
+    expect(calls.filter((c) => c.startsWith('who raised') || c.startsWith('pay'))).toEqual([
+      'who raised prp_theLegAAAAAA',
+      'pay 0 30 from a1:50',
+      'who raised prp_theLegAAAAAA',
+      'pay 1 40 from a2:50'
+    ]);
+    calls.length = 0;
+    paidOnTheAccount = new Set();
     raisedByALeaver = true;
     /* RED WHEN: a staying device pays a run in private money that a seat whose removal is raised raised. */
-    await expect(payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 50n }, { nonce: 'a2'.repeat(32), value: 50n }]), leg))
-      .rejects.toThrow(/raised by a signer whose removal is raised/u);
+    await expect(
+      payAnApprovedLeg(
+        await aVault([
+          { nonce: 'a1'.repeat(32), value: 50n },
+          { nonce: 'a2'.repeat(32), value: 50n }
+        ]),
+        leg
+      )
+    ).rejects.toThrow(/raised by a signer whose removal is raised/u);
     expect(calls.filter((c) => c.startsWith('pay'))).toEqual([]);
     calls.length = 0;
     order = anOrder([aPayment(0, 30, 'unshielded')], 'unshielded');
     /* RED WHEN: a staying device pays a run in public money that a seat whose removal is raised raised. */
-    await expect(payAnApprovedLeg(await aVault([]), leg)).rejects.toThrow(/raised by a signer whose removal is raised/u);
+    await expect(payAnApprovedLeg(await aVault([]), leg)).rejects.toThrow(
+      /raised by a signer whose removal is raised/u
+    );
     expect(calls.filter((c) => c.startsWith('pay'))).toEqual([]);
   });
 
@@ -353,7 +493,9 @@ describe('A LEG THAT STOPS PART WAY, AND PAID AGAIN', () => {
     expect(String((cause as Error).message)).toMatch(/the wallet stopped waiting/u);
     expect((stopped as Error).message).toMatch(/1 of the leg's 3 payment\(s\) were sent/u);
     /* Paid again: the account shows person 0 paid and person 1's payment landed; only person 2 is owed. */
-    stopsAt = null; calls.length = 0; paidOnTheAccount.add(1);
+    stopsAt = null;
+    calls.length = 0;
+    paidOnTheAccount.add(1);
     const again = await payAnApprovedLeg(doors, leg);
     /* RED WHEN: paying again sends a payment to anyone the account records paid. */
     expect(calls.filter((c) => c.startsWith('pay'))).toEqual([expect.stringMatching(/^pay 2 20 /u)]);
@@ -367,16 +509,19 @@ describe('A LEG THAT STOPS PART WAY, AND PAID AGAIN', () => {
     /* RED WHEN: a public leg's stop loses the payments it had already sent. */
     expect(stopped).toBeInstanceOf(LegStopped);
     expect((stopped as InstanceType<typeof LegStopped>).done).toMatchObject({ paid: [0], payees: 2 });
-    stopsAt = null; calls.length = 0;
+    stopsAt = null;
+    calls.length = 0;
     await payAnApprovedLeg(await aVault([]), leg);
     expect(calls.filter((c) => c.startsWith('pay'))).toEqual(['pay publicly 1 40 asking true']);
   });
 
-  it('A STOP BEFORE ANY STEP WAS SENT IS THE STEP\'S OWN REFUSAL, NOT A LEG STOPPED PART WAY', async () => {
+  it("A STOP BEFORE ANY STEP WAS SENT IS THE STEP'S OWN REFUSAL, NOT A LEG STOPPED PART WAY", async () => {
     order = anOrder([aPayment(0, 30)]);
     stopsAt = 0;
     /* RED WHEN: a leg that sent nothing is reported as one stopped part way. */
-    const stopped = await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]), leg).catch((e: unknown) => e);
+    const stopped = await payAnApprovedLeg(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }]), leg).catch(
+      (e: unknown) => e
+    );
     expect(stopped).not.toBeInstanceOf(LegStopped);
   });
 });
@@ -385,11 +530,17 @@ describe('A MERGE THIS DEVICE CANNOT PROVE', () => {
   it('A PLAN WITH A MERGE IS REFUSED BEFORE THE RUN IS CHARGED WHEN THIS DEVICE CANNOT PROVE A MERGE, AND PAID AS PLANNED WHEN IT CAN', async () => {
     charging = 'charged';
     order = anOrder([aPayment(0, 250)]);
-    const notes = [{ nonce: 'a1'.repeat(32), value: 120n }, { nonce: 'a2'.repeat(32), value: 100n }, { nonce: 'a3'.repeat(32), value: 90n }];
+    const notes = [
+      { nonce: 'a1'.repeat(32), value: 120n },
+      { nonce: 'a2'.repeat(32), value: 100n },
+      { nonce: 'a3'.repeat(32), value: 90n }
+    ];
     const cannot = { ...(await aVault(notes)), mergesProvedHere: async () => false } as Doors;
     /* RED WHEN: a run whose plan needs a merge this wallet cannot prove is charged first, and then stops at the merge. */
     await expect(payAnApprovedLeg(cannot, leg)).rejects.toThrow(LegNotPayable);
-    await expect(payAnApprovedLeg(cannot, leg)).rejects.toThrow(/does not\s+yet hold the key a merge is proved with, so the run was not charged/u);
+    await expect(payAnApprovedLeg(cannot, leg)).rejects.toThrow(
+      /does not\s+yet hold the key a merge is proved with, so the run was not charged/u
+    );
     expect(charges).toEqual([]);
     expect(calls).toEqual([]);
     const can = { ...(await aVault(notes)), mergesProvedHere: async () => true } as Doors;
@@ -399,7 +550,10 @@ describe('A MERGE THIS DEVICE CANNOT PROVE', () => {
 
   it('A PLAN WITH NO MERGE IS PAID WHETHER OR NOT THIS DEVICE CAN PROVE A MERGE', async () => {
     order = anOrder([aPayment(0, 30)]);
-    const doors = { ...(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }])), mergesProvedHere: async () => false } as Doors;
+    const doors = {
+      ...(await aVault([{ nonce: 'a1'.repeat(32), value: 100n }])),
+      mergesProvedHere: async () => false
+    } as Doors;
     /* RED WHEN: a leg that needs no merge is refused because this wallet cannot prove one. */
     expect(await payAnApprovedLeg(doors, leg)).toMatchObject({ paid: [0] });
   });

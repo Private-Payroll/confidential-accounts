@@ -6,7 +6,12 @@
  * counts the same company on either.
  */
 import type { Hex } from '../../../src/core/crypto.js';
-import { approverRosterFrom, type ApproverRoster, type SeatRights, type SeatThresholdChange } from '../../../src/core/vault-approvers.js';
+import {
+  approverRosterFrom,
+  type ApproverRoster,
+  type SeatRights,
+  type SeatThresholdChange
+} from '../../../src/core/vault-approvers.js';
 import { NO_VAULT_COUNTED } from '../../../src/core/seat-rights.js';
 
 /** A seat of the directory this device believes, as far as the count reads it. */
@@ -18,12 +23,18 @@ interface DirectorySeatRead {
 
 /** Each seat's rights as the directory this device believes holds them, by its leaf. */
 export const rightsBelievedIn = (seats: readonly DirectorySeatRead[]): ReadonlyMap<string, SeatRights> =>
-  new Map(seats.filter((x) => x.retired === null && x.rights !== undefined).map((x) => [x.seat.toLowerCase(), x.rights!]));
+  new Map(
+    seats.filter((x) => x.retired === null && x.rights !== undefined).map((x) => [x.seat.toLowerCase(), x.rights!])
+  );
 
 /** The seats the chain holds and the roster names as active, by their leaves. */
-export const activeSeatsOnTheChain = (signers: readonly { status: string; leafCommitment: string | null }[], held: readonly string[]): string[] => {
+export const activeSeatsOnTheChain = (
+  signers: readonly { status: string; leafCommitment: string | null }[],
+  held: readonly string[]
+): string[] => {
   const onTheChain = new Set(held.map((x) => x.toLowerCase()));
-  return signers.filter((x) => x.status === 'active' && x.leafCommitment !== null && onTheChain.has(x.leafCommitment.toLowerCase()))
+  return signers
+    .filter((x) => x.status === 'active' && x.leafCommitment !== null && onTheChain.has(x.leafCommitment.toLowerCase()))
     .map((x) => x.leafCommitment!);
 };
 
@@ -34,16 +45,22 @@ export const activeSeatsOnTheChain = (signers: readonly { status: string; leafCo
 export const unnamedSeatsRefusal = (account: { readonly notBelieved: readonly string[] }): string | null => {
   const n = account.notBelieved.length;
   if (n === 0) return null;
-  return `the company's roster, as this wallet believes it, names no signer for ${n} seat${n === 1 ? '' : 's'} the `
-    + 'company\'s account holds on the network, so it cannot count who approves each vault. Nothing was approved. If a '
-    + 'signer is waiting for Finish adding, a signer presses it first; then try again.';
+  return (
+    `the company's roster, as this wallet believes it, names no signer for ${n} seat${n === 1 ? '' : 's'} the ` +
+    "company's account holds on the network, so it cannot count who approves each vault. Nothing was approved. If a " +
+    'signer is waiting for Finish adding, a signer presses it first; then try again.'
+  );
 };
 
 /**
  * The change a seat invited with a threshold makes, as `seatThresholdRefusal` counts it: the rights the invited seat is
  * given and the approvals the company needs once it is taken.
  */
-export const seatAndThreshold = (rights: SeatRights, threshold: number): SeatThresholdChange => ({ kind: 'seatAndThreshold', rights, threshold });
+export const seatAndThreshold = (rights: SeatRights, threshold: number): SeatThresholdChange => ({
+  kind: 'seatAndThreshold',
+  rights,
+  threshold
+});
 
 /** The signers removed or replaced since the open run they outran most was raised, and one run open on the chain. */
 interface OutrunRead {
@@ -66,8 +83,10 @@ interface OutrunRead {
 export const approversFrom = (reads: {
   readonly account: { readonly signers: readonly { status: string; leafCommitment: string | null }[] };
   readonly held: {
-    readonly seats: readonly string[]; readonly approvals: number;
-    readonly vaultThresholds: ReadonlyArray<{ readonly vault: string; readonly threshold: number }>; readonly adoptedVaults: readonly string[];
+    readonly seats: readonly string[];
+    readonly approvals: number;
+    readonly vaultThresholds: ReadonlyArray<{ readonly vault: string; readonly threshold: number }>;
+    readonly adoptedVaults: readonly string[];
   };
   readonly companyWide: string;
   readonly rights: ReadonlyMap<string, SeatRights>;
@@ -80,12 +99,18 @@ export const approversFrom = (reads: {
   const counting = reads.removal === true && (outrun.open ?? null) !== null;
   const leaves = activeSeatsOnTheChain(account.signers, held.seats);
   return approverRosterFrom({
-    threshold: held.approvals, vaultThresholds: held.vaultThresholds,
+    threshold: held.approvals,
+    vaultThresholds: held.vaultThresholds,
     seated: leaves.map((leaf) => ({ leaf, rights: rightsOf.get(leaf.toLowerCase()) ?? NO_VAULT_COUNTED })),
-    adoptedVaults: held.adoptedVaults, companyWide: wide,
-    ...(since > 0 || counting ? {
-      removals: since, openRuns: new Set([...held.adoptedVaults, wide].map((v) => v.toLowerCase() as Hex)), ...(outrun.run === null ? {} : { outrunBy: outrun.run }),
-      ...(counting && since === 0 ? { openRun: outrun.open! } : {}),
-    } : {}),
+    adoptedVaults: held.adoptedVaults,
+    companyWide: wide,
+    ...(since > 0 || counting
+      ? {
+          removals: since,
+          openRuns: new Set([...held.adoptedVaults, wide].map((v) => v.toLowerCase() as Hex)),
+          ...(outrun.run === null ? {} : { outrunBy: outrun.run }),
+          ...(counting && since === 0 ? { openRun: outrun.open! } : {})
+        }
+      : {})
   });
 };

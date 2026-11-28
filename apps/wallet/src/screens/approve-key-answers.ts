@@ -13,7 +13,18 @@ import { giveKeyring, giveUnlockKey } from './approve-answer-keys.js';
 export function useUnlockAnswer(a: ApproveInputs & ApproveState & WhatIsAsked) {
   const { identity, port, now, channel, profile, setProfile, setProblem, setSentAt, request, companyOnChain } = a;
   const release = useCallback((): void => {
-    giveUnlockKey({ request, profile, channel, identity, port, now, companyOnChain, setProblem, setProfile, setSentAt });
+    giveUnlockKey({
+      request,
+      profile,
+      channel,
+      identity,
+      port,
+      now,
+      companyOnChain,
+      setProblem,
+      setProfile,
+      setSentAt
+    });
   }, [request, profile, channel, identity, port, now, companyOnChain]);
   return { release };
 }
@@ -30,7 +41,11 @@ export function useHeldAddresses(a: ApproveInputs & ApproveState & WhatIsAsked) 
     const held = new Map<string, number>();
     if (request === null || request.kind !== 'keyring' || request.signedInAs === null) return held;
     for (const account of WALLET_ACCOUNTS) {
-      try { held.set(unshieldedAddressFor(identity, account), account); } catch { /* not an address this wallet can show */ }
+      try {
+        held.set(unshieldedAddressFor(identity, account), account);
+      } catch {
+        /* not an address this wallet can show */
+      }
     }
     return held;
   }, [request, identity]);
@@ -39,12 +54,57 @@ export function useHeldAddresses(a: ApproveInputs & ApproveState & WhatIsAsked) 
 export type HeldAddresses = ReturnType<typeof useHeldAddresses>;
 
 export function useKeyringAnswer(a: ApproveInputs & ApproveState & WhatIsAsked & HeldAddresses) {
-  const { identity, secret, port, now, channel, profile, setProfile, setProblem, setSentAt, setGivenCompany, thisWallet, request, companyOnChain, openedCompanyRead, addressesHeld } = a;
+  const {
+    identity,
+    secret,
+    port,
+    now,
+    channel,
+    profile,
+    setProfile,
+    setProblem,
+    setSentAt,
+    setGivenCompany,
+    thisWallet,
+    request,
+    companyOnChain,
+    openedCompanyRead,
+    addressesHeld
+  } = a;
   /* One release per ask: founding a company takes a moment, and a second press in it must not found a second one. */
   const releasing = useRef<unknown>(null);
   const releaseKeyring = useCallback((): void => {
-    giveKeyring({ request, profile, channel, identity, secret, port, now, addressesHeld, thisWallet, companyOnChain, openedCompanyRead, releasing, setProblem, setProfile, setSentAt, setGivenCompany });
-  }, [request, profile, channel, identity, secret, port, now, addressesHeld, thisWallet, companyOnChain, openedCompanyRead]);
+    giveKeyring({
+      request,
+      profile,
+      channel,
+      identity,
+      secret,
+      port,
+      now,
+      addressesHeld,
+      thisWallet,
+      companyOnChain,
+      openedCompanyRead,
+      releasing,
+      setProblem,
+      setProfile,
+      setSentAt,
+      setGivenCompany
+    });
+  }, [
+    request,
+    profile,
+    channel,
+    identity,
+    secret,
+    port,
+    now,
+    addressesHeld,
+    thisWallet,
+    companyOnChain,
+    openedCompanyRead
+  ]);
   return { releaseKeyring };
 }
 export type KeyringAnswerPress = ReturnType<typeof useKeyringAnswer>;

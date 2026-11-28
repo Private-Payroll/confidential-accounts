@@ -22,8 +22,15 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { canonical, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import {
-  COMPANY_SERVICE_RECORD, companyServiceOf, openCompanyService, sealCompanyService, serviceAddressRefusal, serviceAsked,
-  type CompanyService, type ServiceAsked, type ServiceOpener,
+  COMPANY_SERVICE_RECORD,
+  companyServiceOf,
+  openCompanyService,
+  sealCompanyService,
+  serviceAddressRefusal,
+  serviceAsked,
+  type CompanyService,
+  type ServiceAsked,
+  type ServiceOpener
 } from '../../../../src/midnight/company-service-record.js';
 import { companyRecordEntry } from '../../../../src/midnight/record-manifest.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
@@ -33,7 +40,15 @@ import { CompanyKeyBeingChanged } from '../../../../packages/web-shared/src/comp
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { companyServiceFiledHere, type ServiceFiled, type ServiceUnread } from './company-service-read.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import { companyRecordFiledHere } from './company-record-filed.js';
@@ -51,7 +66,8 @@ export interface ChooseCompanyServiceReach {
 export const CHOOSE_SERVICE_STATE = { inForce: 'in-force', waiting: 'waiting-for-signers' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.choose-company-service.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.choose-company-service.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
@@ -72,8 +88,10 @@ export const choiceOf = (intent: ActIntent): CompanyService | Words => {
 /** The choice in plain words, as the window shows it before the passkey. */
 const shownChoice = (intent: ActIntent): ShownLine => {
   const service = intent.fields['service'] ?? '';
-  if (service === 'ours' || service === 'none') return { key: `act.choose-company-service.shown.${service}`, from: 'page' };
-  if (service === 'own') return { key: 'act.choose-company-service.shown.own', values: { at: intent.fields['at'] ?? '' }, from: 'page' };
+  if (service === 'ours' || service === 'none')
+    return { key: `act.choose-company-service.shown.${service}`, from: 'page' };
+  if (service === 'own')
+    return { key: 'act.choose-company-service.shown.own', values: { at: intent.fields['at'] ?? '' }, from: 'page' };
   return { key: 'act.choose-company-service.shown.not-a-choice', values: { service }, from: 'page' };
 };
 
@@ -102,7 +120,8 @@ async function filedHere(r: CompanyReach, choice: CompanyService, filed: Service
   const not = await mayFileHere(directory, signingPublicKeyOf(signingSecret), COMPANY_SERVICE_RECORD.kind);
   if (not !== null) throw new StepRefused(why(not.why === 'role' ? 'role-may-not-file' : 'seat-not-believed'));
   const signers = await readersIn(directory).signers();
-  if (!signers.some((s) => s.id.toLowerCase() === r.leaf.toLowerCase())) throw new StepRefused(why('seat-not-believed'));
+  if (!signers.some((s) => s.id.toLowerCase() === r.leaf.toLowerCase()))
+    throw new StepRefused(why('seat-not-believed'));
   const filer = signingPublicKeyOf(signingSecret).toLowerCase() as Hex;
   const own = filed.unentered;
   if (own !== undefined && verifiedCompanyFiler(own)?.toLowerCase() === filer && asks(own, r.opener, choice)) {
@@ -118,7 +137,11 @@ async function filedHere(r: CompanyReach, choice: CompanyService, filed: Service
   try {
     sealing = r.companyKeys.sealing();
   } catch (e) {
-    if (e instanceof CompanyKeyBeingChanged) throw new StepRefused(why('key-being-changed', { says: said(e).replace(/\.\s*Nothing was sealed\..*$/su, '') }), codeOfError(e));
+    if (e instanceof CompanyKeyBeingChanged)
+      throw new StepRefused(
+        why('key-being-changed', { says: said(e).replace(/\.\s*Nothing was sealed\..*$/su, '') }),
+        codeOfError(e)
+      );
     throw e;
   }
   const rec = sealCompanyService({ company: r.accountId, version: filed.highest + 1, sealing, choice, signers });
@@ -138,13 +161,13 @@ export function chooseCompanyServiceAction(reach: ChooseCompanyServiceReach): Ac
       { key: 'act.choose-company-service.shown.bar', from: 'action' },
       { key: 'act.choose-company-service.shown.sealed', from: 'action' },
       ...upkeepShown(),
-      { key: 'act.choose-company-service.shown.nothing-else', from: 'action' },
+      { key: 'act.choose-company-service.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.choose-company-service.check.address' },
       { key: 'act.choose-company-service.check.seat' },
       { key: 'act.choose-company-service.check.read' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent) => {
       if ((intent.fields['record'] ?? '') === '') return why('not-a-company');
@@ -152,10 +175,14 @@ export function chooseCompanyServiceAction(reach: ChooseCompanyServiceReach): Ac
       return 'key' in choice ? choice : null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.choose-company-service.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const file: ActionStep = {
@@ -170,11 +197,12 @@ export function chooseCompanyServiceAction(reach: ChooseCompanyServiceReach): Ac
           const asked = await filedHere(r, choice, filed);
           ctx.tell({
             state: asked.by >= asked.needed ? CHOOSE_SERVICE_STATE.inForce : CHOOSE_SERVICE_STATE.waiting,
-            filed: asked.by, needed: asked.needed,
+            filed: asked.by,
+            needed: asked.needed
           });
-        },
+        }
       };
       return [seat, upkeep.first, file, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

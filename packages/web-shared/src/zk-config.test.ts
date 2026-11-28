@@ -46,7 +46,7 @@ const countingFetch = () => {
       ok: true,
       status: 200,
       headers: { get: (h: string) => (h === 'content-length' ? String(body.length) : null) },
-      arrayBuffer: async () => body.buffer.slice(0, body.length),
+      arrayBuffer: async () => body.buffer.slice(0, body.length)
     } as unknown as Response;
   }) as unknown as typeof fetch;
   return { asked, impl };
@@ -56,7 +56,7 @@ const sourceWithCache = () => {
   const { asked, impl } = countingFetch();
   return {
     asked,
-    source: httpKeyMaterialSource(BASE, { cache: new MemoryArtefactCache(), fetchImpl: impl }),
+    source: httpKeyMaterialSource(BASE, { cache: new MemoryArtefactCache(), fetchImpl: impl })
   };
 };
 
@@ -74,10 +74,11 @@ describe('the provider a call is assembled with', () => {
 
     const key = await zk.getVerifierKey('approve');
 
-    expect(asked,
-      'assembling a call fetched something besides the verifying key. The proving key is '
-      + 'eighteen megabytes and nothing is being proved yet')
-      .toEqual(['/keys/approve.verifier']);
+    expect(
+      asked,
+      'assembling a call fetched something besides the verifying key. The proving key is ' +
+        'eighteen megabytes and nothing is being proved yet'
+    ).toEqual(['/keys/approve.verifier']);
     expect(text(key as unknown as Uint8Array)).toBe(`${BASE}/keys/approve.verifier`);
   });
 
@@ -98,9 +99,7 @@ describe('the provider a call is assembled with', () => {
     const { asked, source } = sourceWithCache();
 
     await source.lookupKey('approve');
-    expect(asked).toEqual([
-      '/keys/approve.prover', '/keys/approve.verifier', '/zkir/approve.bzkir',
-    ]);
+    expect(asked).toEqual(['/keys/approve.prover', '/keys/approve.verifier', '/zkir/approve.bzkir']);
 
     const zk = zkConfigOver(source, byCircuitName, RUNTIME);
     await zk.get('approve');
@@ -108,10 +107,10 @@ describe('the provider a call is assembled with', () => {
     await zk.getProverKey('approve');
     await zk.getZKIR('approve');
 
-    expect(asked,
-      'the adapter downloaded something the cache already held. There is one fetcher and this '
-      + 'is not it')
-      .toEqual(['/keys/approve.prover', '/keys/approve.verifier', '/zkir/approve.bzkir']);
+    expect(
+      asked,
+      'the adapter downloaded something the cache already held. There is one fetcher and this ' + 'is not it'
+    ).toEqual(['/keys/approve.prover', '/keys/approve.verifier', '/zkir/approve.bzkir']);
   });
 
   /** And the other direction: the prover asks after the adapter has. */
@@ -136,9 +135,7 @@ describe('the provider a call is assembled with', () => {
     const { asked, source } = sourceWithCache();
     const zk = zkConfigOver(source, byCircuitName, RUNTIME);
 
-    await Promise.all([
-      zk.getVerifierKey('approve'), zk.getVerifierKey('approve'), zk.getVerifierKey('approve'),
-    ]);
+    await Promise.all([zk.getVerifierKey('approve'), zk.getVerifierKey('approve'), zk.getVerifierKey('approve')]);
 
     expect(asked).toEqual(['/keys/approve.verifier']);
   });
@@ -149,9 +146,7 @@ describe('the provider a call is assembled with', () => {
 
     const pairs = await zk.getVerifierKeys(['approve', 'cancel', 'propose']);
 
-    expect(asked.slice().sort()).toEqual([
-      '/keys/approve.verifier', '/keys/cancel.verifier', '/keys/propose.verifier',
-    ]);
+    expect(asked.slice().sort()).toEqual(['/keys/approve.verifier', '/keys/cancel.verifier', '/keys/propose.verifier']);
     expect(pairs.map(([id]) => id)).toEqual(['approve', 'cancel', 'propose']);
   });
 
@@ -186,10 +181,11 @@ describe('the provider a call is assembled with', () => {
     await zkConfigOver(source, byCircuitName, RUNTIME).getVerifierKey('approve');
     await source.artefact('verifier', location);
 
-    expect(asked,
-      'the same verifying key was fetched twice, under two cache keys, because the interface a '
-      + 'call is assembled through names only the circuit')
-      .toEqual(['/keys/approve.verifier', '/keys/approve.verifier']);
+    expect(
+      asked,
+      'the same verifying key was fetched twice, under two cache keys, because the interface a ' +
+        'call is assembled through names only the circuit'
+    ).toEqual(['/keys/approve.verifier', '/keys/approve.verifier']);
   });
 
   /** A caller that CAN name the location pays nothing for the second entry. */
@@ -234,10 +230,11 @@ describe('the provider a call is assembled with', () => {
 
     await zk.asKeyMaterialProvider().getVerifierKey(location);
 
-    expect(asked,
-      'a key location was put through the circuit-to-location mapping, so it missed the entry '
-      + 'the prover had already filled and fetched the same bytes a second time')
-      .toEqual(['/keys/approve.verifier']);
+    expect(
+      asked,
+      'a key location was put through the circuit-to-location mapping, so it missed the entry ' +
+        'the prover had already filled and fetched the same bytes a second time'
+    ).toEqual(['/keys/approve.verifier']);
   });
 
   it('and the circuit-named methods DO apply the mapping, which is the control for that', async () => {
@@ -265,7 +262,9 @@ describe('the provider a call is assembled with', () => {
     expect(runtimeVersionOf({ 'runtime-version': '0.21.0', 'compiler-version': '0.36.1' }, 'the vault')).toBe('0.21.0');
     /* RED WHEN: a manifest without a version is answered with a guess, and calls are built for a ledger nobody named. */
     for (const manifest of [{}, null, 'manifest', { 'runtime-version': '' }, { 'runtime-version': 21 }]) {
-      expect(() => runtimeVersionOf(manifest, 'the vault'), JSON.stringify(manifest)).toThrow(/names no contract runtime for the vault/);
+      expect(() => runtimeVersionOf(manifest, 'the vault'), JSON.stringify(manifest)).toThrow(
+        /names no contract runtime for the vault/
+      );
     }
   });
 
@@ -278,7 +277,7 @@ describe('the provider a call is assembled with', () => {
     const zk = zkConfigOver(
       httpKeyMaterialSource(BASE, { cache: new MemoryArtefactCache(), fetchImpl: impl }),
       byCircuitName,
-      RUNTIME,
+      RUNTIME
     );
 
     await expect(zk.getVerifierKey('approve')).rejects.toThrow(/404 for .*approve\.verifier/);

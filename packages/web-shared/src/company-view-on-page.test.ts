@@ -5,8 +5,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const t = vi.hoisted(() => ({
-  paths: [] as string[], wallet: 0, sealed: { id: 'c1', companyLabel: 'co_1', contractAddress: 'acct1' } as Record<string, unknown>,
-  indexer: { indexerUri: 'i', indexerWsUri: 'w' } as unknown, adopted: [] as string[],
+  paths: [] as string[],
+  wallet: 0,
+  sealed: { id: 'c1', companyLabel: 'co_1', contractAddress: 'acct1' } as Record<string, unknown>,
+  indexer: { indexerUri: 'i', indexerWsUri: 'w' } as unknown,
+  adopted: [] as string[]
 }));
 vi.mock('./service-transport.js', async (real) => ({
   ...(await real<typeof import('./service-transport.js')>()),
@@ -14,29 +17,53 @@ vi.mock('./service-transport.js', async (real) => ({
     t.paths.push(path);
     if (/^\/api\/accounts\/c\d$/u.test(path)) return { ...t.sealed, id: path.slice(-2) };
     if (path.endsWith('/directory')) return { filings: [] };
-    if (path.endsWith('/manifest/newest')) return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => 0) };
+    if (path.endsWith('/manifest/newest'))
+      return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => 0) };
     if (path.endsWith('/vaults')) return { rows: [] };
     if (init?.method === 'POST' && path.endsWith('/manifest/entries')) return { ok: true };
     throw new Error(`nothing is served at ${path}`);
-  },
+  }
 }));
 vi.mock('./wallet-asks.js', async (real) => ({
   ...(await real<typeof import('./wallet-asks.js')>()),
-  holdersFromTheWallet: async () => { t.wallet += 1; return { holders: { seats: ['s1'], approvals: 1, adoptedVaults: t.adopted, committee: [], threshold: 1, vaultThresholds: [], policyBar: null }, indexer: t.indexer }; },
+  holdersFromTheWallet: async () => {
+    t.wallet += 1;
+    return {
+      holders: {
+        seats: ['s1'],
+        approvals: 1,
+        adoptedVaults: t.adopted,
+        committee: [],
+        threshold: 1,
+        vaultThresholds: [],
+        policyBar: null
+      },
+      indexer: t.indexer
+    };
+  }
 }));
 
 const page = await import('./company-view-on-page.js');
 const { ViewEnded } = await import('./company-view.js');
 const doors: Parameters<typeof page.openOnPage>[1] = {
   walletOrigin: 'https://wallet.example',
-  builder: async () => { throw new Error('no read here asks the builder'); },
-  held: () => async () => { throw new Error('no read here asks what the anchor holds'); },
-  directory: async () => { throw new Error('no read here asks for the directory believed'); },
+  builder: async () => {
+    throw new Error('no read here asks the builder');
+  },
+  held: () => async () => {
+    throw new Error('no read here asks what the anchor holds');
+  },
+  directory: async () => {
+    throw new Error('no read here asks for the directory believed');
+  }
 };
 const accountReads = (): number => t.paths.filter((p) => p === '/api/accounts/c1').length;
 
 beforeEach(() => {
-  t.paths.length = 0; t.wallet = 0; t.adopted = []; t.indexer = { indexerUri: 'i', indexerWsUri: 'w' };
+  t.paths.length = 0;
+  t.wallet = 0;
+  t.adopted = [];
+  t.indexer = { indexerUri: 'i', indexerWsUri: 'w' };
   t.sealed = { id: 'c1', companyLabel: 'co_1', contractAddress: 'acct1' };
 });
 
@@ -44,9 +71,20 @@ describe('one view of a company on the page', () => {
   it('reads the account once and asks the wallet once, however many tiles read through it', async () => {
     const view = page.openOnPage('c1', doors);
     const [sealed, account, holders, indexer, again, vaults] = await Promise.all([
-      page.accountOnPage(view), view.account(), view.holders(), page.indexerOnPage(view), view.holders(), view.list('vaults'),
+      page.accountOnPage(view),
+      view.account(),
+      view.holders(),
+      page.indexerOnPage(view),
+      view.holders(),
+      view.list('vaults')
     ]);
-    expect([(sealed as { id: string }).id, account === sealed, holders === again, indexer, vaults]).toEqual(['c1', true, true, t.indexer, { rows: [] }]);
+    expect([(sealed as { id: string }).id, account === sealed, holders === again, indexer, vaults]).toEqual([
+      'c1',
+      true,
+      true,
+      t.indexer,
+      { rows: [] }
+    ]);
     /* RED WHEN: the wallet's door reads the account apart from the view, so every view costs two reads of it. */
     expect(accountReads()).toBe(1);
     /* RED WHEN: the indexer, or a second tile's holders, costs another ask of the wallet in the same view. */
@@ -67,17 +105,27 @@ describe('one view of a company on the page', () => {
 
 describe('the check before a write, on the page', () => {
   it('reads the account again from the service, so signers another seat changed meanwhile stop the write', async () => {
-    t.sealed = { id: 'c1', companyLabel: 'co_1', contractAddress: 'acct1', keyEpoch: 1, pendingSigners: [], wrappedKeys: [], roster: { version: 1 } };
+    t.sealed = {
+      id: 'c1',
+      companyLabel: 'co_1',
+      contractAddress: 'acct1',
+      keyEpoch: 1,
+      pendingSigners: [],
+      wrappedKeys: [],
+      roster: { version: 1 }
+    };
     const view = page.openOnPage('c1', doors);
     await page.accountOnPage(view);
     t.sealed = { ...t.sealed, roster: { version: 2 } };
     /* RED WHEN: the check is answered from the page's own kept account, so a vault's keys are sealed to a roster that changed. */
-    await expect(view.write([{ to: 'entries', entries: [] }])).rejects.toMatchObject({ moved: ['the company\'s account'] });
+    await expect(view.write([{ to: 'entries', entries: [] }])).rejects.toMatchObject({
+      moved: ["the company's account"]
+    });
   });
 });
 
 describe('the page keeps nothing beside its view', () => {
-  it('carries the wallet\'s indexer in the holders, and a fresh read naming another indexer, nothing else moved, stops no write', async () => {
+  it("carries the wallet's indexer in the holders, and a fresh read naming another indexer, nothing else moved, stops no write", async () => {
     const view = page.openOnPage('c1', doors);
     expect(await page.indexerOnPage(view)).toEqual(t.indexer);
     t.indexer = { indexerUri: 'another', indexerWsUri: 'another-ws' };
@@ -103,7 +151,7 @@ describe('the page keeps nothing beside its view', () => {
     expect([accountReads(), t.wallet]).toEqual([0, 1]);
   });
 
-  it('writes nothing through a view opened at a place on the chain the company\'s own account does not name', async () => {
+  it("writes nothing through a view opened at a place on the chain the company's own account does not name", async () => {
     const wrong = page.openOnPage('c1', doors, { company: 'co_1' as never, account: 'acct2' as never });
     await wrong.holders();
     /* RED WHEN: the check before a write takes the place the opener named without the company's account naming it. */
@@ -142,7 +190,7 @@ describe('the vaults on the chain, read through the view', () => {
         b.asked.push([...i.vaults]);
         b.named.push(i.account !== undefined);
         return i.vaults.map((state) => ({ onChain: true, state }));
-      },
+      }
     });
   };
 
@@ -150,7 +198,8 @@ describe('the vaults on the chain, read through the view', () => {
     t.adopted = ['V1', 'v2', 'v3'];
     const b = aBuilder();
     const view = page.openOnPage('c1', { ...doors, builder: async () => b as never });
-    const read = (vault: string, round?: number) => page.vaultOnPage(view, vault, t.indexer as never, round).then((r) => (r as { state?: string }).state);
+    const read = (vault: string, round?: number) =>
+      page.vaultOnPage(view, vault, t.indexer as never, round).then((r) => (r as { state?: string }).state);
     expect(await read('v2')).toBe('v2');
     expect(await Promise.all([read('v1'), read('v3')])).toEqual(['v1', 'v3']);
     /* RED WHEN: a tile reads its vault alone, or asks the account's circuits a page never shows. */
@@ -160,8 +209,15 @@ describe('the vaults on the chain, read through the view', () => {
     expect(b.asked).toHaveLength(1);
     expect(await Promise.all([read('v1', 1), read('v3', 1)])).toEqual(['v1', 'v3']);
     /* RED WHEN: a press that reads the vault again is shown what was read before it. */
-    expect(b.asked).toEqual([['v2', 'v1', 'v3'], ['v1', 'v2', 'v3']]);
-    await page.vaultOnPage(page.openOnPage('c1', { ...doors, builder: async () => b as never }), 'v1', t.indexer as never);
+    expect(b.asked).toEqual([
+      ['v2', 'v1', 'v3'],
+      ['v1', 'v2', 'v3']
+    ]);
+    await page.vaultOnPage(
+      page.openOnPage('c1', { ...doors, builder: async () => b as never }),
+      'v1',
+      t.indexer as never
+    );
     /* RED WHEN: another opening is served this opening's reads. */
     expect(b.asked).toHaveLength(3);
   });

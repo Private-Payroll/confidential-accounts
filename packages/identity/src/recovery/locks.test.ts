@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import {
-  LockError, checkLockPlan, lockPiece, proveStoredPieceOpens, recoveryKeyOf, recoveryKeypair,
-  unlockPiece,
+  LockError,
+  checkLockPlan,
+  lockPiece,
+  proveStoredPieceOpens,
+  recoveryKeyOf,
+  recoveryKeypair,
+  unlockPiece
 } from './locks.js';
 import { combinePieces, splitSecret } from './pieces.js';
-import {
-  identityFromSecret, identityFromWords, newSecret, secretFromWords,
-} from '../keys/derivation.js';
+import { identityFromSecret, identityFromWords, newSecret, secretFromWords } from '../keys/derivation.js';
 import { addressFor } from '../wallet/address.js';
 import { toBase64Url } from '../passkey/bytes.js';
 
-const hex = (b: Uint8Array): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 const me = identityFromWords(TEST_MNEMONIC);
 const someoneElse = identityFromSecret(newSecret());
@@ -134,14 +136,17 @@ describe('a locked piece is still a piece', () => {
      */
     const secret = secretFromWords(TEST_MNEMONIC);
     const guardians = [identityFromSecret(newSecret()), identityFromSecret(newSecret())];
-    const set = await splitSecret(secret, [
-      { label: 'My brother', holder: 'person:brother' },
-      { label: 'My accountant', holder: 'person:accountant' },
-      { label: 'Printed', holder: 'paper' },
-    ], 2);
+    const set = await splitSecret(
+      secret,
+      [
+        { label: 'My brother', holder: 'person:brother' },
+        { label: 'My accountant', holder: 'person:accountant' },
+        { label: 'Printed', holder: 'paper' }
+      ],
+      2
+    );
 
-    const stored = guardians.map((g, i) =>
-      lockPiece(set.pieces[i]!.bytes, recoveryKeyOf(g), MINE));
+    const stored = guardians.map((g, i) => lockPiece(set.pieces[i]!.bytes, recoveryKeyOf(g), MINE));
     const opened = stored.map((locked, i) => unlockPiece(locked, recoveryKeypair(guardians[i]!)));
     expect(hex(await combinePieces(opened))).toBe(hex(secret));
   });
@@ -181,8 +186,7 @@ describe('locking, proved rather than assumed', () => {
     const theirs = recoveryKeypair(someoneElse);
     const piece = crypto.getRandomValues(new Uint8Array(43));
     const stored = lockPiece(piece, THEIRS, MINE);
-    await expect(proveStoredPieceOpens(stored, piece, (l) => unlockPiece(l, theirs)))
-      .resolves.toBeUndefined();
+    await expect(proveStoredPieceOpens(stored, piece, (l) => unlockPiece(l, theirs))).resolves.toBeUndefined();
   });
 
   it('REFUSES a piece sealed to a key its holder does not have', async () => {
@@ -197,7 +201,8 @@ describe('locking, proved rather than assumed', () => {
     const sealedToTheWrongPerson = lockPiece(piece, MINE, THEIRS);
     await refusesAsync(
       () => proveStoredPieceOpens(sealedToTheWrongPerson, piece, (l) => unlockPiece(l, holder)),
-      'will-not-open-where-it-is');
+      'will-not-open-where-it-is'
+    );
   });
 
   it('REFUSES a piece that opens into something other than the piece that was cut', async () => {
@@ -206,6 +211,7 @@ describe('locking, proved rather than assumed', () => {
     const stored = lockPiece(new Uint8Array(43).fill(2), THEIRS, MINE);
     await refusesAsync(
       () => proveStoredPieceOpens(stored, piece, (l) => unlockPiece(l, theirs)),
-      'will-not-open-where-it-is');
+      'will-not-open-where-it-is'
+    );
   });
 });

@@ -1,6 +1,10 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  type NonceSecretReader, keepsEveryEpochOf, openNonceSecrets, recordsKeypairFrom, refileNonceSecret,
+  type NonceSecretReader,
+  keepsEveryEpochOf,
+  openNonceSecrets,
+  recordsKeypairFrom,
+  refileNonceSecret
 } from '../../../src/midnight/company-nonce-secret.js';
 import type { PoolDoors, VaultChainView } from './vault-doors.js';
 import { SealedNotePool, type SealedPool } from '../../../src/midnight/vault-pool.js';
@@ -17,11 +21,15 @@ import { theVaultReadForItsStart } from './vault-read-here.js';
  * refused there.
  */
 export async function theChainWins(
-  doors: PoolDoors & { readonly builder: Pick<VaultBuilderClient, 'secretIsTheVaults'> }, vault: Hex, state: string,
+  doors: PoolDoors & { readonly builder: Pick<VaultBuilderClient, 'secretIsTheVaults'> },
+  vault: Hex,
+  state: string
 ): Promise<'the-newest' | 'filed-again' | 'none-names-it'> {
   return fileTheChainsSecretAsTheNewest({
-    vault, me: doors.me, records: doors.records,
-    secretIsTheVaults: (secret) => doors.builder.secretIsTheVaults({ vault, state, secret }),
+    vault,
+    me: doors.me,
+    records: doors.records,
+    secretIsTheVaults: (secret) => doors.builder.secretIsTheVaults({ vault, state, secret })
   });
 }
 
@@ -50,9 +58,20 @@ export interface SecretReadBack {
   readonly madeHere: boolean;
 }
 
-export const openedHere = (doors: Pick<PoolDoors, 'me'>, vault: Hex, filed: SealedPool, madeHere: boolean): SecretReadBack => {
+export const openedHere = (
+  doors: Pick<PoolDoors, 'me'>,
+  vault: Hex,
+  filed: SealedPool,
+  madeHere: boolean
+): SecretReadBack => {
   const opened = openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey));
-  return { secret: opened.secrets[opened.secrets.length - 1]! as Hex, readers: [...opened.readers] as Hex[], epoch: opened.epoch, filed, madeHere };
+  return {
+    secret: opened.secrets[opened.secrets.length - 1]! as Hex,
+    readers: [...opened.readers] as Hex[],
+    epoch: opened.epoch,
+    filed,
+    madeHere
+  };
 };
 
 /**
@@ -62,16 +81,22 @@ export const openedHere = (doors: Pick<PoolDoors, 'me'>, vault: Hex, filed: Seal
  * this returns only once the chain vouches for it: the vault's own commitment,
  * or an open run of its signers made from it.
  */
-export async function readTheSecretBack(doors: Pick<PoolDoors, 'me' | 'records' | 'secretKeptHere'>, vault: Hex): Promise<SecretReadBack> {
+export async function readTheSecretBack(
+  doors: Pick<PoolDoors, 'me' | 'records' | 'secretKeptHere'>,
+  vault: Hex
+): Promise<SecretReadBack> {
   const back = await doors.records('nonce-secret').get(vault);
   if (back === null) {
-    throw new Error('the company\'s records hold no nonce secret for this vault, so nothing is built from one. File it '
-      + 'first: creating the vault again does.');
+    throw new Error(
+      "the company's records hold no nonce secret for this vault, so nothing is built from one. File it " +
+        'first: creating the vault again does.'
+    );
   }
   const read = openedHere(doors, vault, back, false);
-  const kept = await doors.secretKeptHere?.held(vault) ?? null;
+  const kept = (await doors.secretKeptHere?.held(vault)) ?? null;
   return kept !== null && openedHere(doors, vault, kept, true).secret.toLowerCase() === read.secret.toLowerCase()
-    ? { ...read, madeHere: true } : read;
+    ? { ...read, madeHere: true }
+    : read;
 }
 
 /**
@@ -98,13 +123,21 @@ export async function readTheSecretBack(doors: Pick<PoolDoors, 'me' | 'records' 
 const theChainHoldsASecret = (view: VaultChainView): boolean =>
   typeof view.nonceCommitment === 'string' && /[1-9a-f]/iu.test(view.nonceCommitment);
 
-const CHAIN_HOLDS_ANOTHER_SECRET = 'the chain already holds a secret for this vault, and neither the company\'s records '
-  + 'nor this wallet hold one the chain shows, so no fresh secret was made: it could never be the vault\'s. Nothing was '
-  + 'filed. Finish setting it up on the device whose wallet made it, where that secret is kept.';
+const CHAIN_HOLDS_ANOTHER_SECRET =
+  "the chain already holds a secret for this vault, and neither the company's records " +
+  "nor this wallet hold one the chain shows, so no fresh secret was made: it could never be the vault's. Nothing was " +
+  'filed. Finish setting it up on the device whose wallet made it, where that secret is kept.';
 
 /** Whether the chain shows this secret; a secret that does not open, or a read that fails, is not the chain's. */
-const theChainsOrNot = async (shows: (secret: Hex, state: string) => Promise<boolean>, secret: Hex | null, state: string): Promise<boolean> =>
-  secret !== null && await shows(secret, state).catch(() => { /* a read that fails is not the chain's: no secret is taken from it */ return false; });
+const theChainsOrNot = async (
+  shows: (secret: Hex, state: string) => Promise<boolean>,
+  secret: Hex | null,
+  state: string
+): Promise<boolean> =>
+  secret !== null &&
+  (await shows(secret, state).catch(() => {
+    /* a read that fails is not the chain's: no secret is taken from it */ return false;
+  }));
 
 /** The newest secret a sealed record of this vault's secret opens to here, or none when it does not open. */
 const newestSecretIn = (doors: Pick<PoolDoors, 'me'>, vault: Hex, rec: SealedPool | null): Hex | null => {
@@ -137,7 +170,10 @@ const behindTheFiled = (doors: Pick<PoolDoors, 'me'>, vault: Hex, kept: SealedPo
 };
 
 /** Whether every reader of a kept record is still one the directory believes now: never filed again to one who left. */
-const everyReaderStays = async (readers: readonly Hex[], readersNow?: () => Promise<readonly Hex[]>): Promise<boolean> => {
+const everyReaderStays = async (
+  readers: readonly Hex[],
+  readersNow?: () => Promise<readonly Hex[]>
+): Promise<boolean> => {
   if (readersNow === undefined) return true;
   const now = (await readersNow()).map((k) => k.toLowerCase());
   return readers.every((k) => now.includes(k.toLowerCase()));
@@ -151,7 +187,12 @@ const readersToSealTo = async (readersNow?: () => Promise<readonly Hex[]>): Prom
  * A kept record as it is filed after the newest the records list: as it is when it was made as that next version (the
  * wallet's record of a vault's next secret), otherwise sealed again as the version after the newer of the two.
  */
-const keptAsNext = async (store: ReturnType<PoolDoors['records']>, vault: Hex, rec: SealedPool, by: Uint8Array): Promise<SealedPool> => {
+const keptAsNext = async (
+  store: ReturnType<PoolDoors['records']>,
+  vault: Hex,
+  rec: SealedPool,
+  by: Uint8Array
+): Promise<SealedPool> => {
   const all = await store.versions(vault);
   const next = (all.length === 0 ? 0 : all[all.length - 1]!.version) + 1;
   const own = openNonceSecrets(rec, vault, recordsKeypairFrom(by)).version;
@@ -159,10 +200,12 @@ const keptAsNext = async (store: ReturnType<PoolDoors['records']>, vault: Hex, r
 };
 
 export async function openCompanyVaultPool(
-  doors: PoolDoors, vault: Hex, beforeFiling: (readers: readonly Hex[]) => Promise<void>,
+  doors: PoolDoors,
+  vault: Hex,
+  beforeFiling: (readers: readonly Hex[]) => Promise<void>,
   chainsSecret?: (secret: Hex, state: string) => Promise<boolean>,
   removals?: () => Promise<number>,
-  readersNow?: () => Promise<readonly Hex[]>,
+  readersNow?: () => Promise<readonly Hex[]>
 ): Promise<SecretReadBack> {
   doors.progress?.('opening the pool');
   const { view, refusal } = await theVaultReadForItsStart(doors, vault);
@@ -171,19 +214,23 @@ export async function openCompanyVaultPool(
     throw new Error(refusal ?? view.why ?? 'the chain does not show this vault yet, so its pool is not opened.');
   }
   const everCreated = new Set(view.everCreated ?? []);
-  const pool = new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
-
-
-
+  const pool = new SealedNotePool(
+    doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  );
 
   const store = doors.records('nonce-secret');
   const filedNow = await store.get(vault);
   const secretOwed = filedNow === null;
-  const kept = await doors.secretKeptHere?.held(vault) ?? null;
+  const kept = (await doors.secretKeptHere?.held(vault)) ?? null;
   const chainHolds = theChainHoldsASecret(view);
-  const keptIsTheChains = kept !== null && chainHolds && chainsSecret !== undefined && view.state !== undefined
-    && await theChainsOrNot(chainsSecret, newestSecretIn(doors, vault, kept), view.state);
+  const keptIsTheChains =
+    kept !== null &&
+    chainHolds &&
+    chainsSecret !== undefined &&
+    view.state !== undefined &&
+    (await theChainsOrNot(chainsSecret, newestSecretIn(doors, vault, kept), view.state));
   if (chainHolds && !keptIsTheChains && secretOwed) {
     throw new VaultStartOwed(vault, CHAIN_HOLDS_ANOTHER_SECRET);
   }
@@ -191,10 +238,12 @@ export async function openCompanyVaultPool(
   const counted = secretOwed && keptHere === null && removals !== undefined ? await removals() : 0;
   const readers = secretOwed && keptHere === null ? await readersToSealTo(readersNow) : [];
   if (secretOwed && keptHere === null) await beforeFiling(readers);
-  if (await doors.records('pool').get(vault) === null) {
+  if ((await doors.records('pool').get(vault)) === null) {
     if ((view.notes ?? []).length > 0 || everCreated.size > 0) {
-      throw new Error('the chain has already put money in this vault and it has no pool, so a new empty pool '
-        + 'would record nothing of it. Nothing is filed; rebuild the pool from the company\'s records instead.');
+      throw new Error(
+        'the chain has already put money in this vault and it has no pool, so a new empty pool ' +
+          "would record nothing of it. Nothing is filed; rebuild the pool from the company's records instead."
+      );
     }
     await pool.create(vault, { notes: [] });
   }
@@ -202,8 +251,11 @@ export async function openCompanyVaultPool(
     const opened = openedHere(doors, vault, keptHere, true);
     if (filedNow === null) {
       await store.put(vault, keptHere);
-    } else if (newestSecretIn(doors, vault, filedNow)?.toLowerCase() !== opened.secret.toLowerCase()
-      && !behindTheFiled(doors, vault, keptHere, filedNow) && await everyReaderStays(opened.readers, readersNow)) {
+    } else if (
+      newestSecretIn(doors, vault, filedNow)?.toLowerCase() !== opened.secret.toLowerCase() &&
+      !behindTheFiled(doors, vault, keptHere, filedNow) &&
+      (await everyReaderStays(opened.readers, readersNow))
+    ) {
       await store.put(vault, await keptAsNext(store, vault, keptHere, doors.me.companyKey));
     }
     return opened;

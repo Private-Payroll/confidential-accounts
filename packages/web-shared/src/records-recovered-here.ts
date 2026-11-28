@@ -33,21 +33,40 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import { EMPTY_HEAD } from '../../../src/midnight/record-manifest.js';
 import {
-  headStepOf, nextTreeHeader, treeBatchOf, type CheckedHead, type ResumesFrom, type TransitionStop, type TreeHeader,
+  headStepOf,
+  nextTreeHeader,
+  treeBatchOf,
+  type CheckedHead,
+  type ResumesFrom,
+  type TransitionStop,
+  type TreeHeader
 } from '../../../src/midnight/record-tree.js';
 import type { AnchorsOnChain } from './governed-call-builder.js';
 import type { TreeService } from './record-entered-here.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import { keptWith, type CheckedHeadsStore, type HeadersKeptStore, type KeptRecoveryWindow } from './tree-kept-here.js';
-import { durationSaid, RECOVERY_WINDOW_RANGE, windowWhenNoneInForce } from '../../../src/midnight/recovery-window-record.js';
 import {
-  approveFromAFile, callStateHere, fileCheckedAgainstTheChain, PROPOSAL_FILE_FORMAT, raiseFromTheChain, sentFromHere, standingNow,
-  type FromTheChainDoors, type ProposalFile, type SentBy,
+  durationSaid,
+  RECOVERY_WINDOW_RANGE,
+  windowWhenNoneInForce
+} from '../../../src/midnight/recovery-window-record.js';
+import {
+  approveFromAFile,
+  callStateHere,
+  fileCheckedAgainstTheChain,
+  PROPOSAL_FILE_FORMAT,
+  raiseFromTheChain,
+  sentFromHere,
+  standingNow,
+  type FromTheChainDoors,
+  type ProposalFile,
+  type SentBy
 } from './governance-from-the-chain.js';
 
 /** What a recovery asks of this device, beside what any proposal read from the chain and a file does. */
 export interface RecoveryDoors extends FromTheChainDoors {
-  readonly builder: FromTheChainDoors['builder'] & Pick<VaultBuilderClient, 'recoverAnchor' | 'anchorTag' | 'anchorHeads' | 'lastRecovery'>;
+  readonly builder: FromTheChainDoors['builder'] &
+    Pick<VaultBuilderClient, 'recoverAnchor' | 'anchorTag' | 'anchorHeads' | 'lastRecovery'>;
   /**
    * This device's own read of the company's records: the last head it checked, and where and why it stopped. Absent
    * on a device that asks the company's service nothing: its standing is then read from `checked` and the chain.
@@ -81,10 +100,12 @@ export interface OwnStanding {
  * at the batch after it whenever the chain holds another head - no device can
  * be given that batch's header then.
  */
-async function ownStandingHere(doors: Pick<RecoveryDoors, 'accountId' | 'read' | 'checked' | 'onChain'>): Promise<OwnStanding> {
+async function ownStandingHere(
+  doors: Pick<RecoveryDoors, 'accountId' | 'read' | 'checked' | 'onChain'>
+): Promise<OwnStanding> {
   let unread: string;
   if (doors.read === undefined) {
-    unread = 'this device asks the company\'s service nothing for a recovery';
+    unread = "this device asks the company's service nothing for a recovery";
   } else {
     try {
       return { ...(await doors.read()), serviceUnreached: false };
@@ -94,14 +115,21 @@ async function ownStandingHere(doors: Pick<RecoveryDoors, 'accountId' | 'read' |
   }
   const kept = await doors.checked?.read(doors.accountId);
   if (kept === undefined || kept === null) {
-    throw new Error(`${unread} and keeps no head of them it checked, `
-      + 'so it cannot say where they stopped. Open the company on a device that has read its records before');
+    throw new Error(
+      `${unread} and keeps no head of them it checked, ` +
+        'so it cannot say where they stopped. Open the company on a device that has read its records before'
+    );
   }
   const { landed } = await doors.onChain();
   const head = landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase();
   const reached = kept.latest;
-  const what = doors.read === undefined ? 'the company\'s service was not asked' : 'the company\'s service could not be reached';
-  return { reached, serviceUnreached: true, stop: head === reached.head ? null : { stop: 'not-given', seq: reached.seq + 1, what } };
+  const what =
+    doors.read === undefined ? "the company's service was not asked" : "the company's service could not be reached";
+  return {
+    reached,
+    serviceUnreached: true,
+    stop: head === reached.head ? null : { stop: 'not-given', seq: reached.seq + 1, what }
+  };
 }
 
 /**
@@ -113,20 +141,28 @@ async function ownStandingHere(doors: Pick<RecoveryDoors, 'accountId' | 'read' |
  */
 export function recoveryRefusal(own: OwnStanding, resumesFrom: ResumesFrom): string | null {
   if (own.stop === null) {
-    return 'this device reads the company\'s records up to the head the chain holds, so nothing is stopped and nothing needs recovering. '
-      + 'Do not approve it; ask the signer who raised it what their device shows';
+    return (
+      "this device reads the company's records up to the head the chain holds, so nothing is stopped and nothing needs recovering. " +
+      'Do not approve it; ask the signer who raised it what their device shows'
+    );
   }
   if (own.reached.seq > resumesFrom.seq) {
-    return `this device checked batch ${resumesFrom.seq + 1}, the one after the batch this recovery resumes from, and a recovery would give it up. `
-      + 'Do not approve it; ask the signer who raised it why their device could not check it';
+    return (
+      `this device checked batch ${resumesFrom.seq + 1}, the one after the batch this recovery resumes from, and a recovery would give it up. ` +
+      'Do not approve it; ask the signer who raised it why their device could not check it'
+    );
   }
   if (own.reached.seq < resumesFrom.seq) {
-    return `this device has checked the company's records only up to batch ${own.reached.seq}, before batch ${resumesFrom.seq} the recovery resumes from, `
-      + 'so it cannot say that batch is the company\'s. Reload the page so it checks further, then try again';
+    return (
+      `this device has checked the company's records only up to batch ${own.reached.seq}, before batch ${resumesFrom.seq} the recovery resumes from, ` +
+      "so it cannot say that batch is the company's. Reload the page so it checks further, then try again"
+    );
   }
   if (own.reached.head !== resumesFrom.head.toLowerCase() || own.reached.root !== resumesFrom.root.toLowerCase()) {
-    return `this device checked batch ${resumesFrom.seq} as another batch than the one the recovery resumes from. `
-      + 'Do not approve it; ask the signer who raised it what their device shows';
+    return (
+      `this device checked batch ${resumesFrom.seq} as another batch than the one the recovery resumes from. ` +
+      'Do not approve it; ask the signer who raised it what their device shows'
+    );
   }
   if (own.stop.seq !== resumesFrom.seq + 1) {
     return `this device stops at batch ${own.stop.seq}, not at the batch after the one the recovery resumes from. Reload the page, then try again`;
@@ -135,21 +171,29 @@ export function recoveryRefusal(own: OwnStanding, resumesFrom: ResumesFrom): str
 }
 
 /** What the service's absence means for a step taken without it, said to the person, who chooses to go on. */
-const WITHOUT_THE_SERVICE = 'the company\'s service could not be reached, so this device could not ask it for the batch after the last one it checked; '
-  + 'going on gives that batch up as one no device here can check. Choose to go on without the service only if it stays unreachable';
+const WITHOUT_THE_SERVICE =
+  "the company's service could not be reached, so this device could not ask it for the batch after the last one it checked; " +
+  'going on gives that batch up as one no device here can check. Choose to go on without the service only if it stays unreachable';
 
 /** The same choice for a device that asks the service nothing: it has the batch after the last one it checked from nobody. */
-const NOT_ASKING_THE_SERVICE = 'this device asks the company\'s service nothing for a recovery, so it has checked no batch after the last one it kept; '
-  + 'going on gives up every batch the chain anchored after that one, unchecked by this device, whether or not another signer\'s device could check it. '
-  + 'Choose to go on without the service only if you mean to';
+const NOT_ASKING_THE_SERVICE =
+  "this device asks the company's service nothing for a recovery, so it has checked no batch after the last one it kept; " +
+  "going on gives up every batch the chain anchored after that one, unchecked by this device, whether or not another signer's device could check it. " +
+  'Choose to go on without the service only if you mean to';
 
 /** The device's own read, held to the rule (`recoveryRefusal`) and, without the service, to the person's choice to go on. */
-async function standingFor(doors: RecoveryDoors, resumesFrom: ResumesFrom, withoutTheService: boolean): Promise<OwnStanding> {
+async function standingFor(
+  doors: RecoveryDoors,
+  resumesFrom: ResumesFrom,
+  withoutTheService: boolean
+): Promise<OwnStanding> {
   const own = await ownStandingHere(doors);
   const why = recoveryRefusal(own, resumesFrom);
   if (why !== null) throw new Error(`${why}. Nothing was built or sent`);
   if (own.serviceUnreached && !withoutTheService) {
-    throw new Error(`${doors.read === undefined ? NOT_ASKING_THE_SERVICE : WITHOUT_THE_SERVICE}. Nothing was built or sent`);
+    throw new Error(
+      `${doors.read === undefined ? NOT_ASKING_THE_SERVICE : WITHOUT_THE_SERVICE}. Nothing was built or sent`
+    );
   }
   return own;
 }
@@ -159,11 +203,19 @@ async function standingFor(doors: RecoveryDoors, resumesFrom: ResumesFrom, witho
  * carried out and the head the latest recovery carried out wrote when it was
  * raised - or refused as not one.
  */
-const recoveryOf = (file: ProposalFile): { readonly resumesFrom: ResumesFrom; readonly latest: number; readonly lastRecovery: string } => {
+const recoveryOf = (
+  file: ProposalFile
+): { readonly resumesFrom: ResumesFrom; readonly latest: number; readonly lastRecovery: string } => {
   if (file.change.kind !== 'recover-anchor' || file.resumesFrom === undefined) {
-    throw new Error('this file is not a recovery of the company\'s records. Nothing was built or sent. Open it where the change it names is made');
+    throw new Error(
+      "this file is not a recovery of the company's records. Nothing was built or sent. Open it where the change it names is made"
+    );
   }
-  return { resumesFrom: file.resumesFrom, latest: Number(file.change.latest), lastRecovery: String(file.change.lastRecovery).toLowerCase() };
+  return {
+    resumesFrom: file.resumesFrom,
+    latest: Number(file.change.latest),
+    lastRecovery: String(file.change.lastRecovery).toLowerCase()
+  };
 };
 
 /**
@@ -172,11 +224,15 @@ const recoveryOf = (file: ProposalFile): { readonly resumesFrom: ResumesFrom; re
  * wallet names (`callStateHere`) and never from the service; with that state,
  * for a call to be built on.
  */
-async function latestRecoveryHere(doors: RecoveryDoors): Promise<{ readonly head: string; readonly chain: Awaited<ReturnType<typeof callStateHere>> }> {
+async function latestRecoveryHere(
+  doors: RecoveryDoors
+): Promise<{ readonly head: string; readonly chain: Awaited<ReturnType<typeof callStateHere>> }> {
   const chain = await callStateHere(doors);
   const head = String(await doors.builder.lastRecovery({ accountState: chain.accountState })).toLowerCase();
   if (!/^[0-9a-f]{64}$/u.test(head)) {
-    throw new Error('the account\'s latest recovery could not be read from its state. Nothing was built or sent. Reload the page to use the current build');
+    throw new Error(
+      "the account's latest recovery could not be read from its state. Nothing was built or sent. Reload the page to use the current build"
+    );
   }
   return { head, chain };
 }
@@ -192,10 +248,12 @@ async function latestRecoveryHere(doors: RecoveryDoors): Promise<{ readonly head
  */
 const refusedVoid = (approved: string, latest: string, step: string): void => {
   if (approved !== latest) {
-    throw new Error(`this recovery names ${approved} as the head the latest recovery carried out wrote, and the account at your wallet's indexer holds ${latest}, `
-      + `so as this device reads it, it is void and the account would refuse it; ${step} could only spend a fee. Nothing was built or sent. `
-      + 'If your wallet has not caught up with the chain, wait until it has and try again. Otherwise another recovery carried out has replaced the one it names: '
-      + 'raise it again, and have it approved, once this device\'s read of the account is current; a recovery raised from an indexer behind the chain names the same old head, and is void too');
+    throw new Error(
+      `this recovery names ${approved} as the head the latest recovery carried out wrote, and the account at your wallet's indexer holds ${latest}, ` +
+        `so as this device reads it, it is void and the account would refuse it; ${step} could only spend a fee. Nothing was built or sent. ` +
+        'If your wallet has not caught up with the chain, wait until it has and try again. Otherwise another recovery carried out has replaced the one it names: ' +
+        "raise it again, and have it approved, once this device's read of the account is current; a recovery raised from an indexer behind the chain names the same old head, and is void too"
+    );
   }
 };
 
@@ -216,19 +274,25 @@ export class RecoveryWindowNotRead extends Error {}
  * records name that this device holds no key to open refuses the recovery,
  * until an upkeep reads it.
  */
-async function recoveryHorizonSeconds(doors: Pick<RecoveryDoors, 'window'>, at: { readonly seq: number; readonly head: string }): Promise<number> {
+async function recoveryHorizonSeconds(
+  doors: Pick<RecoveryDoors, 'window'>,
+  at: { readonly seq: number; readonly head: string }
+): Promise<number> {
   const kept = await doors.window();
   if (kept === null || kept.head.toLowerCase() !== at.head.toLowerCase()) return RECOVERY_WINDOW_RANGE.longest;
   if (kept.unread !== undefined) {
-    throw new RecoveryWindowNotRead(`this wallet could not read the company's recovery window as of batch ${at.seq}, the batch the recovery resumes from (${kept.unread.replace(/\.\s*$/u, '')}), `
-      + 'so it holds no length for the recovery. Nothing was built or sent. Do an act on this company in your wallet that does the company\'s upkeep '
-      + '(for example setting the recovery window), while its service answers: its last step reads the window again. Then try again');
+    throw new RecoveryWindowNotRead(
+      `this wallet could not read the company's recovery window as of batch ${at.seq}, the batch the recovery resumes from (${kept.unread.replace(/\.\s*$/u, '')}), ` +
+        "so it holds no length for the recovery. Nothing was built or sent. Do an act on this company in your wallet that does the company's upkeep " +
+        '(for example setting the recovery window), while its service answers: its last step reads the window again. Then try again'
+    );
   }
   return kept.seconds ?? windowWhenNoneInForce();
 }
 
 /** The time this device reads now, in whole seconds since 1970, as the chain's block time counts them. */
-const secondsNow = (doors: Pick<RecoveryDoors, 'now'>): number => Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000);
+const secondsNow = (doors: Pick<RecoveryDoors, 'now'>): number =>
+  Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000);
 
 /**
  * **A RECOVERY WHOSE LAST TIME HAS PASSED, REFUSED BEFORE ANYTHING IS MADE OR
@@ -238,8 +302,10 @@ const secondsNow = (doors: Pick<RecoveryDoors, 'now'>): number => Math.floor((do
  */
 const refusedPast = (doors: Pick<RecoveryDoors, 'now'>, latest: number, step: string): void => {
   if (secondsNow(doors) >= latest) {
-    throw new Error(`the time to carry out this recovery passed at ${new Date(latest * 1000).toISOString()}, so ${step} cannot carry it out. `
-      + 'Nothing was built or sent. Ask the signer who raised it to raise it again, with a later time');
+    throw new Error(
+      `the time to carry out this recovery passed at ${new Date(latest * 1000).toISOString()}, so ${step} cannot carry it out. ` +
+        'Nothing was built or sent. Ask the signer who raised it to raise it again, with a later time'
+    );
   }
 };
 
@@ -252,19 +318,26 @@ const refusedPast = (doors: Pick<RecoveryDoors, 'now'>, latest: number, step: st
  * to hand the other signers returned.
  */
 export async function raiseRecoveryHere(
-  doors: RecoveryDoors, input: { readonly latest: Date; readonly withoutTheService?: boolean },
+  doors: RecoveryDoors,
+  input: { readonly latest: Date; readonly withoutTheService?: boolean }
 ): Promise<{ readonly file: ProposalFile; readonly sentBy: SentBy }> {
   const latest = Math.floor(input.latest.getTime() / 1000);
   if (!Number.isSafeInteger(latest) || latest <= secondsNow(doors)) {
-    throw new Error('the last time to carry out a recovery must be later than now. Nothing was sent. Choose a later time');
+    throw new Error(
+      'the last time to carry out a recovery must be later than now. Nothing was sent. Choose a later time'
+    );
   }
   const own = await ownStandingHere(doors);
   if (own.reached.seq < 0) {
-    throw new Error('this device has checked no batch of the company\'s records, so there is nothing a recovery could resume from. Nothing was sent');
+    throw new Error(
+      "this device has checked no batch of the company's records, so there is nothing a recovery could resume from. Nothing was sent"
+    );
   }
   const horizon = await recoveryHorizonSeconds(doors, own.reached);
   if (latest > secondsNow(doors) + horizon) {
-    throw new Error(`the last time to carry out a recovery may be at most ${durationSaid(horizon)} from now, the company's recovery window. Nothing was sent. Choose a nearer time`);
+    throw new Error(
+      `the last time to carry out a recovery may be at most ${durationSaid(horizon)} from now, the company's recovery window. Nothing was sent. Choose a nearer time`
+    );
   }
   const resumesFrom: ResumesFrom = { seq: own.reached.seq, head: own.reached.head, root: own.reached.root };
   await standingFor(doors, resumesFrom, input.withoutTheService === true);
@@ -272,14 +345,14 @@ export async function raiseRecoveryHere(
   return raiseFromTheChain(doors, {
     change: { kind: 'recover-anchor', resumesFrom: resumesFrom.head, latest: String(latest), lastRecovery },
     summary: recoverySummary(resumesFrom.seq, latest),
-    resumesFrom,
+    resumesFrom
   });
 }
 
 /** What a recovery's file says it does, in the same words on every device that makes the file. */
 const recoverySummary = (seq: number, latest: number): string =>
-  `Recover the company's records from batch ${seq}, giving up every batch after it, which the raising device could not check, `
-  + `if it is carried out before ${new Date(latest * 1000).toISOString()}`;
+  `Recover the company's records from batch ${seq}, giving up every batch after it, which the raising device could not check, ` +
+  `if it is carried out before ${new Date(latest * 1000).toISOString()}`;
 
 /** A recovery's file in parts, each a fact the chain or the raise fixed: what a wallet hands back, and is handed, in place of the file. */
 export interface RecoveryParts {
@@ -296,7 +369,15 @@ export interface RecoveryParts {
 /** A recovery's parts, as its file carries them; the inverse of `recoveryFileOf`. */
 export const recoveryPartsOf = (file: ProposalFile): RecoveryParts => {
   const { resumesFrom, latest, lastRecovery } = recoveryOf(file);
-  return { company: file.company, account: file.account, chainId: file.chainId, salt: file.salt, latest: String(latest), lastRecovery, resumesFrom };
+  return {
+    company: file.company,
+    account: file.account,
+    chainId: file.chainId,
+    salt: file.salt,
+    latest: String(latest),
+    lastRecovery,
+    resumesFrom
+  };
 };
 
 /**
@@ -306,10 +387,23 @@ export const recoveryPartsOf = (file: ProposalFile): RecoveryParts => {
  * another proposal than the one it names, and is refused.
  */
 export const recoveryFileOf = (p: RecoveryParts): ProposalFile => ({
-  format: PROPOSAL_FILE_FORMAT, company: p.company, account: p.account.toLowerCase(),
-  change: { kind: 'recover-anchor', resumesFrom: p.resumesFrom.head.toLowerCase(), latest: p.latest, lastRecovery: p.lastRecovery.toLowerCase() },
-  salt: p.salt.toLowerCase(), chainId: p.chainId.toLowerCase(), summary: recoverySummary(p.resumesFrom.seq, Number(p.latest)),
-  resumesFrom: { seq: p.resumesFrom.seq, head: p.resumesFrom.head.toLowerCase(), root: p.resumesFrom.root.toLowerCase() },
+  format: PROPOSAL_FILE_FORMAT,
+  company: p.company,
+  account: p.account.toLowerCase(),
+  change: {
+    kind: 'recover-anchor',
+    resumesFrom: p.resumesFrom.head.toLowerCase(),
+    latest: p.latest,
+    lastRecovery: p.lastRecovery.toLowerCase()
+  },
+  salt: p.salt.toLowerCase(),
+  chainId: p.chainId.toLowerCase(),
+  summary: recoverySummary(p.resumesFrom.seq, Number(p.latest)),
+  resumesFrom: {
+    seq: p.resumesFrom.seq,
+    head: p.resumesFrom.head.toLowerCase(),
+    root: p.resumesFrom.root.toLowerCase()
+  }
 });
 
 /**
@@ -318,15 +412,19 @@ export const recoveryFileOf = (p: RecoveryParts): ProposalFile => ({
  * recovery the one the file names.
  */
 export async function approveRecoveryHere(
-  doors: RecoveryDoors, file: ProposalFile, input: { readonly withoutTheService?: boolean } = {},
+  doors: RecoveryDoors,
+  file: ProposalFile,
+  input: { readonly withoutTheService?: boolean } = {}
 ): Promise<{ readonly sentBy: SentBy; readonly approvalsBefore: number }> {
   const { resumesFrom, latest, lastRecovery } = recoveryOf(file);
   refusedPast(doors, latest, 'approving it now');
   const horizon = await recoveryHorizonSeconds(doors, resumesFrom);
   if (latest > secondsNow(doors) + horizon) {
-    throw new Error(`this recovery may be carried out until ${new Date(latest * 1000).toISOString()}, more than ${durationSaid(horizon)} after now, the company's recovery window, `
-      + 'so this device does not approve it: an approval good for that long could be carried out long after the company\'s records have moved on. '
-      + 'Nothing was built or sent. Ask the signer who raised it to raise it again with a nearer time');
+    throw new Error(
+      `this recovery may be carried out until ${new Date(latest * 1000).toISOString()}, more than ${durationSaid(horizon)} after now, the company's recovery window, ` +
+        "so this device does not approve it: an approval good for that long could be carried out long after the company's records have moved on. " +
+        'Nothing was built or sent. Ask the signer who raised it to raise it again with a nearer time'
+    );
   }
   return approveFromAFile(doors, file, async () => {
     refusedVoid(lastRecovery, (await latestRecoveryHere(doors)).head, 'approving it');
@@ -378,27 +476,27 @@ type CarriedOutOnTheChain = 'landed' | 'another' | { readonly beaten: boolean; r
  *     another signer's device carried it out, or its raiser withdrew it.
  * A refused call seen is a fee paid.
  */
-const carriedOutOnTheChain = (
-  doors: RecoveryDoors, chainId: string, previous: Hex, head: Hex, failedBefore: number,
-) => async (): Promise<CarriedOutOnTheChain | null> => {
-  const paidIn = (s: { readonly failedCalls?: readonly string[] }): boolean =>
-    (s.failedCalls ?? []).filter((c) => c === 'recoverAnchor').length > failedBefore;
-  const standing = await standingNow(doors, chainId);
-  const { landed } = await doors.onChain();
-  if (standing.held === 'open') {
-    const now = (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head).toLowerCase();
-    if (now === previous) return paidIn(standing) ? { beaten: false, feePaid: true } : null;
-    /*
-     * The head moved: read the proposal again, so this device's own call landing between the two reads is not read
-     * as beaten, and whether its fee was paid is read from that second reading, which can hold the refused call the
-     * first was taken too early to see.
-     */
-    const again = await standingNow(doors, chainId);
-    if (again.held === 'open') return { beaten: true, feePaid: paidIn(again) };
-  }
-  if ((await doors.onChain()).landed.some((l) => l.head.toLowerCase() === head)) return 'landed';
-  return standing.held === 'never' ? null : 'another';
-};
+const carriedOutOnTheChain =
+  (doors: RecoveryDoors, chainId: string, previous: Hex, head: Hex, failedBefore: number) =>
+  async (): Promise<CarriedOutOnTheChain | null> => {
+    const paidIn = (s: { readonly failedCalls?: readonly string[] }): boolean =>
+      (s.failedCalls ?? []).filter((c) => c === 'recoverAnchor').length > failedBefore;
+    const standing = await standingNow(doors, chainId);
+    const { landed } = await doors.onChain();
+    if (standing.held === 'open') {
+      const now = (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head).toLowerCase();
+      if (now === previous) return paidIn(standing) ? { beaten: false, feePaid: true } : null;
+      /*
+       * The head moved: read the proposal again, so this device's own call landing between the two reads is not read
+       * as beaten, and whether its fee was paid is read from that second reading, which can hold the refused call the
+       * first was taken too early to see.
+       */
+      const again = await standingNow(doors, chainId);
+      if (again.held === 'open') return { beaten: true, feePaid: paidIn(again) };
+    }
+    if ((await doors.onChain()).landed.some((l) => l.head.toLowerCase() === head)) return 'landed';
+    return standing.held === 'never' ? null : 'another';
+  };
 
 /**
  * **A RECOVERY CARRIED OUT FROM THIS DEVICE**, once the chain holds its proposal
@@ -417,7 +515,9 @@ const carriedOutOnTheChain = (
  * with the recovery still open.
  */
 export async function carryOutRecoveryHere(
-  doors: RecoveryDoors, file: ProposalFile, input: { readonly withoutTheService?: boolean } = {},
+  doors: RecoveryDoors,
+  file: ProposalFile,
+  input: { readonly withoutTheService?: boolean } = {}
 ): Promise<RecoveryCarriedOut> {
   const { resumesFrom, latest, lastRecovery } = recoveryOf(file);
   refusedPast(doors, latest, 'carrying it out now');
@@ -426,15 +526,33 @@ export async function carryOutRecoveryHere(
   const own = await standingFor(doors, resumesFrom, input.withoutTheService === true);
   const onChain = await doors.onChain();
   const company = doors.accountId;
-  const chainHead = (onChain.landed.length === 0 ? EMPTY_HEAD : onChain.landed[onChain.landed.length - 1]!.head).toLowerCase() as Hex;
-  const tag = await doors.builder.anchorTag({ account: doors.account, material: doors.material }) as Hex;
-  const made = nextTreeHeader({
-    company, before: own.reached, entries: [], current: new Map(), proof: { siblings: [] }, priorChain: () => undefined,
-    held: onChain.now, at: (doors.now ?? (() => new Date()))().toISOString(), tag, recovery: { previous: chainHead, salt: file.salt as Hex },
-  }, doors.material.signingSecret as Hex);
-  if (made === null) throw new Error('the recovery\'s header could not be made. Nothing was sent. Reload the page to use the current version');
+  const chainHead = (
+    onChain.landed.length === 0 ? EMPTY_HEAD : onChain.landed[onChain.landed.length - 1]!.head
+  ).toLowerCase() as Hex;
+  const tag = (await doors.builder.anchorTag({ account: doors.account, material: doors.material })) as Hex;
+  const made = nextTreeHeader(
+    {
+      company,
+      before: own.reached,
+      entries: [],
+      current: new Map(),
+      proof: { siblings: [] },
+      priorChain: () => undefined,
+      held: onChain.now,
+      at: (doors.now ?? (() => new Date()))().toISOString(),
+      tag,
+      recovery: { previous: chainHead, salt: file.salt as Hex }
+    },
+    doors.material.signingSecret as Hex
+  );
+  if (made === null)
+    throw new Error(
+      "the recovery's header could not be made. Nothing was sent. Reload the page to use the current version"
+    );
   const { header } = made;
-  const head = String((await doors.builder.anchorHeads({ after: [headStepOf(header)] })).after[0]!).toLowerCase() as Hex;
+  const head = String(
+    (await doors.builder.anchorHeads({ after: [headStepOf(header)] })).after[0]!
+  ).toLowerCase() as Hex;
   /* Read again off the state the call is built on: a recovery carried out since the read above voids this one too. */
   const { head: latestNow, chain } = await latestRecoveryHere(doors);
   refusedVoid(lastRecovery, latestNow, 'carrying it out');
@@ -444,33 +562,63 @@ export async function carryOutRecoveryHere(
    * is kept or sent.
    */
   const built = await doors.builder.recoverAnchor({
-    account: chain.account, material: doors.material, chain, previous: chainHead, batch: treeBatchOf(header),
+    account: chain.account,
+    material: doors.material,
+    chain,
+    previous: chainHead,
+    batch: treeBatchOf(header),
     held: { approvals: header.held.approvals, signerRoot: header.held.signerRoot },
-    resumesFrom: resumesFrom.head, latest: String(latest), lastRecovery, proposal: file.chainId, proposalSalt: file.salt,
+    resumesFrom: resumesFrom.head,
+    latest: String(latest),
+    lastRecovery,
+    proposal: file.chainId,
+    proposalSalt: file.salt
   });
   /* Kept on this device first, so a header the chain takes is one this device can always file again. */
-  await doors.headers?.signed(company, keptWith(header, () => undefined, () => undefined));
+  await doors.headers?.signed(
+    company,
+    keptWith(
+      header,
+      () => undefined,
+      () => undefined
+    )
+  );
   let filed = false;
   try {
     /* A repair as the recovery files it: through the view it never ends the read the carrying out stands on. */
     if (doors.tree?.refileHeader !== undefined) filed = await doors.tree.refileHeader(company, header);
-    else if (doors.tree !== undefined) { await doors.tree.fileHeader(company, header); filed = true; }
-  } catch { /* the service would not keep it: kept here, and filed again when it can be */ }
+    else if (doors.tree !== undefined) {
+      await doors.tree.fileHeader(company, header);
+      filed = true;
+    }
+  } catch {
+    /* the service would not keep it: kept here, and filed again when it can be */
+  }
   const failedBefore = (standing.failedCalls ?? []).filter((c) => c === 'recoverAnchor').length;
-  const { sentBy, went } = await sentFromHere(doors, built.tx, carriedOutOnTheChain(doors, file.chainId, chainHead, head, failedBefore));
+  const { sentBy, went } = await sentFromHere(
+    doors,
+    built.tx,
+    carriedOutOnTheChain(doors, file.chainId, chainHead, head, failedBefore)
+  );
   const until = new Date(latest * 1000).toISOString();
   if (typeof went === 'object' && went.beaten) {
-    throw new RecoveryNotCarriedOut(`another anchor of the company's records got there first, so this carrying out wrote nothing${went.feePaid ? ' and its fee was paid' : ''}. `
-      + `The recovery is still open: carry it out again before ${until}`);
+    throw new RecoveryNotCarriedOut(
+      `another anchor of the company's records got there first, so this carrying out wrote nothing${went.feePaid ? ' and its fee was paid' : ''}. ` +
+        `The recovery is still open: carry it out again before ${until}`
+    );
   }
   if (typeof went === 'object') {
-    throw new RecoveryNotCarriedOut('the company\'s account refused this carrying out as the chain took it - its time had passed, who holds the account '
-      + `changed, or another recovery was carried out, since it was built - so it wrote nothing and its fee was paid. The recovery is still open: reload the page and carry it out again before ${until}, `
-      + 'or, if that time has passed, ask the signer who raised it to raise it again');
+    throw new RecoveryNotCarriedOut(
+      "the company's account refused this carrying out as the chain took it - its time had passed, who holds the account " +
+        `changed, or another recovery was carried out, since it was built - so it wrote nothing and its fee was paid. The recovery is still open: reload the page and carry it out again before ${until}, ` +
+        'or, if that time has passed, ask the signer who raised it to raise it again'
+    );
   }
   if (went === 'another') {
-    throw new Error('the chain no longer holds this recovery open, and the head this device sent is not on it: another signer\'s device carried it out first, '
-      + 'or its raiser withdrew it. Reload the page to read the company\'s records as they stand');
+    throw new Error(
+      "the chain no longer holds this recovery open, and the head this device sent is not on it: another signer's device carried it out first, " +
+        "or its raiser withdrew it. Reload the page to read the company's records as they stand"
+    );
   }
   return { header, head, sentBy, filed, placement: built.placement };
 }

@@ -37,14 +37,31 @@ import type { AnchorsOnChain } from './governed-call-builder.js';
 import { treeKeptInMemory, type TreeKept } from './tree-kept-here.js';
 import type { DirectoryBelieved } from './vault-page-doors.js';
 import {
-  adopts, Baseline, CompanyChangedMeanwhile, directoryVersionOf, ENDED_BY_ANOTHER_SIGNER, FACT_KEY, GRANTS_NAME, holdersStandingOf, probe, VaultNotAdopted,
-  type HoldersStanding,
+  adopts,
+  Baseline,
+  CompanyChangedMeanwhile,
+  directoryVersionOf,
+  ENDED_BY_ANOTHER_SIGNER,
+  FACT_KEY,
+  GRANTS_NAME,
+  holdersStandingOf,
+  probe,
+  VaultNotAdopted,
+  type HoldersStanding
 } from './company-view-probe.js';
 import type { ManifestService, TreeService } from './record-entered-here.js';
 import type { ReadHere } from './records-anchored-here.js';
 import {
-  LIST_FACT, listedRecords, manifestServiceOf, servedFactsOf, treeServiceOf, type CompanyRecordAsked, type ListKind, type RecordSource, type RecordWrite,
-  type VaultRecordAsked,
+  LIST_FACT,
+  listedRecords,
+  manifestServiceOf,
+  servedFactsOf,
+  treeServiceOf,
+  type CompanyRecordAsked,
+  type ListKind,
+  type RecordSource,
+  type RecordWrite,
+  type VaultRecordAsked
 } from './records-source.js';
 
 /** Why a view ended: this side's own send, another signer's change found, a write refused or not known, or any other end. */
@@ -69,14 +86,32 @@ export interface Declared {
 }
 
 /** A record named with the newest version a read of it found. */
-export interface RecordReadAt { readonly name: RecordName; readonly version: number }
+export interface RecordReadAt {
+  readonly name: RecordName;
+  readonly version: number;
+}
 
 /** How the view reads held: the read of the records the company anchored and has not anchored yet (`recordsHeldHere`). */
 export type HeldReader = (view: CompanyView<unknown>, asked: RecordsAsked) => Promise<ReadHere>;
 
 /** The source's reads a view answers, each read once until a write that can change it (`STALE_AFTER`). */
-type ReadsOnce = Pick<RecordSource, 'account' | 'filings' | 'records' | 'vaultRecords' | 'handovers' | 'vendorHandovers' | 'list'
-  | 'standing' | 'callState' | 'vaultChain' | 'payoutState' | 'authority' | 'committeeChange' | 'vaultKeys'>;
+type ReadsOnce = Pick<
+  RecordSource,
+  | 'account'
+  | 'filings'
+  | 'records'
+  | 'vaultRecords'
+  | 'handovers'
+  | 'vendorHandovers'
+  | 'list'
+  | 'standing'
+  | 'callState'
+  | 'vaultChain'
+  | 'payoutState'
+  | 'authority'
+  | 'committeeChange'
+  | 'vaultKeys'
+>;
 
 /** One company, read once. `H` is how this device reads who holds it. */
 export interface CompanyView<H> extends ReadsOnce {
@@ -143,18 +178,34 @@ const kindKey = (k: KindAsked): string => `${k.store}:${k.kind}`;
 
 /** The source with every ask counted in `tally`. */
 const countedSource = (source: RecordSource, tally: Tally): RecordSource => {
-  const counted = <A extends unknown[], R>(name: string, f: (...a: A) => Promise<R>) => (...a: A): Promise<R> => { tally.add(name); return f(...a); };
+  const counted =
+    <A extends unknown[], R>(name: string, f: (...a: A) => Promise<R>) =>
+    (...a: A): Promise<R> => {
+      tally.add(name);
+      return f(...a);
+    };
   return Object.freeze({
     company: source.company,
-    account: counted('account', source.account), filings: counted('filings', source.filings), newest: counted('newest', source.newest),
-    pending: counted('pending', source.pending), proofs: counted('proofs', source.proofs), headers: counted('headers', source.headers),
-    records: counted('records', source.records), vaultRecords: counted('vaultRecords', source.vaultRecords),
-    handovers: counted('handovers', source.handovers), vendorHandovers: counted('vendorHandovers', source.vendorHandovers),
-    list: counted('list', source.list), standing: counted('standing', source.standing), callState: counted('callState', source.callState),
-    vaultChain: counted('vaultChain', source.vaultChain), payoutState: counted('payoutState', source.payoutState), write: counted('write', source.write),
-    authority: counted('authority', source.authority), committeeChange: counted('committeeChange', source.committeeChange),
+    account: counted('account', source.account),
+    filings: counted('filings', source.filings),
+    newest: counted('newest', source.newest),
+    pending: counted('pending', source.pending),
+    proofs: counted('proofs', source.proofs),
+    headers: counted('headers', source.headers),
+    records: counted('records', source.records),
+    vaultRecords: counted('vaultRecords', source.vaultRecords),
+    handovers: counted('handovers', source.handovers),
+    vendorHandovers: counted('vendorHandovers', source.vendorHandovers),
+    list: counted('list', source.list),
+    standing: counted('standing', source.standing),
+    callState: counted('callState', source.callState),
+    vaultChain: counted('vaultChain', source.vaultChain),
+    payoutState: counted('payoutState', source.payoutState),
+    write: counted('write', source.write),
+    authority: counted('authority', source.authority),
+    committeeChange: counted('committeeChange', source.committeeChange),
     vaultKeys: counted('vaultKeys', source.vaultKeys),
-    ...(source.movesOf === undefined ? {} : { movesOf: source.movesOf }),
+    ...(source.movesOf === undefined ? {} : { movesOf: source.movesOf })
   });
 };
 
@@ -166,7 +217,9 @@ class Kept {
     if (there !== undefined) return there as Promise<T>;
     const answer = read();
     this.answers.set(key, answer);
-    answer.catch(() => { if (this.answers.get(key) === answer) this.answers.delete(key); });
+    answer.catch(() => {
+      if (this.answers.get(key) === answer) this.answers.delete(key);
+    });
     return answer;
   }
   drop(match: (key: string) => boolean): void {
@@ -187,14 +240,25 @@ const rolesKept = async <H>(st: ViewState<H>, asked: readonly string[]): Promise
   const missing = [...new Set(asked)].filter((k) => !st.kept.answers.has(keyOf(k)));
   if (missing.length > 0) {
     const read = st.door.roles(missing);
-    missing.forEach((k, i) => void st.kept.get(keyOf(k), async () => {
-      const entry = (await read).roles;
-      if (entry === undefined || entry.length !== missing.length || entry[i]?.key !== k) throw new RoleNotNamed();
-      return entry[i]!;
-    }).catch(() => { /* Seen below, through the same kept answer, where the ask is answered. */ }));
+    missing.forEach(
+      (k, i) =>
+        void st.kept
+          .get(keyOf(k), async () => {
+            const entry = (await read).roles;
+            if (entry === undefined || entry.length !== missing.length || entry[i]?.key !== k) throw new RoleNotNamed();
+            return entry[i]!;
+          })
+          .catch(() => {
+            /* Seen below, through the same kept answer, where the ask is answered. */
+          })
+    );
   }
-  const settled = await Promise.allSettled(asked.map((k) => st.kept.answers.get(keyOf(k)) as Promise<AccountRoleEntry>));
-  const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected' && !(r.reason instanceof RoleNotNamed));
+  const settled = await Promise.allSettled(
+    asked.map((k) => st.kept.answers.get(keyOf(k)) as Promise<AccountRoleEntry>)
+  );
+  const failed = settled.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r.reason instanceof RoleNotNamed)
+  );
   if (failed !== undefined) throw failed.reason;
   if (settled.some((r) => r.status === 'rejected')) return {};
   return { roles: settled.map((r) => (r as PromiseFulfilledResult<AccountRoleEntry>).value) };
@@ -208,7 +272,12 @@ interface ViewState<H> {
   readonly tally: Tally;
   readonly base: Baseline;
   readonly kept: Kept;
-  readonly declared: { readonly records: Map<string, RecordName>; readonly kinds: Map<string, KindAsked>; founding: boolean; everyPending: boolean };
+  readonly declared: {
+    readonly records: Map<string, RecordName>;
+    readonly kinds: Map<string, KindAsked>;
+    founding: boolean;
+    everyPending: boolean;
+  };
   heldAsked: string;
   /** Whether the held answer was let go once already for a body newer than it (`heldAgain`). */
   heldReadAgain: boolean;
@@ -226,24 +295,57 @@ interface ViewState<H> {
   readonly vendorHandovers: JoinedAsks<string, unknown>;
 }
 
-const stateOf = <H extends HoldersStanding>(source: RecordSource, doors: ViewDoors<H>, from?: Baseline): ViewState<H> => {
+const stateOf = <H extends HoldersStanding>(
+  source: RecordSource,
+  doors: ViewDoors<H>,
+  from?: Baseline
+): ViewState<H> => {
   const tally = new Tally();
   const src = countedSource(doors.chain === undefined ? source : { ...source, ...doors.chain }, tally);
   const door = countedDoors(doors, tally);
   const base = from?.copy() ?? new Baseline();
   return {
-    src, door, doors, tally, base, kept: new Kept(),
-    declared: { records: new Map(), kinds: new Map(), founding: false, everyPending: false }, heldAsked: '', heldReadAgain: false, rounds: 0, ended: null, endedAs: null, started: null,
-    holdersRead: once(async () => { const h = await door.holders(); base.holders ??= holdersStandingOf(h); return h; }),
+    src,
+    door,
+    doors,
+    tally,
+    base,
+    kept: new Kept(),
+    declared: { records: new Map(), kinds: new Map(), founding: false, everyPending: false },
+    heldAsked: '',
+    heldReadAgain: false,
+    rounds: 0,
+    ended: null,
+    endedAs: null,
+    started: null,
+    holdersRead: once(async () => {
+      const h = await door.holders();
+      base.holders ??= holdersStandingOf(h);
+      return h;
+    }),
     newest: new JoinedAsks<RecordName, number>(recordKeyOf, (part) => src.newest(part)),
-    records: new JoinedAsks<CompanyRecordAsked, unknown>((r) => `${r.kind}:${r.id}:${r.every === true}`, (part) => src.records(part)),
-    vaultRecords: new JoinedAsks<VaultRecordAsked, unknown>((r) => `${r.vault}:${r.record}:${r.every === true}`, (part) => src.vaultRecords(part)),
-    handovers: new JoinedAsks<string, unknown>((p) => p, (part) => src.handovers(part)),
-    vendorHandovers: new JoinedAsks<string, unknown>((v) => v, (part) => src.vendorHandovers(part)),
+    records: new JoinedAsks<CompanyRecordAsked, unknown>(
+      (r) => `${r.kind}:${r.id}:${r.every === true}`,
+      (part) => src.records(part)
+    ),
+    vaultRecords: new JoinedAsks<VaultRecordAsked, unknown>(
+      (r) => `${r.vault}:${r.record}:${r.every === true}`,
+      (part) => src.vaultRecords(part)
+    ),
+    handovers: new JoinedAsks<string, unknown>(
+      (p) => p,
+      (part) => src.handovers(part)
+    ),
+    vendorHandovers: new JoinedAsks<string, unknown>(
+      (v) => v,
+      (part) => src.vendorHandovers(part)
+    )
   };
 };
 
-const live = <H>(st: ViewState<H>): void => { if (st.ended !== null) throw new ViewEnded(st.ended); };
+const live = <H>(st: ViewState<H>): void => {
+  if (st.ended !== null) throw new ViewEnded(st.ended);
+};
 
 /**
  * The view's first read: the directory, who holds the company and the read grants' newest version, taken before any
@@ -256,16 +358,20 @@ const started = <H>(st: ViewState<H>, src: RecordSource = st.src): Promise<void>
     st.base.served(GRANTS_NAME, grants);
   });
   st.started = first;
-  first.catch(() => { if (st.started === first) st.started = null; });
+  first.catch(() => {
+    if (st.started === first) st.started = null;
+  });
   return first;
 };
 
 /** `read` once the view has begun, or a refusal when it has ended: a read of an ended view never reaches the source. */
 const guarded = <H, T>(st: ViewState<H>, read: () => Promise<T>): Promise<T> =>
-  (st.ended !== null ? Promise.reject(new ViewEnded(st.ended)) : started(st).then(() => {
-    live(st);
-    return read();
-  }));
+  st.ended !== null
+    ? Promise.reject(new ViewEnded(st.ended))
+    : started(st).then(() => {
+        live(st);
+        return read();
+      });
 
 /**
  * The newest version entered of each record named, read with the records themselves and kept as what the view served,
@@ -290,19 +396,25 @@ const listServed = async <H>(st: ViewState<H>, kind: ListKind, answer: unknown):
   return answer;
 };
 
-const filingsOf = <H>(st: ViewState<H>, src: RecordSource = st.src): Promise<readonly DirectoryFiling[]> => st.kept.get('filings', async () => {
-  const f = await src.filings();
-  st.base.directory ??= directoryVersionOf(f);
-  return f;
-});
+const filingsOf = <H>(st: ViewState<H>, src: RecordSource = st.src): Promise<readonly DirectoryFiling[]> =>
+  st.kept.get('filings', async () => {
+    const f = await src.filings();
+    st.base.directory ??= directoryVersionOf(f);
+    return f;
+  });
 
 /**
  * Adds `more` to what is declared, and the records and kinds a held read is asked for, with the key that tells two
  * apart. A record of a kind already declared is not named again: the kind's read proves every record of it, and such a
  * record is given back (`ofKinds`) to be kept as served from that read.
  */
-const heldAskedOf = <H>(st: ViewState<H>, more: RecordsAsked | undefined): {
-  readonly asked: RecordsAsked; readonly key: string; readonly ofKinds: readonly RecordName[];
+const heldAskedOf = <H>(
+  st: ViewState<H>,
+  more: RecordsAsked | undefined
+): {
+  readonly asked: RecordsAsked;
+  readonly key: string;
+  readonly ofKinds: readonly RecordName[];
 } => {
   const d = st.declared;
   for (const k of more?.kinds ?? []) d.kinds.set(kindKey(k), k);
@@ -315,11 +427,13 @@ const heldAskedOf = <H>(st: ViewState<H>, more: RecordsAsked | undefined): {
   d.everyPending ||= more?.everyPending === true;
   return {
     asked: {
-      records: [...d.records.values()], kinds: [...d.kinds.values()],
-      ...(d.founding ? { founding: true } : {}), ...(d.everyPending ? { everyPending: true } : {}),
+      records: [...d.records.values()],
+      kinds: [...d.kinds.values()],
+      ...(d.founding ? { founding: true } : {}),
+      ...(d.everyPending ? { everyPending: true } : {})
     },
     key: JSON.stringify([[...d.records.keys()], [...d.kinds.keys()], d.founding, d.everyPending]),
-    ofKinds,
+    ofKinds
   };
 };
 
@@ -332,30 +446,64 @@ const heldAskedOf = <H>(st: ViewState<H>, more: RecordsAsked | undefined): {
 const servedFromHeld = <H>(st: ViewState<H>, read: ReadHere, names: readonly RecordName[]): void => {
   if (names.length === 0) return;
   const records = (read as Partial<ReadHere>).records;
-  if (records === undefined) throw new Error('the held read answered no records, so a record it was asked to prove is not checked against it.');
+  if (records === undefined)
+    throw new Error('the held read answered no records, so a record it was asked to prove is not checked against it.');
   for (const name of names) {
     const key = recordKeyOf(name);
-    st.base.served(name, Math.max(0, ...(records.history.get(key) ?? []).map((v) => v.version),
-      ...records.notYetAnchored.filter((e) => recordKeyOf(e) === key).map((e) => e.version), records.seenWaiting?.get(key) ?? 0));
+    st.base.served(
+      name,
+      Math.max(
+        0,
+        ...(records.history.get(key) ?? []).map((v) => v.version),
+        ...records.notYetAnchored.filter((e) => recordKeyOf(e) === key).map((e) => e.version),
+        records.seenWaiting?.get(key) ?? 0
+      )
+    );
   }
 };
 
 /** What a proposal's filing or step can change: its lists, and, when it sends a call, the chain and what is believed from it. */
-const proposalMoved = (k: string): boolean => k === 'list:proposals' || k === 'list:runs' || k === 'account' || k === 'onChain' || k === 'held'
-  || k === 'callState' || k === 'authority' || k === 'committee-change' || k.startsWith('roles:') || k.startsWith('standing:') || k.startsWith('layer:') || k.startsWith('pending:') || k.startsWith('proofs:') || k.startsWith('headers:');
+const proposalMoved = (k: string): boolean =>
+  k === 'list:proposals' ||
+  k === 'list:runs' ||
+  k === 'account' ||
+  k === 'onChain' ||
+  k === 'held' ||
+  k === 'callState' ||
+  k === 'authority' ||
+  k === 'committee-change' ||
+  k.startsWith('roles:') ||
+  k.startsWith('standing:') ||
+  k.startsWith('layer:') ||
+  k.startsWith('pending:') ||
+  k.startsWith('proofs:') ||
+  k.startsWith('headers:');
 
 /** What a call sent to the chain can change: the chain's own answers, and everything proven or built on them. */
-const chainMoved = (k: string): boolean => k === 'onChain' || k === 'held' || k === 'callState' || k === 'authority' || k === 'committee-change'
-  || k.startsWith('roles:') || k.startsWith('standing:') || k.startsWith('vault:')
-  || k.startsWith('layer:') || k.startsWith('pending:') || k.startsWith('proofs:') || k.startsWith('headers:');
+const chainMoved = (k: string): boolean =>
+  k === 'onChain' ||
+  k === 'held' ||
+  k === 'callState' ||
+  k === 'authority' ||
+  k === 'committee-change' ||
+  k.startsWith('roles:') ||
+  k.startsWith('standing:') ||
+  k.startsWith('vault:') ||
+  k.startsWith('layer:') ||
+  k.startsWith('pending:') ||
+  k.startsWith('proofs:') ||
+  k.startsWith('headers:');
 
 /** What each write can change, as the kept answers it makes stale. */
 const STALE_AFTER: Readonly<Record<RecordWrite['to'], (k: string) => boolean>> = Object.freeze({
   record: () => false,
   'vault-record': () => false,
-  roster: (k: string) => k === 'account' || k === 'list:vault-key-offers' || k === 'vault-keys' || k.startsWith('layer:'),
-  'vault-keys': (k: string) => k === 'account' || k === 'list:vault-key-offers' || k === 'vault-keys' || k.startsWith('layer:'),
-  admission: (k: string) => k === 'account' || k === 'list:vault-key-offers' || k === 'vault-keys' || k.startsWith('layer:'),
+  roster: (k: string) =>
+    k === 'account' || k === 'list:vault-key-offers' || k === 'vault-keys' || k.startsWith('layer:'),
+  'vault-keys': (k: string) =>
+    k === 'account' || k === 'list:vault-key-offers' || k === 'vault-keys' || k.startsWith('layer:'),
+  admission: (k: string) =>
+    k === 'account' || k === 'list:vault-key-offers' || k === 'vault-keys' || k.startsWith('layer:'),
   readers: (k: string) => k === 'account' || k.startsWith('layer:'),
   'proposal-filed': (k: string) => proposalMoved(k),
   proposal: (k: string) => proposalMoved(k),
@@ -368,15 +516,33 @@ const STALE_AFTER: Readonly<Record<RecordWrite['to'], (k: string) => boolean>> =
   run: (k: string) => k === 'list:runs',
   fee: () => false,
   'fee-done': () => false,
-  entries: (k: string) => k === 'filings' || k === 'held' || k.startsWith('layer:') || k.startsWith('pending:') || k.startsWith('proofs:') || k.startsWith('headers:'),
-  header: (k: string) => k === 'filings' || k === 'held' || k.startsWith('layer:') || k.startsWith('pending:') || k.startsWith('proofs:') || k.startsWith('headers:'),
+  entries: (k: string) =>
+    k === 'filings' ||
+    k === 'held' ||
+    k.startsWith('layer:') ||
+    k.startsWith('pending:') ||
+    k.startsWith('proofs:') ||
+    k.startsWith('headers:'),
+  header: (k: string) =>
+    k === 'filings' ||
+    k === 'held' ||
+    k.startsWith('layer:') ||
+    k.startsWith('pending:') ||
+    k.startsWith('proofs:') ||
+    k.startsWith('headers:'),
   proven: chainMoved,
   /* A vault send can adopt or hand over a vault, so the account and its list of vaults are read again too. */
   'vault-send': (k: string) => chainMoved(k) || k === 'account' || k === 'list:vaults',
   'vault-start': (k: string) => chainMoved(k) || k === 'account' || k === 'list:vaults',
   /* Signatures given or an update sent: the change owed, who holds the account as the service reads it, and the chain's answers are read again. */
   'committee-change': (k: string) => k === 'committee-change' || k === 'authority' || chainMoved(k),
-  directory: (k: string) => k === 'filings' || k === 'held' || k.startsWith('layer:') || k.startsWith('pending:') || k.startsWith('proofs:') || k.startsWith('headers:'),
+  directory: (k: string) =>
+    k === 'filings' ||
+    k === 'held' ||
+    k.startsWith('layer:') ||
+    k.startsWith('pending:') ||
+    k.startsWith('proofs:') ||
+    k.startsWith('headers:')
 });
 
 /**
@@ -412,8 +578,10 @@ const forget = <H>(st: ViewState<H>, w: RecordWrite): void => {
     st.base.forgetFacts((k) => k === handover || k === FACT_KEY.invites);
   }
   if (w.to === 'vault-start') st.vaultRecords.drop((k) => k.startsWith(`${w.vault}:`));
-  if (w.to === 'vault-send') for (const c of w.calls) if (c.vault !== undefined) st.vaultRecords.drop((k) => k.startsWith(`${c.vault}:`));
-  if (w.to === 'entries' || w.to === 'header') for (const e of w.entries ?? []) st.newest.drop((k) => k === recordKeyOf(e));
+  if (w.to === 'vault-send')
+    for (const c of w.calls) if (c.vault !== undefined) st.vaultRecords.drop((k) => k.startsWith(`${c.vault}:`));
+  if (w.to === 'entries' || w.to === 'header')
+    for (const e of w.entries ?? []) st.newest.drop((k) => k === recordKeyOf(e));
 };
 
 const endOn = <H>(st: ViewState<H>, why: string, as: ViewEndedAs = 'ended'): void => {
@@ -431,7 +599,14 @@ const checked = async <H extends HoldersStanding>(st: ViewState<H>, through?: Re
   const source = through === undefined ? st.src : countedSource(through, st.tally);
   await started(st, source);
   try {
-    return await probe({ source, holdersNow: () => st.door.freshHolders(), ...(st.doors.pause === undefined ? {} : { pause: st.doors.pause }) }, st.base);
+    return await probe(
+      {
+        source,
+        holdersNow: () => st.door.freshHolders(),
+        ...(st.doors.pause === undefined ? {} : { pause: st.doors.pause })
+      },
+      st.base
+    );
   } catch (e) {
     if (e instanceof CompanyChangedMeanwhile) endOn(st, ENDED_BY_ANOTHER_SIGNER, 'changed');
     else endOn(st, 'the company could not be read again before a write', 'refused');
@@ -455,7 +630,10 @@ const notAdoptedIn = (w: RecordWrite, holders: HoldersStanding): string | null =
  * sent. A send into a vault, or a write its source says moves who holds the company, ends the view as sent: its next
  * use reads again from this reading, moved by exactly what the writes that landed said, a batch stopped part way too.
  */
-const written = async <H extends HoldersStanding>(st: ViewState<H>, batch: readonly RecordWrite[]): Promise<readonly unknown[]> => {
+const written = async <H extends HoldersStanding>(
+  st: ViewState<H>,
+  batch: readonly RecordWrite[]
+): Promise<readonly unknown[]> => {
   let holders: H;
   try {
     holders = await checked(st);
@@ -467,11 +645,16 @@ const written = async <H extends HoldersStanding>(st: ViewState<H>, batch: reado
   const answers: unknown[] = [];
   let sent = false;
   /* What landed before a write that did not still moved who holds the company: the next view reads on from that. */
-  const settled = (): void => { if (sent) st.base.moveHolders(holdersStandingOf(holders)); };
+  const settled = (): void => {
+    if (sent) st.base.moveHolders(holdersStandingOf(holders));
+  };
   const notAdopted = (vault: string): never => {
     settled();
     endOn(st, 'a deposit was asked into a vault the company does not adopt', 'not-adopted');
-    throw Object.assign(new VaultNotAdopted(vault), { thisSendNotSent: true, ...(answers.length === 0 ? { nothingWasSent: true } : {}) });
+    throw Object.assign(new VaultNotAdopted(vault), {
+      thisSendNotSent: true,
+      ...(answers.length === 0 ? { nothingWasSent: true } : {})
+    });
   };
   for (const w of batch) {
     const refused = notAdoptedIn(w, holders);
@@ -527,67 +710,122 @@ const refiled = async <H>(st: ViewState<H>, w: RecordWrite): Promise<boolean> =>
 };
 
 /** Handovers asked together, each served with its facts. */
-const handedOver = async <H>(st: ViewState<H>, ids: readonly string[], asks: JoinedAsks<string, unknown>, keyOf: (id: string) => string,
-  fact: 'handover' | 'vendor-handover'): Promise<unknown[]> => {
+const handedOver = async <H>(
+  st: ViewState<H>,
+  ids: readonly string[],
+  asks: JoinedAsks<string, unknown>,
+  keyOf: (id: string) => string,
+  fact: 'handover' | 'vendor-handover'
+): Promise<unknown[]> => {
   const answers = await asks.many(ids);
   ids.forEach((id, i) => st.base.servedAs(keyOf(id), servedFactsOf(fact, answers[i])));
   return answers;
 };
 
 /** The record tree and the manifest through the view: kept answers, its newest versions, and writes through its one write. */
-const servicesOf = <H extends HoldersStanding>(st: ViewState<H>, newest: CompanyView<H>['newest']): Pick<CompanyView<H>, 'tree' | 'manifest'> => {
+const servicesOf = <H extends HoldersStanding>(
+  st: ViewState<H>,
+  newest: CompanyView<H>['newest']
+): Pick<CompanyView<H>, 'tree' | 'manifest'> => {
   const one = (w: RecordWrite) => written(st, [w]).then((a) => a[0]);
   return {
     tree: {
       ...treeServiceOf({
-        ...st.src, write: one,
-        headers: (after: number, limit: number): Promise<HeadersPage> => guarded(st, () => st.kept.get(`headers:${after}:${limit}`, () => st.src.headers(after, limit))),
-        proofs: (ask: ProofsAsk): Promise<ProofsGiven | null> => guarded(st, () => st.kept.get(`proofs:${JSON.stringify(ask)}`, () => st.src.proofs(ask))),
-        pending: (root: Hex) => guarded(st, () => st.kept.get(`pending:${root}`, () => st.src.pending(root))),
+        ...st.src,
+        write: one,
+        headers: (after: number, limit: number): Promise<HeadersPage> =>
+          guarded(st, () => st.kept.get(`headers:${after}:${limit}`, () => st.src.headers(after, limit))),
+        proofs: (ask: ProofsAsk): Promise<ProofsGiven | null> =>
+          guarded(st, () => st.kept.get(`proofs:${JSON.stringify(ask)}`, () => st.src.proofs(ask))),
+        pending: (root: Hex) => guarded(st, () => st.kept.get(`pending:${root}`, () => st.src.pending(root)))
       }),
       refileHeader: async (accountId, header, entries) => {
         let kept = false;
-        await treeServiceOf({ ...st.src, write: async (w) => { kept = await refiled(st, w); } }).fileHeader(accountId, header, entries);
+        await treeServiceOf({
+          ...st.src,
+          write: async (w) => {
+            kept = await refiled(st, w);
+          }
+        }).fileHeader(accountId, header, entries);
         return kept;
-      },
+      }
     },
-    manifest: manifestServiceOf({ ...st.src, newest, write: one }),
+    manifest: manifestServiceOf({ ...st.src, newest, write: one })
   };
 };
 
 /** Opens a view of `source`'s company, reading outside the service through `doors`, and reading held through `held`. */
 export function companyViewFor<H extends HoldersStanding>(
-  source: RecordSource, doors: ViewDoors<H>, held: HeldReader, from?: Baseline,
+  source: RecordSource,
+  doors: ViewDoors<H>,
+  held: HeldReader,
+  from?: Baseline
 ): CompanyView<H> {
   const st = stateOf(source, doors, from);
   /* The one read of the account a view makes, until a write changes it: its own readers and its doors share it. */
-  const accountRead = (): Promise<unknown> => st.kept.get(FACT_KEY.account, () => st.src.account().then((answer) => {
-    st.base.servedAs(FACT_KEY.account, servedFactsOf('account', answer));
-    return answer;
-  }));
-  const newest: CompanyView<H>['newest'] = (names) => guarded(st, async () => {
-    const versions = await st.newest.many(names);
-    names.forEach((n, i) => st.base.served(n, versions[i]!));
-    return versions;
-  });
+  const accountRead = (): Promise<unknown> =>
+    st.kept.get(FACT_KEY.account, () =>
+      st.src.account().then((answer) => {
+        st.base.servedAs(FACT_KEY.account, servedFactsOf('account', answer));
+        return answer;
+      })
+    );
+  const newest: CompanyView<H>['newest'] = (names) =>
+    guarded(st, async () => {
+      const versions = await st.newest.many(names);
+      names.forEach((n, i) => st.base.served(n, versions[i]!));
+      return versions;
+    });
   const view: CompanyView<H> = {
     company: source.company,
-    get ended() { return st.ended; },
-    get endedAs() { return st.endedAs; },
+    get ended() {
+      return st.ended;
+    },
+    get endedAs() {
+      return st.endedAs;
+    },
     carried: () => st.base.copy(),
-    declare: (asks) => { heldAskedOf(st, asks); },
+    declare: (asks) => {
+      heldAskedOf(st, asks);
+    },
     account: () => guarded(st, accountRead),
     filings: () => guarded(st, () => filingsOf(st)),
     newest,
-    records: (asked) => guarded(st, async () => (await Promise.all([
-      st.records.many(asked), servedNow(st, asked.map((r) => ({ store: 'company' as const, kind: r.kind, id: r.id }))),
-    ]))[0]),
-    vaultRecords: (asked) => guarded(st, async () => (await Promise.all([
-      st.vaultRecords.many(asked), servedNow(st, asked.map((r) => ({ store: 'vault' as const, kind: r.record, id: r.vault }))),
-    ]))[0]),
+    records: (asked) =>
+      guarded(
+        st,
+        async () =>
+          (
+            await Promise.all([
+              st.records.many(asked),
+              servedNow(
+                st,
+                asked.map((r) => ({ store: 'company' as const, kind: r.kind, id: r.id }))
+              )
+            ])
+          )[0]
+      ),
+    vaultRecords: (asked) =>
+      guarded(
+        st,
+        async () =>
+          (
+            await Promise.all([
+              st.vaultRecords.many(asked),
+              servedNow(
+                st,
+                asked.map((r) => ({ store: 'vault' as const, kind: r.record, id: r.vault }))
+              )
+            ])
+          )[0]
+      ),
     handovers: (people) => guarded(st, () => handedOver(st, people, st.handovers, FACT_KEY.handover, 'handover')),
-    vendorHandovers: (vendors) => guarded(st, () => handedOver(st, vendors, st.vendorHandovers, FACT_KEY.vendorHandover, 'vendor-handover')),
-    list: (kind) => guarded(st, () => st.kept.get(`list:${kind}`, () => st.src.list(kind).then((answer) => listServed(st, kind, answer)))),
+    vendorHandovers: (vendors) =>
+      guarded(st, () => handedOver(st, vendors, st.vendorHandovers, FACT_KEY.vendorHandover, 'vendor-handover')),
+    list: (kind) =>
+      guarded(st, () =>
+        st.kept.get(`list:${kind}`, () => st.src.list(kind).then((answer) => listServed(st, kind, answer)))
+      ),
     standing: (proposal) => guarded(st, () => st.kept.get(`standing:${proposal}`, () => st.src.standing(proposal))),
     callState: () => guarded(st, () => st.kept.get('callState', () => st.src.callState())),
     vaultChain: (vault) => guarded(st, () => st.kept.get(`vault:${vault}:chain`, () => st.src.vaultChain(vault))),
@@ -597,23 +835,35 @@ export function companyViewFor<H extends HoldersStanding>(
     vaultKeys: () => guarded(st, () => st.kept.get('vault-keys', () => st.src.vaultKeys())),
     roles: (asked) => guarded(st, () => rolesKept(st, asked)),
     holders: () => guarded(st, () => st.holdersRead()),
-    held: (more) => guarded(st, async () => {
-      const { asked, key, ofKinds } = heldAskedOf(st, more);
-      if (key !== st.heldAsked) { st.kept.drop((k) => k === 'held'); st.heldAsked = key; }
-      const read = await st.kept.get('held', async () => (await Promise.all([held(view as CompanyView<unknown>, asked), servedNow(st, asked.records ?? [])]))[0]);
-      servedFromHeld(st, read, ofKinds);
-      return read;
-    }),
-    heldAgain: () => guarded(st, async () => {
-      if (st.heldReadAgain) return false;
-      st.heldReadAgain = true;
-      /* What an entries write lets go of, and the chain's head and the newest versions the held read is judged with. */
-      st.kept.drop((k) => STALE_AFTER.entries(k) || k === 'onChain');
-      st.newest.drop(() => true);
-      return true;
-    }),
+    held: (more) =>
+      guarded(st, async () => {
+        const { asked, key, ofKinds } = heldAskedOf(st, more);
+        if (key !== st.heldAsked) {
+          st.kept.drop((k) => k === 'held');
+          st.heldAsked = key;
+        }
+        const read = await st.kept.get(
+          'held',
+          async () =>
+            (await Promise.all([held(view as CompanyView<unknown>, asked), servedNow(st, asked.records ?? [])]))[0]
+        );
+        servedFromHeld(st, read, ofKinds);
+        return read;
+      }),
+    heldAgain: () =>
+      guarded(st, async () => {
+        if (st.heldReadAgain) return false;
+        st.heldReadAgain = true;
+        /* What an entries write lets go of, and the chain's head and the newest versions the held read is judged with. */
+        st.kept.drop((k) => STALE_AFTER.entries(k) || k === 'onChain');
+        st.newest.drop(() => true);
+        return true;
+      }),
     layer: (name, build) => guarded(st, () => st.kept.get(`layer:${name}`, () => build(view))),
-    nextRound: () => { st.rounds += 1; return st.rounds; },
+    nextRound: () => {
+      st.rounds += 1;
+      return st.rounds;
+    },
     ...servicesOf(st, newest),
     doors: {
       onChain: () => guarded(st, () => st.kept.get('onChain', st.door.onChain)),
@@ -621,20 +871,36 @@ export function companyViewFor<H extends HoldersStanding>(
       account: () => (st.ended !== null ? Promise.reject(new ViewEnded(st.ended)) : accountRead()),
       builder: {
         anchorHeads: (ask) => guarded(st, () => st.door.builder.anchorHeads(ask)),
-        vaultsOnChain: (ask) => guarded(st, () => (st.door.builder.vaultsOnChain === undefined
-          ? Promise.reject(new Error('this read of the company was given no way to read its vaults on the chain (the builder\'s vaultsOnChain door).'))
-          : st.door.builder.vaultsOnChain(ask))),
-      },
+        vaultsOnChain: (ask) =>
+          guarded(st, () =>
+            st.door.builder.vaultsOnChain === undefined
+              ? Promise.reject(
+                  new Error(
+                    "this read of the company was given no way to read its vaults on the chain (the builder's vaultsOnChain door)."
+                  )
+                )
+              : st.door.builder.vaultsOnChain(ask)
+          )
+      }
     },
     stores: doors.kept?.() ?? treeKeptInMemory(),
-    directory: () => guarded(st, () => st.kept.get('layer:directory-believed', () => (doors.directory === undefined
-      ? Promise.reject(new Error('this read of the company was given no way to believe its directory, so it believes none.'))
-      : doors.directory(view)))),
+    directory: () =>
+      guarded(st, () =>
+        st.kept.get('layer:directory-believed', () =>
+          doors.directory === undefined
+            ? Promise.reject(
+                new Error('this read of the company was given no way to believe its directory, so it believes none.')
+              )
+            : doors.directory(view)
+        )
+      ),
     stillAsRead: (through) => checked(st, through),
     write: (batch) => written(st, batch),
-    readBefore: (read) => { for (const r of read) st.base.readBefore(r.name, r.version); },
+    readBefore: (read) => {
+      for (const r of read) st.base.readBefore(r.name, r.version);
+    },
     end: (why, as) => endOn(st, why, as),
-    counts: () => st.tally.counts,
+    counts: () => st.tally.counts
   };
   return view;
 }
@@ -666,6 +932,6 @@ export const viewHeldOver = <H>(open: (from?: Baseline) => CompanyView<H>): View
       view.end(why);
       view = open();
       return view;
-    },
+    }
   });
 };

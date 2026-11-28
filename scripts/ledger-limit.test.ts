@@ -34,7 +34,7 @@ import {
   layoutFromInfo,
   limitRefusalText,
   limitRefusals,
-  readLayout,
+  readLayout
 } from './ledger-limit.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -50,7 +50,7 @@ describe('THE FIFTEEN-FIELD FIXTURE — what a legal ledger looks like', () => {
     expect(layoutFromArtifact(read(`${FIXTURES}/fifteen/index.js`))).toEqual({
       constructorArrays: 1,
       topLevelPushes: 15,
-      reshaped: false,
+      reshaped: false
     });
   });
 
@@ -64,7 +64,9 @@ describe('THE SIXTEENTH FIELD — THE REFUSAL FIRES, which is why this file exis
   it('the compiler nests every index, field 0 included', () => {
     // This is the whole defect in one assertion: not an error, not a rejected
     // build — sixteen paths that all MOVED.
-    const info = JSON.parse(read(`${FIXTURES}/sixteen/contract-info.json`)) as { ledger: { name: string; index: number | number[] }[] };
+    const info = JSON.parse(read(`${FIXTURES}/sixteen/contract-info.json`)) as {
+      ledger: { name: string; index: number | number[] }[];
+    };
     expect(info.ledger).toHaveLength(16);
     expect(info.ledger[0].index).toEqual([0, 0]);
     expect(info.ledger[1].index).toEqual([1, 0]);
@@ -76,7 +78,7 @@ describe('THE SIXTEENTH FIELD — THE REFUSAL FIRES, which is why this file exis
     expect(layoutFromArtifact(read(`${FIXTURES}/sixteen/index.js`))).toEqual({
       constructorArrays: 3,
       topLevelPushes: 0,
-      reshaped: true,
+      reshaped: true
     });
   });
 
@@ -126,7 +128,13 @@ describe('THE SIXTEENTH FIELD — THE REFUSAL FIRES, which is why this file exis
 describe('the refusal is one a person can act on', () => {
   it('says NO DOOR resolves an over-limit contract, because recompiling reproduces it', () => {
     const text = limitRefusalText([
-      { kind: 'reshaped', label: 'Fixture', door: 'npm run compile:fixture', detail: '16 fields', layout: { fields: 16, reshaped: true, constructorArrays: 3, topLevelPushes: 0 } },
+      {
+        kind: 'reshaped',
+        label: 'Fixture',
+        door: 'npm run compile:fixture',
+        detail: '16 fields',
+        layout: { fields: 16, reshaped: true, constructorArrays: 3, topLevelPushes: 0 }
+      }
     ]);
     expect(text).toContain('THE BUILD DID NOT RUN');
     expect(text).toContain('NO DOOR RESOLVES THIS');
@@ -139,7 +147,9 @@ describe('the refusal is one a person can act on', () => {
   });
 
   it('names the compiler door when an artifact has simply not been built', () => {
-    const refusals = limitRefusals(ROOT, [{ label: 'Nowhere', managed: 'contracts/not-compiled-here', door: 'npm run compile:nowhere' }]);
+    const refusals = limitRefusals(ROOT, [
+      { label: 'Nowhere', managed: 'contracts/not-compiled-here', door: 'npm run compile:nowhere' }
+    ]);
     expect(refusals[0].kind).toBe('missing');
     expect(limitRefusalText(refusals)).toContain('Run npm run compile:nowhere');
   });
@@ -177,9 +187,13 @@ describe('the refusal is one a person can act on', () => {
     // real artifacts would fail `layoutFromArtifact`'s anchors loudly — but the
     // fixtures would go on asserting the OLD compiler's `3 newArray` and
     // `[0,0]`, which is a guard proving something about a compiler nobody runs.
-    const installed = (JSON.parse(read('contracts/managed/compiler/contract-info.json')) as { 'compiler-version': string })['compiler-version'];
+    const installed = (
+      JSON.parse(read('contracts/managed/compiler/contract-info.json')) as { 'compiler-version': string }
+    )['compiler-version'];
     for (const n of ['fifteen', 'sixteen']) {
-      const v = (JSON.parse(read(`${FIXTURES}/${n}/contract-info.json`)) as { 'compiler-version': string })['compiler-version'];
+      const v = (JSON.parse(read(`${FIXTURES}/${n}/contract-info.json`)) as { 'compiler-version': string })[
+        'compiler-version'
+      ];
       expect(v).toBe(installed);
     }
   });
@@ -207,15 +221,17 @@ describe('the guard is WIRED IN, and every contract is under it', () => {
     expect(LEDGER_LIMIT_TARGETS.map((t) => [t.label, t.managed, t.door])).toEqual([
       ['ConfidentialAccount', 'contracts/managed', 'npm run compact:fast'],
       ['Vault', 'contracts/managed-vault', 'npm run compact:fast'],
-      ['PrivateRegistry', 'contracts/managed-registry', 'npm run compact:fast'],
+      ['PrivateRegistry', 'contracts/managed-registry', 'npm run compact:fast']
     ]);
     // AND EACH IS A COMMAND A READER CAN ACTUALLY RUN. Read as a path, this
     // passed only in the one folder that happened to hold a file of that name.
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     for (const t of LEDGER_LIMIT_TARGETS) {
       const named = /^npm run ([A-Za-z0-9:_-]+)$/.exec(t.door);
-      expect({ door: t.door, defined: named !== null && typeof pkg.scripts[named[1]] === 'string' })
-        .toEqual({ door: t.door, defined: true });
+      expect({ door: t.door, defined: named !== null && typeof pkg.scripts[named[1]] === 'string' }).toEqual({
+        door: t.door,
+        defined: true
+      });
     }
   });
 

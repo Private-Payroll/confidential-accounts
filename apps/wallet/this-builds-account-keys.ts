@@ -32,15 +32,30 @@ export interface AccountKeyDigests {
 /** The digests, read from `<root>/contracts/managed/keys`. */
 export function accountKeyDigests(root: string): AccountKeyDigests {
   const dir = join(root, 'contracts', 'managed', 'keys');
-  const absent = [...CREATION_STEPS.first, ...CREATION_STEPS.second].filter((c) => !existsSync(join(dir, `${c}.verifier`)));
+  const absent = [...CREATION_STEPS.first, ...CREATION_STEPS.second].filter(
+    (c) => !existsSync(join(dir, `${c}.verifier`))
+  );
   if (absent.length > 0) {
-    return { first: [], second: [], verifiers: [], missing: `this wallet was built without the company account's compiled keys (${absent.join(', ')})` };
+    return {
+      first: [],
+      second: [],
+      verifiers: [],
+      missing: `this wallet was built without the company account's compiled keys (${absent.join(', ')})`
+    };
   }
-  const digest = (c: string) => [c, createHash('sha256').update(readFileSync(join(dir, `${c}.verifier`))).digest('hex')] as const;
+  const digest = (c: string) =>
+    [
+      c,
+      createHash('sha256')
+        .update(readFileSync(join(dir, `${c}.verifier`)))
+        .digest('hex')
+    ] as const;
   const verifier = (c: string) => [c, readFileSync(join(dir, `${c}.verifier`)).toString('hex')] as const;
   return {
-    first: CREATION_STEPS.first.map(digest), second: CREATION_STEPS.second.map(digest), missing: null,
-    verifiers: [...CREATION_STEPS.first, ...CREATION_STEPS.second].map(verifier),
+    first: CREATION_STEPS.first.map(digest),
+    second: CREATION_STEPS.second.map(digest),
+    missing: null,
+    verifiers: [...CREATION_STEPS.first, ...CREATION_STEPS.second].map(verifier)
   };
 }
 
@@ -49,15 +64,19 @@ export function thisBuildsAccountKeys(root: string) {
   const resolved = `\0${THIS_BUILDS_ACCOUNT_KEYS}`;
   return {
     name: 'this-builds-account-keys',
-    resolveId(id: string) { return id === THIS_BUILDS_ACCOUNT_KEYS ? resolved : null; },
+    resolveId(id: string) {
+      return id === THIS_BUILDS_ACCOUNT_KEYS ? resolved : null;
+    },
     load(id: string) {
       if (id !== resolved) return null;
       const d = accountKeyDigests(root);
-      return `export const first = ${JSON.stringify(d.first)};\n`
-        + `export const second = ${JSON.stringify(d.second)};\n`
-        + `export const missing = ${JSON.stringify(d.missing)};\n`
-        + `export const verifiers = ${JSON.stringify(d.verifiers)};\n`;
-    },
+      return (
+        `export const first = ${JSON.stringify(d.first)};\n` +
+        `export const second = ${JSON.stringify(d.second)};\n` +
+        `export const missing = ${JSON.stringify(d.missing)};\n` +
+        `export const verifiers = ${JSON.stringify(d.verifiers)};\n`
+      );
+    }
   };
 }
 
@@ -72,5 +91,5 @@ export function thisBuildsAccountKeys(root: string) {
 export const SERVED_TO_THE_WALLET = {
   id: THIS_BUILDS_ACCOUNT_KEYS,
   servedBy: fileURLToPath(import.meta.url),
-  plugin: thisBuildsAccountKeys,
+  plugin: thisBuildsAccountKeys
 } as const;

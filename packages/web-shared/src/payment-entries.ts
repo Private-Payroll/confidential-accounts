@@ -14,10 +14,13 @@ import type { RaisingHere, RunMadeHere } from './what-this-device-made.js';
  * payment before it. Made with the account's own circuit (`paidOnceOf`).
  */
 export const paymentEntriesOf = (
-  made: Pick<RunMadeHere, 'payKey' | 'records' | 'facts' | 'retry'>, paidOnceOf: (nonce: Uint8Array) => Uint8Array,
+  made: Pick<RunMadeHere, 'payKey' | 'records' | 'facts' | 'retry'>,
+  paidOnceOf: (nonce: Uint8Array) => Uint8Array
 ): string[] => {
   const entry = (record: (typeof made.records)[number]): string =>
-    Array.from(paidOnceOf(bytesOfHex(payRecordNonceOf(made.payKey as Hex, record))), (b) => b.toString(16).padStart(2, '0')).join('');
+    Array.from(paidOnceOf(bytesOfHex(payRecordNonceOf(made.payKey as Hex, record))), (b) =>
+      b.toString(16).padStart(2, '0')
+    ).join('');
   const positions = made.retry ?? made.facts.map((_, i) => i);
   const out = new Set<string>();
   for (const i of positions) {
@@ -31,7 +34,6 @@ export const paymentEntriesOf = (
 
 const bytesOfHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
 
-
 /**
  * **THE ENTRIES THE ACCOUNT RECORDS FOR EVERY PAYMENT THE COMPANY'S RECORDS
  * KNOW ABOUT**: for each leaf of every leg they hold, the entry recorded when
@@ -42,13 +44,18 @@ const bytesOfHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ??
  */
 export const knownEntriesOf = (
   raising: Pick<RaisingHere, 'knownLeaves' | 'knownNonces' | 'oneOffs'>,
-  circuits: { readonly paidMovementOf: (leaf: Uint8Array) => Uint8Array; readonly paidOnceOf: (nonce: Uint8Array) => Uint8Array },
+  circuits: {
+    readonly paidMovementOf: (leaf: Uint8Array) => Uint8Array;
+    readonly paidOnceOf: (nonce: Uint8Array) => Uint8Array;
+  }
 ): string[] => {
   const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-  return [...new Set([
-    ...raising.knownLeaves.map((l) => hex(circuits.paidMovementOf(bytesOfHex(l.toLowerCase())))),
-    ...raising.knownNonces.map((n) => hex(circuits.paidOnceOf(bytesOfHex(n.toLowerCase())))),
-    ...(raising.oneOffs?.leaves ?? []).map((l) => hex(circuits.paidMovementOf(bytesOfHex(l.toLowerCase())))),
-    ...(raising.oneOffs?.nonces ?? []).map((n) => hex(circuits.paidOnceOf(bytesOfHex(n.toLowerCase())))),
-  ])];
+  return [
+    ...new Set([
+      ...raising.knownLeaves.map((l) => hex(circuits.paidMovementOf(bytesOfHex(l.toLowerCase())))),
+      ...raising.knownNonces.map((n) => hex(circuits.paidOnceOf(bytesOfHex(n.toLowerCase())))),
+      ...(raising.oneOffs?.leaves ?? []).map((l) => hex(circuits.paidMovementOf(bytesOfHex(l.toLowerCase())))),
+      ...(raising.oneOffs?.nonces ?? []).map((n) => hex(circuits.paidOnceOf(bytesOfHex(n.toLowerCase()))))
+    ])
+  ];
 };

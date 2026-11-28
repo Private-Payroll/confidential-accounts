@@ -8,20 +8,34 @@
 import { describe, it, expect } from 'vitest';
 import { newSigningKeypair, newWrappingKeypair, type Hex } from '../../../src/core/crypto.js';
 import { sealPool } from '../../../src/midnight/vault-pool.js';
-import { FilingNotBelieved, HttpCompanyRecordStore, HttpSealedPoolStore, type FilingJudge } from './http-sealed-pool-store.js';
+import {
+  FilingNotBelieved,
+  HttpCompanyRecordStore,
+  HttpSealedPoolStore,
+  type FilingJudge
+} from './http-sealed-pool-store.js';
 import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 import { storeReachOver } from '../../../src/testing/writes-over-a-send.js';
 import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memory.js';
 
 const ACC = 'acc_held_behind';
 const ADA = newSigningKeypair();
-const NOT_ENTERED = 'no entry in the company\'s records names it';
+const NOT_ENTERED = "no entry in the company's records names it";
 const NO_SIGNATURE = 'it carries no valid signature for this record';
 
-const filed = (version: number) => signCompanyFiling({
-  company: ACC, kind: 'roster', id: 'roster', version, keyEpoch: 0, sealed: { iv: '11'.repeat(12) as Hex, tag: '22'.repeat(16) as Hex, body: '33' as Hex },
-  wrapped: [],
-} as never, ADA.secret);
+const filed = (version: number) =>
+  signCompanyFiling(
+    {
+      company: ACC,
+      kind: 'roster',
+      id: 'roster',
+      version,
+      keyEpoch: 0,
+      sealed: { iv: '11'.repeat(12) as Hex, tag: '22'.repeat(16) as Hex, body: '33' as Hex },
+      wrapped: []
+    } as never,
+    ADA.secret
+  );
 
 /** A judge made for each held read in turn: `says[i]` is what the i-th read's judge answers, and a held read behind says so. */
 const judgesSaying = (...says: (string | null)[]) => {
@@ -30,22 +44,43 @@ const judgesSaying = (...says: (string | null)[]) => {
   const fresh = async (): Promise<FilingJudge> => {
     const why = says[Math.min(made, says.length - 1)]!;
     made += 1;
-    return Object.assign((_f: unknown, _k: unknown, _key: unknown, read: { version?: number }) => { versions.push(read.version ?? 0); return why; },
-      { heldBehind: (w: string) => w === NOT_ENTERED });
+    return Object.assign(
+      (_f: unknown, _k: unknown, _key: unknown, read: { version?: number }) => {
+        versions.push(read.version ?? 0);
+        return why;
+      },
+      { heldBehind: (w: string) => w === NOT_ENTERED }
+    );
   };
   return { fresh, made: () => made, versions };
 };
 
 /** The store over one view; `letGo` records each answer the view's `heldAgain` gave. */
 const aStore = (judge: () => Promise<FilingJudge>, letGo: boolean[] = []) => {
-  const reach = storeReachOver(readRoutesOverSend(
-    async () => ({ status: 200, body: { kind: 'roster', id: 'roster', filed: toCompanyWire(filed(2)) } }),
-    { directory: 'empty', newest: 'none-entered' }), ACC);
-  return new HttpCompanyRecordStore(ACC, { ...reach, heldAgain: async () => { const r = await reach.heldAgain!(); letGo.push(r); return r; } }, ADA.secret, judge);
+  const reach = storeReachOver(
+    readRoutesOverSend(
+      async () => ({ status: 200, body: { kind: 'roster', id: 'roster', filed: toCompanyWire(filed(2)) } }),
+      { directory: 'empty', newest: 'none-entered' }
+    ),
+    ACC
+  );
+  return new HttpCompanyRecordStore(
+    ACC,
+    {
+      ...reach,
+      heldAgain: async () => {
+        const r = await reach.heldAgain!();
+        letGo.push(r);
+        return r;
+      }
+    },
+    ADA.secret,
+    judge
+  );
 };
 
 describe('a body read after the held answer', () => {
-  it('is believed from the version the company\'s records name once held is read afresh: the run is drawn from the new version', async () => {
+  it("is believed from the version the company's records name once held is read afresh: the run is drawn from the new version", async () => {
     const j = judgesSaying(NOT_ENTERED, null);
     const rec = await aStore(j.fresh).get('roster', 'roster');
     /* RED WHEN: a body entered after the held read is refused, where a fresh held read names it. */
@@ -83,25 +118,52 @@ describe('a body read after the held answer', () => {
   });
 });
 
-describe('a vault\'s record read after the held answer', () => {
+describe("a vault's record read after the held answer", () => {
   const VAULT = 'ab'.repeat(32);
   const WRAPPING = newWrappingKeypair();
   /** A vault's pool with two versions filed, and a store that reads it through one view, judged by `judge`; `letGo` as `aStore`'s. */
   const aVaultStore = async (judge: () => Promise<FilingJudge>, letGo: boolean[] = []) => {
     const filed: unknown[] = [];
-    const routes = readRoutesOverSend(async (path, init) => {
-      if (init.method === 'PUT') {
-        const wire = JSON.parse(init.body!);
-        filed.push(wire);
-        return { status: 201, body: { filed: true, record: 'pool', version: wire.version, digest: wire.digest } };
-      }
-      if (path.endsWith('/versions')) return { status: 200, body: { record: 'pool', versions: filed } };
-      return { status: 200, body: { record: 'pool', filed: filed.at(-1) ?? null } };
-    }, { directory: 'empty', newest: 'none-entered' });
-    const filer = new HttpSealedPoolStore('pool', storeReachOver(routes, ACC), ADA.secret, async () => Object.assign(() => null, {}));
-    for (const version of [1, 2]) await filer.put(VAULT, sealPool(VAULT, { notes: [] } as never, [{ id: 'aa'.repeat(32), wrappingPublicKey: WRAPPING.publicKey }], version, 'pool'));
+    const routes = readRoutesOverSend(
+      async (path, init) => {
+        if (init.method === 'PUT') {
+          const wire = JSON.parse(init.body!);
+          filed.push(wire);
+          return { status: 201, body: { filed: true, record: 'pool', version: wire.version, digest: wire.digest } };
+        }
+        if (path.endsWith('/versions')) return { status: 200, body: { record: 'pool', versions: filed } };
+        return { status: 200, body: { record: 'pool', filed: filed.at(-1) ?? null } };
+      },
+      { directory: 'empty', newest: 'none-entered' }
+    );
+    const filer = new HttpSealedPoolStore('pool', storeReachOver(routes, ACC), ADA.secret, async () =>
+      Object.assign(() => null, {})
+    );
+    for (const version of [1, 2])
+      await filer.put(
+        VAULT,
+        sealPool(
+          VAULT,
+          { notes: [] } as never,
+          [{ id: 'aa'.repeat(32), wrappingPublicKey: WRAPPING.publicKey }],
+          version,
+          'pool'
+        )
+      );
     const reach = storeReachOver(routes, ACC);
-    return new HttpSealedPoolStore('pool', { ...reach, heldAgain: async () => { const r = await reach.heldAgain!(); letGo.push(r); return r; } }, null, judge);
+    return new HttpSealedPoolStore(
+      'pool',
+      {
+        ...reach,
+        heldAgain: async () => {
+          const r = await reach.heldAgain!();
+          letGo.push(r);
+          return r;
+        }
+      },
+      null,
+      judge
+    );
   };
 
   it('is believed from every version the fresh held answer names: the list read once more, after the one let-go', async () => {
@@ -138,11 +200,26 @@ describe('a vault\'s record read after the held answer', () => {
 describe('a record write names only what the record route takes', () => {
   it('refuses a roster or a person before anything is sent, which the record route would refuse', async () => {
     let sent = 0;
-    const store = new HttpCompanyRecordStore(ACC, storeReachOver(readRoutesOverSend(async () => { sent += 1; return { status: 200, body: {} }; },
-      { directory: 'empty', newest: 'none-entered' }), ACC), ADA.secret, async () => Object.assign(() => null, {}) as never);
+    const store = new HttpCompanyRecordStore(
+      ACC,
+      storeReachOver(
+        readRoutesOverSend(
+          async () => {
+            sent += 1;
+            return { status: 200, body: {} };
+          },
+          { directory: 'empty', newest: 'none-entered' }
+        ),
+        ACC
+      ),
+      ADA.secret,
+      async () => Object.assign(() => null, {}) as never
+    );
     for (const kind of ['roster', 'person'] as const) {
       /* RED WHEN: a person or the roster is sent to the route that refuses both, so the step learns it only from the service. */
-      await expect(store.put({ ...filed(1), kind, id: kind === 'roster' ? 'roster' : 'p1' } as never)).rejects.toThrow(/filed by its own route/u);
+      await expect(store.put({ ...filed(1), kind, id: kind === 'roster' ? 'roster' : 'p1' } as never)).rejects.toThrow(
+        /filed by its own route/u
+      );
     }
     expect(sent).toBe(0);
   });

@@ -50,7 +50,8 @@ export interface InboxSnapshot {
 }
 
 const NOTHING: InboxSnapshot = Object.freeze({
-  view: { of: 'no-host' } as const, host: null,
+  view: { of: 'no-host' } as const,
+  host: null
 });
 
 let snapshot: InboxSnapshot = NOTHING;
@@ -60,16 +61,24 @@ const listeners = new Set<() => void>();
 
 /* Iterated over a COPY — `shell/wallets.ts`'s reason: a subscriber that
  * unmounts while being notified would otherwise mutate the set mid-iteration. */
-const changed = (): void => { for (const l of [...listeners]) l(); };
+const changed = (): void => {
+  for (const l of [...listeners]) l();
+};
 
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
-  return () => { listeners.delete(onChange); };
+  return () => {
+    listeners.delete(onChange);
+  };
 }
 
 /** The card, and anything else that wants to know. Read-only by construction. */
 export function useInbox(): InboxSnapshot {
-  return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
+  return useSyncExternalStore(
+    subscribe,
+    () => snapshot,
+    () => snapshot
+  );
 }
 
 /** Ask on purpose. **The refresh control the agreement requires.** */
@@ -102,12 +111,14 @@ export function forgetInbox(): void {
 export function openInbox(
   identity: Identity,
   unlocked: () => boolean,
-  host: InboxHost | null = INBOX_HOST,
+  host: InboxHost | null = INBOX_HOST
 ): () => void {
   if (host === null) {
     snapshot = NOTHING;
     changed();
-    return () => { forgetInbox(); };
+    return () => {
+      forgetInbox();
+    };
   }
   const keys = inboxKeypair(identity);
   live = startInboxPolling({
@@ -117,7 +128,9 @@ export function openInbox(
     onState: (view) => {
       snapshot = Object.freeze({ view, host: host.describes });
       changed();
-    },
+    }
   });
-  return () => { forgetInbox(); };
+  return () => {
+    forgetInbox();
+  };
 }

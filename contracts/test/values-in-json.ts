@@ -11,7 +11,11 @@ export type CompiledType =
   | { readonly 'type-name': 'Field' }
   | { readonly 'type-name': 'Boolean' }
   | { readonly 'type-name': 'Vector'; readonly length: number; readonly type: CompiledType }
-  | { readonly 'type-name': 'Struct'; readonly name: string; readonly elements: readonly { readonly name: string; readonly type: CompiledType }[] };
+  | {
+      readonly 'type-name': 'Struct';
+      readonly name: string;
+      readonly elements: readonly { readonly name: string; readonly type: CompiledType }[];
+    };
 
 /** A value as the record writes it. */
 export type JsonValue = string | boolean | readonly JsonValue[] | { readonly [k: string]: JsonValue };
@@ -24,7 +28,8 @@ export function toJson(value: unknown): JsonValue {
   if (typeof value === 'bigint') return `${value}n`;
   if (typeof value === 'boolean') return value;
   if (Array.isArray(value)) return value.map(toJson);
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toJson(v)]));
+  if (value !== null && typeof value === 'object')
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toJson(v)]));
   throw new Error(`a compiled contract hands back no value like ${String(value)}`);
 }
 
@@ -32,7 +37,8 @@ export function toJson(value: unknown): JsonValue {
 export function fromJson(value: JsonValue): unknown {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
-    if (/^0x(?:[0-9a-f]{2})*$/u.test(value)) return Uint8Array.from(value.slice(2).match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
+    if (/^0x(?:[0-9a-f]{2})*$/u.test(value))
+      return Uint8Array.from(value.slice(2).match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
     if (/^[0-9]+n$/u.test(value)) return BigInt(value.slice(0, -1));
     throw new Error(`the record holds "${value}" where a value is written as 0x and hex, or as digits and n`);
   }
@@ -52,16 +58,22 @@ export type InputSet = (typeof INPUT_SETS)[number];
 /** The fixed value of a type for one seed in one input set: the same type, seed and set always give the same value. */
 export function fixedValueOf(type: CompiledType, seed: number, set: InputSet): unknown {
   switch (type['type-name']) {
-    case 'Bytes': return Uint8Array.from({ length: type.length }, (_, i) => {
-      const b = (seed * 31 + i * 7 + 1) & 0xff;
-      if (i < type.length - 1) return b;
-      return set === 1 ? 0 : b | 0x80;
-    });
-    case 'Uint': return set === 1 ? BigInt(seed) % (BigInt(type.maxval) + 1n) : seed % 2 === 1 ? BigInt(type.maxval) : 0n;
-    case 'Field': return set === 1 ? BigInt(seed) * 1_000_003n : BigInt(seed) * 7_919n + 1n;
-    case 'Boolean': return (seed % 2 === 1) === (set === 1);
-    case 'Vector': return Array.from({ length: type.length }, (_, i) => fixedValueOf(type.type, seed * 7 + i + 1, set));
-    case 'Struct': return Object.fromEntries(type.elements.map((e, i) => [e.name, fixedValueOf(e.type, seed * 5 + i + 1, set)]));
+    case 'Bytes':
+      return Uint8Array.from({ length: type.length }, (_, i) => {
+        const b = (seed * 31 + i * 7 + 1) & 0xff;
+        if (i < type.length - 1) return b;
+        return set === 1 ? 0 : b | 0x80;
+      });
+    case 'Uint':
+      return set === 1 ? BigInt(seed) % (BigInt(type.maxval) + 1n) : seed % 2 === 1 ? BigInt(type.maxval) : 0n;
+    case 'Field':
+      return set === 1 ? BigInt(seed) * 1_000_003n : BigInt(seed) * 7_919n + 1n;
+    case 'Boolean':
+      return (seed % 2 === 1) === (set === 1);
+    case 'Vector':
+      return Array.from({ length: type.length }, (_, i) => fixedValueOf(type.type, seed * 7 + i + 1, set));
+    case 'Struct':
+      return Object.fromEntries(type.elements.map((e, i) => [e.name, fixedValueOf(e.type, seed * 5 + i + 1, set)]));
   }
 }
 

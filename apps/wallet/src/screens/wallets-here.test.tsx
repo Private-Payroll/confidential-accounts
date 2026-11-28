@@ -34,7 +34,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -66,7 +66,7 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 const assertionFixture = (credentialId: string) => ({
@@ -74,7 +74,7 @@ const assertionFixture = (credentialId: string) => ({
   clientDataJSON: new Uint8Array(),
   authenticatorData: new Uint8Array(),
   signature: new Uint8Array(),
-  userHandle: 'cGVyc29uLTE',
+  userHandle: 'cGVyc29uLTE'
 });
 
 /**
@@ -89,7 +89,9 @@ const assertionFixture = (credentialId: string) => ({
  * the guard in `wallets-here.tsx` exists for.
  */
 const putWallet = async (
-  name: string, credentialId: string, withPasskey = true,
+  name: string,
+  credentialId: string,
+  withPasskey = true
 ): Promise<{ id: string; secret: Uint8Array }> => {
   const secret = newSecret();
   const id = await saveSecret(secret);
@@ -104,16 +106,19 @@ function PhaseProbe(): ReactNode {
     <>
       <div data-testid="phase">{session.phase.name}</div>
       <div data-testid="secret-fp">
-        {session.phase.name === 'unlocked'
-          ? toBase64Url(fingerprintOf(session.phase.secret))
-          : ''}
+        {session.phase.name === 'unlocked' ? toBase64Url(fingerprintOf(session.phase.secret)) : ''}
       </div>
     </>
   );
 }
 
 const mount = (): void => {
-  render(<SessionProvider><Unlock /><PhaseProbe /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <Unlock />
+      <PhaseProbe />
+    </SessionProvider>
+  );
 };
 
 /** The rows, and only the rows. The wallet this window points at is also
@@ -155,36 +160,33 @@ describe('§2 — pressing a wallet in the list OPENS it, in one press', () => {
    * red. That is the whole point: the visible effect of the press was never
    * the thing that was missing.
    */
-  it('the press reaches the ONE ceremony — usePasskey is called, not merely switchTo',
-    async () => {
-      const founder = await putWallet('Founder', 'cred-founder');
-      await putWallet('Employee', 'cred-employee');
-      /* `saveSecret` opened the compartment it landed in, so this window is
-       * pointing at Employee — Founder is the row a person would press. */
-      expect(openWalletId()).not.toBe(founder.id);
+  it('the press reaches the ONE ceremony — usePasskey is called, not merely switchTo', async () => {
+    const founder = await putWallet('Founder', 'cred-founder');
+    await putWallet('Employee', 'cred-employee');
+    /* `saveSecret` opened the compartment it landed in, so this window is
+     * pointing at Employee — Founder is the row a person would press. */
+    expect(openWalletId()).not.toBe(founder.id);
 
-      mockUsePasskey.mockResolvedValue(assertionFixture('cred-founder'));
-      mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
-        Promise.resolve({ passkey }) as never);
+    mockUsePasskey.mockResolvedValue(assertionFixture('cred-founder'));
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) => Promise.resolve({ passkey }) as never);
 
-      mount();
-      expect(phase()).toBe('locked');
-      fireEvent.click(within(list()).getByText('Founder'));
+    mount();
+    expect(phase()).toBe('locked');
+    fireEvent.click(within(list()).getByText('Founder'));
 
-      /* HALF ONE — the switch. */
-      expect(openWalletId()).toBe(founder.id);
-      /* HALF TWO — and this is the half that was missing. The ceremony is
-       * asynchronous (`session.tsx` issues a challenge before it prompts), so
-       * it is awaited rather than asserted synchronously. */
-      await waitFor(() => expect(mockUsePasskey).toHaveBeenCalledTimes(1));
+    /* HALF ONE — the switch. */
+    expect(openWalletId()).toBe(founder.id);
+    /* HALF TWO — and this is the half that was missing. The ceremony is
+     * asynchronous (`session.tsx` issues a challenge before it prompts), so
+     * it is awaited rather than asserted synchronously. */
+    await waitFor(() => expect(mockUsePasskey).toHaveBeenCalledTimes(1));
 
-      /* AND IT OPENS. Asserted on the UNLOCKED secret rather than on storage:
-       * a mutation that swapped in a fresh secret would write the very
-       * record a storage assertion reads, and pass it. */
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      expect(screen.getByTestId('secret-fp').textContent)
-        .toBe(toBase64Url(fingerprintOf(founder.secret)));
-    });
+    /* AND IT OPENS. Asserted on the UNLOCKED secret rather than on storage:
+     * a mutation that swapped in a fresh secret would write the very
+     * record a storage assertion reads, and pass it. */
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(founder.secret)));
+  });
 
   it('the row of the wallet ALREADY selected is pressable, and opens it too', async () => {
     await putWallet('Founder', 'cred-founder');
@@ -192,16 +194,14 @@ describe('§2 — pressing a wallet in the list OPENS it, in one press', () => {
     expect(openWalletId()).toBe(employee.id);
 
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-employee'));
-    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
-      Promise.resolve({ passkey }) as never);
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) => Promise.resolve({ passkey }) as never);
 
     mount();
     /* It used to be a bare `<strong>` — no button, nothing to press. */
     fireEvent.click(within(list()).getByText('Employee'));
     await waitFor(() => expect(mockUsePasskey).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(employee.secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(employee.secret)));
   });
 
   /**
@@ -212,22 +212,21 @@ describe('§2 — pressing a wallet in the list OPENS it, in one press', () => {
    * screen that has already been replaced underneath it. `switchTo` hands back
    * the phase it landed in so the row can tell the difference.
    */
-  it('a wallet with no credential on record is SWITCHED to and NOT prompted for',
-    async () => {
-      const stranded = await putWallet('Old laptop wallet', 'unused', false);
-      await putWallet('Employee', 'cred-employee');
+  it('a wallet with no credential on record is SWITCHED to and NOT prompted for', async () => {
+    const stranded = await putWallet('Old laptop wallet', 'unused', false);
+    await putWallet('Employee', 'cred-employee');
 
-      mount();
-      fireEvent.click(within(list()).getByText('Old laptop wallet'));
+    mount();
+    fireEvent.click(within(list()).getByText('Old laptop wallet'));
 
-      expect(openWalletId()).toBe(stranded.id);
-      expect(phase()).toBe('account-no-passkey');
-      /* Awaited long enough for a ceremony to have started if one were going
-       * to: the challenge issue is one microtask, and `waitFor` turns the loop
-       * either way. Asserted as a count so a later prompt cannot hide. */
-      await waitFor(() => expect(phase()).toBe('account-no-passkey'));
-      expect(mockUsePasskey).not.toHaveBeenCalled();
-    });
+    expect(openWalletId()).toBe(stranded.id);
+    expect(phase()).toBe('account-no-passkey');
+    /* Awaited long enough for a ceremony to have started if one were going
+     * to: the challenge issue is one microtask, and `waitFor` turns the loop
+     * either way. Asserted as a count so a later prompt cannot hide. */
+    await waitFor(() => expect(phase()).toBe('account-no-passkey'));
+    expect(mockUsePasskey).not.toHaveBeenCalled();
+  });
 
   /**
    * WHICH WALLET OPENS IS STILL THE CREDENTIAL'S ANSWER, NOT THE ROW'S. THIS
@@ -236,24 +235,21 @@ describe('§2 — pressing a wallet in the list OPENS it, in one press', () => {
    * exactly as it is."* This is that sentence, pinned from the new entry point
    * — `session.test.tsx` pins it from the unlock button.
    */
-  it('the credential the person picks still decides, even when a row started it',
-    async () => {
-      const founder = await putWallet('Founder', 'cred-founder');
-      await putWallet('Employee', 'cred-employee');
+  it('the credential the person picks still decides, even when a row started it', async () => {
+    const founder = await putWallet('Founder', 'cred-founder');
+    await putWallet('Employee', 'cred-employee');
 
-      /* The row pressed is Founder; the chooser hands back EMPLOYEE's. */
-      mockUsePasskey.mockResolvedValue(assertionFixture('cred-employee'));
-      mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
-        Promise.resolve({ passkey }) as never);
+    /* The row pressed is Founder; the chooser hands back EMPLOYEE's. */
+    mockUsePasskey.mockResolvedValue(assertionFixture('cred-employee'));
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) => Promise.resolve({ passkey }) as never);
 
-      mount();
-      fireEvent.click(within(list()).getByText('Founder'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
+    mount();
+    fireEvent.click(within(list()).getByText('Founder'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
 
-      expect(screen.getByTestId('secret-fp').textContent)
-        .not.toBe(toBase64Url(fingerprintOf(founder.secret)));
-      expect(openWalletId()).not.toBe(founder.id);
-    });
+    expect(screen.getByTestId('secret-fp').textContent).not.toBe(toBase64Url(fingerprintOf(founder.secret)));
+    expect(openWalletId()).not.toBe(founder.id);
+  });
 });
 
 describe('§3 — a wallet pressed in the list is the only one the browser is asked about', () => {
@@ -264,15 +260,14 @@ describe('§3 — a wallet pressed in the list is the only one the browser is as
    * did not choose. So a press offers only the pressed wallet's passkeys, and
    * the unlock button - where nobody has said which - still offers them all.
    */
-  it('a row press offers ONLY that wallet\'s passkeys to the browser', async () => {
+  it("a row press offers ONLY that wallet's passkeys to the browser", async () => {
     const founder = await putWallet('Founder', 'cred-founder');
     await putWallet('Employee', 'cred-employee');
     savePasskey(passkeyFixture('cred-founder-phone'), founder.id);
     expect(openWalletId()).not.toBe(founder.id);
 
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-founder'));
-    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
-      Promise.resolve({ passkey }) as never);
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) => Promise.resolve({ passkey }) as never);
 
     mount();
     fireEvent.click(within(list()).getByText('Founder'));
@@ -282,8 +277,7 @@ describe('§3 — a wallet pressed in the list is the only one the browser is as
     expect([...(offered ?? [])].sort()).toEqual(['cred-founder', 'cred-founder-phone']);
     expect(offered).not.toContain('cred-employee');
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(founder.secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(founder.secret)));
   });
 
   it('the unlock button, where nobody has said which wallet, still offers every passkey', async () => {
@@ -291,8 +285,7 @@ describe('§3 — a wallet pressed in the list is the only one the browser is as
     await putWallet('Employee', 'cred-employee');
 
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-employee'));
-    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
-      Promise.resolve({ passkey }) as never);
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) => Promise.resolve({ passkey }) as never);
 
     mount();
     fireEvent.click(screen.getByText('Unlock with your passkey'));

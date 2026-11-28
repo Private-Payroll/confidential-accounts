@@ -11,7 +11,11 @@ export const personOnPage: PersonAsks<unknown> = personAsks(serviceCall);
 /** The person's own asks for a tab that reads each answer's status itself, saying it was prepared for `signedInAs`. */
 export const personAnsweredOnPage = (signedInAs: () => string | null): PersonAsks<Awaited<ReturnType<PageSend>>> => {
   const send = serviceAnswered(signedInAs);
-  return personAsks((path, init) => send(path, {
-    method: init?.method ?? 'GET', ...(init?.body === undefined ? {} : { body: init.body }), ...(init?.signal === undefined ? {} : { signal: init.signal }),
-  }));
+  return personAsks((path, init) =>
+    send(path, {
+      method: init?.method ?? 'GET',
+      ...(init?.body === undefined ? {} : { body: init.body }),
+      ...(init?.signal === undefined ? {} : { signal: init.signal })
+    })
+  );
 };

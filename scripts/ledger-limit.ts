@@ -66,7 +66,9 @@ export type LedgerLimitTarget = {
  * added. `npm run compact:fast` compiles every contract in the table, so it is the one door.
  */
 export const LEDGER_LIMIT_TARGETS: readonly LedgerLimitTarget[] = Object.values(CONTRACT_TABLE).map((c) => ({
-  label: c.name, managed: c.compiled, door: 'npm run compact:fast',
+  label: c.name,
+  managed: c.compiled,
+  door: 'npm run compact:fast'
 }));
 
 /** The compiler's own top-level segment length, past which it nests the ledger. Not chosen here. */
@@ -106,21 +108,29 @@ export function layoutFromInfo(infoText: string): { fields: number; reshaped: bo
  * a line number or an indent, because both of those are compiler formatting and
  * neither is a promise.
  */
-export function layoutFromArtifact(moduleText: string): { constructorArrays: number; topLevelPushes: number; reshaped: boolean } {
+export function layoutFromArtifact(moduleText: string): {
+  constructorArrays: number;
+  topLevelPushes: number;
+  reshaped: boolean;
+} {
   const open = moduleText.indexOf('let stateValue_0 = __compactRuntime.StateValue.newArray();');
   if (open === -1) {
     throw new Error(
       'ledger-limit: the artifact has no `let stateValue_0 = …newArray();` — the constructor does not build ' +
-        'a top-level field array in the shape this guard knows how to count. Reading it any other way would be a guess.',
+        'a top-level field array in the shape this guard knows how to count. Reading it any other way would be a guess.'
     );
   }
   const close = moduleText.indexOf('state_0.data = new __compactRuntime.ChargedState(stateValue_0);', open);
   if (close === -1) {
-    throw new Error('ledger-limit: the constructor accumulator opens and is never handed to ChargedState. The artifact is not the shape this guard knows how to count.');
+    throw new Error(
+      'ledger-limit: the constructor accumulator opens and is never handed to ChargedState. The artifact is not the shape this guard knows how to count.'
+    );
   }
   const slice = moduleText.slice(open, close);
   const constructorArrays = (slice.match(/__compactRuntime\.StateValue\.newArray\(\)/g) ?? []).length;
-  const topLevelPushes = (slice.match(/stateValue_0 = stateValue_0\.arrayPush\(__compactRuntime\.StateValue\.newNull\(\)\);/g) ?? []).length;
+  const topLevelPushes = (
+    slice.match(/stateValue_0 = stateValue_0\.arrayPush\(__compactRuntime\.StateValue\.newNull\(\)\);/g) ?? []
+  ).length;
   return { constructorArrays, topLevelPushes, reshaped: constructorArrays > 1 };
 }
 
@@ -133,10 +143,15 @@ export function readLayout(root: string, managed: string): Layout {
       `ledger-limit: the two instruments disagree about ${managed}. contract-info.json says the top level is ` +
         `${info.reshaped ? 'NESTED' : 'FLAT'} and the constructor says it is ${art.reshaped ? 'NESTED' : 'FLAT'} ` +
         `(${art.constructorArrays} newArray, ${art.topLevelPushes} top-level pushes). One of them is being read wrongly ` +
-        'and this guard will not pick. Nothing was asserted.',
+        'and this guard will not pick. Nothing was asserted.'
     );
   }
-  return { fields: info.fields, reshaped: info.reshaped, constructorArrays: art.constructorArrays, topLevelPushes: art.topLevelPushes };
+  return {
+    fields: info.fields,
+    reshaped: info.reshaped,
+    constructorArrays: art.constructorArrays,
+    topLevelPushes: art.topLevelPushes
+  };
 }
 
 /**
@@ -150,21 +165,33 @@ export function limitRefusals(root: string, targets: readonly LedgerLimitTarget[
   if (targets.length === 0) {
     throw new Error(
       'ledger-limit: asked to check ZERO artifacts. A check over nothing cannot fail, so this is an ' +
-        'error rather than a pass. Something has emptied LEDGER_LIMIT_TARGETS.',
+        'error rather than a pass. Something has emptied LEDGER_LIMIT_TARGETS.'
     );
   }
   const out: LimitRefusal[] = [];
   for (const t of targets) {
     const dir = join(root, t.managed);
     if (!existsSync(join(dir, 'compiler', 'contract-info.json')) || !existsSync(join(dir, 'contract', 'index.js'))) {
-      out.push({ kind: 'missing', label: t.label, door: t.door, detail: `${t.managed} has not been compiled here`, layout: null });
+      out.push({
+        kind: 'missing',
+        label: t.label,
+        door: t.door,
+        detail: `${t.managed} has not been compiled here`,
+        layout: null
+      });
       continue;
     }
     let layout: Layout;
     try {
       layout = readLayout(root, t.managed);
     } catch (e) {
-      out.push({ kind: 'instruments-disagree', label: t.label, door: t.door, detail: String((e as Error).message), layout: null });
+      out.push({
+        kind: 'instruments-disagree',
+        label: t.label,
+        door: t.door,
+        detail: String((e as Error).message),
+        layout: null
+      });
       continue;
     }
     // RESHAPED IS CHECKED FIRST AND SEPARATELY FROM THE COUNT. They are the
@@ -172,7 +199,13 @@ export function limitRefusals(root: string, targets: readonly LedgerLimitTarget[
     // fix in the source, reshaped is what the artifact on disk already is.
     // Collapsing them into one message loses which of those is true.
     if (layout.reshaped) {
-      out.push({ kind: 'reshaped', label: t.label, door: t.door, detail: `${layout.fields} fields; the compiler has nested the top level`, layout });
+      out.push({
+        kind: 'reshaped',
+        label: t.label,
+        door: t.door,
+        detail: `${layout.fields} fields; the compiler has nested the top level`,
+        layout
+      });
       continue;
     }
     if (layout.fields > MAX_LEDGER_FIELDS) {

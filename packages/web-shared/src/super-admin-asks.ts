@@ -40,8 +40,12 @@ export interface SuperAdminWorker {
 const plain = (k: Key): Key => ({ tag: k.tag, value: k.value });
 
 /** The worker's reads and ledger, over `asked`: the vault worker client's own way of asking. */
-export function superAdminWorkerOver(asked: (request: SuperAdminRequest) => Promise<SuperAdminAnswer>): SuperAdminWorker {
-  const answer = async <A extends SuperAdminAsk['ask']>(request: SuperAdminRequest & { ask: A }): Promise<Extract<SuperAdminAnswer, { ask: A }>> => {
+export function superAdminWorkerOver(
+  asked: (request: SuperAdminRequest) => Promise<SuperAdminAnswer>
+): SuperAdminWorker {
+  const answer = async <A extends SuperAdminAsk['ask']>(
+    request: SuperAdminRequest & { ask: A }
+  ): Promise<Extract<SuperAdminAnswer, { ask: A }>> => {
     const a = await asked(request);
     if (a.ask !== request.ask) throw new Error('the vault worker answered a different question.');
     return a as Extract<SuperAdminAnswer, { ask: A }>;
@@ -49,14 +53,31 @@ export function superAdminWorkerOver(asked: (request: SuperAdminRequest) => Prom
   return {
     reads: (indexer) => ({
       accountAt: async (account) => (await answer({ ask: 'account-committee', account, indexer })).read,
-      authorityAt: async (address) => (await answer({ ask: 'contract-authority', address, indexer })).read,
+      authorityAt: async (address) => (await answer({ ask: 'contract-authority', address, indexer })).read
     }),
     ledger: {
-      updateBytes: async (u) => fromBase64((await answer({
-        ask: 'super-admin-update', vault: u.vault, counter: u.counter.toString(), to: { committee: u.to.committee.map(plain), threshold: u.to.threshold },
-      })).bytes),
-      signedBy: async (key, data, signature) => (await answer({ ask: 'super-admin-signed', key: plain(key), data: toBase64(data), signature: plain(signature) })).good,
-      joinedBy: async (bytes, key, signature) => (await answer({ ask: 'super-admin-joined', key: plain(key), data: toBase64(bytes), signature })).good,
-    },
+      updateBytes: async (u) =>
+        fromBase64(
+          (
+            await answer({
+              ask: 'super-admin-update',
+              vault: u.vault,
+              counter: u.counter.toString(),
+              to: { committee: u.to.committee.map(plain), threshold: u.to.threshold }
+            })
+          ).bytes
+        ),
+      signedBy: async (key, data, signature) =>
+        (
+          await answer({
+            ask: 'super-admin-signed',
+            key: plain(key),
+            data: toBase64(data),
+            signature: plain(signature)
+          })
+        ).good,
+      joinedBy: async (bytes, key, signature) =>
+        (await answer({ ask: 'super-admin-joined', key: plain(key), data: toBase64(bytes), signature })).good
+    }
   };
 }

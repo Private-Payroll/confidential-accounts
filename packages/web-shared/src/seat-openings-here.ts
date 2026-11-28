@@ -29,11 +29,14 @@ interface TagSeatsDoors {
  * over it is that seat's leaf. A seat with no opening here is left out.
  */
 export async function tagSeatsHere(
-  d: TagSeatsDoors, seats: readonly { readonly seat: string; readonly opening?: SeatOpening }[], held: readonly string[],
+  d: TagSeatsDoors,
+  seats: readonly { readonly seat: string; readonly opening?: SeatOpening }[],
+  held: readonly string[]
 ): Promise<ReadonlyMap<string, string>> {
   const now = new Set(held.map((x) => x.toLowerCase()));
-  const opened = seats.flatMap((x) => (x.opening !== undefined && now.has(x.seat.toLowerCase())
-    ? [{ seat: x.seat.toLowerCase(), opening: x.opening }] : []));
+  const opened = seats.flatMap((x) =>
+    x.opening !== undefined && now.has(x.seat.toLowerCase()) ? [{ seat: x.seat.toLowerCase(), opening: x.opening }] : []
+  );
   if (opened.length === 0) return new Map();
   const { openings } = await d.builder.seatOpenings({ account: d.account, openings: opened.map((o) => o.opening) });
   const out = new Map<string, string>();

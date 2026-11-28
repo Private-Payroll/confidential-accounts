@@ -249,13 +249,14 @@ export function tidyFingerprint(typed: string): string | null {
 export function companyFingerprint(company: CompanyLabel, account: AccountAddress): string {
   const label = readCompanyLabel(company);
   if (label === null) {
-    throw new FingerprintError('a company fingerprint is computed from a company\'s label, and that is not one.');
+    throw new FingerprintError("a company fingerprint is computed from a company's label, and that is not one.");
   }
   const at = readAccountAddress(account);
   if (at === null) {
     throw new FingerprintError(
-      'a company fingerprint covers the company\'s label and the address of its account together, '
-      + 'and what was given as the account is not an address.');
+      "a company fingerprint covers the company's label and the address of its account together, " +
+        'and what was given as the account is not an address.'
+    );
   }
   return render(COMPANY_DOMAIN, `${label}/${at}`);
 }
@@ -285,8 +286,8 @@ export function companyFingerprint(company: CompanyLabel, account: AccountAddres
 export function addressFingerprint(address: string): string {
   if (typeof address !== 'string' || !RECEIVING_ADDRESS.test(address)) {
     throw new FingerprintError(
-      'this code is computed from the address money would be sent to, and that is not an '
-      + 'address.');
+      'this code is computed from the address money would be sent to, and that is not an ' + 'address.'
+    );
   }
   return render(RECEIVING_ADDRESS_LABEL, address.toLowerCase());
 }
@@ -298,10 +299,16 @@ export function addressFingerprint(address: string): string {
  * out from what it is seating, and the two people compare. A seat request
  * whose keys were swapped anywhere along the way has another fingerprint.
  */
-export function seatKeyFingerprint(keys: { readonly signingPublicKey: string; readonly wrappingPublicKey: string; readonly leafCommitment: string }): string {
+export function seatKeyFingerprint(keys: {
+  readonly signingPublicKey: string;
+  readonly wrappingPublicKey: string;
+  readonly leafCommitment: string;
+}): string {
   const parts = [keys?.signingPublicKey, keys?.wrappingPublicKey, keys?.leafCommitment];
   if (!parts.every((k) => typeof k === 'string' && /^[0-9a-fA-F]{64}$/u.test(k))) {
-    throw new FingerprintError('a seat\'s fingerprint is worked out from its two public keys and its leaf, and those given are not all three.');
+    throw new FingerprintError(
+      "a seat's fingerprint is worked out from its two public keys and its leaf, and those given are not all three."
+    );
   }
   return render(SEAT_KEY_LABEL, parts.map((k) => (k as string).toLowerCase()).join('/'));
 }
@@ -314,13 +321,24 @@ export function seatKeyFingerprint(keys: { readonly signingPublicKey: string; re
  * way - another wallet's, the same address with another payslip key - has
  * another fingerprint, which an address's fingerprint alone would not.
  */
-export function payeeCodeFingerprint(code: { readonly committeeKey: { readonly value: string }; readonly parts: { readonly address: string; readonly payslipKey: string } }): string {
+export function payeeCodeFingerprint(code: {
+  readonly committeeKey: { readonly value: string };
+  readonly parts: { readonly address: string; readonly payslipKey: string };
+}): string {
   const signer = code?.committeeKey?.value;
   const address = code?.parts?.address;
   const payslipKey = code?.parts?.payslipKey;
-  if (typeof signer !== 'string' || !/^[0-9a-fA-F]{64,}$/u.test(signer) || typeof address !== 'string' || !RECEIVING_ADDRESS.test(address)
-    || typeof payslipKey !== 'string' || !/^[0-9a-fA-F]{64}$/u.test(payslipKey)) {
-    throw new FingerprintError('a payee\'s code fingerprint is worked out from the wallet that signed it, its address and its payslip key, and those given are not all three.');
+  if (
+    typeof signer !== 'string' ||
+    !/^[0-9a-fA-F]{64,}$/u.test(signer) ||
+    typeof address !== 'string' ||
+    !RECEIVING_ADDRESS.test(address) ||
+    typeof payslipKey !== 'string' ||
+    !/^[0-9a-fA-F]{64}$/u.test(payslipKey)
+  ) {
+    throw new FingerprintError(
+      "a payee's code fingerprint is worked out from the wallet that signed it, its address and its payslip key, and those given are not all three."
+    );
   }
   return render(PAYEE_CODE_LABEL, [signer.toLowerCase(), address.toLowerCase(), payslipKey.toLowerCase()].join('/'));
 }
@@ -333,13 +351,25 @@ export function payeeCodeFingerprint(code: { readonly committeeKey: { readonly v
  * A code swapped anywhere on the way - another wallet's, another person's,
  * another key - has another fingerprint.
  */
-export function readerCodeFingerprint(code: { readonly committeeKey: { readonly value: string }; readonly person: string; readonly parts: { readonly readerKey: string } }): string {
+export function readerCodeFingerprint(code: {
+  readonly committeeKey: { readonly value: string };
+  readonly person: string;
+  readonly parts: { readonly readerKey: string };
+}): string {
   const signer = code?.committeeKey?.value;
   const person = code?.person;
   const readerKey = code?.parts?.readerKey;
-  if (typeof signer !== 'string' || !/^[0-9a-fA-F]{64,}$/u.test(signer) || typeof person !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(person)
-    || typeof readerKey !== 'string' || !/^[0-9a-fA-F]{64}$/u.test(readerKey)) {
-    throw new FingerprintError('a reader\'s code fingerprint is worked out from the wallet that signed it, the person it names and its key, and those given are not all three.');
+  if (
+    typeof signer !== 'string' ||
+    !/^[0-9a-fA-F]{64,}$/u.test(signer) ||
+    typeof person !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,64}$/u.test(person) ||
+    typeof readerKey !== 'string' ||
+    !/^[0-9a-fA-F]{64}$/u.test(readerKey)
+  ) {
+    throw new FingerprintError(
+      "a reader's code fingerprint is worked out from the wallet that signed it, the person it names and its key, and those given are not all three."
+    );
   }
   return render(READER_CODE_LABEL, [signer.toLowerCase(), person, readerKey.toLowerCase()].join('/'));
 }

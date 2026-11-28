@@ -11,17 +11,36 @@
  * Approving files nothing.
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
-import { assets as theAssets, formatAmount, type Asset, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
+import {
+  assets as theAssets,
+  formatAmount,
+  type Asset,
+  type AssetId,
+  type AssetRegistry
+} from '../../../../src/core/assets.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { GovernedOutcome } from '../../../../packages/web-shared/src/company-change-on-device.js';
-import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import {
+  ApprovalNotOwed,
+  WithdrawnWhileSent
+} from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { seatsUnderARaisedRemovalHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
 import {
-  approveSpendingPolicyOnDevice, PolicyNotOpenedHere, policyReadHere, setPolicyBarOnDevice, type PolicyGovernanceDoors, type PolicyRead, type PolicySteps,
+  approveSpendingPolicyOnDevice,
+  PolicyNotOpenedHere,
+  policyReadHere,
+  setPolicyBarOnDevice,
+  type PolicyGovernanceDoors,
+  type PolicyRead,
+  type PolicySteps
 } from '../../../../packages/web-shared/src/spending-policy-here.js';
-import { vaultInfoHere, vaultInfoRecordsFor, type VaultInfoRead } from '../../../../packages/web-shared/src/vault-info-here.js';
+import {
+  vaultInfoHere,
+  vaultInfoRecordsFor,
+  type VaultInfoRead
+} from '../../../../packages/web-shared/src/vault-info-here.js';
 import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { governanceDoorsFor, type CompanyReach } from './company-reach.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
@@ -44,10 +63,12 @@ export interface PolicyKindsReach {
 export const POLICY_STATE = { waiting: 'waiting-for-approvals', atItsBar: 'ready-to-carry' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.approve-policy.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.approve-policy.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const KIND_WHY: Readonly<Record<string, string>> = { closed: 'carried-out', counted: 'already-counted' };
-const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
+const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words =>
+  why(KIND_WHY[stop] ?? stop, values);
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const WHOLE = /^[1-9][0-9]{0,8}$/u;
 const DIGITS = /^[0-9]{1,39}$/u;
@@ -60,9 +81,16 @@ const DAY = 86_400n;
  * A moment named in seconds, as the wallet shows a date and time elsewhere, with its year, in UTC and saying so: a
  * policy's period starts at a moment on the chain, the same everywhere, so it is never shown in the device's own zone.
  */
-const momentOf = (seconds: string): string => new Date(Number(seconds) * 1000).toLocaleString(undefined, {
-  day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short',
-});
+const momentOf = (seconds: string): string =>
+  new Date(Number(seconds) * 1000).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short'
+  });
 
 /** A period's length in days, to two places, from its seconds. */
 const daysOf = (seconds: string): string => {
@@ -80,7 +108,10 @@ const daysOf = (seconds: string): string => {
 export const vaultNameHere = async (r: CompanyReach, vault: string): Promise<VaultInfoRead> => {
   try {
     const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
-    return await vaultInfoHere({ companyKeys: r.companyKeys, records: vaultInfoRecordsFor(r.accountId, null, judge, readsJoinedIn(r.stepView)) }, vault);
+    return await vaultInfoHere(
+      { companyKeys: r.companyKeys, records: vaultInfoRecordsFor(r.accountId, null, judge, readsJoinedIn(r.stepView)) },
+      vault
+    );
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     return { state: 'unread', why: said(e), version: null };
@@ -88,44 +119,79 @@ export const vaultNameHere = async (r: CompanyReach, vault: string): Promise<Vau
 };
 
 /** The line naming the vault and currency a policy is for: by the vault's name beside its address where the records name it. */
-export const policyVaultShown = (vault: string, token: string, named: VaultInfoRead): Words[] => (named.state === 'named'
-  ? [{ key: 'act.approve-policy.shown.policy-named', values: { name: named.name, vault, token } }]
-  : [{ key: 'act.approve-policy.shown.policy', values: { vault, token } },
-    { key: named.state === 'none' ? 'act.approve-policy.shown.vault-unnamed' : 'act.approve-policy.shown.vault-name-unread' }]);
+export const policyVaultShown = (vault: string, token: string, named: VaultInfoRead): Words[] =>
+  named.state === 'named'
+    ? [{ key: 'act.approve-policy.shown.policy-named', values: { name: named.name, vault, token } }]
+    : [
+        { key: 'act.approve-policy.shown.policy', values: { vault, token } },
+        {
+          key:
+            named.state === 'none'
+              ? 'act.approve-policy.shown.vault-unnamed'
+              : 'act.approve-policy.shown.vault-name-unread'
+        }
+      ];
 
 /**
  * The lines a policy's terms are shown in, in the currency's own units, or a refusal when they cannot be shown: other
  * than four bands, a number that is not whole, or a first period no date can name.
  */
 export const termsShown = (t: PolicyRead['opening']['terms'], asset: Asset): Words[] => {
-  const numbers = [t.periodLimit, t.periodStart, t.periodLength, ...t.bands.flatMap((b) => [b.ceiling, b.approvals])].map(String);
+  const numbers = [
+    t.periodLimit,
+    t.periodStart,
+    t.periodLength,
+    ...t.bands.flatMap((b) => [b.ceiling, b.approvals])
+  ].map(String);
   if (t.bands.length !== 4 || !numbers.every((x) => DIGITS.test(x)) || BigInt(t.periodStart) * 1000n > MOST_MS) {
     throw new StepRefused(why('cannot-show'));
   }
   const limit = formatAmount(BigInt(t.periodLimit), asset);
   return [
     ...t.bands.map((b, i): Words => ({
-      key: 'act.approve-policy.shown.band', values: { n: i + 1, ceiling: formatAmount(BigInt(b.ceiling), asset), symbol: asset.symbol, approvals: String(b.approvals) },
+      key: 'act.approve-policy.shown.band',
+      values: {
+        n: i + 1,
+        ceiling: formatAmount(BigInt(b.ceiling), asset),
+        symbol: asset.symbol,
+        approvals: String(b.approvals)
+      }
     })),
     {
       key: 'act.approve-policy.shown.limit',
-      values: { limit, symbol: asset.symbol, name: asset.name, start: momentOf(String(t.periodStart)), days: daysOf(String(t.periodLength)) },
+      values: {
+        limit,
+        symbol: asset.symbol,
+        name: asset.name,
+        start: momentOf(String(t.periodStart)),
+        days: daysOf(String(t.periodLength))
+      }
     },
     /* Said beside the limit: carrying the change out starts the running period's total again, whatever was paid in it. */
     { key: 'act.approve-policy.shown.period-starts-again', values: { limit, symbol: asset.symbol } },
     { key: 'act.approve-policy.shown.confirm-period-starts-again' },
-    { key: 'act.approve-policy.shown.raises-the-seat-bar', values: { approvals: String(Math.max(...t.bands.map((b) => Number(b.approvals)))) } },
+    {
+      key: 'act.approve-policy.shown.raises-the-seat-bar',
+      values: { approvals: String(Math.max(...t.bands.map((b) => Number(b.approvals)))) }
+    }
   ];
 };
 
 /** The lines this wallet shows of the policy it read, for the person to confirm: the vault and currency, then its terms. */
-const readShown = (read: PolicyRead, asset: Asset, vault: string, named: VaultInfoRead): Words[] =>
-  [...policyVaultShown(vault, asset.symbol, named), ...termsShown(read.opening.terms, asset)];
+const readShown = (read: PolicyRead, asset: Asset, vault: string, named: VaultInfoRead): Words[] => [
+  ...policyVaultShown(vault, asset.symbol, named),
+  ...termsShown(read.opening.terms, asset)
+];
 
 /** What the first step read of a policy, as the approval and the carrying out are handed it; refused when nothing was read. */
 const policyReadOf = (round: RoundHere): PolicyRead => {
   const read = round.read as PolicyRead | undefined;
-  if (read === undefined || typeof read.asset !== 'string' || typeof read.chainId !== 'string' || read.chainId !== round.chainId) {
+  if (
+    read === undefined ||
+    typeof read.asset !== 'string' ||
+    typeof read.chainId !== 'string' ||
+    read.chainId !== round.chainId
+  ) {
     throw new StepRefused(why('not-read'));
   }
   return read;
@@ -137,30 +203,49 @@ const policyReadOf = (round: RoundHere): PolicyRead => {
  * raised removal read from the company's proposals, refusing when they cannot be read in full.
  */
 export const policyDoorsFor = (
-  r: CompanyReach, reach: Pick<PolicyKindsReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed, o: { readonly files?: true } = {},
+  r: CompanyReach,
+  reach: Pick<PolicyKindsReach, 'pause' | 'waitMs' | 'everyMs'>,
+  ctx: StepContext,
+  handed: Handed,
+  o: { readonly files?: true } = {}
 ): PolicyGovernanceDoors => {
   const doors = governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
-    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
+    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }),
+    ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs })
   });
   return {
     ...doors,
     records: { ...doors.records!, spendingPolicies: policiesInTheWallet(r, o) },
     builder: r.builder,
-    leaving: () => seatsUnderARaisedRemovalHere(doors, r.companyKeys, true),
+    leaving: () => seatsUnderARaisedRemovalHere(doors, r.companyKeys, true)
   };
 };
 
 /** A refusal of the shared code's, or one that stopped after something was handed over to be sent, in this kind's words. */
 const stoppedAs = (e: unknown, handed: Handed, notSent: string): never => {
-  if (e instanceof StepRefused || e instanceof ActionStopped || e instanceof ApprovalNotOwed || e instanceof WithdrawnWhileSent) throw e;
+  if (
+    e instanceof StepRefused ||
+    e instanceof ActionStopped ||
+    e instanceof ApprovalNotOwed ||
+    e instanceof WithdrawnWhileSent
+  )
+    throw e;
   if (e instanceof PolicyNotOpenedHere) throw new StepRefused(why('refused', { says: said(e) }), codeOfError(e));
-  throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says: said(e) }), codeOfError(e));
+  throw new StepRefused(
+    why(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says: said(e) }),
+    codeOfError(e)
+  );
 };
 
 /** The carrying out at the bar: the shared code, asked only to carry out, answers done or nothing was sent. */
 const carriedOr = (out: GovernedOutcome): void => {
   if (out.state !== 'done') {
-    throw Object.assign(new Error('the company\'s records do not show this proposal at the approvals it needs yet, so it was not carried out.'), { nothingWasSent: true });
+    throw Object.assign(
+      new Error(
+        "the company's records do not show this proposal at the approvals it needs yet, so it was not carried out."
+      ),
+      { nothingWasSent: true }
+    );
   }
 };
 
@@ -177,11 +262,28 @@ const carriedOr = (out: GovernedOutcome): void => {
 export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
   const registry = reach.assets ?? theAssets;
   const vaultOf = (intent: ActIntent): string => (intent.fields['vault'] ?? '').toLowerCase();
-  const onDevice = (ctx: StepContext, r: CompanyReach, intent: ActIntent, handed: Handed, round: RoundHere, steps: PolicySteps & { readonly approveOnly: string }) => {
+  const onDevice = (
+    ctx: StepContext,
+    r: CompanyReach,
+    intent: ActIntent,
+    handed: Handed,
+    round: RoundHere,
+    steps: PolicySteps & { readonly approveOnly: string }
+  ) => {
     const read = policyReadOf(round);
-    return approveSpendingPolicyOnDevice(policyDoorsFor(r, reach, ctx, handed), withCompanyKeys({
-      proposal: intent.fields['proposal']!, vault: vaultOf(intent), asset: read.asset, terms: read.opening.terms, ...steps,
-    }, r.companyKeys));
+    return approveSpendingPolicyOnDevice(
+      policyDoorsFor(r, reach, ctx, handed),
+      withCompanyKeys(
+        {
+          proposal: intent.fields['proposal']!,
+          vault: vaultOf(intent),
+          asset: read.asset,
+          terms: read.opening.terms,
+          ...steps
+        },
+        r.companyKeys
+      )
+    );
   };
   const carryOut: CarryOut = async (ctx, r, intent, round, handed) => {
     carriedOr(await onDevice(ctx, r, intent, handed, round, { approveOnly: round.chainId, carryOnly: true }));
@@ -195,7 +297,7 @@ export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
       { key: 'act.approve-policy.shown.policy-vault', values: { vault: intent.fields['vault'] ?? '' }, from: 'page' },
       { key: 'act.approve-policy.shown.read-here', from: 'action' },
       { key: 'act.approve-policy.shown.checks', from: 'action' },
-      { key: 'act.approve-policy.shown.approve', from: 'action' },
+      { key: 'act.approve-policy.shown.approve', from: 'action' }
     ],
     check: (intent) => {
       if (!HEX64.test(intent.fields['vault'] ?? '')) return why('not-a-policy');
@@ -207,9 +309,17 @@ export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
       const among = token === undefined ? registry.all().map((a) => a.code) : [token as AssetId];
       let read: PolicyRead;
       try {
-        read = await policyReadHere(policyDoorsFor(r, reach, ctx, { over: false }), withCompanyKeys({
-          proposal: intent.fields['proposal']!, vault: vaultOf(intent), among,
-        }, r.companyKeys));
+        read = await policyReadHere(
+          policyDoorsFor(r, reach, ctx, { over: false }),
+          withCompanyKeys(
+            {
+              proposal: intent.fields['proposal']!,
+              vault: vaultOf(intent),
+              among
+            },
+            r.companyKeys
+          )
+        );
       } catch (e) {
         if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
         throw new StepRefused(why('not-approved', { says: said(e) }), codeOfError(e));
@@ -217,7 +327,12 @@ export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
       const asset = registry.find(read.asset);
       if (asset === null) throw new StepRefused(why('not-a-known-currency'));
       const chainId = read.chainId.toLowerCase();
-      return { id: intent.fields['proposal']!, chainId, read: { ...read, chainId }, confirm: readShown(read, asset, vaultOf(intent), await vaultNameHere(r, vaultOf(intent))) };
+      return {
+        id: intent.fields['proposal']!,
+        chainId,
+        read: { ...read, chainId },
+        confirm: readShown(read, asset, vaultOf(intent), await vaultNameHere(r, vaultOf(intent)))
+      };
     },
     needed: (round, held) => Math.max(round.needed ?? 0, held.seatBar),
     approve: async (ctx, r, intent, round, handed) => {
@@ -228,36 +343,55 @@ export function spendingPolicyKind(reach: PolicyKindsReach): ProposalKind {
       }
     },
     stateAt: (atItsBar) => (atItsBar ? POLICY_STATE.atItsBar : POLICY_STATE.waiting),
-    carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-policy.step.carry' }, carryOut)],
-    carries: (_intent, round) => ({ kind: 'spending-policy', move: policySet(Math.max(...policyReadOf(round).opening.terms.bands.map((b) => Number(b.approvals)))) }),
-    why: kindWhy,
+    carry: (here, read, intent) => [
+      carryStep(kind, intent, read, here, { key: 'act.approve-policy.step.carry' }, carryOut)
+    ],
+    carries: (_intent, round) => ({
+      kind: 'spending-policy',
+      move: policySet(Math.max(...policyReadOf(round).opening.terms.bands.map((b) => Number(b.approvals))))
+    }),
+    why: kindWhy
   };
   return kind;
 }
 
 /** Why a bar is refused before anything is built, from the seats the chain holds now: the contract's own bounds. */
-const barRefusal = (bar: number, seats: number): string | null => (bar > seats
-  ? `a change to a spending policy cannot need more approvals than the ${seats} signers the company has seated. Withdraw this proposal, `
-    + 'or seat more signers first. Nothing was sent.'
-  : null);
+const barRefusal = (bar: number, seats: number): string | null =>
+  bar > seats
+    ? `a change to a spending policy cannot need more approvals than the ${seats} signers the company has seated. Withdraw this proposal, ` +
+      'or seat more signers first. Nothing was sent.'
+    : null;
 
 /**
  * A bar handed to the shared code, refused first while it is more than the seats the chain holds, and checked against
  * the seats again before every send: raised, approved or carried out as `steps` say.
  */
 export const policyBarOnDevice = async (
-  reach: Pick<PolicyKindsReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, r: CompanyReach, bar: number, handed: Handed, steps: PolicySteps,
+  reach: Pick<PolicyKindsReach, 'pause' | 'waitMs' | 'everyMs'>,
+  ctx: StepContext,
+  r: CompanyReach,
+  bar: number,
+  handed: Handed,
+  steps: PolicySteps
 ): Promise<GovernedOutcome> => {
   const seated = async (): Promise<number> => (await r.holders()).seats.length;
   const no = barRefusal(bar, await seated());
   if (no !== null) throw new StepRefused(why('refused', { says: no }));
-  return setPolicyBarOnDevice(policyDoorsFor(r, reach, ctx, handed), withCompanyKeys({
-    newBar: bar, seated: await seated(), ...steps,
-    before: async () => {
-      const again = barRefusal(bar, await seated());
-      if (again !== null) throw new PolicyNotOpenedHere(again.replace(/ Nothing was sent\.$/u, ''));
-    },
-  }, r.companyKeys));
+  return setPolicyBarOnDevice(
+    policyDoorsFor(r, reach, ctx, handed),
+    withCompanyKeys(
+      {
+        newBar: bar,
+        seated: await seated(),
+        ...steps,
+        before: async () => {
+          const again = barRefusal(bar, await seated());
+          if (again !== null) throw new PolicyNotOpenedHere(again.replace(/ Nothing was sent\.$/u, ''));
+        }
+      },
+      r.companyKeys
+    )
+  );
 };
 
 /**
@@ -271,8 +405,13 @@ export function policyBarKind(reach: PolicyKindsReach): ProposalKind {
     if (!WHOLE.test(f)) throw new StepRefused(why('not-a-bar'));
     return Number(f);
   };
-  const onDevice = (ctx: StepContext, r: CompanyReach, intent: ActIntent, handed: Handed, steps: PolicySteps & { readonly approveOnly: string }) =>
-    policyBarOnDevice(reach, ctx, r, barOf(intent), handed, steps);
+  const onDevice = (
+    ctx: StepContext,
+    r: CompanyReach,
+    intent: ActIntent,
+    handed: Handed,
+    steps: PolicySteps & { readonly approveOnly: string }
+  ) => policyBarOnDevice(reach, ctx, r, barOf(intent), handed, steps);
   const carryOut: CarryOut = async (ctx, r, intent, round, handed) => {
     carriedOr(await onDevice(ctx, r, intent, handed, { approveOnly: round.chainId, carryOnly: true }));
   };
@@ -286,7 +425,7 @@ export function policyBarKind(reach: PolicyKindsReach): ProposalKind {
       { key: 'act.approve-policy.shown.bar-every-signer', values: { bar: intent.fields['bar'] ?? '' }, from: 'action' },
       { key: 'act.approve-policy.shown.bar-below-a-band', from: 'action' },
       { key: 'act.approve-policy.shown.checks-bar', from: 'action' },
-      { key: 'act.approve-policy.shown.approve', from: 'action' },
+      { key: 'act.approve-policy.shown.approve', from: 'action' }
     ],
     check: (intent) => (WHOLE.test(intent.fields['bar'] ?? '') ? null : why('not-a-bar')),
     opened: async (ctx, r, intent) => {
@@ -295,15 +434,25 @@ export function policyBarKind(reach: PolicyKindsReach): ProposalKind {
       let governance: GovernanceOnTheWire | undefined;
       let chainId: string;
       try {
-        const opened = await openTheRoundHere(doors.service, r.accountId, intent.fields['proposal']!, r.companyKeys, false, doors.records, doors.leaves, false,
-          'set-policy-bar');
+        const opened = await openTheRoundHere(
+          doors.service,
+          r.accountId,
+          intent.fields['proposal']!,
+          r.companyKeys,
+          false,
+          doors.records,
+          doors.leaves,
+          false,
+          'set-policy-bar'
+        );
         governance = opened.governance as GovernanceOnTheWire | undefined;
         chainId = opened.chainId;
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         throw new StepRefused(why('not-approved', { says: said(e) }), codeOfError(e));
       }
-      if (governance?.kind !== 'policy-bar' || String(governance.bar) !== String(bar)) throw new StepRefused(why('not-as-shown'));
+      if (governance?.kind !== 'policy-bar' || String(governance.bar) !== String(bar))
+        throw new StepRefused(why('not-as-shown'));
       return { id: intent.fields['proposal']!, chainId };
     },
     needed: (round, held) => Math.max(round.needed ?? 0, held.seatBar),
@@ -315,9 +464,11 @@ export function policyBarKind(reach: PolicyKindsReach): ProposalKind {
       }
     },
     stateAt: (atItsBar) => (atItsBar ? POLICY_STATE.atItsBar : POLICY_STATE.waiting),
-    carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-policy.step.carry' }, carryOut)],
+    carry: (here, read, intent) => [
+      carryStep(kind, intent, read, here, { key: 'act.approve-policy.step.carry' }, carryOut)
+    ],
     carries: (intent) => ({ kind: 'policy-bar', move: policyBarSet(barOf(intent)) }),
-    why: kindWhy,
+    why: kindWhy
   };
   return kind;
 }

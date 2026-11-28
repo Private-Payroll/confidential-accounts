@@ -16,21 +16,25 @@ const seen = (over: Partial<WhatCanBeSeen> = {}): WhatCanBeSeen => ({
   height: 720,
   documentVisible: true,
   seenForMs: DWELL_MS,
-  ...over,
+  ...over
 });
 
 describe('consentFor', () => {
   it('a wallet in a window of its own is never held, whatever the measures say', () => {
-    expect(consentFor(seen({ framing: { of: 'top' }, width: 1, height: 1, documentVisible: false, seenForMs: 0 })))
-      .toEqual({ ok: true });
+    expect(
+      consentFor(seen({ framing: { of: 'top' }, width: 1, height: 1, documentVisible: false, seenForMs: 0 }))
+    ).toEqual({ ok: true });
   });
 
   it('a framed wallet that meets every measure may be pressed', () => {
     expect(consentFor(seen())).toEqual({ ok: true });
   });
 
-  it('REFUSES inside a page it does not know, with that page\'s refusal', () => {
-    expect(consentFor(seen({ framing: { of: 'refused', why: 'not yours' } }))).toEqual({ ok: false, says: 'not yours' });
+  it("REFUSES inside a page it does not know, with that page's refusal", () => {
+    expect(consentFor(seen({ framing: { of: 'refused', why: 'not yours' } }))).toEqual({
+      ok: false,
+      says: 'not yours'
+    });
   });
 
   it('REFUSES off screen', () => {

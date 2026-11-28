@@ -29,27 +29,39 @@ export const RUN_FRESH = vouchedFreshOf(RUN_VOUCHED.head, RUN_VOUCHED.r);
  */
 export const aRunMadeHere = (
   window: { opensAt: string; closesAt: string },
-  commit: (key: Uint8Array) => Uint8Array = pureCircuits.payKeyCommitmentOf,
+  commit: (key: Uint8Array) => Uint8Array = pureCircuits.payKeyCommitmentOf
 ) => {
   const facts: PaymentFacts[] = [0, 1, 2].map((i) => ({
     payee: payeeFor(`a${i + 1}`.repeat(32), 'undeployed'),
-    token: ledgerTokenOf(TEST_TOKEN, 'shielded', registryWithTestPrivateForms()), amount: BigInt(100 + i),
+    token: ledgerTokenOf(TEST_TOKEN, 'shielded', registryWithTestPrivateForms()),
+    amount: BigInt(100 + i)
   }));
   const pay = payFor(facts, { people: ['p1', 'p2', 'p3'] });
   const seeds = [{ epoch: 0, seed: '6e'.repeat(32) as Hex }];
   const identity = { accountId: 'acc_1', runId: 'run_1:leg', epoch: 0 };
   const tree = buildRun(seeds, identity, facts, vaultDetails, pay, TEST_TOKEN).tree;
   let made: RunMadeHere = {
-    kind: 'payroll', seeds, payKey: pay.key, identity, facts, records: pay.records,
-    asset: TEST_TOKEN, opensAt: window.opensAt, closesAt: window.closesAt, required: '0',
+    kind: 'payroll',
+    seeds,
+    payKey: pay.key,
+    identity,
+    facts,
+    records: pay.records,
+    asset: TEST_TOKEN,
+    opensAt: window.opensAt,
+    closesAt: window.closesAt,
+    required: '0'
   };
   const asked = paymentEntriesOf(made, pureCircuits.paidOnceOf);
-  made = { ...made, wallet: { payKeyCommitment: toHex(commit(fromHex(pay.key))), asked, held: [], openRounds: [], entries: 0 } };
+  made = {
+    ...made,
+    wallet: { payKeyCommitment: toHex(commit(fromHex(pay.key))), asked, held: [], openRounds: [], entries: 0 }
+  };
   return { made, root: tree.root, payees: tree.payees };
 };
 
 /** A ledger that holds every proposal asked about open, or none, and has paid nobody. */
 export const aLedgerHolding = (holds: 'every proposal' | 'none' = 'every proposal'): AccountLedgerView => ({
   openProposals: { member: () => holds === 'every proposal' },
-  movements: { member: () => false },
+  movements: { member: () => false }
 });

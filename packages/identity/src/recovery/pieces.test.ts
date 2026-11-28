@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import {
-  MAX_PIECES, RecoveryError, checkPlan, combinePieces, fingerprintOf, hasNoMargin,
-  proveRecoverable, splitSecret, suggestDefault, warningsFor,
+  MAX_PIECES,
+  RecoveryError,
+  checkPlan,
+  combinePieces,
+  fingerprintOf,
+  hasNoMargin,
+  proveRecoverable,
+  splitSecret,
+  suggestDefault,
+  warningsFor
 } from './pieces.js';
 import type { Placement } from './pieces.js';
 import { identityFromSecret, newSecret, secretFromWords, wordsFromSecret } from '../keys/derivation.js';
 
-const hex = (b: Uint8Array): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 /**
  * ASSERTS BOTH HALVES: that it threw, and that it threw the right thing.
@@ -46,13 +53,16 @@ const refuses = (what: () => unknown, code: string): void => {
   expect((thrown as RecoveryError).code).toBe(code);
 };
 
-const place = (label: string, holder: string, isThisDevice = false): Placement =>
-  ({ label, holder, ...(isThisDevice ? { isThisDevice } : {}) });
+const place = (label: string, holder: string, isThisDevice = false): Placement => ({
+  label,
+  holder,
+  ...(isThisDevice ? { isThisDevice } : {})
+});
 
 const THREE: readonly Placement[] = [
   place('Your Google account', 'google:person@example.com'),
   place('Printed', 'paper'),
-  place('My other laptop', 'device:laptop-2'),
+  place('My other laptop', 'device:laptop-2')
 ];
 
 describe('cutting a secret into pieces and putting it back', () => {
@@ -77,7 +87,12 @@ describe('cutting a secret into pieces and putting it back', () => {
     const secret = newSecret();
     const set = await splitSecret(secret, THREE, 2);
     const [a, b, c] = set.pieces.map((p) => p.bytes) as [Uint8Array, Uint8Array, Uint8Array];
-    for (const subset of [[a, b], [a, c], [b, c], [a, b, c]]) {
+    for (const subset of [
+      [a, b],
+      [a, c],
+      [b, c],
+      [a, b, c]
+    ]) {
       expect(hex(await combinePieces(subset))).toBe(hex(secret));
     }
   });
@@ -93,8 +108,7 @@ describe('cutting a secret into pieces and putting it back', () => {
     const secret = newSecret();
     const set = await splitSecret(secret, THREE, 3);
     await refusesAsync(() => combinePieces([set.pieces[0]!.bytes]), 'not-enough-pieces');
-    await refusesAsync(
-      () => combinePieces([set.pieces[0]!.bytes, set.pieces[1]!.bytes]), 'not-enough-pieces');
+    await refusesAsync(() => combinePieces([set.pieces[0]!.bytes, set.pieces[1]!.bytes]), 'not-enough-pieces');
     /* All three, and it is right. */
     expect(hex(await combinePieces(set.pieces.map((p) => p.bytes)))).toBe(hex(secret));
   });
@@ -112,15 +126,12 @@ describe('cutting a secret into pieces and putting it back', () => {
      */
     const one = await splitSecret(newSecret(), THREE, 2);
     const two = await splitSecret(newSecret(), THREE, 2);
-    await refusesAsync(
-      () => combinePieces([one.pieces[0]!.bytes, two.pieces[1]!.bytes]),
-      'pieces-from-different-sets');
+    await refusesAsync(() => combinePieces([one.pieces[0]!.bytes, two.pieces[1]!.bytes]), 'pieces-from-different-sets');
   });
 
   it('refuses a piece that is not one, or is from a future format', async () => {
     const set = await splitSecret(newSecret(), THREE, 2);
-    await refusesAsync(
-      () => combinePieces([new Uint8Array(4), set.pieces[1]!.bytes]), 'not-a-piece');
+    await refusesAsync(() => combinePieces([new Uint8Array(4), set.pieces[1]!.bytes]), 'not-a-piece');
     const future = Uint8Array.from(set.pieces[0]!.bytes);
     future[0] = 9;
     await refusesAsync(() => combinePieces([future, set.pieces[1]!.bytes]), 'not-a-piece');
@@ -138,9 +149,7 @@ describe('cutting a secret into pieces and putting it back', () => {
      * the fingerprint catches it.
      */
     const set = await splitSecret(newSecret(), THREE, 2);
-    await refusesAsync(
-      () => combinePieces([damageShare(set.pieces[0]!.bytes), set.pieces[1]!.bytes]),
-      'wrong-secret');
+    await refusesAsync(() => combinePieces([damageShare(set.pieces[0]!.bytes), set.pieces[1]!.bytes]), 'wrong-secret');
   });
 
   it('RECOVERS FROM ANY WORKING SUBSET, not just the first pieces offered', async () => {
@@ -167,8 +176,7 @@ describe('cutting a secret into pieces and putting it back', () => {
      * the threshold — the search is exhaustive, not lenient. Two pieces, one of
      * them altered, is a set that genuinely cannot be rebuilt.
      */
-    await refusesAsync(
-      () => combinePieces([damaged[0]!, damaged[1]!]), 'wrong-secret');
+    await refusesAsync(() => combinePieces([damaged[0]!, damaged[1]!]), 'wrong-secret');
   });
 
   it('REFUSES TWO SETS CUT FROM THE SAME ACCOUNT — which is the ordinary case', async () => {
@@ -186,7 +194,8 @@ describe('cutting a secret into pieces and putting it back', () => {
     expect(first.setId).not.toBe(second.setId);
     await refusesAsync(
       () => combinePieces([first.pieces[0]!.bytes, second.pieces[1]!.bytes]),
-      'pieces-from-different-sets');
+      'pieces-from-different-sets'
+    );
   });
 
   it('REFUSES MORE PIECES THAN IT EVER CUTS, because the search is C(n,k)', async () => {
@@ -204,8 +213,7 @@ describe('cutting a secret into pieces and putting it back', () => {
     /* And the cap itself is still allowed. */
     const wide = Array.from({ length: MAX_PIECES }, (_, i) => place(`p${i}`, `holder-${i}`));
     const big = await splitSecret(newSecret(), wide, 2);
-    await expect(combinePieces(big.pieces.slice(0, MAX_PIECES).map((p) => p.bytes)))
-      .resolves.toBeTruthy();
+    await expect(combinePieces(big.pieces.slice(0, MAX_PIECES).map((p) => p.bytes))).resolves.toBeTruthy();
   });
 
   it('refuses a piece claiming a threshold this library never writes', async () => {
@@ -267,7 +275,7 @@ describe('the rules, all of which refuse rather than warn', () => {
     const collide = [
       place('My Google Drive', 'google:person@example.com'),
       place('Backup folder', 'GOOGLE:Person@Example.com'),
-      place('Printed', 'paper'),
+      place('Printed', 'paper')
     ];
     refuses(() => checkPlan(collide, 2), 'holders-collide');
     expect(() => checkPlan(collide, 2)).toThrow(/Backup folder/u);
@@ -279,13 +287,11 @@ describe('the rules, all of which refuse rather than warn', () => {
   });
 
   it('refuses a secret of the wrong length, including the 64-byte seed', async () => {
-    await expect(splitSecret(new Uint8Array(64), THREE, 2))
-      .rejects.toMatchObject({ code: 'secret-wrong-length' });
-    await expect(splitSecret(new Uint8Array(16), THREE, 2))
-      .rejects.toMatchObject({ code: 'secret-wrong-length' });
+    await expect(splitSecret(new Uint8Array(64), THREE, 2)).rejects.toMatchObject({ code: 'secret-wrong-length' });
+    await expect(splitSecret(new Uint8Array(16), THREE, 2)).rejects.toMatchObject({ code: 'secret-wrong-length' });
   });
 
-  it('names N-of-N rather than refusing it, because it is somebody\'s own choice', () => {
+  it("names N-of-N rather than refusing it, because it is somebody's own choice", () => {
     expect(hasNoMargin(2, 2)).toBe(true);
     expect(hasNoMargin(3, 3)).toBe(true);
     expect(hasNoMargin(3, 2)).toBe(false);
@@ -313,10 +319,7 @@ describe('the rules, all of which refuse rather than warn', () => {
      * would then depend on us, which is the thing the whole design exists to
      * avoid.
      */
-    const withHost = [
-      place('A password I remember', 'host:payroll'),
-      place('Printed', 'paper'),
-    ];
+    const withHost = [place('A password I remember', 'host:payroll'), place('Printed', 'paper')];
     const kinds = warningsFor(withHost, 2, 'host:payroll').map((w) => w.kind);
     expect(kinds).toContain('host-holds-a-necessary-piece');
 
@@ -325,8 +328,7 @@ describe('the rules, all of which refuse rather than warn', () => {
     expect(warningsFor(roomy, 2, 'host:payroll')).toHaveLength(0);
 
     /* And a set with no host piece at all is never warned about on this count. */
-    expect(warningsFor(THREE, 3, 'host:payroll').map((w) => w.kind))
-      .toEqual(['no-margin']);
+    expect(warningsFor(THREE, 3, 'host:payroll').map((w) => w.kind)).toEqual(['no-margin']);
   });
 });
 
@@ -337,10 +339,7 @@ describe('the suggested default', () => {
      * two-of-three and behaves as two-of-two, because the device going is the
      * most likely reason somebody is recovering at all.
      */
-    const available = [
-      place('This laptop', 'device:laptop-1', true),
-      ...THREE,
-    ];
+    const available = [place('This laptop', 'device:laptop-1', true), ...THREE];
     const suggested = suggestDefault(available);
     expect(suggested.threshold).toBe(2);
     expect(suggested.placements).toHaveLength(3);
@@ -384,10 +383,12 @@ describe('proving it works before saying it does', () => {
     /* Everything that comes out of the door has already been proved. */
     await expect(proveRecoverable(secret, set)).resolves.toBeUndefined();
     /* And the proof is genuinely reached: a corrupted set is refused by it. */
-    await expect(proveRecoverable(secret, {
-      ...set,
-      pieces: set.pieces.map((p, i) => (i === 0 ? { ...p, bytes: damageShare(p.bytes) } : p)),
-    })).rejects.toThrow(RecoveryError);
+    await expect(
+      proveRecoverable(secret, {
+        ...set,
+        pieces: set.pieces.map((p, i) => (i === 0 ? { ...p, bytes: damageShare(p.bytes) } : p))
+      })
+    ).rejects.toThrow(RecoveryError);
   });
 
   it('REFUSES a set where one piece has been corrupted', async () => {
@@ -400,15 +401,14 @@ describe('proving it works before saying it does', () => {
     const set = await splitSecret(secret, THREE, 2);
     const damaged = {
       ...set,
-      pieces: set.pieces.map((p, i) => (i === 1 ? { ...p, bytes: damageShare(p.bytes) } : p)),
+      pieces: set.pieces.map((p, i) => (i === 1 ? { ...p, bytes: damageShare(p.bytes) } : p))
     };
     await expect(proveRecoverable(secret, damaged)).rejects.toThrow(RecoveryError);
   });
 
   it('REFUSES a set built from a different secret than the one being secured', async () => {
     const set = await splitSecret(newSecret(), THREE, 2);
-    await expect(proveRecoverable(newSecret(), set))
-      .rejects.toMatchObject({ code: 'wrong-secret' });
+    await expect(proveRecoverable(newSecret(), set)).rejects.toMatchObject({ code: 'wrong-secret' });
   });
 
   it('checks every combination, which is what a single-subset check would miss', async () => {
@@ -423,7 +423,7 @@ describe('proving it works before saying it does', () => {
     const set = await splitSecret(secret, five, 3);
     const damaged = {
       ...set,
-      pieces: set.pieces.map((p, i) => (i === 4 ? { ...p, bytes: damageShare(p.bytes, 11) } : p)),
+      pieces: set.pieces.map((p, i) => (i === 4 ? { ...p, bytes: damageShare(p.bytes, 11) } : p))
     };
     const good = [set.pieces[0]!.bytes, set.pieces[1]!.bytes, set.pieces[2]!.bytes];
     expect(hex(await combinePieces(good))).toBe(hex(secret));

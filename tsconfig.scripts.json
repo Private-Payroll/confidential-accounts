@@ -7,11 +7,18 @@
   // contracts/src/* — everything the scripts reach — without dragging in the
   // web and server code, which has its own config and its own dependencies.
   "compilerOptions": {
-    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
-    "strict": false, "esModuleInterop": true, "skipLibCheck": true,
-    "resolveJsonModule": true, "types": ["node"],
-    "noEmit": true, "allowImportingTsExtensions": true,
-    "allowJs": true, "checkJs": false
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false
   },
   "include": ["scripts/**/*.ts", "src/midnight/**/*.ts", "contracts/src/**/*.ts", "contracts/test/**/*.ts"]
 }

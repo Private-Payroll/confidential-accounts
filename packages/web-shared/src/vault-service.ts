@@ -29,7 +29,10 @@ export interface ServedVaultChain {
 }
 
 /** What the service answered for one step of a vault's start it sent. */
-interface StartStepSent { readonly txRef: string; readonly transactionHash?: string | null }
+interface StartStepSent {
+  readonly txRef: string;
+  readonly transactionHash?: string | null;
+}
 
 interface VaultKeysView {
   readonly committee: Committee | null;
@@ -58,8 +61,13 @@ export interface VaultService {
    * payment read their block on this device (`chainAtOneBlockHere`).
    */
   payoutState(vault: Hex): Promise<{
-    vault: Hex; account: Hex; blockHash: string;
-    vaultState: string; zswapState: string; parameters: string; accountState: string;
+    vault: Hex;
+    account: Hex;
+    blockHash: string;
+    vaultState: string;
+    zswapState: string;
+    parameters: string;
+    accountState: string;
   }>;
   payout(vault: Hex, tx: string): Promise<{ txRef: string; transactionHash: string | null }>;
   /** Sends a merge of the vault's own notes, with the network fee paid for it. It moves nothing out of the vault. */
@@ -72,7 +80,10 @@ export interface VaultService {
    * adoption carried out. Each is raised with its record instead
    * (`VaultStartProposals`).
    */
-  startAccountCall?(vault: Hex, body: { tx: string; step: 'adoption' | 'secret-run'; call: 'approve' | 'adopt' }): Promise<StartStepSent>;
+  startAccountCall?(
+    vault: Hex,
+    body: { tx: string; step: 'adoption' | 'secret-run'; call: 'approve' | 'adopt' }
+  ): Promise<StartStepSent>;
   /** The vault's first secret set under its approved run. */
   startSecret?(vault: Hex, tx: string): Promise<StartStepSent>;
   /** One signer's sealed copy of the secret written, by its place in the approved tree. */

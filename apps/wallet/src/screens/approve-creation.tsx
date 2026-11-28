@@ -5,9 +5,7 @@ import type { Identity } from 'midnight-identity/keys/derivation';
 import type { CreationRequest } from 'midnight-identity/profile/request';
 import type { Channel } from 'midnight-identity/profile/channel';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
-import {
-  CreationSignError, creationShown, creationSignatureFor,
-} from 'midnight-identity/profile/creation-sign';
+import { CreationSignError, creationShown, creationSignatureFor } from 'midnight-identity/profile/creation-sign';
 import type { CreationLedger, CreationShown } from 'midnight-identity/profile/creation-sign';
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import { Button, Section } from 'vaults-ui';
@@ -47,24 +45,38 @@ type Stage =
   | { of: 'refused'; says: string }
   | { of: 'sent'; at: number; shown: CreationShown };
 
-function CreationSent({ request, at, shown }: {
+function CreationSent({
+  request,
+  at,
+  shown
+}: {
   readonly request: CreationRequest;
   readonly at: number;
   readonly shown: CreationShown;
 }): ReactNode {
   return (
     <>
-      <h1 data-signed-heading>{`You signed the step that finishes your company's account, for ${request.requester.origin}`}</h1>
+      <h1
+        data-signed-heading
+      >{`You signed the step that finishes your company's account, for ${request.requester.origin}`}</h1>
       <p className="lede" data-signed>
         {`On ${new Date(at).toLocaleString()} this wallet signed the second step of the account's creation and handed the signature back. `}
         Return to the page to send it: the page sends the account, and once the chain shows it you finish it there with
         one more press. You will not be asked to sign again. This wallet now knows the account below as this
         company&rsquo;s.
       </p>
-      <p className="m-0 font-mono break-all text-sm" data-pinned-label>{shown.company}</p>
-      <p className="m-0 font-mono break-all text-sm" data-pinned-account>{shown.account}</p>
-      <p className="m-0 font-mono text-xl" data-pinned-fingerprint>{companyFingerprint(shown.company, shown.account)}</p>
-      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+      <p className="m-0 font-mono break-all text-sm" data-pinned-label>
+        {shown.company}
+      </p>
+      <p className="m-0 font-mono break-all text-sm" data-pinned-account>
+        {shown.account}
+      </p>
+      <p className="m-0 font-mono text-xl" data-pinned-fingerprint>
+        {companyFingerprint(shown.company, shown.account)}
+      </p>
+      <p style={{ marginTop: '1.5rem' }}>
+        <a href={hrefOf('home')}>&larr; Your wallet</a>
+      </p>
     </>
   );
 }
@@ -72,19 +84,27 @@ function CreationSent({ request, at, shown }: {
 function CreationAccountSection({ shown }: { readonly shown: CreationShown }): ReactNode {
   return (
     <Section
-      list={false} box={false} aria-label="The company's account" title="The company's account"
+      list={false}
+      box={false}
+      aria-label="The company's account"
+      title="The company's account"
       description="Read by this wallet from the deploy the page built. Nothing has been sent yet."
     >
       <p className="m-0 text-sm text-muted-foreground">The label this wallet made up for the company</p>
-      <p className="m-0 font-mono break-all text-sm" data-label>{shown.company}</p>
+      <p className="m-0 font-mono break-all text-sm" data-label>
+        {shown.company}
+      </p>
       <p className="m-0 text-sm text-muted-foreground">The account the deploy creates</p>
-      <p className="m-0 font-mono break-all text-sm" data-account>{shown.account}</p>
+      <p className="m-0 font-mono break-all text-sm" data-account>
+        {shown.account}
+      </p>
       <p className="m-0 text-sm text-muted-foreground">The fingerprint of the label and the account together</p>
-      <p className="m-0 font-mono text-xl" data-fingerprint>{companyFingerprint(shown.company, shown.account)}</p>
+      <p className="m-0 font-mono text-xl" data-fingerprint>
+        {companyFingerprint(shown.company, shown.account)}
+      </p>
       <p className="m-0 text-sm" data-held-by-you>
-        The account is held by your own key for this company and by nobody else, from its first transaction. Only
-        your key controls it for now: signers you named do not, until its committee is changed to include them in
-        Settings.
+        The account is held by your own key for this company and by nobody else, from its first transaction. Only your
+        key controls it for now: signers you named do not, until its committee is changed to include them in Settings.
       </p>
       <p className="m-0 text-sm" data-circuits>
         {`Its deploy runs ${shown.deployed.length} of this build's circuits. This step adds the other ${shown.inserted.length}, each checked against this build's own, and changes nothing else.`}
@@ -94,9 +114,19 @@ function CreationAccountSection({ shown }: { readonly shown: CreationShown }): R
 }
 
 export function ApproveCreation({
-  request, identity, channel, consent, whoIsAsking, onDecline, onPin, drewTheLabel,
-  ledger = liveCreationLedger, now = Date.now, built = builtAccountKeys, construction = liveConstruction,
-  answerAtOnce = false,
+  request,
+  identity,
+  channel,
+  consent,
+  whoIsAsking,
+  onDecline,
+  onPin,
+  drewTheLabel,
+  ledger = liveCreationLedger,
+  now = Date.now,
+  built = builtAccountKeys,
+  construction = liveConstruction,
+  answerAtOnce = false
 }: {
   readonly request: CreationRequest;
   readonly identity: Identity;
@@ -133,43 +163,65 @@ export function ApproveCreation({
     let alive = true;
     setStage({ of: 'reading' });
     if (!drewAtOpen) {
-      setStage({ of: 'refused', says: 'This wallet did not make up this company\'s label for a new company, or has already finished creating it. There is nothing to sign here.' });
-      return () => { alive = false; };
+      setStage({
+        of: 'refused',
+        says: "This wallet did not make up this company's label for a new company, or has already finished creating it. There is nothing to sign here."
+      });
+      return () => {
+        alive = false;
+      };
     }
     const keys = built();
     if (keys.of !== 'built') {
       setStage({ of: 'refused', says: `${keys.why}, so it cannot check what it would sign. Nothing has been signed.` });
-      return () => { alive = false; };
+      return () => {
+        alive = false;
+      };
     }
-    const cannotLoad = 'This wallet could not load what it needs to read the deploy. Nothing has been signed. Close this window and try again.';
-    void ledger().then(async (L) => {
-      if (!alive) return;
-      let shown: CreationShown;
-      try {
-        shown = creationShown(L, identity, request, keys.keys, sha256, labelInAccountState);
-      } catch (e) {
-        setStage({ of: 'refused', says: e instanceof CreationSignError ? e.message : 'Nothing has been signed.' });
-        return;
-      }
-      let deps: ConstructionDeps;
-      try {
-        deps = await construction();
-      } catch {
+    const cannotLoad =
+      'This wallet could not load what it needs to read the deploy. Nothing has been signed. Close this window and try again.';
+    void ledger().then(
+      async (L) => {
+        if (!alive) return;
+        let shown: CreationShown;
+        try {
+          shown = creationShown(L, identity, request, keys.keys, sha256, labelInAccountState);
+        } catch (e) {
+          setStage({ of: 'refused', says: e instanceof CreationSignError ? e.message : 'Nothing has been signed.' });
+          return;
+        }
+        let deps: ConstructionDeps;
+        try {
+          deps = await construction();
+        } catch {
+          if (alive) setStage({ of: 'refused', says: cannotLoad });
+          return;
+        }
+        let why: string | null;
+        try {
+          why = await startingStateRefusal(deps, {
+            deploy: request.deploy,
+            label: request.company,
+            foundingKey: shown.mine,
+            insert: request.insert,
+            build: keys.keys,
+            digest: sha256
+          });
+        } catch {
+          why = "This wallet could not compare the account's starting state with the one its constructor makes.";
+        }
+        if (!alive) return;
+        setStage(
+          why === null ? { of: 'ready', shown, ledger: L } : { of: 'refused', says: `${why} Nothing has been signed.` }
+        );
+      },
+      () => {
         if (alive) setStage({ of: 'refused', says: cannotLoad });
-        return;
       }
-      let why: string | null;
-      try {
-        why = await startingStateRefusal(deps, {
-          deploy: request.deploy, label: request.company, foundingKey: shown.mine, insert: request.insert, build: keys.keys, digest: sha256,
-        });
-      } catch {
-        why = 'This wallet could not compare the account\'s starting state with the one its constructor makes.';
-      }
-      if (!alive) return;
-      setStage(why === null ? { of: 'ready', shown, ledger: L } : { of: 'refused', says: `${why} Nothing has been signed.` });
-    }, () => { if (alive) setStage({ of: 'refused', says: cannotLoad }); });
-    return () => { alive = false; };
+    );
+    return () => {
+      alive = false;
+    };
   }, [identity, request, ledger, built, drewAtOpen, construction]);
 
   const sign = useCallback(async (): Promise<void> => {
@@ -190,15 +242,18 @@ export function ApproveCreation({
     if (!channel.answer(answer)) {
       setStage({
         of: 'refused',
-        says: 'The page had already closed this request, so the signature did not reach it and nothing was sent. This wallet '
-          + 'has kept the account as this company\'s. Start creating the company again from the page.',
+        says:
+          'The page had already closed this request, so the signature did not reach it and nothing was sent. This wallet ' +
+          "has kept the account as this company's. Start creating the company again from the page."
       });
       return;
     }
     signed.current = true;
     setStage({ of: 'sent', at, shown: stage.shown });
   }, [stage, channel, identity, request, now, built, onPin, drewAtOpen, consent]);
-  const signAtOnce = useCallback(() => { void sign(); }, [sign]);
+  const signAtOnce = useCallback(() => {
+    void sign();
+  }, [sign]);
   useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null, signAtOnce);
 
   if (stage.of === 'sent') return <CreationSent request={request} at={stage.at} shown={stage.shown} />;
@@ -207,19 +262,30 @@ export function ApproveCreation({
   return (
     <>
       <h1 data-headline>{`Finish creating a company, for ${request.requester.origin}`}</h1>
-      {stage.of === 'reading' && <p className="lede" data-reading>Reading the deploy the page built. Nothing has been signed and nothing has been sent.</p>}
+      {stage.of === 'reading' && (
+        <p className="lede" data-reading>
+          Reading the deploy the page built. Nothing has been signed and nothing has been sent.
+        </p>
+      )}
       {stage.of === 'refused' && (
         <StatusAlert tone="danger" title="This wallet will not sign this">
-          <p className="m-0" data-creation-refused>{stage.says}</p>
+          <p className="m-0" data-creation-refused>
+            {stage.says}
+          </p>
         </StatusAlert>
       )}
-      {shown !== null && (
-        <CreationAccountSection shown={shown} />
-      )}
+      {shown !== null && <CreationAccountSection shown={shown} />}
       {whoIsAsking}
       <div className="flex flex-wrap gap-2">
         <Button
-          size="lg" type="button" variant="default" onClick={() => { void sign(); }} data-approve data-sign-creation
+          size="lg"
+          type="button"
+          variant="default"
+          onClick={() => {
+            void sign();
+          }}
+          data-approve
+          data-sign-creation
           disabled={!consent.ok || stage.of !== 'ready' || channel === null}
         >
           Sign and finish

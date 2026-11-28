@@ -38,14 +38,20 @@ export interface ContractKeys {
 
 /** The account, as this build compiled it. */
 export const ACCOUNT_KEYS: ContractKeys = {
-  name: 'the account', dir: join(ROOT, 'contracts/managed/keys'), circuits: DEPLOYED_CIRCUITS,
-  expectedVk: accountExpectedVk, module: 'contracts/managed/contract/index.js',
+  name: 'the account',
+  dir: join(ROOT, 'contracts/managed/keys'),
+  circuits: DEPLOYED_CIRCUITS,
+  expectedVk: accountExpectedVk,
+  module: 'contracts/managed/contract/index.js'
 };
 
 /** The vault, as this build compiled it. */
 export const VAULT_KEYS: ContractKeys = {
-  name: 'the vault', dir: join(ROOT, 'contracts/managed-vault/keys'), circuits: VAULT_CIRCUITS,
-  expectedVk: vaultExpectedVk, module: 'contracts/managed-vault/contract/index.js',
+  name: 'the vault',
+  dir: join(ROOT, 'contracts/managed-vault/keys'),
+  circuits: VAULT_CIRCUITS,
+  expectedVk: vaultExpectedVk,
+  module: 'contracts/managed-vault/contract/index.js'
 };
 
 /** What the keys on disk came to. */
@@ -85,15 +91,19 @@ export function keysOnDisk(contracts: readonly ContractKeys[] = [ACCOUNT_KEYS, V
       }
     }
   }
-  const why = problems.length === 0
-    ? 'every circuit\'s verifier key is on disk and is the one this build compiled.'
-    : `${problems.join('; ')}. \`npm run compact\` then \`npm run compact:vault -- --full\` build them.`;
+  const why =
+    problems.length === 0
+      ? "every circuit's verifier key is on disk and is the one this build compiled."
+      : `${problems.join('; ')}. \`npm run compact\` then \`npm run compact:vault -- --full\` build them.`;
   return { ok: problems.length === 0, anyOnDisk, problems, why };
 }
 
 /** The `.verifier` files in a folder, by circuit name; none when the folder is not there. */
 export const verifiersIn = (dir: string): string[] =>
-  (existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith('.verifier')).map((f) => f.slice(0, -'.verifier'.length)).sort();
+  (existsSync(dir) ? readdirSync(dir) : [])
+    .filter((f) => f.endsWith('.verifier'))
+    .map((f) => f.slice(0, -'.verifier'.length))
+    .sort();
 
 /**
  * **EVERY WAY ONE COMPILED MODULE AND THE KEYS ON DISK DISAGREE**: a module
@@ -113,11 +123,14 @@ export function moduleAgainstKeys(c: ContractKeys): string[] {
   for (const circuit of onDisk) {
     const file = join(c.dir, `${circuit}.verifier`);
     const want = c.expectedVk[circuit];
-    if (typeof want !== 'string' || want === '') out.push(`${shown(file)} is on disk and ${c.module} pins no key for it`);
-    else if (sha256(file) !== want.toLowerCase()) out.push(`${shown(file)} is not the key ${c.module} pins for ${circuit}`);
+    if (typeof want !== 'string' || want === '')
+      out.push(`${shown(file)} is on disk and ${c.module} pins no key for it`);
+    else if (sha256(file) !== want.toLowerCase())
+      out.push(`${shown(file)} is not the key ${c.module} pins for ${circuit}`);
   }
   for (const circuit of pinned) {
-    if (!onDisk.includes(circuit)) out.push(`${c.module} pins a key for ${circuit} and ${shown(join(c.dir, `${circuit}.verifier`))} is not on disk`);
+    if (!onDisk.includes(circuit))
+      out.push(`${c.module} pins a key for ${circuit} and ${shown(join(c.dir, `${circuit}.verifier`))} is not on disk`);
   }
   return out;
 }

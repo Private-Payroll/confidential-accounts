@@ -1,8 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from 'vaults-ui/lib/utils';
-import {
-  Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle,
-} from 'vaults-ui/components/item';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from 'vaults-ui/components/item';
 import { Glyph } from '../glyphs.js';
 import type { IconSvgElement } from '../glyphs.js';
 
@@ -33,7 +31,16 @@ export interface RowItemProps {
 }
 
 export function RowItem({
-  leading, title, subtitle, trailing, meta, href, onClick, current, disabled, className,
+  leading,
+  title,
+  subtitle,
+  trailing,
+  meta,
+  href,
+  onClick,
+  current,
+  disabled,
+  className
 }: RowItemProps): ReactNode {
   const interactive = (href !== undefined || onClick !== undefined) && disabled !== true;
   const look = cn(
@@ -41,7 +48,7 @@ export function RowItem({
     current === true && 'bg-muted',
     interactive && 'cursor-pointer hover:bg-muted',
     disabled === true && 'pointer-events-none opacity-50',
-    className,
+    className
   );
 
   const body = (
@@ -49,9 +56,7 @@ export function RowItem({
       {leading !== undefined && <ItemMedia>{leading}</ItemMedia>}
       <ItemContent className="min-w-0 gap-0.5">
         <ItemTitle className="block w-full truncate">{title}</ItemTitle>
-        {subtitle !== undefined && (
-          <ItemDescription className="block truncate text-xs">{subtitle}</ItemDescription>
-        )}
+        {subtitle !== undefined && <ItemDescription className="block truncate text-xs">{subtitle}</ItemDescription>}
       </ItemContent>
       {(trailing !== undefined || meta !== undefined) && (
         <ItemActions className="shrink-0 flex-col items-end gap-0.5 text-end">
@@ -66,7 +71,9 @@ export function RowItem({
   if (href !== undefined) {
     return (
       <Item asChild size="sm" variant={variant} className={look}>
-        <a href={href} aria-current={current === true ? 'true' : undefined}>{body}</a>
+        <a href={href} aria-current={current === true ? 'true' : undefined}>
+          {body}
+        </a>
       </Item>
     );
   }
@@ -84,11 +91,18 @@ export function RowItem({
       </Item>
     );
   }
-  return <Item size="sm" variant={variant} className={look}>{body}</Item>;
+  return (
+    <Item size="sm" variant={variant} className={look}>
+      {body}
+    </Item>
+  );
 }
 
 /** Rows one under another, a rule between each. */
-export function RowItems({ children, className }: {
+export function RowItems({
+  children,
+  className
+}: {
   readonly children: ReactNode;
   readonly className?: string;
 }): ReactNode {
@@ -111,12 +125,20 @@ export interface ShortcutTileProps {
 
 /** A shortcut: its glyph, its name, and a line on what it does. */
 export function ShortcutTile({
-  glyph, label, says, saysWraps = false, href, onClick, tone = 'quiet', trailing, className,
+  glyph,
+  label,
+  says,
+  saysWraps = false,
+  href,
+  onClick,
+  tone = 'quiet',
+  trailing,
+  className
 }: ShortcutTileProps): ReactNode {
   const look = cn(
     'flex-col flex-nowrap items-start gap-2 bg-card text-start shadow-xs',
     (href !== undefined || onClick !== undefined) && 'cursor-pointer hover:bg-muted',
-    className,
+    className
   );
   const body = (
     <>
@@ -129,30 +151,41 @@ export function ShortcutTile({
       <span className="w-full min-w-0">
         <span className="block truncate text-sm font-medium">{label}</span>
         {says !== undefined && (
-          <span className={cn('block text-xs text-muted-foreground', !saysWraps && 'truncate')}>
-            {says}
-          </span>
+          <span className={cn('block text-xs text-muted-foreground', !saysWraps && 'truncate')}>{says}</span>
         )}
       </span>
     </>
   );
   if (href !== undefined) {
-    return <Item asChild variant="outline" className={look}><a href={href}>{body}</a></Item>;
+    return (
+      <Item asChild variant="outline" className={look}>
+        <a href={href}>{body}</a>
+      </Item>
+    );
   }
   if (onClick !== undefined) {
-    return <Item asChild variant="outline" className={look}><button type="button" onClick={onClick}>{body}</button></Item>;
+    return (
+      <Item asChild variant="outline" className={look}>
+        <button type="button" onClick={onClick}>
+          {body}
+        </button>
+      </Item>
+    );
   }
-  return <Item variant="outline" className={look}>{body}</Item>;
+  return (
+    <Item variant="outline" className={look}>
+      {body}
+    </Item>
+  );
 }
 
 /** Shortcuts in a grid: two across on a phone, four on a wider screen. */
-export function ShortcutTiles({ children, className }: {
+export function ShortcutTiles({
+  children,
+  className
+}: {
   readonly children: ReactNode;
   readonly className?: string;
 }): ReactNode {
-  return (
-    <div className={cn('grid grid-cols-2 gap-3 md:grid-cols-4', className)}>
-      {children}
-    </div>
-  );
+  return <div className={cn('grid grid-cols-2 gap-3 md:grid-cols-4', className)}>{children}</div>;
 }

@@ -18,7 +18,10 @@ import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
 import type { Note } from '../../../src/midnight/vault-notes.js';
 import { PaymentJournalInStore } from '../../../src/midnight/vault-journal.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
-import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import type {
+  PrivatePaymentOnTheWire,
+  PrivatePaymentOrderOnTheWire
+} from '../../../src/midnight/private-payment-wire.js';
 import type { EventOnTheWire, NoteOnTheWire } from './vault-builder.js';
 import { handedOver } from './hand-over.js';
 import type { PayoutChainOnTheWire } from './vault-worker-client.js';
@@ -28,13 +31,34 @@ import { chainAtOneBlockHere, theWalletsIndexer } from './vault-read-here.js';
 import { theSecretToSpend } from './vault-secret-to-spend.js';
 import { HEX64, lowerOf, NAMED_BY_NOTHING, notesAsThisDeviceReadsThem } from './vault-step-reads.js';
 import { fundableOrThrow } from './vault-fundable-here.js';
-import { A_PAYOUT, type NoteAsHex, type PaymentInFlight, PaymentLandedUnrecorded, paymentLandsBy, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentRefusedOnChain, PaymentStartedElsewhere, PaymentStillInFlight, type PayoutDoors, wireOf } from './vault-payment-in-flight.js';
-import { ownPaymentOnChain, recordedIfOvertaken, recordPayment, settlePaymentInFlight, whyAfterTheSend } from './vault-payment-settled.js';
+import {
+  A_PAYOUT,
+  type NoteAsHex,
+  type PaymentInFlight,
+  PaymentLandedUnrecorded,
+  paymentLandsBy,
+  PaymentNotAsBuilt,
+  PaymentNotYetSeen,
+  PaymentRefusedOnChain,
+  PaymentStartedElsewhere,
+  PaymentStillInFlight,
+  type PayoutDoors,
+  wireOf
+} from './vault-payment-in-flight.js';
+import {
+  ownPaymentOnChain,
+  recordedIfOvertaken,
+  recordPayment,
+  settlePaymentInFlight,
+  whyAfterTheSend
+} from './vault-payment-settled.js';
 import { vaultNotesHere } from './vault-notes-here.js';
 
 /** Every zswap event the chain holds for one transaction, read on this device at the indexer the wallet names. */
 async function eventsHere(
-  doors: Pick<BuiltOnHereDoors, 'builder' | 'indexer'>, vault: Hex, transactionHash: string,
+  doors: Pick<BuiltOnHereDoors, 'builder' | 'indexer'>,
+  vault: Hex,
+  transactionHash: string
 ): Promise<EventOnTheWire[]> {
   return doors.builder.eventsOf({ transactionHash, indexer: await theWalletsIndexer(doors, vault) });
 }
@@ -59,20 +83,26 @@ interface StepWords {
 
 const A_PAYMENT: StepWords = {
   what: 'this payment',
-  writing: 'writing the payment down', building: 'building the payment', sending: 'sending the payment',
-  waiting: 'waiting for the payment', recording: 'recording the payment',
+  writing: 'writing the payment down',
+  building: 'building the payment',
+  sending: 'sending the payment',
+  waiting: 'waiting for the payment',
+  recording: 'recording the payment',
   notYetSeen: (vault, txRef, why) => new PaymentNotYetSeen(vault, txRef, why),
   landedUnrecorded: (vault, hash, why) => new PaymentLandedUnrecorded(vault, hash, why),
-  notAsBuilt: (vault, hash, why) => new PaymentNotAsBuilt(vault, hash, why),
+  notAsBuilt: (vault, hash, why) => new PaymentNotAsBuilt(vault, hash, why)
 };
 
 const A_MERGE: StepWords = {
   what: 'this merge',
-  writing: 'writing the merge down', building: 'building the merge', sending: 'sending the merge',
-  waiting: 'waiting for the merge', recording: 'recording the merge',
+  writing: 'writing the merge down',
+  building: 'building the merge',
+  sending: 'sending the merge',
+  waiting: 'waiting for the merge',
+  recording: 'recording the merge',
   notYetSeen: (vault, txRef, why) => new MergeNotYetSeen(vault, txRef, why),
   landedUnrecorded: (vault, hash, why) => new MergeLandedUnrecorded(vault, hash, why),
-  notAsBuilt: (vault, hash, why) => new MergeNotAsBuilt(vault, hash, why),
+  notAsBuilt: (vault, hash, why) => new MergeNotAsBuilt(vault, hash, why)
 };
 
 /**
@@ -82,32 +112,50 @@ const A_MERGE: StepWords = {
  * vault from this browser.
  */
 export class MergeNotYetSeen extends Error {
-  constructor(readonly vault: Hex, readonly txRef: string, why?: string) {
-    super(`the merge of this vault's notes may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has `
-      + `not seen it land${why === undefined ? '' : ` (${why})`}. Nothing left the vault either way. This browser keeps `
-      + 'a locked record of it, and the next payment out of this vault from here adds it to the vault\'s record once '
-      + 'the chain shows it. Until then, no other payment leaves this vault from this browser.');
+  constructor(
+    readonly vault: Hex,
+    readonly txRef: string,
+    why?: string
+  ) {
+    super(
+      `the merge of this vault's notes may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has ` +
+        `not seen it land${why === undefined ? '' : ` (${why})`}. Nothing left the vault either way. This browser keeps ` +
+        "a locked record of it, and the next payment out of this vault from here adds it to the vault's record once " +
+        'the chain shows it. Until then, no other payment leaves this vault from this browser.'
+    );
     this.name = 'MergeNotYetSeen';
   }
 }
 
 /** **THE MERGE LANDED, AND THE VAULT'S RECORD WAS NOT WRITTEN.** The next look from this browser writes it. */
 class MergeLandedUnrecorded extends Error {
-  constructor(readonly vault: Hex, readonly transactionHash: string, why: string) {
-    super(`the merge of this vault's notes landed${transactionHash === '' ? '' : ` (${transactionHash})`} and the `
-      + `vault's record could not be written (${why}). Nothing left the vault. This browser keeps a locked record of `
-      + 'it, and the next payment out of this vault from here writes the record.');
+  constructor(
+    readonly vault: Hex,
+    readonly transactionHash: string,
+    why: string
+  ) {
+    super(
+      `the merge of this vault's notes landed${transactionHash === '' ? '' : ` (${transactionHash})`} and the ` +
+        `vault's record could not be written (${why}). Nothing left the vault. This browser keeps a locked record of ` +
+        'it, and the next payment out of this vault from here writes the record.'
+    );
     this.name = 'MergeLandedUnrecorded';
   }
 }
 
 /** **A TRANSACTION UNDER THIS MERGE'S NAME IS ON THE CHAIN, AND IT IS NOT THE MERGE THIS DEVICE BUILT.** */
 export class MergeNotAsBuilt extends Error {
-  constructor(readonly vault: Hex, readonly transactionHash: string, why: string) {
-    super(`the chain holds a transaction under this merge's name${transactionHash === '' ? '' : ` (${transactionHash})`} `
-      + `that is not the merge this device built: ${why}. The vault's record is not changed for it now. If the `
-      + 'vault\'s record still holds the notes it spent once the chain no longer does, the record has to be rebuilt '
-      + 'from the company\'s records before this device spends them.');
+  constructor(
+    readonly vault: Hex,
+    readonly transactionHash: string,
+    why: string
+  ) {
+    super(
+      `the chain holds a transaction under this merge's name${transactionHash === '' ? '' : ` (${transactionHash})`} ` +
+        `that is not the merge this device built: ${why}. The vault's record is not changed for it now. If the ` +
+        "vault's record still holds the notes it spent once the chain no longer does, the record has to be rebuilt " +
+        "from the company's records before this device spends them."
+    );
     this.name = 'MergeNotAsBuilt';
   }
 }
@@ -133,16 +181,23 @@ export class NotesMovedUnderAStep extends Error {
  * stands.
  */
 export class StepOvertaken extends NotesMovedUnderAStep {
-  constructor(readonly vault: Hex, what: string) {
-    super(`${what} did not land: another step out of this vault spent a note it spends and landed first, and that step `
-      + `is recorded as the chain holds it. Nothing left the vault for ${what}. Plan it again from the record as it is now.`);
+  constructor(
+    readonly vault: Hex,
+    what: string
+  ) {
+    super(
+      `${what} did not land: another step out of this vault spent a note it spends and landed first, and that step ` +
+        `is recorded as the chain holds it. Nothing left the vault for ${what}. Plan it again from the record as it is now.`
+    );
     this.name = 'StepOvertaken';
   }
 }
 
 /** The commitment the vault holds for one of its notes, as its worker works it out. */
 const heldOfANote = async (doors: Pick<PayoutDoors, 'builder'>, vault: Hex, n: NoteOnTheWire): Promise<string> =>
-  (await doors.builder.commitments({ vault, coin: { nonce: n.nonce, token: n.token, value: n.value } })).held.toLowerCase();
+  (
+    await doors.builder.commitments({ vault, coin: { nonce: n.nonce, token: n.token, value: n.value } })
+  ).held.toLowerCase();
 
 /**
  * **THE VAULT OPENED FOR A STEP OUT OF IT, ON THIS DEVICE**: pinned to the
@@ -152,13 +207,16 @@ const heldOfANote = async (doors: Pick<PayoutDoors, 'builder'>, vault: Hex, n: N
  * it. Who holds the vault is not asked: no payment waits on the super admins.
  */
 async function openedForAStepOut(
-  doors: PayoutDoors, vault: Hex,
+  doors: PayoutDoors,
+  vault: Hex
 ): Promise<{ readonly view: VaultChainView; readonly pool: Awaited<ReturnType<SealedNotePool['load']>> }> {
   doors.progress?.('opening the pool');
   const answer = await fundableOrThrow(doors, vault);
   if (answer.of === 'not-on-chain') {
-    throw new Error('the chain, as this device read it, does not show this vault, so its record is not opened here and '
-      + `nothing is paid out of it. Nothing was sent. Reason: ${answer.why}`);
+    throw new Error(
+      'the chain, as this device read it, does not show this vault, so its record is not opened here and ' +
+        `nothing is paid out of it. Nothing was sent. Reason: ${answer.why}`
+    );
   }
   /*
    * **WHETHER MONEY MAY GO OUT NOW, ASKED BEFORE ANYTHING ELSE.** The vault
@@ -167,8 +225,10 @@ async function openedForAStepOut(
    * could not be sent.
    */
   if (answer.of !== 'fundable') {
-    throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
-      + `sent. Reason: ${answer.why}`);
+    throw new Error(
+      'No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was ' +
+        `sent. Reason: ${answer.why}`
+    );
   }
   const view = answer.view;
   /*
@@ -185,8 +245,11 @@ async function openedForAStepOut(
    * the record as filed.
    */
   await vaultNotesHere(doors, vault, view);
-  const pool = await new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers).load(vault);
+  const pool = await new SealedNotePool(
+    doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  ).load(vault);
   return { view, pool };
 }
 
@@ -197,7 +260,9 @@ async function openedForAStepOut(
  * its place.
  */
 function exactlyTheNotesNamed(
-  pool: { readonly notes: readonly Note[] }, named: readonly NoteOnTheWire[], what: string,
+  pool: { readonly notes: readonly Note[] },
+  named: readonly NoteOnTheWire[],
+  what: string
 ): NoteOnTheWire[] {
   if (new Set(named.map((n) => lowerOf(n.nonce))).size !== named.length) {
     throw new Error(`${what} names one note twice, and a note is spent once. Nothing was sent.`);
@@ -205,8 +270,10 @@ function exactlyTheNotesNamed(
   return named.map((n) => {
     const held = pool.notes.find((x) => lowerOf(x.nonce) === lowerOf(n.nonce));
     if (held === undefined || lowerOf(held.token) !== lowerOf(n.token) || held.value.toString() !== n.value) {
-      throw new NotesMovedUnderAStep(`${what} names a note this vault's record does not hold as named, so nothing was built: the record `
-        + 'has moved since the step was planned. Plan it again from the record as it is now. Nothing was sent.');
+      throw new NotesMovedUnderAStep(
+        `${what} names a note this vault's record does not hold as named, so nothing was built: the record ` +
+          'has moved since the step was planned. Plan it again from the record as it is now. Nothing was sent.'
+      );
     }
     return wireOf(held);
   });
@@ -221,15 +288,21 @@ function exactlyTheNotesNamed(
  * the indexer the person's own wallet names. Nothing is written down yet.
  */
 async function readyToSpend(
-  doors: PayoutDoors, vault: Hex, view: VaultChainView, notes: readonly NoteOnTheWire[], what: string,
+  doors: PayoutDoors,
+  vault: Hex,
+  view: VaultChainView,
+  notes: readonly NoteOnTheWire[],
+  what: string
 ): Promise<{
   readonly withEvents: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: EventOnTheWire[] }>;
   readonly chain: PayoutChainOnTheWire & { readonly account: Hex };
   readonly secret: string;
 }> {
   if (notes.some((n) => n.createdIn === undefined)) {
-    throw new Error(`a note of this vault's that ${what} would spend does not record which transaction created it, so `
-      + 'its place in the chain cannot be read and it cannot be spent yet. It is still the vault\'s. Nothing was sent.');
+    throw new Error(
+      `a note of this vault's that ${what} would spend does not record which transaction created it, so ` +
+        "its place in the chain cannot be read and it cannot be spent yet. It is still the vault's. Nothing was sent."
+    );
   }
   /*
    * **A NOTE THE CHAIN NO LONGER HOLDS IS NOT SPENT AGAIN.** It means a step
@@ -242,10 +315,12 @@ async function readyToSpend(
   const onChainNow = new Set((view.notes ?? []).map((n) => n.toLowerCase()));
   for (const n of notes) {
     if (!onChainNow.has(await heldOfANote(doors, vault, n))) {
-      throw new NotesMovedUnderAStep(`the chain no longer holds a note this vault's record would spend for ${what}: a step `
-        + 'that spent it has landed that this record does not show yet. Nothing was sent. If another signer is paying '
-        + `from this vault right now, try again in a minute. Otherwise ${what}, and any other that would `
-        + 'spend that note, waits until the vault\'s record is rebuilt from the company\'s records.');
+      throw new NotesMovedUnderAStep(
+        `the chain no longer holds a note this vault's record would spend for ${what}: a step ` +
+          'that spent it has landed that this record does not show yet. Nothing was sent. If another signer is paying ' +
+          `from this vault right now, try again in a minute. Otherwise ${what}, and any other that would ` +
+          "spend that note, waits until the vault's record is rebuilt from the company's records."
+      );
     }
   }
 
@@ -275,20 +350,30 @@ async function readyToSpend(
  * every step is journalled in.
  */
 async function writtenDown(
-  doors: PayoutDoors, vault: Hex, notes: readonly NoteOnTheWire[], step: 'payment' | 'merge', amount: string,
+  doors: PayoutDoors,
+  vault: Hex,
+  notes: readonly NoteOnTheWire[],
+  step: 'payment' | 'merge',
+  amount: string
 ): Promise<void> {
-  const journal = new PaymentJournalInStore(doors.records('payment-journal'), vault,
-    { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const journal = new PaymentJournalInStore(
+    doors.records('payment-journal'),
+    vault,
+    { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  );
   const [first, ...further] = notes as unknown as NoteAsHex[];
   if (first === undefined) throw new Error('a step that spends no note is not written down. Nothing was sent.');
   await journal.record(vault, {
     spent: { nonce: first.nonce, token: first.token, value: BigInt(first.value) },
-    ...(further.length === 0 ? {} : {
-      further: further.map((n) => ({ nonce: n.nonce, token: n.token, value: BigInt(n.value) })),
-    }),
+    ...(further.length === 0
+      ? {}
+      : {
+          further: further.map((n) => ({ nonce: n.nonce, token: n.token, value: BigInt(n.value) }))
+        }),
     step,
     amount: BigInt(amount),
-    attemptedAt: new Date().toISOString(),
+    attemptedAt: new Date().toISOString()
   });
 }
 
@@ -298,15 +383,22 @@ async function writtenDown(
  * exactly one payout of this vault.
  */
 async function namedByItsOwnTransaction(
-  doors: PayoutDoors, vault: Hex, tx: string,
+  doors: PayoutDoors,
+  vault: Hex,
+  tx: string
 ): Promise<Pick<PaymentInFlight, 'identifiers' | 'timeToLive' | 'transaction'>> {
-  const read = typeof doors.builder.readTransaction === 'function' && typeof doors.builder.vaultCallOnChain === 'function'
-    ? await doors.builder.readTransaction({ transaction: tx }).catch(() => null) : null;
+  const read =
+    typeof doors.builder.readTransaction === 'function' && typeof doors.builder.vaultCallOnChain === 'function'
+      ? await doors.builder.readTransaction({ transaction: tx }).catch(() => null)
+      : null;
   const bare = (h: string) => lowerOf(h).replace(/^0x/u, '');
-  const payouts = read === null ? [] : read.calls.filter((c) => bare(c.address) === bare(vault) && A_PAYOUT.includes(c.entryPoint));
+  const payouts =
+    read === null ? [] : read.calls.filter((c) => bare(c.address) === bare(vault) && A_PAYOUT.includes(c.entryPoint));
   if (read === null || read.identifiers.length === 0 || read.timeToLive === null || payouts.length !== 1) {
-    throw new Error('this page could not read the payment it built well enough to find it on the chain afterwards, so '
-      + 'it did not send it. Nothing was sent and nobody was paid by it. Reload the page and pay again.');
+    throw new Error(
+      'this page could not read the payment it built well enough to find it on the chain afterwards, so ' +
+        'it did not send it. Nothing was sent and nobody was paid by it. Reload the page and pay again.'
+    );
   }
   return { identifiers: [...read.identifiers], timeToLive: read.timeToLive, transaction: tx };
 }
@@ -316,15 +408,23 @@ async function namedByItsOwnTransaction(
  * thrown as it is; any other failure is kept as why the step may have been sent, and the wait for it goes on.
  */
 async function sentOrLetGo(
-  doors: PayoutDoors, vault: Hex, claim: NonNullable<Awaited<ReturnType<PayoutDoors['inFlight']['claim']>>>,
-  s: { readonly tx: string; readonly send: (vault: Hex, tx: string) => Promise<{ txRef: string; transactionHash: string | null }>; readonly words: StepWords },
+  doors: PayoutDoors,
+  vault: Hex,
+  claim: NonNullable<Awaited<ReturnType<PayoutDoors['inFlight']['claim']>>>,
+  s: {
+    readonly tx: string;
+    readonly send: (vault: Hex, tx: string) => Promise<{ txRef: string; transactionHash: string | null }>;
+    readonly words: StepWords;
+  }
 ): Promise<{ readonly sent: { txRef: string; transactionHash: string | null }; readonly sendFailed?: string }> {
   doors.progress?.(s.words.sending);
   try {
     return { sent: await s.send(vault, s.tx) };
   } catch (e) {
     if (sentNothing(e)) {
-      await doors.inFlight.forget(vault, claim).catch(() => { /* the next step settles it, and finds it never landed */ });
+      await doors.inFlight.forget(vault, claim).catch(() => {
+        /* the next step settles it, and finds it never landed */
+      });
       throw e;
     }
     return { sent: { txRef: '', transactionHash: null }, sendFailed: (e as Error)?.message ?? String(e) };
@@ -336,9 +436,14 @@ async function sentOrLetGo(
  * journal names spent its note first and landed; otherwise null, to look again. Why a look could not answer is `said`.
  */
 async function ownPaymentLook(
-  doors: PayoutDoors, vault: Hex,
-  { first, inFlight, heldSpent }: { readonly first: PaymentInFlight; readonly inFlight: PaymentInFlight; readonly heldSpent: string | null },
-  said: (why: string) => void,
+  doors: PayoutDoors,
+  vault: Hex,
+  {
+    first,
+    inFlight,
+    heldSpent
+  }: { readonly first: PaymentInFlight; readonly inFlight: PaymentInFlight; readonly heldSpent: string | null },
+  said: (why: string) => void
 ) {
   const own = await ownPaymentOnChain(doors, vault, inFlight);
   if (own.of === 'landed') return { state: 'landed' as const, createdIn: own.transactionHash };
@@ -370,15 +475,31 @@ async function ownPaymentLook(
  * commitment, judged by the vault worker; null to look again. Why a look could not answer is `said`.
  */
 async function aKeptCoinLook(
-  doors: PayoutDoors, vault: Hex,
-  { kept, merge, hash, keptOutput }: { readonly kept: NoteOnTheWire | null; readonly merge: boolean; readonly hash: string | null; readonly keptOutput: string | null },
-  said: (why: string) => void,
+  doors: PayoutDoors,
+  vault: Hex,
+  {
+    kept,
+    merge,
+    hash,
+    keptOutput
+  }: {
+    readonly kept: NoteOnTheWire | null;
+    readonly merge: boolean;
+    readonly hash: string | null;
+    readonly keptOutput: string | null;
+  },
+  said: (why: string) => void
 ) {
   let own: { transactionHash: string; events: EventOnTheWire[] } | null;
   try {
-    own = hash !== null
-      ? { transactionHash: hash, events: await eventsHere(doors, vault, hash) }
-      : await doors.builder.createdBy({ vault, commitment: keptOutput!, indexer: await theWalletsIndexer(doors, vault) });
+    own =
+      hash !== null
+        ? { transactionHash: hash, events: await eventsHere(doors, vault, hash) }
+        : await doors.builder.createdBy({
+            vault,
+            commitment: keptOutput!,
+            indexer: await theWalletsIndexer(doors, vault)
+          });
   } catch {
     /* The indexer does not hold it yet, or could not be asked: ask again. */
     return null;
@@ -387,8 +508,11 @@ async function aKeptCoinLook(
   let answer: Awaited<ReturnType<typeof doors.builder.confirmPayment>>;
   try {
     answer = await doors.builder.confirmPayment({
-      vault, transactionHash: String(own.transactionHash).toLowerCase(), change: kept, events: own.events,
-      ...(merge ? { merge: true as const } : {}),
+      vault,
+      transactionHash: String(own.transactionHash).toLowerCase(),
+      change: kept,
+      events: own.events,
+      ...(merge ? { merge: true as const } : {})
     });
   } catch (e) {
     /* The check could not be made this time; the next look asks again, of a new worker if this one stopped. */
@@ -409,16 +533,20 @@ async function aKeptCoinLook(
  * vault's payout; never by its notes leaving, and never by a hash the service
  * named. The vault's record is advanced on those and nothing else.
  */
-async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
-  readonly notes: readonly NoteOnTheWire[];
-  readonly amount: string;
-  /** The one coin the step keeps, as the build read it, or `null` when it keeps none. */
-  readonly kept: NoteOnTheWire | null;
-  readonly merge: boolean;
-  readonly tx: string;
-  readonly send: (vault: Hex, tx: string) => Promise<{ txRef: string; transactionHash: string | null }>;
-  readonly words: StepWords;
-}): Promise<{ readonly txRef: string; readonly hash: string | null; readonly createdIn: Hex | null }> {
+async function sendAStepOut(
+  doors: PayoutDoors,
+  vault: Hex,
+  s: {
+    readonly notes: readonly NoteOnTheWire[];
+    readonly amount: string;
+    /** The one coin the step keeps, as the build read it, or `null` when it keeps none. */
+    readonly kept: NoteOnTheWire | null;
+    readonly merge: boolean;
+    readonly tx: string;
+    readonly send: (vault: Hex, tx: string) => Promise<{ txRef: string; transactionHash: string | null }>;
+    readonly words: StepWords;
+  }
+): Promise<{ readonly txRef: string; readonly hash: string | null; readonly createdIn: Hex | null }> {
   const [note, ...further] = s.notes as unknown as NoteAsHex[];
   if (note === undefined) throw new Error('a step that spends no note is not sent. Nothing was sent.');
   /*
@@ -428,7 +556,8 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
    */
   const byItsOwn = s.kept === null && !s.merge;
   const named: Pick<PaymentInFlight, 'identifiers' | 'timeToLive' | 'transaction'> = byItsOwn
-    ? await namedByItsOwnTransaction(doors, vault, s.tx) : {};
+    ? await namedByItsOwnTransaction(doors, vault, s.tx)
+    : {};
   /*
    * **KEPT ON THIS DEVICE BEFORE IT IS SENT, AND THIS MAY NOT MOVE BELOW THE
    * SEND.** The coin kept, and a payment's own transaction, are known only from
@@ -437,10 +566,16 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
    */
   const first: PaymentInFlight = {
     spent: { nonce: note.nonce, token: note.token, value: note.value },
-    ...(further.length === 0 ? {} : { further: further.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value })) }),
+    ...(further.length === 0
+      ? {}
+      : { further: further.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value })) }),
     ...(s.merge ? { merge: true as const } : {}),
-    amount: s.amount, change: s.kept, recordedAt: (doors.now ?? (() => new Date()))().getTime(), txRef: '', transactionHash: null,
-    ...named,
+    amount: s.amount,
+    change: s.kept,
+    recordedAt: (doors.now ?? (() => new Date()))().getTime(),
+    txRef: '',
+    transactionHash: null,
+    ...named
   };
   const claim = await doors.inFlight.claim(vault, first);
   if (claim === null) throw new PaymentStartedElsewhere(vault);
@@ -450,8 +585,9 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
   /* ---- from here the money may have moved, and every failure says so ---- */
   try {
     const inFlight: PaymentInFlight = { ...first, txRef: sent.txRef, transactionHash: sent.transactionHash };
-    await doors.inFlight.update(vault, claim, inFlight)
-      .catch(() => { /* the record kept before still names the coin kept, or the payment's own transaction */ });
+    await doors.inFlight.update(vault, claim, inFlight).catch(() => {
+      /* the record kept before still names the coin kept, or the payment's own transaction */
+    });
     const answered = sent.transactionHash === null ? null : sent.transactionHash.toLowerCase();
     const hash = answered !== null && HEX64.test(answered) ? answered : null;
     doors.progress?.(s.words.waiting);
@@ -461,41 +597,70 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
      * events, once found, are judged exactly as a named transaction's are.
      */
     const heldSpent = byItsOwn ? await heldOfANote(doors, vault, s.notes[0]!) : null;
-    const keptOutput = hash === null && s.kept !== null
-      ? (await doors.builder.commitments({ vault, coin: s.kept })).output : null;
+    const keptOutput =
+      hash === null && s.kept !== null ? (await doors.builder.commitments({ vault, coin: s.kept })).output : null;
     let unchecked: string | undefined;
-    const said = (why: string) => { unchecked = why; };
-    const confirmed = await until(doors, async () => (byItsOwn
-      ? ownPaymentLook(doors, vault, { first, inFlight, heldSpent }, said)
-      : aKeptCoinLook(doors, vault, { kept: s.kept, merge: s.merge, hash, keptOutput }, said)));
+    const said = (why: string) => {
+      unchecked = why;
+    };
+    const confirmed = await until(doors, async () =>
+      byItsOwn
+        ? ownPaymentLook(doors, vault, { first, inFlight, heldSpent }, said)
+        : aKeptCoinLook(doors, vault, { kept: s.kept, merge: s.merge, hash, keptOutput }, said)
+    );
     if (confirmed === null) {
-      throw s.words.notYetSeen(vault, sent.txRef,
-        sendFailed ?? (byItsOwn || hash !== null ? unchecked : 'the service could not name the transaction it sent'));
+      throw s.words.notYetSeen(
+        vault,
+        sent.txRef,
+        sendFailed ?? (byItsOwn || hash !== null ? unchecked : 'the service could not name the transaction it sent')
+      );
     }
     if (confirmed.state === 'refused') {
-      await doors.inFlight.forget(vault, claim).catch(() => { /* the next step settles it, and finds it refused */ });
+      await doors.inFlight.forget(vault, claim).catch(() => {
+        /* the next step settles it, and finds it refused */
+      });
       throw new PaymentRefusedOnChain(vault, confirmed.transactionHash);
     }
     if (confirmed.state === 'overtaken') {
-      await doors.inFlight.forget(vault, claim).catch(() => { /* the next look finds its note gone from the record and forgets it */ });
+      await doors.inFlight.forget(vault, claim).catch(() => {
+        /* the next look finds its note gone from the record and forgets it */
+      });
       throw new StepOvertaken(vault, s.words.what);
     }
     if (confirmed.state === 'not-as-built') throw s.words.notAsBuilt(vault, hash ?? '', confirmed.why);
-    const createdIn = confirmed.createdIn === null ? null : confirmed.createdIn as Hex;
+    const createdIn = confirmed.createdIn === null ? null : (confirmed.createdIn as Hex);
 
     doors.progress?.(s.words.recording);
     try {
-      await recordPayment(doors, vault, note.nonce, further.map((n) => n.nonce), s.amount, s.kept, createdIn);
+      await recordPayment(
+        doors,
+        vault,
+        note.nonce,
+        further.map((n) => n.nonce),
+        s.amount,
+        s.kept,
+        createdIn
+      );
     } catch (cause) {
       throw s.words.landedUnrecorded(vault, createdIn ?? '', (cause as Error)?.message ?? String(cause));
     }
-    await doors.inFlight.forget(vault, claim).catch(() => { /* the next step finds it recorded and forgets it */ });
+    await doors.inFlight.forget(vault, claim).catch(() => {
+      /* the next step finds it recorded and forgets it */
+    });
     doors.progress?.('done');
     return { txRef: sent.txRef, hash: byItsOwn ? createdIn : hash, createdIn };
   } catch (e) {
-    if (e instanceof PaymentNotYetSeen || e instanceof PaymentNotAsBuilt || e instanceof PaymentLandedUnrecorded
-      || e instanceof MergeNotYetSeen || e instanceof MergeNotAsBuilt || e instanceof MergeLandedUnrecorded
-      || e instanceof StepOvertaken || e instanceof PaymentRefusedOnChain) throw e;
+    if (
+      e instanceof PaymentNotYetSeen ||
+      e instanceof PaymentNotAsBuilt ||
+      e instanceof PaymentLandedUnrecorded ||
+      e instanceof MergeNotYetSeen ||
+      e instanceof MergeNotAsBuilt ||
+      e instanceof MergeLandedUnrecorded ||
+      e instanceof StepOvertaken ||
+      e instanceof PaymentRefusedOnChain
+    )
+      throw e;
     throw s.words.notYetSeen(vault, sent.txRef, whyAfterTheSend(e));
   }
 }
@@ -522,11 +687,15 @@ async function sendAStepOut(doors: PayoutDoors, vault: Hex, s: {
 export async function payPrivatelyFromCompanyVault(
   doors: PayoutDoors,
   input: {
-    readonly order: PrivatePaymentOrderOnTheWire; readonly payment: PrivatePaymentOnTheWire;
+    readonly order: PrivatePaymentOrderOnTheWire;
+    readonly payment: PrivatePaymentOnTheWire;
     readonly notes?: readonly NoteOnTheWire[];
-  },
+  }
 ): Promise<{
-  txRef: string; transactionHash: string; spent: Hex; change: NoteOnTheWire | null;
+  txRef: string;
+  transactionHash: string;
+  spent: Hex;
+  change: NoteOnTheWire | null;
   /**
    * `its-own-transaction` when the transaction the service named was read and
    * judged to pay a person, or, for a payment that kept no change, when the
@@ -544,51 +713,80 @@ export async function payPrivatelyFromCompanyVault(
     throw new Error('this payment is not a private one, so it is not paid privately. Nothing was sent.');
   }
   if (payment.paid === true) {
-    throw new Error('the company\'s account already records this person paid for this run. Nothing was sent.');
+    throw new Error("the company's account already records this person paid for this run. Nothing was sent.");
   }
   const seconds = BigInt(Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000));
   if (seconds < BigInt(order.opensAt) || seconds >= BigInt(order.closesAt)) {
-    throw new Error('this run can be paid only inside the window its signers approved, and it is not open now. '
-      + 'Nothing was sent.');
+    throw new Error(
+      'this run can be paid only inside the window its signers approved, and it is not open now. ' + 'Nothing was sent.'
+    );
   }
   const { view, pool } = await openedForAStepOut(doors, vault);
 
   doors.progress?.('choosing the notes');
   /* In place order: the first is the note the vault is offered, the rest go in the payment's further place. */
-  const chosen = input.notes !== undefined
-    ? exactlyTheNotesNamed(pool, input.notes, A_PAYMENT.what)
-    : await doors.builder.notesForPayment({ notes: pool.notes.map(wireOf), token: payment.token, amount: payment.amount });
+  const chosen =
+    input.notes !== undefined
+      ? exactlyTheNotesNamed(pool, input.notes, A_PAYMENT.what)
+      : await doors.builder.notesForPayment({
+          notes: pool.notes.map(wireOf),
+          token: payment.token,
+          amount: payment.amount
+        });
   const [note, ...further] = chosen;
-  if (note === undefined) throw new Error('no note was chosen for this payment, so nothing was built. Nothing was sent.');
+  if (note === undefined)
+    throw new Error('no note was chosen for this payment, so nothing was built. Nothing was sent.');
   const { withEvents, chain, secret } = await readyToSpend(doors, vault, view, chosen, A_PAYMENT.what);
 
   doors.progress?.(A_PAYMENT.building);
   const { payments: _all, ...round } = order;
   const built = await doors.builder.payout({
-    vault, account: chain.account, order: round, payment, note, events: withEvents[0]!.events, secret,
+    vault,
+    account: chain.account,
+    order: round,
+    payment,
+    note,
+    events: withEvents[0]!.events,
+    secret,
     ...(further.length === 0 ? {} : { further: withEvents.slice(1) }),
     chain: {
-      blockHash: chain.blockHash, vaultState: chain.vaultState, zswapState: chain.zswapState,
-      parameters: chain.parameters, accountState: chain.accountState,
-    },
+      blockHash: chain.blockHash,
+      vaultState: chain.vaultState,
+      zswapState: chain.zswapState,
+      parameters: chain.parameters,
+      accountState: chain.accountState
+    }
   });
   if (built.spent !== note.nonce) {
-    throw new Error('the payment built spends a different note from the one chosen, so it was not sent. Nothing was sent.');
+    throw new Error(
+      'the payment built spends a different note from the one chosen, so it was not sent. Nothing was sent.'
+    );
   }
 
   doors.progress?.(A_PAYMENT.writing);
   await writtenDown(doors, vault, chosen, 'payment', payment.amount);
   const sent = await sendAStepOut(doors, vault, {
-    notes: chosen, amount: payment.amount, kept: built.change, merge: false, tx: built.tx,
-    send: (v, tx) => handedOver(doors.handOver, {
-      tx, call: { kind: 'payout', contract: v, circuit: 'payout', account: doors.account },
-      viaService: () => doors.service.payout(v, tx), after: async () => NAMED_BY_NOTHING,
-    }), words: A_PAYMENT,
+    notes: chosen,
+    amount: payment.amount,
+    kept: built.change,
+    merge: false,
+    tx: built.tx,
+    send: (v, tx) =>
+      handedOver(doors.handOver, {
+        tx,
+        call: { kind: 'payout', contract: v, circuit: 'payout', account: doors.account },
+        viaService: () => doors.service.payout(v, tx),
+        after: async () => NAMED_BY_NOTHING
+      }),
+    words: A_PAYMENT
   });
   /* A transaction found by what the payment left may be another payment's, so it is not named as this one's. */
   return {
-    txRef: sent.txRef, transactionHash: sent.hash === null ? '' : sent.createdIn ?? '', spent: note.nonce as Hex,
-    change: built.change, seenAs: sent.hash === null ? 'by-what-it-left' : 'its-own-transaction',
+    txRef: sent.txRef,
+    transactionHash: sent.hash === null ? '' : (sent.createdIn ?? ''),
+    spent: note.nonce as Hex,
+    change: built.change,
+    seenAs: sent.hash === null ? 'by-what-it-left' : 'its-own-transaction'
   };
 }
 
@@ -604,9 +802,12 @@ export async function payPrivatelyFromCompanyVault(
  */
 export async function mergeNotesInCompanyVault(
   doors: PayoutDoors,
-  input: { readonly vault: Hex; readonly notes: readonly NoteOnTheWire[] },
+  input: { readonly vault: Hex; readonly notes: readonly NoteOnTheWire[] }
 ): Promise<{
-  txRef: string; transactionHash: string; spent: readonly Hex[]; kept: NoteOnTheWire;
+  txRef: string;
+  transactionHash: string;
+  spent: readonly Hex[];
+  kept: NoteOnTheWire;
   /** As a payment's: `by-what-it-left` when the send named no transaction and the merge was found by the coin it kept. */
   seenAs: 'its-own-transaction' | 'by-what-it-left';
 }> {
@@ -623,11 +824,16 @@ export async function mergeNotesInCompanyVault(
 
   doors.progress?.(A_MERGE.building);
   const built = await doors.builder.mergeNotes({
-    vault, notes: withEvents, secret,
+    vault,
+    notes: withEvents,
+    secret,
     chain: {
-      blockHash: chain.blockHash, vaultState: chain.vaultState, zswapState: chain.zswapState,
-      parameters: chain.parameters, accountState: chain.accountState,
-    },
+      blockHash: chain.blockHash,
+      vaultState: chain.vaultState,
+      zswapState: chain.zswapState,
+      parameters: chain.parameters,
+      accountState: chain.accountState
+    }
   });
   if (built.spent.length !== notes.length || built.spent.some((n, i) => lowerOf(n) !== lowerOf(notes[i]!.nonce))) {
     throw new Error('the merge built spends other notes than the ones named, so it was not sent. Nothing was sent.');
@@ -636,14 +842,25 @@ export async function mergeNotesInCompanyVault(
   doors.progress?.(A_MERGE.writing);
   await writtenDown(doors, vault, notes, 'merge', '0');
   const sent = await sendAStepOut(doors, vault, {
-    notes, amount: '0', kept: built.kept, merge: true, tx: built.tx,
-    send: (v, tx) => handedOver(doors.handOver, {
-      tx, call: { kind: 'merge', contract: v, circuit: 'merge', account: doors.account },
-      viaService: () => doors.service.merge(v, tx), after: async () => NAMED_BY_NOTHING,
-    }), words: A_MERGE,
+    notes,
+    amount: '0',
+    kept: built.kept,
+    merge: true,
+    tx: built.tx,
+    send: (v, tx) =>
+      handedOver(doors.handOver, {
+        tx,
+        call: { kind: 'merge', contract: v, circuit: 'merge', account: doors.account },
+        viaService: () => doors.service.merge(v, tx),
+        after: async () => NAMED_BY_NOTHING
+      }),
+    words: A_MERGE
   });
   return {
-    txRef: sent.txRef, transactionHash: sent.hash === null ? '' : sent.createdIn ?? '',
-    spent: notes.map((n) => n.nonce as Hex), kept: built.kept, seenAs: sent.hash === null ? 'by-what-it-left' : 'its-own-transaction',
+    txRef: sent.txRef,
+    transactionHash: sent.hash === null ? '' : (sent.createdIn ?? ''),
+    spent: notes.map((n) => n.nonce as Hex),
+    kept: built.kept,
+    seenAs: sent.hash === null ? 'by-what-it-left' : 'its-own-transaction'
   };
 }

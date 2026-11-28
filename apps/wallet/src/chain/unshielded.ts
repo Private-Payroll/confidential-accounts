@@ -1,5 +1,9 @@
 import {
-  DefaultForkSchedule, NoOpTransactionHistoryStorage, PublicKey, UnshieldedWallet, createKeystore,
+  DefaultForkSchedule,
+  NoOpTransactionHistoryStorage,
+  PublicKey,
+  UnshieldedWallet,
+  createKeystore
 } from '@midnightntwrk/wallet-sdk';
 import type { UnshieldedWallet as RunningUnshieldedWallet } from '@midnightntwrk/wallet-sdk-unshielded-wallet';
 import type { UnshieldedKeystore } from '@midnightntwrk/wallet-sdk-unshielded-wallet';
@@ -42,8 +46,10 @@ import { describeFailure } from '../lib/failure-text.js';
 
 const guardAccount = (account: number): void => {
   if (!isWalletAccount(account)) {
-    throw new Error(`account ${account} is not a wallet this interface offers`
-      + (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.'));
+    throw new Error(
+      `account ${account} is not a wallet this interface offers` +
+        (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.')
+    );
   }
 };
 
@@ -51,8 +57,7 @@ const guardAccount = (account: number): void => {
  * own choice for NIGHT (its `V1Builder` and testkit both use it). */
 export function unshieldedKeystoreFor(identity: Identity, account: number): UnshieldedKeystore {
   guardAccount(account);
-  return createKeystore(
-    { kind: 'schnorr', secret: identity.moneyAt(account).night }, NETWORK);
+  return createKeystore({ kind: 'schnorr', secret: identity.moneyAt(account).night }, NETWORK);
 }
 
 /** The address ordinary NIGHT transfers — and the faucet — pay into. */
@@ -74,17 +79,15 @@ export const shortUnshielded = (bech32: string): string => {
 
 /** The unshielded wallet for ONE account, through the right door. Exported
  * so the agreement test and the probe exercise what the app runs. */
-export async function unshieldedWalletFor(
-  identity: Identity, account: number,
-): Promise<RunningUnshieldedWallet> {
+export async function unshieldedWalletFor(identity: Identity, account: number): Promise<RunningUnshieldedWallet> {
   return UnshieldedWallet({
     networkId: NETWORK,
     indexerClientConnection: {
       indexerHttpUrl: INDEXER_HTTP_URL,
-      indexerWsUrl: INDEXER_WS_URL,
+      indexerWsUrl: INDEXER_WS_URL
     },
     txHistoryStorage: new NoOpTransactionHistoryStorage(),
-    forks: DefaultForkSchedule,
+    forks: DefaultForkSchedule
   }).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystoreFor(identity, account)));
 }
 
@@ -102,9 +105,7 @@ type Synced = Extract<BalanceState, { name: 'synced' }>;
  * own map, so a public payment in any token shows on the card rather than
  * reading as nothing.
  */
-export const syncedFromUnshielded = (
-  balances: Readonly<Record<string, bigint>>, asOf: number,
-): Synced => {
+export const syncedFromUnshielded = (balances: Readonly<Record<string, bigint>>, asOf: number): Synced => {
   const { night, others } = splitShielded(balances, NIGHT_UNSHIELDED_RAW);
   return { name: 'synced', night, asOf, others };
 };
@@ -118,7 +119,9 @@ export const syncedFromUnshielded = (
  */
 const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
   let stopped = false;
-  const tell = (state: BalanceState): void => { if (!stopped) onState(state); };
+  const tell = (state: BalanceState): void => {
+    if (!stopped) onState(state);
+  };
 
   tell({ name: 'connecting' });
 
@@ -128,7 +131,9 @@ const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
   void (async (): Promise<void> => {
     wallet = await unshieldedWalletFor(identity, account);
     if (stopped) {
-      void wallet.stop().catch(() => { /* already stopping is fine */ });
+      void wallet.stop().catch(() => {
+        /* already stopping is fine */
+      });
       return;
     }
     subscription = wallet.state.subscribe({
@@ -150,7 +155,7 @@ const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
       },
       error: (e: unknown) => {
         if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
-      },
+      }
     });
     wallet.start().catch((e: unknown) => {
       if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
@@ -160,7 +165,9 @@ const startUnshieldedRaw: BalanceEngine = (identity, account, onState) => {
   return () => {
     stopped = true;
     subscription?.unsubscribe();
-    void wallet?.stop().catch(() => { /* already stopping is fine */ });
+    void wallet?.stop().catch(() => {
+      /* already stopping is fine */
+    });
   };
 };
 

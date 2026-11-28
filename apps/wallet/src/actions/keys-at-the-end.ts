@@ -1,6 +1,10 @@
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { ActEnded, ActStop } from 'midnight-identity/profile/channel';
-import { READER_KEYS_INTENT, readReleasedReadKeys, type ReadKeysReleased } from 'midnight-identity/profile/read-keys-release';
+import {
+  READER_KEYS_INTENT,
+  readReleasedReadKeys,
+  type ReadKeysReleased
+} from 'midnight-identity/profile/read-keys-release';
 import { isPurpose } from '../../../../src/core/sealed-records.js';
 import type { ActRequest } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
@@ -17,7 +21,10 @@ import { readFor } from '../keyring/read-for-the-page.js';
  * afterwards with no other window. Nothing at all when the keys were not opened or cannot be read now.
  */
 export const keysAtTheEnd = (
-  opened: HeldKeyring | null, request: ActRequest, identity: Identity, ownOf: (k: Keyring) => string | null,
+  opened: HeldKeyring | null,
+  request: ActRequest,
+  identity: Identity,
+  ownOf: (k: Keyring) => string | null
 ): { keys?: NonNullable<ActEnded['keys']> } => {
   const h = opened;
   if (h === null || request.person === undefined) return {};
@@ -26,7 +33,8 @@ export const keysAtTheEnd = (
     const own = ownOf(k);
     const served = own === null ? [] : (request.served ?? []).filter((s) => s.accountId === own);
     const read = readFor(identity, { requester: request.requester, person: request.person, served }, k);
-    const viewing = own !== null && Object.prototype.hasOwnProperty.call(read.viewing, own) ? { [own]: read.viewing[own]! } : {};
+    const viewing =
+      own !== null && Object.prototype.hasOwnProperty.call(read.viewing, own) ? { [own]: read.viewing[own]! } : {};
     return { keys: Object.freeze({ ...read, viewing, resealed: null }) };
   } catch {
     /* Saved keys let go or unreadable at the end: the page is told nothing of them, and opens them with its wallet. */
@@ -39,7 +47,11 @@ export const keysAtTheEnd = (
  * in the one closed shape, its kinds of record the company's own purposes (`readReleasedReadKeys`, the reader the page
  * runs too). Anything else a step released is dropped here, before it leaves the wallet.
  */
-export const readKeysAtTheEnd = (intent: string, why: ActStop | null, released: ReadKeysReleased | null): { readKeys?: ReadKeysReleased } => {
+export const readKeysAtTheEnd = (
+  intent: string,
+  why: ActStop | null,
+  released: ReadKeysReleased | null
+): { readKeys?: ReadKeysReleased } => {
   if (why !== null || released === null || intent !== READER_KEYS_INTENT) return {};
   const read = readReleasedReadKeys(released, isPurpose);
   return read === null ? {} : { readKeys: read };

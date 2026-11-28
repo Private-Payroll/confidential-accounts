@@ -25,9 +25,8 @@ export function PasskeyNoAccount(): ReactNode {
         <Moon large />
         <h1>A passkey, but no wallet behind it.</h1>
         <p className="lede">
-          This browser remembers a passkey for this site, but the sealed account it
-          used to open is gone — that happens when site data is partly cleared.
-          Signing in with it would open nothing, so it isn&rsquo;t offered.
+          This browser remembers a passkey for this site, but the sealed account it used to open is gone — that happens
+          when site data is partly cleared. Signing in with it would open nothing, so it isn&rsquo;t offered.
         </p>
       </div>
 
@@ -40,8 +39,8 @@ export function PasskeyNoAccount(): ReactNode {
         <p className="muted small" style={{ marginBottom: 0 }}>
           {setup
             ? 'Enough of the pieces above put the old account back — on this machine or any other.'
-            : 'If you secured the old account, enough of its placed pieces put it back — '
-              + 'on this machine or any other.'}
+            : 'If you secured the old account, enough of its placed pieces put it back — ' +
+              'on this machine or any other.'}
         </p>
       </section>
 
@@ -50,8 +49,7 @@ export function PasskeyNoAccount(): ReactNode {
           <a href={hrefOf('add-device')}>Bring it over from another device</a>
         </h2>
         <p className="muted small" style={{ marginBottom: 0 }}>
-          If another machine still has the wallet, a scan and a two-digit check move
-          it onto this one.
+          If another machine still has the wallet, a scan and a two-digit check move it onto this one.
         </p>
       </section>
 
@@ -79,15 +77,14 @@ function StartFresh({ hasMap }: { readonly hasMap: boolean }): ReactNode {
     <section className="card">
       <h2>Start fresh with a new wallet</h2>
       <p className="muted small">
-        Creates a brand-new wallet with a new passkey and a <strong>new address</strong>.
-        The stale records here are forgotten; the passkey itself can be removed in your
-        device&rsquo;s own settings whenever you like.
+        Creates a brand-new wallet with a new passkey and a <strong>new address</strong>. The stale records here are
+        forgotten; the passkey itself can be removed in your device&rsquo;s own settings whenever you like.
       </p>
       {hasMap && !tookTheMap && (
         <>
           <p className="warn-text small">
-            Copy or download the piece list above first — this browser is the only
-            place it is written, and starting fresh erases it.
+            Copy or download the piece list above first — this browser is the only place it is written, and starting
+            fresh erases it.
           </p>
           <button type="button" onClick={() => setTookTheMap(true)}>
             I have taken a copy of the list
@@ -102,19 +99,17 @@ function StartFresh({ hasMap }: { readonly hasMap: boolean }): ReactNode {
       {tookTheMap && confirming && (
         <>
           <p className="warn-text small">
-            The new wallet is a different account with a different address — money sent
-            to the old address stays with the old account. The old account itself is
-            not touched: if its pieces are placed, they still recover it, anywhere.
+            The new wallet is a different account with a different address — money sent to the old address stays with
+            the old account. The old account itself is not touched: if its pieces are placed, they still recover it,
+            anywhere.
           </p>
-          <WalletNameField
-            label="A name for the new wallet (optional)"
-            value={walletName}
-            onChange={setWalletName}
-          />
+          <WalletNameField label="A name for the new wallet (optional)" value={walletName} onChange={setWalletName} />
           <button
             type="button"
             className="danger"
-            onClick={() => { void startFresh(walletName); }}
+            onClick={() => {
+              void startFresh(walletName);
+            }}
             disabled={busy !== null}
           >
             Create a new wallet

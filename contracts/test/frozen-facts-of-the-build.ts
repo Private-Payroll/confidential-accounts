@@ -11,7 +11,12 @@ import { join } from 'node:path';
 import { CONTRACT_TABLE } from '../../scripts/contract-sources.mjs';
 import { addressFactsOf } from './facts-at-an-address.js';
 import type {
-  CompiledJson, ContractFacts, DerivationFact, LedgerFieldFact, RecordedContract, VersionFacts,
+  CompiledJson,
+  ContractFacts,
+  DerivationFact,
+  LedgerFieldFact,
+  RecordedContract,
+  VersionFacts
 } from './frozen-facts.js';
 import { registryFactsInTheWallet } from './registry-facts-in-the-wallet.js';
 import { DEVICE_STATE, initialStateOf, PURE } from './the-compiled-contracts.js';
@@ -39,8 +44,15 @@ const compiledFile = (contract: RecordedContract, file: string): string =>
 
 /** A contract's `contract-info.json`, every `maxval` kept as its digits, which a JSON number would round. */
 function infoOf(contract: RecordedContract): CompiledInfo {
-  const info: CompiledInfo = JSON.parse(compiledFile(contract, 'compiler/contract-info.json').replace(/"maxval": (\d+)/gu, '"maxval": "$1"'));
-  if (!Array.isArray(info.circuits) || !Array.isArray(info.ledger) || !Array.isArray(info.witnesses) || !Array.isArray(info.contracts)) {
+  const info: CompiledInfo = JSON.parse(
+    compiledFile(contract, 'compiler/contract-info.json').replace(/"maxval": (\d+)/gu, '"maxval": "$1"')
+  );
+  if (
+    !Array.isArray(info.circuits) ||
+    !Array.isArray(info.ledger) ||
+    !Array.isArray(info.witnesses) ||
+    !Array.isArray(info.contracts)
+  ) {
     throw new Error(`the ${contract}'s contract-info.json is not laid out as a compiled contract's`);
   }
   return info;
@@ -64,20 +76,48 @@ function runOn(fn: unknown, inputs: readonly JsonValue[], name: string): Derivat
 }
 
 /** Every pure circuit of a contract, run on each input set: the recorded inputs when given, or the fixed ones. */
-function derivationsOf(contract: RecordedContract, info: CompiledInfo, recorded?: ContractFacts): Record<string, DerivationFact[]> {
-  return Object.fromEntries(info.circuits.filter((c) => c.pure).map((c) => [c.name, INPUT_SETS.map((set, i) => {
-    const inputs = recorded?.derivations[c.name]?.[i]?.inputs ?? fixedInputsOf(c.arguments.map((a) => a.type), set);
-    return runOn(Reflect.get(PURE[contract], c.name), inputs, c.name);
-  })]));
+function derivationsOf(
+  contract: RecordedContract,
+  info: CompiledInfo,
+  recorded?: ContractFacts
+): Record<string, DerivationFact[]> {
+  return Object.fromEntries(
+    info.circuits
+      .filter((c) => c.pure)
+      .map((c) => [
+        c.name,
+        INPUT_SETS.map((set, i) => {
+          const inputs =
+            recorded?.derivations[c.name]?.[i]?.inputs ??
+            fixedInputsOf(
+              c.arguments.map((a) => a.type),
+              set
+            );
+          return runOn(Reflect.get(PURE[contract], c.name), inputs, c.name);
+        })
+      ])
+  );
 }
 
 /** The kind of one value a device keeps: bytes, a number, a flag, nothing, a list or a record. */
 const kindOf = (v: unknown): string =>
-  (v instanceof Uint8Array ? 'bytes' : v === null ? 'nothing' : Array.isArray(v) ? 'list' : typeof v === 'object' ? 'record' : typeof v);
+  v instanceof Uint8Array
+    ? 'bytes'
+    : v === null
+      ? 'nothing'
+      : Array.isArray(v)
+        ? 'list'
+        : typeof v === 'object'
+          ? 'record'
+          : typeof v;
 
 /** What a device keeps for a contract, by name, sorted. */
 const deviceOf = (contract: RecordedContract): Record<string, string> =>
-  Object.fromEntries(Object.entries(DEVICE_STATE[contract]).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, kindOf(v)]));
+  Object.fromEntries(
+    Object.entries(DEVICE_STATE[contract])
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => [k, kindOf(v)])
+  );
 
 /** Every fact of one contract. */
 async function contractFactsOf(contract: RecordedContract, recorded?: ContractFacts): Promise<ContractFacts> {
@@ -88,10 +128,14 @@ async function contractFactsOf(contract: RecordedContract, recorded?: ContractFa
     fields,
     slots: await slotsOf(contract),
     derivations: derivationsOf(contract, info, recorded),
-    writes: writesOfCircuits(compiledFile(contract, 'contract/index.js'), proving, fields.map((f) => f.name)),
+    writes: writesOfCircuits(
+      compiledFile(contract, 'contract/index.js'),
+      proving,
+      fields.map((f) => f.name)
+    ),
     witnesses: info.witnesses,
     calls: info.contracts,
-    device: deviceOf(contract),
+    device: deviceOf(contract)
   };
 }
 
@@ -105,7 +149,7 @@ export async function factsOfTheBuild(recorded?: VersionFacts): Promise<VersionF
   return {
     account: await contractFactsOf('account', recorded?.account),
     vault: await contractFactsOf('vault', recorded?.vault),
-    registry: { ...await contractFactsOf('registry', recorded?.registry), inTheWallet },
-    atAnAddress: await addressFactsOf(recorded?.atAnAddress),
+    registry: { ...(await contractFactsOf('registry', recorded?.registry)), inTheWallet },
+    atAnAddress: await addressFactsOf(recorded?.atAnAddress)
   };
 }

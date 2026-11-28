@@ -19,13 +19,14 @@ export { ON_CHAIN };
 export type RetiredVaultOnChain = MoneyOnChain;
 
 /** Whether the chain shows the vault holding nothing at all, on both sides. */
-export const emptyOnChain = (r: RetiredVaultOnChain): boolean => r.notes === ON_CHAIN.none && r.public === ON_CHAIN.none;
+export const emptyOnChain = (r: RetiredVaultOnChain): boolean =>
+  r.notes === ON_CHAIN.none && r.public === ON_CHAIN.none;
 
 type CompanyDoors = Pick<ChainHereDoors, 'builder' | 'indexer'>;
 
 /** The company's door to the chain as its view reads it, or null when the company has no account there or the wallet named no indexer. */
 async function companyDoorsIn(view: PageView): Promise<CompanyDoors | null> {
-  if (await onTheChainIn(view) === null) return null;
+  if ((await onTheChainIn(view)) === null) return null;
   const indexer = await walletIndexerIn(view);
   if (indexer === null) return null;
   return { builder: await theVaultBuilder(), indexer: async () => indexer };

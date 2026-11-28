@@ -3,10 +3,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { newSecret } from 'midnight-identity';
 import {
-  TTL_SETTLE_MARGIN_MS, dismissPendingSend, duplicateUnresolved, loadPendingSends,
-  answerFromTransactions, isKnownStatus, observedPendingGuard, outcomeOfAnswer,
-  pendingGuardFor, resolvePendingSends,
-  settlePendingSend, throwawayPendingGuard, unresolvedPendingSends, writePendingSend,
+  TTL_SETTLE_MARGIN_MS,
+  dismissPendingSend,
+  duplicateUnresolved,
+  loadPendingSends,
+  answerFromTransactions,
+  isKnownStatus,
+  observedPendingGuard,
+  outcomeOfAnswer,
+  pendingGuardFor,
+  resolvePendingSends,
+  settlePendingSend,
+  throwawayPendingGuard,
+  unresolvedPendingSends,
+  writePendingSend
 } from './pending.js';
 import type { PendingDraft, PendingOutcome, PendingSend, ResolutionDoors } from './pending.js';
 
@@ -31,12 +41,14 @@ const draft = (over: Partial<PendingDraft> = {}): PendingDraft => ({
   stars: 25_000_000n,
   feeSpecks: 681_461_485_385_268n,
   ttlAt: Date.now() + 60 * 60 * 1000,
-  ...over,
+  ...over
 });
 
-beforeEach(() => { localStorage.clear(); });
+beforeEach(() => {
+  localStorage.clear();
+});
 
-describe('the record survives, and it is the account\'s own', () => {
+describe("the record survives, and it is the account's own", () => {
   it('written, read back, exact — bigints and all', () => {
     const secret = newSecret();
     writePendingSend(secret, draft());
@@ -49,7 +61,7 @@ describe('the record survives, and it is the account\'s own', () => {
     expect(record.ttlAt).toBeGreaterThan(Date.now());
   });
 
-  it('another account\'s pending payment is never shown here', () => {
+  it("another account's pending payment is never shown here", () => {
     const mine = newSecret();
     const theirs = newSecret();
     writePendingSend(theirs, draft());
@@ -64,8 +76,7 @@ describe('the record survives, and it is the account\'s own', () => {
     const secret = newSecret();
     writePendingSend(secret, draft());
     const raw = JSON.parse(localStorage.getItem('midnight-identity:pending-sends') ?? '[]') as unknown[];
-    localStorage.setItem('midnight-identity:pending-sends',
-      JSON.stringify([...raw, { half: 'a record' }, 42]));
+    localStorage.setItem('midnight-identity:pending-sends', JSON.stringify([...raw, { half: 'a record' }, 42]));
     expect(loadPendingSends(secret).length).toBe(1);
   });
 
@@ -92,7 +103,7 @@ describe('the double-send question', () => {
     expect(duplicateUnresolved(secret, 'mn_addr_stagenet1recipient', 25_000_000n)).toBe(false);
   });
 
-  it('the rehearsal\'s throwaway guard behaves the same and touches no storage', () => {
+  it("the rehearsal's throwaway guard behaves the same and touches no storage", () => {
     const guard = throwawayPendingGuard();
     guard.write({ ...draft(), stars: 1n });
     expect(guard.duplicateUnresolved('mn_addr_stagenet1recipient', 1n)).toBe(true);
@@ -104,24 +115,21 @@ describe('the double-send question', () => {
 
 describe('what one chain answer means — shared by the engine and the home screen', () => {
   const record = { ttlAt: 1_000_000 };
-  it('found SUCCESS is sent; found anything else is failed, in the chain\'s word', () => {
+  it("found SUCCESS is sent; found anything else is failed, in the chain's word", () => {
     expect(outcomeOfAnswer(record, { found: true, status: 'SUCCESS' }, 0)?.name).toBe('sent');
     const failed = outcomeOfAnswer(record, { found: true, status: 'FAILURE' }, 0);
     expect(failed?.name).toBe('failed');
     expect(failed?.name === 'failed' && failed.reason).toMatch(/FAILURE/u);
-    expect(outcomeOfAnswer(record, { found: true, status: 'PARTIAL_SUCCESS' }, 0)?.name)
-      .toBe('failed');
+    expect(outcomeOfAnswer(record, { found: true, status: 'PARTIAL_SUCCESS' }, 0)?.name).toBe('failed');
   });
 
   it('not found BEFORE the TTL decides nothing — the middle keeps being watched', () => {
     expect(outcomeOfAnswer(record, { found: false }, 999_999)).toBeNull();
-    expect(outcomeOfAnswer(record, { found: false },
-      1_000_000 + TTL_SETTLE_MARGIN_MS)).toBeNull();
+    expect(outcomeOfAnswer(record, { found: false }, 1_000_000 + TTL_SETTLE_MARGIN_MS)).toBeNull();
   });
 
   it('not found PAST the TTL (plus margin) settles as failed — the middle must end', () => {
-    const outcome = outcomeOfAnswer(record, { found: false },
-      1_000_001 + TTL_SETTLE_MARGIN_MS);
+    const outcome = outcomeOfAnswer(record, { found: false }, 1_000_001 + TTL_SETTLE_MARGIN_MS);
     expect(outcome?.name).toBe('failed');
     expect(outcome?.name === 'failed' && outcome.reason).toMatch(/can no longer be included/u);
   });
@@ -134,8 +142,7 @@ describe('what one chain answer means — shared by the engine and the home scre
      * defect, but the words it settles with may not assert a fact about the
      * chain that nothing here established. Removing this pin is how the old
      * sentence comes back. */
-    const outcome = outcomeOfAnswer(record, { found: false },
-      1_000_001 + TTL_SETTLE_MARGIN_MS);
+    const outcome = outcomeOfAnswer(record, { found: false }, 1_000_001 + TTL_SETTLE_MARGIN_MS);
     const reason = outcome?.name === 'failed' ? outcome.reason : '';
     expect(reason).not.toMatch(/[Nn]othing moved/u);
     expect(reason).not.toMatch(/safe to send/u);
@@ -154,14 +161,16 @@ describe('resolution runs by itself and believes only answers', () => {
   it('settles what the chain confirms, leaves the silent one alone', async () => {
     const secret = newSecret();
     writePendingSend(secret, draft({ identifiers: ['found1'] }));
-    writePendingSend(secret, draft({
-      identifiers: ['quiet1'], recipientBech32: 'mn_addr_stagenet1other',
-    }));
+    writePendingSend(
+      secret,
+      draft({
+        identifiers: ['quiet1'],
+        recipientBech32: 'mn_addr_stagenet1other'
+      })
+    );
     const doors: ResolutionDoors = {
-      status: async (id) => (id === 'found1'
-        ? { found: true, status: 'SUCCESS' }
-        : { found: false }),
-      now: Date.now,
+      status: async (id) => (id === 'found1' ? { found: true, status: 'SUCCESS' } : { found: false }),
+      now: Date.now
     };
     const settled = await resolvePendingSends(secret, doors);
     expect(settled.map((r) => r.key)).toEqual(['found1']);
@@ -172,8 +181,10 @@ describe('resolution runs by itself and believes only answers', () => {
     const secret = newSecret();
     writePendingSend(secret, draft({ ttlAt: Date.now() - 24 * 60 * 60 * 1000 }));
     const settled = await resolvePendingSends(secret, {
-      status: async () => { throw new Error('the indexer is down'); },
-      now: Date.now,
+      status: async () => {
+        throw new Error('the indexer is down');
+      },
+      now: Date.now
     });
     expect(settled).toEqual([]);
     expect(unresolvedPendingSends(secret).length).toBe(1);
@@ -187,7 +198,7 @@ describe('resolution runs by itself and believes only answers', () => {
         if (id === 'dead1') throw new Error('no answer');
         return { found: true, status: 'SUCCESS' };
       },
-      now: Date.now,
+      now: Date.now
     });
     expect(settled[0]?.outcome?.name).toBe('sent');
   });
@@ -196,9 +207,12 @@ describe('resolution runs by itself and believes only answers', () => {
     const secret = newSecret();
     const guard = pendingGuardFor(secret, 3);
     guard.write({
-      identifiers: ['gg77'], kind: 'unshielded',
+      identifiers: ['gg77'],
+      kind: 'unshielded',
       recipientBech32: 'mn_addr_stagenet1recipient',
-      stars: 5n, feeSpecks: 1n, ttlAt: Date.now() + 1000,
+      stars: 5n,
+      feeSpecks: 1n,
+      ttlAt: Date.now() + 1000
     });
     expect(loadPendingSends(secret)[0]?.account).toBe(3);
     guard.settle('gg77', { name: 'failed', at: Date.now(), reason: 'test' });
@@ -225,11 +239,16 @@ describe('the watched guard reads the record back off disk', () => {
     const wrote: PendingSend[] = [];
     const settled: { key: string; outcome: PendingOutcome }[] = [];
     return {
-      wrote, settled,
+      wrote,
+      settled,
       observer: {
-        wrote: (r: PendingSend) => { wrote.push(r); },
-        settled: (key: string, outcome: PendingOutcome) => { settled.push({ key, outcome }); },
-      },
+        wrote: (r: PendingSend) => {
+          wrote.push(r);
+        },
+        settled: (key: string, outcome: PendingOutcome) => {
+          settled.push({ key, outcome });
+        }
+      }
     };
   };
 
@@ -250,7 +269,7 @@ describe('the watched guard reads the record back off disk', () => {
     expect(spy.wrote[0]?.outcome).toBeNull();
   });
 
-  it('THE PIN, sharpened: the STORE\'s key is reported, not the draft\'s', () => {
+  it("THE PIN, sharpened: the STORE's key is reported, not the draft's", () => {
     /* A draft with no identifiers is where the two diverge: the store keys
      * the record by a constructed fallback, and a report built from the
      * draft would carry an empty string — a key nothing can be found under
@@ -288,7 +307,9 @@ describe('the watched guard reads the record back off disk', () => {
      * `write` returning a value cannot detect. Quota, a dropped field, a
      * fingerprint that does not match on read-back: all look like this. */
     const realSetItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function noop() { /* swallowed */ };
+    Storage.prototype.setItem = function noop() {
+      /* swallowed */
+    };
     try {
       expect(() => guard.write(draft())).toThrow(/NOT on disk/u);
     } finally {
@@ -322,7 +343,7 @@ describe('the watched guard reads the record back off disk', () => {
     expect(guard.duplicateUnresolved('mn_addr_stagenet1recipient', 25_000_000n)).toBe(false);
   });
 
-  it('the record is the ACCOUNT\'s own — another account cannot read it back', () => {
+  it("the record is the ACCOUNT's own — another account cannot read it back", () => {
     const secret = newSecret();
     const other = newSecret();
     observedPendingGuard(secret, 0, observerSpy().observer).write(draft());
@@ -357,8 +378,9 @@ describe('an answer this wallet cannot read resolves nothing', () => {
     /* The TTL clause is only reachable through `found: false`. An answer the
      * wallet cannot read must not fall through to it and become "failed"
      * once enough time has passed — that would be the same guess, delayed. */
-    expect(outcomeOfAnswer(ttl, { found: true, status: '%future added value' },
-      2_000_000 + TTL_SETTLE_MARGIN_MS)).toBeNull();
+    expect(
+      outcomeOfAnswer(ttl, { found: true, status: '%future added value' }, 2_000_000 + TTL_SETTLE_MARGIN_MS)
+    ).toBeNull();
   });
 
   it('the three statuses this wallet HAS heard of still resolve', () => {
@@ -381,7 +403,10 @@ describe('which part failed is READ, not guessed', () => {
     const reason = reasonOf({
       found: true,
       status: 'PARTIAL_SUCCESS',
-      segments: [{ id: 0, success: true }, { id: 1, success: false }],
+      segments: [
+        { id: 0, success: true },
+        { id: 1, success: false }
+      ]
     });
     expect(reason).toContain('part 1 failed');
     expect(reason).toContain('part 0 succeeded');
@@ -402,7 +427,9 @@ describe('which part failed is READ, not guessed', () => {
 
   it('the same rule lives here too: this failure does not claim the money is safe', () => {
     const reason = reasonOf({
-      found: true, status: 'FAILURE', segments: [{ id: 0, success: false }],
+      found: true,
+      status: 'FAILURE',
+      segments: [{ id: 0, success: false }]
     });
     expect(reason).not.toMatch(/[Nn]othing moved/u);
     expect(reason).not.toMatch(/safe to send/u);
@@ -413,17 +440,23 @@ describe('which part failed is READ, not guessed', () => {
     const reason = reasonOf({
       found: true,
       status: 'PARTIAL_SUCCESS',
-      segments: [{ id: 3, success: false }, { id: 7, success: false }],
+      segments: [
+        { id: 3, success: false },
+        { id: 7, success: false }
+      ]
     });
     expect(reason).toContain('part 3, 7 failed');
   });
 });
 
 describe('the segments are read OFF THE WIRE, not just handled once inside', () => {
-  const regular = (status: string, segments: unknown) => ([{
-    __typename: 'RegularTransaction',
-    transactionResult: { status, segments },
-  }] as Parameters<typeof answerFromTransactions>[0]);
+  const regular = (status: string, segments: unknown) =>
+    [
+      {
+        __typename: 'RegularTransaction',
+        transactionResult: { status, segments }
+      }
+    ] as Parameters<typeof answerFromTransactions>[0];
 
   it('THE PIN: a segment list on the wire reaches the answer', () => {
     /* The mutation this exists for: `segments: undefined` in the mapping.
@@ -432,10 +465,15 @@ describe('the segments are read OFF THE WIRE, not just handled once inside', () 
      * pin at all, which is how the field came to be dropped in the first
      * place. */
     const answer = answerFromTransactions(
-      regular('PARTIAL_SUCCESS', [{ id: 0, success: true }, { id: 1, success: false }]));
+      regular('PARTIAL_SUCCESS', [
+        { id: 0, success: true },
+        { id: 1, success: false }
+      ])
+    );
     expect(answer.found).toBe(true);
     expect(answer.found === true && answer.segments).toEqual([
-      { id: 0, success: true }, { id: 1, success: false },
+      { id: 0, success: true },
+      { id: 1, success: false }
     ]);
   });
 

@@ -58,10 +58,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": [
-    "apps/wallet/**",
-    "src/**/*.test.ts",
-    "src/**/*.test.tsx",
-    "packages/identity/src/test-setup.ts"
-  ]
+  "exclude": ["apps/wallet/**", "src/**/*.test.ts", "src/**/*.test.tsx", "packages/identity/src/test-setup.ts"]
 }

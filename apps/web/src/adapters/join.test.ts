@@ -1,20 +1,35 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvitationRefused } from 'vaults-web-shared/invitation-on-device.js';
-import { anInvitation, ACCOUNT, COMPANY_NAME, LABEL, offerAnswer, PRIVATE_ADDRESS, PUBLIC_ADDRESS, RECORD, refusedAnswer, type Invitation } from './join-offers.test-support.js';
+import {
+  anInvitation,
+  ACCOUNT,
+  COMPANY_NAME,
+  LABEL,
+  offerAnswer,
+  PRIVATE_ADDRESS,
+  PUBLIC_ADDRESS,
+  RECORD,
+  refusedAnswer,
+  type Invitation
+} from './join-offers.test-support.js';
 
 const wallet = vi.hoisted(() => ({
-  origin: 'https://wallet.example', signedIn: true,
-  act: vi.fn(), joinByCode: vi.fn(),
+  origin: 'https://wallet.example',
+  signedIn: true,
+  act: vi.fn(),
+  joinByCode: vi.fn()
 }));
 vi.mock('./session.js', async (real) => ({
   ...(await real<typeof import('./session.js')>()),
-  get ACCOUNT_ORIGIN() { return wallet.origin; },
+  get ACCOUNT_ORIGIN() {
+    return wallet.origin;
+  }
 }));
 vi.mock('./keyring-person.js', () => ({ keyringFor: async () => wallet.signedIn }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  actOnACompanyInTheWallet: wallet.act,
+  actOnACompanyInTheWallet: wallet.act
 }));
 vi.mock('vaults-web-shared/join-in-the-wallet.js', () => ({ joinByCodeInTheWallet: wallet.joinByCode }));
 
@@ -24,7 +39,13 @@ type Opening = Awaited<ReturnType<typeof openTheInvitation>>;
 const asked: string[] = [];
 const serve = (answer: () => Response | Promise<Response>): void => {
   asked.length = 0;
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => { asked.push(path); return answer(); }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (path: string) => {
+      asked.push(path);
+      return answer();
+    })
+  );
 };
 const open = (i: Invitation, id = i.id): Promise<Opening> => openTheInvitation(id, i.token, null);
 const offeredOf = async (i: Invitation) => {
@@ -34,17 +55,35 @@ const offeredOf = async (i: Invitation) => {
   return o.offer;
 };
 
-beforeEach(() => { wallet.origin = 'https://wallet.example'; wallet.signedIn = true; wallet.act.mockReset(); wallet.joinByCode.mockReset(); });
-afterEach(() => { vi.unstubAllGlobals(); });
+beforeEach(() => {
+  wallet.origin = 'https://wallet.example';
+  wallet.signedIn = true;
+  wallet.act.mockReset();
+  wallet.joinByCode.mockReset();
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('the join page opens the invitation its link carried', () => {
   /* RED WHEN: an employee invited by link is not offered the wallet's code way, or its facts are not read off the signed offer, or the read names the token. */
-  it('offers an employee invited by link the code way, with the offer\'s facts', async () => {
+  it("offers an employee invited by link the code way, with the offer's facts", async () => {
     const i = anInvitation('employee');
     const offer = await offeredOf(i);
     expect(offer).toMatchObject({
-      kind: 'employee', way: WAY.code, name: 'Priya Rao', title: 'Engineer', classification: 'full-time', startDate: '2026-10-01', endDate: '2027-03-31',
-      address: null, companyName: COMPANY_NAME, record: RECORD, label: String(LABEL), account: ACCOUNT, role: null,
+      kind: 'employee',
+      way: WAY.code,
+      name: 'Priya Rao',
+      title: 'Engineer',
+      classification: 'full-time',
+      startDate: '2026-10-01',
+      endDate: '2027-03-31',
+      address: null,
+      companyName: COMPANY_NAME,
+      record: RECORD,
+      label: String(LABEL),
+      account: ACCOUNT,
+      role: null
     });
     expect(asked).toEqual([`/api/invites/${i.id}/offer`]);
     expect(asked.join()).not.toContain(i.token);
@@ -59,23 +98,39 @@ describe('the join page opens the invitation its link carried', () => {
   /* RED WHEN: a vendor invited at a public address is given the code way, whose fingerprint a public address does not have. */
   it('offers a vendor invited at a public address the claim way', async () => {
     const offer = await offeredOf(anInvitation('vendor', { address: PUBLIC_ADDRESS }));
-    expect(offer).toMatchObject({ kind: 'vendor', way: WAY.claim, address: PUBLIC_ADDRESS, title: null, classification: null });
+    expect(offer).toMatchObject({
+      kind: 'vendor',
+      way: WAY.claim,
+      address: PUBLIC_ADDRESS,
+      title: null,
+      classification: null
+    });
   });
 
   /* RED WHEN: a signer invited at an address is not offered the seat way, or its role is lost. */
   it('offers a signer the seat way, with the role', async () => {
-    expect(await offeredOf(anInvitation('signer'))).toMatchObject({ kind: 'signer', way: WAY.seat, role: 'approver', name: 'Dee' });
+    expect(await offeredOf(anInvitation('signer'))).toMatchObject({
+      kind: 'signer',
+      way: WAY.seat,
+      role: 'approver',
+      name: 'Dee'
+    });
   });
 
   /* RED WHEN: a re-issued invitation for a seat the person holds is closed, or offered as a new seat to take. */
   it('offers a re-issued seat the way that keeps it for the seat the person holds, with the role', async () => {
-    expect(await offeredOf(anInvitation('reissue'))).toMatchObject({ kind: 'signer', way: WAY.reissue, role: 'approver', name: 'Dee' });
+    expect(await offeredOf(anInvitation('reissue'))).toMatchObject({
+      kind: 'signer',
+      way: WAY.reissue,
+      role: 'approver',
+      name: 'Dee'
+    });
   });
 
   /* RED WHEN: an invitation this page cannot take (a super admin's, a signer's seat not made at an address) is offered. */
   it.each([
-    ['a super admin\'s', anInvitation('super-admin'), CLOSED.superAdmin],
-    ['a signer\'s seat not made at an address', anInvitation('signer', { seatByLink: true }), CLOSED.seatByAddressOnly],
+    ["a super admin's", anInvitation('super-admin'), CLOSED.superAdmin],
+    ["a signer's seat not made at an address", anInvitation('signer', { seatByLink: true }), CLOSED.seatByAddressOnly]
   ] as const)('does not offer %s', async (_what, i, why) => {
     serve(() => offerAnswer(i));
     expect(await open(i)).toEqual({ of: 'closed', why, expiresAt: null });
@@ -83,8 +138,12 @@ describe('the join page opens the invitation its link carried', () => {
 
   /* RED WHEN: a closed invitation's refusal is shown as another reason, or an unreachable service as a closed invitation. */
   it.each([
-    [404, 'not-found', CLOSED.notFound], [410, 'withdrawn', CLOSED.withdrawn], [410, 'expired', CLOSED.expired], [410, 'used', CLOSED.used],
-    [403, 'not-accepted', CLOSED.notAccepted], [503, 'busy', CLOSED.unreachable],
+    [404, 'not-found', CLOSED.notFound],
+    [410, 'withdrawn', CLOSED.withdrawn],
+    [410, 'expired', CLOSED.expired],
+    [410, 'used', CLOSED.used],
+    [403, 'not-accepted', CLOSED.notAccepted],
+    [503, 'busy', CLOSED.unreachable]
   ] as const)('says why the service closed it: %s %s', async (status, refused, why) => {
     const i = anInvitation('employee');
     serve(() => refusedAnswer(status, refused));
@@ -94,12 +153,14 @@ describe('the join page opens the invitation its link carried', () => {
   /* RED WHEN: a service that cannot be reached is taken for a closed invitation, or throws out of the page. */
   it('says the service is unreachable when the read fails', async () => {
     const i = anInvitation('employee');
-    serve(() => { throw new TypeError('network'); });
+    serve(() => {
+      throw new TypeError('network');
+    });
     expect(await open(i)).toEqual({ of: 'closed', why: CLOSED.unreachable, expiresAt: null });
   });
 
   /* RED WHEN: an offer already past its time is opened, is shown as not opened, or carries the device's raw English instead of the page's expired words and its moment. */
-  it('closes an expired offer as expired, with the moment it expired and none of the device\'s English', async () => {
+  it("closes an expired offer as expired, with the moment it expired and none of the device's English", async () => {
     const i = anInvitation('employee', { expiresInMs: -1000 });
     serve(() => offerAnswer(i));
     const o = await open(i);
@@ -108,9 +169,11 @@ describe('the join page opens the invitation its link carried', () => {
   });
 
   /* RED WHEN: another refusal of the device (the service sent no sealed offer) is shown with the device's words, or as expired. */
-  it('closes any other device refusal as not opened, with no words of the device\'s', async () => {
+  it("closes any other device refusal as not opened, with no words of the device's", async () => {
     const i = anInvitation('employee');
-    serve(() => new Response(JSON.stringify({ expiresAt: '2030-01-01T00:00:00.000Z', kind: 'employee' }), { status: 200 }));
+    serve(
+      () => new Response(JSON.stringify({ expiresAt: '2030-01-01T00:00:00.000Z', kind: 'employee' }), { status: 200 })
+    );
     expect(await open(i)).toEqual({ of: 'closed', why: CLOSED.notOpened, expiresAt: null });
   });
 
@@ -123,14 +186,18 @@ describe('the join page opens the invitation its link carried', () => {
   });
 
   /* RED WHEN: a refusal of the service stops carrying its code and the page's words. */
-  it('keeps the service\'s refusal on the error the device throws', () => {
+  it("keeps the service's refusal on the error the device throws", () => {
     expect(new InvitationRefused(410, 'used', 'said').refused).toBe('used');
   });
 });
 
 describe('the wallet act the page runs', () => {
-  const FIELDS = (offer: { record: string; label: string; account: string; token: string }) =>
-    ({ record: offer.record, company: offer.label, account: offer.account, token: offer.token });
+  const FIELDS = (offer: { record: string; label: string; account: string; token: string }) => ({
+    record: offer.record,
+    company: offer.label,
+    account: offer.account,
+    token: offer.token
+  });
 
   /* RED WHEN: a signer's join asks the wallet for anything but seat-invited with the four fields of the offer, or is not told done. */
   it('runs seat-invited for a signer, with the company and the token only', async () => {
@@ -156,7 +223,11 @@ describe('the wallet act the page runs', () => {
     const offer = await offeredOf(anInvitation('vendor', { address: PUBLIC_ADDRESS }));
     wallet.act.mockResolvedValue({ of: 'done', steps: 1, relayed: 1 });
     expect(await joinTheCompany('u1', offer)).toEqual({ of: 'done' });
-    expect(wallet.act.mock.calls[0]![0]).toEqual({ name: 'claim-by-address', ...FIELDS(offer), address: PUBLIC_ADDRESS });
+    expect(wallet.act.mock.calls[0]![0]).toEqual({
+      name: 'claim-by-address',
+      ...FIELDS(offer),
+      address: PUBLIC_ADDRESS
+    });
     expect(wallet.joinByCode).not.toHaveBeenCalled();
   });
 
@@ -164,7 +235,10 @@ describe('the wallet act the page runs', () => {
   it('hands each step to the page as the wallet reports it', async () => {
     const offer = await offeredOf(anInvitation('signer'));
     const seen: unknown[] = [];
-    wallet.act.mockImplementation(async (_i: unknown, _o: unknown, opts: { onStep: (at: unknown) => void }) => { opts.onStep({ step: 1, steps: 2 }); return { of: 'done', steps: 2, relayed: 0 }; });
+    wallet.act.mockImplementation(async (_i: unknown, _o: unknown, opts: { onStep: (at: unknown) => void }) => {
+      opts.onStep({ step: 1, steps: 2 });
+      return { of: 'done', steps: 2, relayed: 0 };
+    });
     await joinTheCompany('u1', offer, (at) => seen.push(at));
     expect(seen).toEqual([{ step: 1, steps: 2 }]);
   });
@@ -172,21 +246,53 @@ describe('the wallet act the page runs', () => {
   /* RED WHEN: a stop of the wallet is told as done, or loses where it stopped or the reason it ended with. */
   it('tells a stop with its step and the reason the wallet ended with', async () => {
     const offer = await offeredOf(anInvitation('signer'));
-    wallet.act.mockResolvedValue({ of: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.seat-invited.why.already-seated' });
-    expect(await joinTheCompany('u1', offer)).toEqual({ of: 'stopped', why: 'already-seated', step: 1, steps: 2, handedOver: false });
+    wallet.act.mockResolvedValue({
+      of: 'stopped',
+      step: 1,
+      steps: 2,
+      relayed: 0,
+      unconfirmed: 0,
+      why: 'check-failed',
+      refused: 'act.seat-invited.why.already-seated'
+    });
+    expect(await joinTheCompany('u1', offer)).toEqual({
+      of: 'stopped',
+      why: 'already-seated',
+      step: 1,
+      steps: 2,
+      handedOver: false
+    });
   });
 
   /* RED WHEN: a stop after transactions the wallet handed the page (sent, or not confirmed) is told as one that handed none, or the reverse. */
   it('says a stop handed transactions over when any were sent or left unconfirmed, and none when none were', async () => {
     const offer = await offeredOf(anInvitation('signer'));
-    for (const [relayed, unconfirmed, handedOver] of [[0, 0, false], [1, 0, true], [0, 1, true]] as const) {
-      wallet.act.mockResolvedValue({ of: 'stopped', step: 3, steps: 4, relayed, unconfirmed, why: 'relay-refused', refused: 'act.seat-invited.why.not-sent' });
-      expect(await joinTheCompany('u1', offer), `${relayed}/${unconfirmed}`).toEqual({ of: 'stopped', why: 'not-sent', step: 3, steps: 4, handedOver });
+    for (const [relayed, unconfirmed, handedOver] of [
+      [0, 0, false],
+      [1, 0, true],
+      [0, 1, true]
+    ] as const) {
+      wallet.act.mockResolvedValue({
+        of: 'stopped',
+        step: 3,
+        steps: 4,
+        relayed,
+        unconfirmed,
+        why: 'relay-refused',
+        refused: 'act.seat-invited.why.not-sent'
+      });
+      expect(await joinTheCompany('u1', offer), `${relayed}/${unconfirmed}`).toEqual({
+        of: 'stopped',
+        why: 'not-sent',
+        step: 3,
+        steps: 4,
+        handedOver
+      });
     }
   });
 
   /* RED WHEN: a reason outside the page's list is passed on as its own words, or a key of another shape is read. */
-  it('reads only keys of the wallet\'s shape, and the page\'s own list', () => {
+  it("reads only keys of the wallet's shape, and the page's own list", () => {
     expect(stoppedAs('act.join-by-code.why.used-by-this-wallet')).toBe('used-by-this-wallet');
     expect(stoppedAs('act.seat-invited.why.something-new')).toBe('other');
     expect(stoppedAs('already-seated')).toBe('other');

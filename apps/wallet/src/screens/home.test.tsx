@@ -38,7 +38,7 @@ const TICK = /Account secured/;
 const PLACEMENTS: readonly Placement[] = [
   { label: 'My Google account', holder: 'google:me' },
   { label: 'Printed card', holder: 'paper' },
-  { label: 'Old laptop', holder: 'device:old' },
+  { label: 'Old laptop', holder: 'device:old' }
 ];
 
 const VERIFICATION = { 'google:me': 'never', paper: null, 'device:old': 'never' } as const;
@@ -77,7 +77,9 @@ describe('the home screen and the standing notice — §7.7', () => {
   it('shows the tick for a record proved against the unlocked secret', async () => {
     const secret = newSecret();
     await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), {
-      'google:me': Date.now(), paper: null, 'device:old': 'never',
+      'google:me': Date.now(),
+      paper: null,
+      'device:old': 'never'
     });
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
     expect(screen.getByText(TICK)).toBeTruthy();
@@ -91,9 +93,15 @@ describe('the home screen and the standing notice — §7.7', () => {
 
   it('renders the notice — not a blank page — over a garbage record', () => {
     const secret = newSecret();
-    localStorage.setItem('midnight-identity:secured', JSON.stringify({
-      fingerprint: 'xx', threshold: 2, pieces: [null], rebuiltAt: 1,
-    }));
+    localStorage.setItem(
+      'midnight-identity:secured',
+      JSON.stringify({
+        fingerprint: 'xx',
+        threshold: 2,
+        pieces: [null],
+        rebuiltAt: 1
+      })
+    );
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
     expect(screen.getByText(NOTICE)).toBeTruthy();
   });
@@ -158,16 +166,21 @@ describe('the third state, and the partial map — §7.15', () => {
 
   it('a PARTIAL record says these are the pieces you used, and that others may exist', async () => {
     const secret = newSecret();
-    await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), {
-      'google:me': Date.now(), paper: Date.now(), 'device:old': Date.now(),
-    }, { partial: true });
+    await saveSecuredSetup(
+      secret,
+      await splitSecret(secret, PLACEMENTS, 2),
+      {
+        'google:me': Date.now(),
+        paper: Date.now(),
+        'device:old': Date.now()
+      },
+      { partial: true }
+    );
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
     expect(screen.getByText(TICK)).toBeTruthy();
     expect(screen.queryByText(NOTICE)).toBeNull();
-    expect(screen.getByText(/put back from 3\s+pieces fetched from where they were placed/))
-      .toBeTruthy();
-    expect(screen.getByText(/there may be others this browser does not\s+know about/))
-      .toBeTruthy();
+    expect(screen.getByText(/put back from 3\s+pieces fetched from where they were placed/)).toBeTruthy();
+    expect(screen.getByText(/there may be others this browser does not\s+know about/)).toBeTruthy();
     /* And a partial map never claims the wizard's evidence. */
     expect(screen.queryByText(/read back from\s+its card/)).toBeNull();
   });
@@ -190,29 +203,36 @@ describe('a foreign superseded set is a different account’s map', () => {
      * honest fixture for a record that predates a change. */
     const strangers = newSecret();
     await saveSecuredSetup(strangers, await splitSecret(strangers, PLACEMENTS, 2), VERIFICATION);
-    const strangersRecord = JSON.parse(
-      localStorage.getItem('midnight-identity:secured') as string) as {
-        fingerprint: string; threshold: number; pieces: unknown[]; rebuiltAt: number;
-      };
+    const strangersRecord = JSON.parse(localStorage.getItem('midnight-identity:secured') as string) as {
+      fingerprint: string;
+      threshold: number;
+      pieces: unknown[];
+      rebuiltAt: number;
+    };
     localStorage.clear();
 
     const mine = newSecret();
     const MY_PLACES: readonly Placement[] = [
       { label: 'My iCloud', holder: 'icloud:me' },
-      { label: 'Printed', holder: 'paper' },
+      { label: 'Printed', holder: 'paper' }
     ];
     await saveSecuredSetup(mine, await splitSecret(mine, MY_PLACES, 2), {
-      'icloud:me': 'never', paper: null,
+      'icloud:me': 'never',
+      paper: null
     });
-    const mineRecord = JSON.parse(
-      localStorage.getItem('midnight-identity:secured') as string) as Record<string, unknown>;
-    mineRecord['superseded'] = [{
-      fingerprint: strangersRecord.fingerprint,
-      threshold: strangersRecord.threshold,
-      pieces: strangersRecord.pieces,
-      rebuiltAt: strangersRecord.rebuiltAt,
-      supersededAt: Date.now(),
-    }];
+    const mineRecord = JSON.parse(localStorage.getItem('midnight-identity:secured') as string) as Record<
+      string,
+      unknown
+    >;
+    mineRecord['superseded'] = [
+      {
+        fingerprint: strangersRecord.fingerprint,
+        threshold: strangersRecord.threshold,
+        pieces: strangersRecord.pieces,
+        rebuiltAt: strangersRecord.rebuiltAt,
+        supersededAt: Date.now()
+      }
+    ];
     localStorage.setItem('midnight-identity:secured', JSON.stringify(mineRecord));
 
     render(<Home identity={identityFromSecret(mine)} secret={mine} />);
@@ -220,8 +240,7 @@ describe('a foreign superseded set is a different account’s map', () => {
     /* Not "an earlier set of this account's" — a different account's. */
     expect(screen.queryByText(/earlier set was replaced/)).toBeNull();
     expect(screen.getByText(/A different account’s piece list is also on file/)).toBeTruthy();
-    expect(screen.getByText(/belong to an\s+account that was on this browser before/))
-      .toBeTruthy();
+    expect(screen.getByText(/belong to an\s+account that was on this browser before/)).toBeTruthy();
     /* Kept, named by label — destroying a map is never ours to do. */
     expect(screen.getByText(/My Google account/)).toBeTruthy();
   });
@@ -231,14 +250,14 @@ describe('a foreign superseded set is a different account’s map', () => {
     await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), VERIFICATION);
     const AGAIN: readonly Placement[] = [
       { label: 'My iCloud', holder: 'icloud:me' },
-      { label: 'Printed again', holder: 'paper' },
+      { label: 'Printed again', holder: 'paper' }
     ];
     await saveSecuredSetup(secret, await splitSecret(secret, AGAIN, 2), {
-      'icloud:me': 'never', paper: null,
+      'icloud:me': 'never',
+      paper: null
     });
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
-    expect(screen.getByText(/One earlier set was replaced — its pieces still work/))
-      .toBeTruthy();
+    expect(screen.getByText(/One earlier set was replaced — its pieces still work/)).toBeTruthy();
     expect(screen.queryByText(/A different account’s piece list is also on file/)).toBeNull();
   });
 });
@@ -252,25 +271,37 @@ describe('THE CARRIED QUESTION — a pending send lives on the home screen', () 
     stars: 25_000_000n,
     feeSpecks: 681_461_485_385_268n,
     ttlAt: Date.now() + 60 * 60 * 1000,
-    ...over,
+    ...over
   });
 
   it('renders nothing when nothing is pending — most days this card does not exist', () => {
     const secret = newSecret();
-    const { container } = render(<PendingSendsCard secret={secret} resolution={{
-      status: async () => { throw new Error('must not be asked'); }, now: Date.now,
-    }}
-    />);
+    const { container } = render(
+      <PendingSendsCard
+        secret={secret}
+        resolution={{
+          status: async () => {
+            throw new Error('must not be asked');
+          },
+          now: Date.now
+        }}
+      />
+    );
     expect(container.textContent).toBe('');
   });
 
   it('an unresolved payment is carried, watched, and warns against sending again', () => {
     const secret = newSecret();
     writePendingSend(secret, pendingDraft());
-    render(<PendingSendsCard secret={secret} resolution={{
-      status: async () => ({ found: false }), now: Date.now,
-    }}
-    />);
+    render(
+      <PendingSendsCard
+        secret={secret}
+        resolution={{
+          status: async () => ({ found: false }),
+          now: Date.now
+        }}
+      />
+    );
     expect(screen.getByText(/A payment is still confirming\./u)).toBeTruthy();
     expect(screen.getByText(/25 tNIGHT/u)).toBeTruthy();
     expect(screen.getByText(/Do not send this payment\s*again/u)).toBeTruthy();
@@ -280,10 +311,15 @@ describe('THE CARRIED QUESTION — a pending send lives on the home screen', () 
   it('resolves itself on mount — nobody pressing anything — and the answer stays until dismissed', async () => {
     const secret = newSecret();
     writePendingSend(secret, pendingDraft());
-    render(<PendingSendsCard secret={secret} resolution={{
-      status: async () => ({ found: true, status: 'SUCCESS' }), now: Date.now,
-    }}
-    />);
+    render(
+      <PendingSendsCard
+        secret={secret}
+        resolution={{
+          status: async () => ({ found: true, status: 'SUCCESS' }),
+          now: Date.now
+        }}
+      />
+    );
     /* The resolution runs in the mount effect; the answer replaces the warning. */
     expect(await screen.findByText(/That payment went through\./u)).toBeTruthy();
     expect(screen.queryByText(/still confirming/iu)).toBeNull();
@@ -293,25 +329,37 @@ describe('THE CARRIED QUESTION — a pending send lives on the home screen', () 
     expect(loadPendingSends(secret)).toEqual([]);
   });
 
-  it('a chain answer of FAILURE is said as failed, in the stored reason\'s words', async () => {
+  it("a chain answer of FAILURE is said as failed, in the stored reason's words", async () => {
     const secret = newSecret();
     writePendingSend(secret, pendingDraft());
-    render(<PendingSendsCard secret={secret} resolution={{
-      status: async () => ({ found: true, status: 'FAILURE' }), now: Date.now,
-    }}
-    />);
+    render(
+      <PendingSendsCard
+        secret={secret}
+        resolution={{
+          status: async () => ({ found: true, status: 'FAILURE' }),
+          now: Date.now
+        }}
+      />
+    );
     expect(await screen.findByText(/A payment did not go through\./u)).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toMatch(/FAILURE/u);
   });
 
-  it('another account\'s pending payment is not carried here', () => {
+  it("another account's pending payment is not carried here", () => {
     const mine = newSecret();
     const theirs = newSecret();
     writePendingSend(theirs, pendingDraft());
-    const { container } = render(<PendingSendsCard secret={mine} resolution={{
-      status: async () => { throw new Error('must not be asked'); }, now: Date.now,
-    }}
-    />);
+    const { container } = render(
+      <PendingSendsCard
+        secret={mine}
+        resolution={{
+          status: async () => {
+            throw new Error('must not be asked');
+          },
+          now: Date.now
+        }}
+      />
+    );
     expect(container.textContent).toBe('');
   });
 
@@ -343,8 +391,7 @@ describe('the order Home reads in, and the two rules inside it', () => {
     const alert = screen.getByText(NOTICE);
     const hero = container.querySelector('[data-hero]')!;
     /* DOCUMENT_POSITION_FOLLOWING: the hero comes after the alert. */
-    expect(alert.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
+    expect(alert.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     cleanup();
     await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), VERIFICATION);
@@ -409,7 +456,8 @@ describe('the order Home reads in, and the two rules inside it', () => {
     expect(panel.textContent).toMatch(/staking and yield/);
     expect(panel.textContent).toMatch(/no date for it/);
     expect(panel.textContent).not.toMatch(
-      /shortly|coming (?:up|next)|\bQ[1-4]\b|next (?:month|week|year|release)|20\d\d/i);
+      /shortly|coming (?:up|next)|\bQ[1-4]\b|next (?:month|week|year|release)|20\d\d/i
+    );
   });
 
   it('every “view all” is a LINK TO A PLACE, never an inline drawer', () => {
@@ -424,10 +472,8 @@ describe('the order Home reads in, and the two rules inside it', () => {
      * exactly the drawer this test exists to refuse, so `closest('a')` stays. */
     const secret = newSecret();
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
-    expect(screen.getByLabelText('View all activity').closest('a')?.getAttribute('href'))
-      .toBe('#/activity');
-    expect(screen.getByText('Contacts').closest('a')?.getAttribute('href'))
-      .toBe('#/address-book');
+    expect(screen.getByLabelText('View all activity').closest('a')?.getAttribute('href')).toBe('#/activity');
+    expect(screen.getByText('Contacts').closest('a')?.getAttribute('href')).toBe('#/address-book');
   });
 
   it('recent activity says it has not ASKED — never that there are no payments', () => {
@@ -438,8 +484,7 @@ describe('the order Home reads in, and the two rules inside it', () => {
     const secret = newSecret();
     render(<Home identity={identityFromSecret(secret)} secret={secret} />);
     expect(screen.getByText(/Payment history is not read on this screen yet/)).toBeTruthy();
-    expect(screen.getByText(/Nothing above is a statement that no payments exist/))
-      .toBeTruthy();
+    expect(screen.getByText(/Nothing above is a statement that no payments exist/)).toBeTruthy();
   });
 });
 
@@ -528,7 +573,7 @@ describe('naming is what creates an account', () => {
 
     fireEvent.click(screen.getByLabelText('Name this wallet'));
     fireEvent.change(screen.getByLabelText('A name for the main wallet'), {
-      target: { value: 'Everything' },
+      target: { value: 'Everything' }
     });
     fireEvent.click(screen.getByText('Save the name'));
 
@@ -552,7 +597,7 @@ describe('the private balance line is honest about the mechanism', () => {
     render(
       <BalanceEnginesContext.Provider value={{ shielded: engine, unshielded: inert, dust: inert }}>
         <Home identity={identityFromSecret(secret)} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     fireEvent.click(screen.getByText('Check the balance'));
     const line = document.querySelector('[data-kind="shielded"]')!;
@@ -580,7 +625,7 @@ describe('the home screen names its network only through the network record', ()
     render(
       <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: engineThatSyncs, dust: inert }}>
         <Home identity={identityFromSecret(secret)} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     fireEvent.click(screen.getByText('Check the balance'));
   };

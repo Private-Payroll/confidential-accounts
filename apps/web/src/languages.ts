@@ -24,12 +24,17 @@ export function wordsFor(page: string): () => Promise<MoreMessages> {
   return () => {
     let asked = ASKED.get(page);
     if (asked === undefined) {
-      const files = [...Object.entries(COMMON_FILES), ...Object.entries(PAGE_FILES).filter(([path]) => /pages\/([\w-]+)\//.exec(path)?.[1] === page)];
-      asked = Promise.all(files.map(async ([path, read]) => [tagOf(path), (await read()) as Messages] as const)).then((read) => {
-        const out: Record<string, Messages> = {};
-        for (const [tag, messages] of read) out[tag] = { ...out[tag], ...messages };
-        return out;
-      });
+      const files = [
+        ...Object.entries(COMMON_FILES),
+        ...Object.entries(PAGE_FILES).filter(([path]) => /pages\/([\w-]+)\//.exec(path)?.[1] === page)
+      ];
+      asked = Promise.all(files.map(async ([path, read]) => [tagOf(path), (await read()) as Messages] as const)).then(
+        (read) => {
+          const out: Record<string, Messages> = {};
+          for (const [tag, messages] of read) out[tag] = { ...out[tag], ...messages };
+          return out;
+        }
+      );
       ASKED.set(page, asked);
     }
     return asked;
@@ -38,5 +43,9 @@ export function wordsFor(page: string): () => Promise<MoreMessages> {
 
 /** A language's name in that language, as the browser knows it, or its tag when it does not. */
 export function languageName(tag: string): string {
-  try { return new Intl.DisplayNames([tag], { type: 'language' }).of(tag) ?? tag; } catch { return tag; }
+  try {
+    return new Intl.DisplayNames([tag], { type: 'language' }).of(tag) ?? tag;
+  } catch {
+    return tag;
+  }
 }

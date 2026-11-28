@@ -33,7 +33,7 @@ export const whatIsMissing = (
   run: TheRun,
   waits: Waits,
   root: string,
-  exists: (path: string) => boolean = existsSync,
+  exists: (path: string) => boolean = existsSync
 ): string[] => {
   if (!run.named) return ['MIDNIGHT_NETWORK_ID naming the network to run against'];
   if (waits.fundedSeedFor === undefined) return [];
@@ -50,7 +50,7 @@ export const standDownWhenMissing = (
   check: string,
   missing: readonly string[],
   print: (line: string) => void = console.log,
-  exit: (code: number) => never = process.exit,
+  exit: (code: number) => never = process.exit
 ): void => {
   if (missing.length === 0) return;
   print(standDownLine(check, missing));

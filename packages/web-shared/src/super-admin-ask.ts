@@ -13,7 +13,11 @@ import { currentUser, isSignedIn } from './keyring.js';
 import { showWaitingFor } from './wallet-asks.js';
 import { walletInThisPage } from './wallet-frame.js';
 import { openWalletDialog, US_TO_A_WALLET, type Openable, type WalletDialog } from './wallet-sign-in.js';
-import { askWalletToSignSuperAdminUpdates, askWalletToSignTheChange, askWalletToSignTheRequest } from './wallet-committee.js';
+import {
+  askWalletToSignSuperAdminUpdates,
+  askWalletToSignTheChange,
+  askWalletToSignTheRequest
+} from './wallet-committee.js';
 
 type Key = { readonly tag: string; readonly value: string };
 
@@ -25,7 +29,11 @@ export interface SuperAdminCompany {
 }
 
 /** Opens the wallet for one ask, shows the page waiting on it, and closes it when the ask fails. */
-async function inTheWallet<T>(walletOrigin: string, view: Openable, ask: (dialog: WalletDialog) => Promise<T>): Promise<T> {
+async function inTheWallet<T>(
+  walletOrigin: string,
+  view: Openable,
+  ask: (dialog: WalletDialog) => Promise<T>
+): Promise<T> {
   if (!isSignedIn()) throw new Error('not signed in');
   const dialog = openWalletDialog(view, walletOrigin);
   const done = showWaitingFor(dialog);
@@ -48,16 +56,32 @@ const signed = new Map<string, { readonly key: Key; readonly header: string }>()
  * on the service's word.
  */
 export async function superAdminSigned(
-  company: SuperAdminCompany, walletOrigin: string, view: Openable = walletInThisPage(window), atOrigin: string = window.location.origin,
+  company: SuperAdminCompany,
+  walletOrigin: string,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin
 ): Promise<{ readonly key: Key; readonly headers: Record<string, string> }> {
   const user = currentUser()?.id;
   if (user === undefined) throw new Error('not signed in');
   const at = `${company.accountId} ${user}`;
   let held = signed.get(at);
   if (held === undefined) {
-    const answer = await inTheWallet(walletOrigin, view, (dialog) => askWalletToSignTheRequest(view, walletOrigin, {
-      company: company.label, account: company.account, record: company.accountId, user, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog));
+    const answer = await inTheWallet(walletOrigin, view, (dialog) =>
+      askWalletToSignTheRequest(
+        view,
+        walletOrigin,
+        {
+          company: company.label,
+          account: company.account,
+          record: company.accountId,
+          user,
+          atOrigin,
+          name: US_TO_A_WALLET.name,
+          rdns: US_TO_A_WALLET.rdns
+        },
+        dialog
+      )
+    );
     held = { key: answer.signer, header: superAdminHeaderFor({ key: answer.signer, signature: answer.signature }) };
     signed.set(at, held);
   }
@@ -66,15 +90,22 @@ export async function superAdminSigned(
 
 /** The wallet as a super admin's doors reach it: its key for the company, its update signatures and its own signature on a change. */
 export function superAdminWallet(
-  company: SuperAdminCompany, walletOrigin: string, view: Openable = walletInThisPage(window), atOrigin: string = window.location.origin,
+  company: SuperAdminCompany,
+  walletOrigin: string,
+  view: Openable = walletInThisPage(window),
+  atOrigin: string = window.location.origin
 ): SuperAdminDoors['wallet'] {
   const asking = { atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns };
   return {
     key: async () => (await superAdminSigned(company, walletOrigin, view, atOrigin)).key,
-    signUpdates: async (ask) => inTheWallet(walletOrigin, view, async (dialog) => {
-      const read = await askWalletToSignSuperAdminUpdates(view, walletOrigin, { ...asking, ...ask }, dialog);
-      return { signer: read.signer, signatures: read.signatures };
-    }),
-    signJoin: async (ask) => inTheWallet(walletOrigin, view, (dialog) => askWalletToSignTheChange(view, walletOrigin, { ...asking, ...ask }, dialog)),
+    signUpdates: async (ask) =>
+      inTheWallet(walletOrigin, view, async (dialog) => {
+        const read = await askWalletToSignSuperAdminUpdates(view, walletOrigin, { ...asking, ...ask }, dialog);
+        return { signer: read.signer, signatures: read.signatures };
+      }),
+    signJoin: async (ask) =>
+      inTheWallet(walletOrigin, view, (dialog) =>
+        askWalletToSignTheChange(view, walletOrigin, { ...asking, ...ask }, dialog)
+      )
   };
 }

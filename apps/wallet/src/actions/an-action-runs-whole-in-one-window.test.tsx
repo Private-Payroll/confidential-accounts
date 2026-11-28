@@ -18,13 +18,15 @@ const until = (check: () => void): Promise<void> => waitFor(check, { timeout: 50
  * window's Confirm before it hands anything over, one fails its read, and one asks for the Confirm too late.
  */
 
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -33,22 +35,32 @@ vi.mock('midnight-identity', async (importOriginal) => {
 });
 
 vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => ({
-  ...await importOriginal<typeof import('midnight-identity/profile/act-intents')>(),
+  ...(await importOriginal<typeof import('midnight-identity/profile/act-intents')>()),
   ACT_INTENTS: Object.freeze({
     'three-transfers': { fields: { vault: 'vault' } },
     /* The same action as one whose calls go through the page, so its act may name which way they go. */
-    'three-transfers-sent': { fields: { vault: 'vault' }, calls: [{ method: 'POST', path: '/api/transfers', sends: true }] },
+    'three-transfers-sent': {
+      fields: { vault: 'vault' },
+      calls: [{ method: 'POST', path: '/api/transfers', sends: true }]
+    },
     'read-then-sign': { fields: { vault: 'vault' } },
     'read-fails': { fields: { vault: 'vault' } },
     'confirm-after-a-send': { fields: { vault: 'vault' } },
-    'confirm-after-a-write': { fields: { vault: 'vault' }, calls: [{ method: 'POST', path: '/api/invites/:invitation/accept-signer' }] },
+    'confirm-after-a-write': {
+      fields: { vault: 'vault' },
+      calls: [{ method: 'POST', path: '/api/invites/:invitation/accept-signer' }]
+    },
     'confirms-twice': { fields: { vault: 'vault' } },
-    'fee-after-a-send': { fields: { vault: 'vault' } },
-  }),
+    'fee-after-a-send': { fields: { vault: 'vault' } }
+  })
 }));
 
 /* What the second step waits on before it builds, so a press can land between two steps. */
-const gate = vi.hoisted(() => ({ open: (): void => {}, wait: Promise.resolve() as Promise<void>, built: [] as number[] }));
+const gate = vi.hoisted(() => ({
+  open: (): void => {},
+  wait: Promise.resolve() as Promise<void>,
+  built: [] as number[]
+}));
 
 vi.mock('./registry.js', async () => {
   const { StepRefused } = await import('./definition.js');
@@ -59,36 +71,93 @@ vi.mock('./registry.js', async () => {
       if (c.signal.aborted) throw new Error('stopped before it was built');
       gate.built.push(n);
       await c.relay(`dHg${n}`);
-      if (n === 3) c.show({ key: 'act.join-by-code.over.fingerprint', values: { fingerprint: 'K7QM-2XRT-9VBN-4HCD-PW3S', address: 'an address' } });
-    },
+      if (n === 3)
+        c.show({
+          key: 'act.join-by-code.over.fingerprint',
+          values: { fingerprint: 'K7QM-2XRT-9VBN-4HCD-PW3S', address: 'an address' }
+        });
+    }
   });
   const action = {
     headline: 'ask.act.headline',
     shown: async (intent: { fields: Record<string, string> }) => [
       { key: 'ask.balance.vault', values: { vault: intent.fields['vault'] ?? '' }, from: 'page' },
-      { key: 'ask.committee.check', from: 'action' },
+      { key: 'ask.committee.check', from: 'action' }
     ],
     checks: [{ key: 'ask.committee.check' }],
-    checksFor: (intent: { fields: Record<string, string> }) => [{ key: 'ask.balance.vault', values: { vault: `checked for ${intent.fields['vault'] ?? ''}` } }],
+    checksFor: (intent: { fields: Record<string, string> }) => [
+      { key: 'ask.balance.vault', values: { vault: `checked for ${intent.fields['vault'] ?? ''}` } }
+    ],
     check: async () => null,
-    steps: () => [step(1), step(2), step(3)],
+    steps: () => [step(1), step(2), step(3)]
   };
-  type Ctx = { relay(tx: string): Promise<void>; confirm(lines: readonly unknown[]): Promise<void>; confirmFee(lines: readonly unknown[]): Promise<boolean>; invitations: { acceptSigner(invitation: string, body: unknown): Promise<unknown> } };
+  type Ctx = {
+    relay(tx: string): Promise<void>;
+    confirm(lines: readonly unknown[]): Promise<void>;
+    confirmFee(lines: readonly unknown[]): Promise<boolean>;
+    invitations: { acceptSigner(invitation: string, body: unknown): Promise<unknown> };
+  };
   const READ = [{ key: 'ask.balance.vault', values: { vault: 'read with the seat keys' } }];
   /* Reads with the seat's keys, asks for the Confirm, and only then hands its transaction over. */
-  const reads = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { gate.built.push(0); await c.confirm(READ); gate.built.push(1); await c.relay('dHg1'); } };
-  const fails = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async () => { throw new StepRefused({ key: 'ask.act.unread' }); } };
-  const late = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.relay('dHg1'); await c.confirm(READ); gate.built.push(1); } };
+  const reads = {
+    title: { key: 'ask.balance.vault', values: { vault: 'read' } },
+    run: async (c: Ctx) => {
+      gate.built.push(0);
+      await c.confirm(READ);
+      gate.built.push(1);
+      await c.relay('dHg1');
+    }
+  };
+  const fails = {
+    title: { key: 'ask.balance.vault', values: { vault: 'read' } },
+    run: async () => {
+      throw new StepRefused({ key: 'ask.act.unread' });
+    }
+  };
+  const late = {
+    title: { key: 'ask.balance.vault', values: { vault: 'read' } },
+    run: async (c: Ctx) => {
+      await c.relay('dHg1');
+      await c.confirm(READ);
+      gate.built.push(1);
+    }
+  };
   /* Writes to the service, sending nothing to the chain, and only then asks for the Confirm. */
-  const wrote = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.invitations.acceptSigner('1', {}); await c.confirm(READ); gate.built.push(1); } };
-  const twice = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.confirm(READ); gate.built.push(1); await c.confirm(READ); gate.built.push(2); } };
+  const wrote = {
+    title: { key: 'ask.balance.vault', values: { vault: 'read' } },
+    run: async (c: Ctx) => {
+      await c.invitations.acceptSigner('1', {});
+      await c.confirm(READ);
+      gate.built.push(1);
+    }
+  };
+  const twice = {
+    title: { key: 'ask.balance.vault', values: { vault: 'read' } },
+    run: async (c: Ctx) => {
+      await c.confirm(READ);
+      gate.built.push(1);
+      await c.confirm(READ);
+      gate.built.push(2);
+    }
+  };
   /* Hands its transaction over, then asks whether to pay a fee from the person's own DUST. */
-  const fee = { title: { key: 'ask.balance.vault', values: { vault: 'read' } }, run: async (c: Ctx) => { await c.relay('dHg1'); if (await c.confirmFee(READ)) gate.built.push(1); } };
+  const fee = {
+    title: { key: 'ask.balance.vault', values: { vault: 'read' } },
+    run: async (c: Ctx) => {
+      await c.relay('dHg1');
+      if (await c.confirmFee(READ)) gate.built.push(1);
+    }
+  };
   const withSteps = (steps: readonly unknown[]) => ({ ...action, steps: () => steps });
   const acts: Record<string, unknown> = {
-    'three-transfers': action, 'three-transfers-sent': action,
-    'read-then-sign': withSteps([reads, step(2)]), 'read-fails': withSteps([fails, step(2)]), 'confirm-after-a-send': withSteps([late, step(2)]),
-    'confirm-after-a-write': withSteps([wrote, step(2)]), 'confirms-twice': withSteps([twice, step(2)]), 'fee-after-a-send': withSteps([fee]),
+    'three-transfers': action,
+    'three-transfers-sent': action,
+    'read-then-sign': withSteps([reads, step(2)]),
+    'read-fails': withSteps([fails, step(2)]),
+    'confirm-after-a-send': withSteps([late, step(2)]),
+    'confirm-after-a-write': withSteps([wrote, step(2)]),
+    'confirms-twice': withSteps([twice, step(2)]),
+    'fee-after-a-send': withSteps([fee])
   };
   return { ACTIONS: acts, actionFor: (name: string) => acts[name] ?? null };
 });
@@ -102,7 +171,14 @@ import { verifyAssertion } from 'midnight-identity';
 import type { Passkey } from 'midnight-identity/passkey/verify';
 import { newSecret } from 'midnight-identity/keys/derivation';
 import {
-  ACT_CALLED_SCHEMA, ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, ACT_RELAYED_SCHEMA, ACT_RELAY_SCHEMA, ACT_STOPS, PROGRESS_SCHEMA, READY_PING,
+  ACT_CALLED_SCHEMA,
+  ACT_CALL_SCHEMA,
+  ACT_ENDED_SCHEMA,
+  ACT_RELAYED_SCHEMA,
+  ACT_RELAY_SCHEMA,
+  ACT_STOPS,
+  PROGRESS_SCHEMA,
+  READY_PING
 } from 'midnight-identity/profile/channel';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
 import { act } from '../testing/render.js';
@@ -126,13 +202,24 @@ const mockUsePasskey = vi.mocked(usePasskey);
 const mockVerifyAssertion = vi.mocked(verifyAssertion);
 
 const passkeyFixture = (credentialId: string): Passkey => ({
-  credentialId, personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7, signCount: 0,
-  provenBySignIn: false, rpId: 'localhost', syncsToACloud: false, backedUpNow: false, transports: [],
+  credentialId,
+  personHandle: 'person-1',
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  algorithm: -7,
+  signCount: 0,
+  provenBySignIn: false,
+  rpId: 'localhost',
+  syncsToACloud: false,
+  backedUpNow: false,
+  transports: []
 });
 const passkeyAnswers = (credentialId: string): void => {
   mockUsePasskey.mockResolvedValueOnce({
-    credentialId, clientDataJSON: new Uint8Array(), authenticatorData: new Uint8Array(), signature: new Uint8Array(),
-    userHandle: 'cGVyc29uLTE',
+    credentialId,
+    clientDataJSON: new Uint8Array(),
+    authenticatorData: new Uint8Array(),
+    signature: new Uint8Array(),
+    userHandle: 'cGVyc29uLTE'
   } as never);
   mockVerifyAssertion.mockResolvedValueOnce({ passkey: passkeyFixture(credentialId) } as never);
 };
@@ -152,7 +239,7 @@ const actAsk = (): Record<string, unknown> => ({
   nonce: `act-${(asked += 1)}`,
   expiresAt: Date.now() + 20 * 60_000,
   progress: PROGRESS_SCHEMA,
-  intent: { name: 'three-transfers', vault: VAULT },
+  intent: { name: 'three-transfers', vault: VAULT }
 });
 
 /* The page that opened this window. `answer` says what it does with each transaction: send it, refuse it, or hold. */
@@ -175,16 +262,24 @@ const page = {
     }
     if (m['schema'] === ACT_RELAY_SCHEMA) {
       const n = m['n'] as number;
-      const reply = (outcome: 'relayed' | 'refused') => send({ schema: ACT_RELAYED_SCHEMA, nonce: m['nonce'], n, outcome });
+      const reply = (outcome: 'relayed' | 'refused') =>
+        send({ schema: ACT_RELAYED_SCHEMA, nonce: m['nonce'], n, outcome });
       const doing = answer(n);
       if (doing === 'hold') held.push(() => reply('relayed'));
       else setTimeout(() => reply(doing), 0);
     }
     if (m['schema'] === ACT_CALL_SCHEMA) {
-      const sending = { schema: ACT_CALLED_SCHEMA, nonce: m['nonce'], n: m['n'], outcome: 'answered', status: 200, body: {} };
+      const sending = {
+        schema: ACT_CALLED_SCHEMA,
+        nonce: m['nonce'],
+        n: m['n'],
+        outcome: 'answered',
+        status: 200,
+        body: {}
+      };
       setTimeout(() => send(sending), 0);
     }
-  },
+  }
 };
 const of = (schema: string) => posted.filter((m) => m['schema'] === schema);
 
@@ -194,19 +289,27 @@ const phases: string[] = [];
 function Phase(): null {
   const name = useSession().phase.name;
   phaseNow = name;
-  useEffect(() => { phases.push(name); }, [name]);
+  useEffect(() => {
+    phases.push(name);
+  }, [name]);
   return null;
 }
 /** Resolves once the wallet has gone from open to locked: the lock the action's end sets. */
-const lockedAfterBeingOpen = (): Promise<void> => until(() => {
-  const opened = phases.indexOf('unlocked');
-  expect(opened).toBeGreaterThanOrEqual(0);
-  expect(phases.lastIndexOf('locked')).toBeGreaterThan(opened);
-});
+const lockedAfterBeingOpen = (): Promise<void> =>
+  until(() => {
+    const opened = phases.indexOf('unlocked');
+    expect(opened).toBeGreaterThanOrEqual(0);
+    expect(phases.lastIndexOf('locked')).toBeGreaterThan(opened);
+  });
 
 const runFromTheWindow = async (name?: string): Promise<void> => {
   asking = name === undefined ? actAsk() : { ...actAsk(), intent: { name, vault: VAULT } };
-  render(<SessionProvider><App /><Phase /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+      <Phase />
+    </SessionProvider>
+  );
   await until(() => expect(document.querySelector('[data-ask-window="act"]')).not.toBeNull());
   await until(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
   passkeyAnswers('cred-a');
@@ -236,9 +339,13 @@ beforeEach(async () => {
 });
 
 describe('an action runs whole in one window, on one passkey', () => {
-  it('the window shows what the action does before the passkey, marking the page\'s own words', async () => {
+  it("the window shows what the action does before the passkey, marking the page's own words", async () => {
     asking = actAsk();
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
     /* RED WHEN: a line only the page says is shown as if this wallet had read it. */
     expect(document.querySelector('[data-shown-from="page"]')?.textContent).toContain('Only the page says this');
@@ -263,11 +370,19 @@ describe('an action runs whole in one window, on one passkey', () => {
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
     /* RED WHEN: the transactions are not handed over one each, in order, numbered for the page to answer. */
     expect(of(ACT_RELAY_SCHEMA).map((m) => [m['n'], m['step'], m['steps'], m['transaction']])).toEqual([
-      [1, 1, 3, 'dHg1'], [2, 2, 3, 'dHg2'], [3, 3, 3, 'dHg3'],
+      [1, 1, 3, 'dHg1'],
+      [2, 2, 3, 'dHg2'],
+      [3, 3, 3, 'dHg3']
     ]);
     /* RED WHEN: the page is not told which step is running, so it cannot show progress or keep waiting. */
     expect(of(PROGRESS_SCHEMA).map((m) => m['step'])).toEqual([1, 2, 3]);
-    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'done', step: 3, steps: 3, relayed: 3, intent: 'three-transfers' });
+    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({
+      ended: 'done',
+      step: 3,
+      steps: 3,
+      relayed: 3,
+      intent: 'three-transfers'
+    });
   });
 
   it('the opened wallet is locked again when the action ends, and the window says how it ended', async () => {
@@ -312,14 +427,25 @@ describe('an action runs whole in one window, on one passkey', () => {
     /* RED WHEN: a refused relay is taken as sent, and the next step is built on it. */
     expect(of(ACT_RELAY_SCHEMA).map((m) => m['n'])).toEqual([1, 2]);
     expect(gate.built).toEqual([1, 2]);
-    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'relay-refused', step: 2, steps: 3, relayed: 1, unconfirmed: 1 });
+    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({
+      ended: 'stopped',
+      why: 'relay-refused',
+      step: 2,
+      steps: 3,
+      relayed: 1,
+      unconfirmed: 1
+    });
     await until(() => expect(phaseNow).toBe('locked'));
     await until(() => expect(document.querySelector('[data-act-ended="stopped"]')).not.toBeNull());
     /* RED WHEN: the window says, as its own fact, that the page did not send what it refused. */
     expect(document.body.textContent).toContain('The page says it did not send');
     /* RED WHEN: the transaction the page was handed and did not confirm is not said, or not with what to do. */
-    expect(document.querySelector('[data-act-unconfirmed]')?.textContent).toBe((en as Record<string, string>)['act.over.unconfirmed_one']);
-    expect(document.querySelector('[data-act-unconfirmed]')?.textContent).toContain('Wait a few minutes before you do anything more on the page');
+    expect(document.querySelector('[data-act-unconfirmed]')?.textContent).toBe(
+      (en as Record<string, string>)['act.over.unconfirmed_one']
+    );
+    expect(document.querySelector('[data-act-unconfirmed]')?.textContent).toContain(
+      'Wait a few minutes before you do anything more on the page'
+    );
   });
 
   /*
@@ -335,7 +461,13 @@ describe('an action runs whole in one window, on one passkey', () => {
     expect(phaseNow).toBe('unlocked');
     fireEvent.click(document.querySelector('[data-act-confirm-button]') as HTMLElement);
     await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
-    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'done', step: 2, steps: 2, relayed: 2, intent: 'read-then-sign' });
+    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({
+      ended: 'done',
+      step: 2,
+      steps: 2,
+      relayed: 2,
+      intent: 'read-then-sign'
+    });
     expect(of(ACT_RELAY_SCHEMA).map((m) => m['transaction'])).toEqual(['dHg1', 'dHg2']);
     /* RED WHEN: confirming asks for the passkey again. */
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
@@ -361,7 +493,13 @@ describe('an action runs whole in one window, on one passkey', () => {
     await until(() => expect(document.querySelector('[data-act-confirm]')).not.toBeNull());
     fireEvent.click(document.querySelector('[data-act-stop]') as HTMLElement);
     await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
-    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'stopped', step: 1, relayed: 0, unconfirmed: 0 });
+    expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({
+      ended: 'stopped',
+      why: 'stopped',
+      step: 1,
+      relayed: 0,
+      unconfirmed: 0
+    });
     expect(of(ACT_RELAY_SCHEMA)).toEqual([]);
     expect(gate.built).toEqual([0]);
     expect(mockUsePasskey).toHaveBeenCalledTimes(1);
@@ -394,7 +532,9 @@ describe('an action runs whole in one window, on one passkey', () => {
   it('a Confirm asked after a write that sends nothing to the chain stops the action too', async () => {
     await runFromTheWindow('confirm-after-a-write');
     await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
-    expect(of(ACT_CALL_SCHEMA).map((m) => [m['method'], m['path']])).toEqual([['POST', '/api/invites/1/accept-signer']]);
+    expect(of(ACT_CALL_SCHEMA).map((m) => [m['method'], m['path']])).toEqual([
+      ['POST', '/api/invites/1/accept-signer']
+    ]);
     expect(of(ACT_ENDED_SCHEMA)[0]).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
     expect(gate.built).toEqual([]);
     expect(document.querySelector('[data-act-confirm]')).toBeNull();
@@ -423,8 +563,12 @@ describe('an action runs whole in one window, on one passkey', () => {
     const bar = document.querySelector('[data-ask-actions]')!;
     expect(bar.querySelector('button')?.hasAttribute('data-act-stop')).toBe(true);
     expect(document.activeElement).toBe(document.querySelector('[data-act-confirm]'));
-    expect(document.querySelector('[data-act-confirm-lede]')?.textContent).toMatch(/^Step 1 of 2 of the same action\..*not another passkey/u);
-    expect(document.querySelector('[data-act-confirm-lede]')?.textContent).toContain('Nothing has been approved, signed or sent to the network yet');
+    expect(document.querySelector('[data-act-confirm-lede]')?.textContent).toMatch(
+      /^Step 1 of 2 of the same action\..*not another passkey/u
+    );
+    expect(document.querySelector('[data-act-confirm-lede]')?.textContent).toContain(
+      'Nothing has been approved, signed or sent to the network yet'
+    );
     for (const li of document.querySelectorAll('[data-act-read] li')) expect(li.className).toContain('break-all');
     fireEvent.click(document.querySelector('[data-act-stop]') as HTMLElement);
     await until(() => expect(of(ACT_ENDED_SCHEMA)).toHaveLength(1));
@@ -433,8 +577,19 @@ describe('an action runs whole in one window, on one passkey', () => {
 
   it('an action that ended with a step still running never says its keys and work are over', () => {
     const end = {
-      ended: { schema: ACT_ENDED_SCHEMA, nonce: 'n', intent: 'three-transfers', ended: 'stopped', step: 1, steps: 3, relayed: 0, unconfirmed: 0, why: 'out-of-time' },
-      says: null, abandoned: true,
+      ended: {
+        schema: ACT_ENDED_SCHEMA,
+        nonce: 'n',
+        intent: 'three-transfers',
+        ended: 'stopped',
+        step: 1,
+        steps: 3,
+        relayed: 0,
+        unconfirmed: 0,
+        why: 'out-of-time'
+      },
+      says: null,
+      abandoned: true
     } as const;
     render(<ActOver end={end} framed={false} />);
     /* RED WHEN: a step left running is described as if the keys it could reach were already gone and its work done. */
@@ -445,8 +600,15 @@ describe('an action runs whole in one window, on one passkey', () => {
 
 describe('the window before the passkey shows only what is being approved, never which way the calls go', () => {
   const shownFor = async (path?: string): Promise<string> => {
-    asking = { ...actAsk(), intent: { name: 'three-transfers-sent', vault: VAULT, ...(path === undefined ? {} : { path }) } };
-    render(<SessionProvider><App /></SessionProvider>);
+    asking = {
+      ...actAsk(),
+      intent: { name: 'three-transfers-sent', vault: VAULT, ...(path === undefined ? {} : { path }) }
+    };
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-act-shown]')).not.toBeNull());
     return document.querySelector('[data-act-shown]')?.textContent ?? '';
   };
@@ -460,17 +622,30 @@ describe('the window before the passkey shows only what is being approved, never
       expect(await shownFor(path), path).toBe(plain);
     }
     /* RED WHEN: the window before the passkey speaks of a fallback no call has used yet. */
-    for (const key of ['act.fell-back.chain', 'act.fell-back.own-dust', 'act.fell-back.chain-own-dust']) expect(plain).not.toContain(words[key]);
+    for (const key of ['act.fell-back.chain', 'act.fell-back.own-dust', 'act.fell-back.chain-own-dust'])
+      expect(plain).not.toContain(words[key]);
     expect(mockUsePasskey).not.toHaveBeenCalled();
   });
 });
 
 describe('the stopped window says truly what had left the wallet, and what pressing again does', () => {
   const words = en as Record<string, string>;
-  const stopped = (intent: string, why: string, relayed: number, unconfirmed: number) => ({
-    ended: { schema: ACT_ENDED_SCHEMA, nonce: 'n', intent, ended: 'stopped', step: 3, steps: 4, relayed, unconfirmed, why },
-    says: { key: 'act.private-deposit.why.not-yet-seen' }, abandoned: false,
-  }) as never;
+  const stopped = (intent: string, why: string, relayed: number, unconfirmed: number) =>
+    ({
+      ended: {
+        schema: ACT_ENDED_SCHEMA,
+        nonce: 'n',
+        intent,
+        ended: 'stopped',
+        step: 3,
+        steps: 4,
+        relayed,
+        unconfirmed,
+        why
+      },
+      says: { key: 'act.private-deposit.why.not-yet-seen' },
+      abandoned: false
+    }) as never;
   const title = (): string => document.querySelector('[data-slot="alert-title"]')?.textContent ?? '';
 
   it('has words for every way an action can stop', () => {
@@ -522,14 +697,30 @@ describe('the stopped window says truly what had left the wallet, and what press
   });
 
   it('a one-off payment that ends awaiting approvals is not told as done with every step run', () => {
-    const ended = (outcome: Record<string, string | number>) => ({
-      ended: { schema: ACT_ENDED_SCHEMA, nonce: 'n', intent: 'one-off-payment', ended: 'done', step: 6, steps: 6, relayed: 2, unconfirmed: 0, outcome },
-      says: null, abandoned: false,
-    }) as never;
+    const ended = (outcome: Record<string, string | number>) =>
+      ({
+        ended: {
+          schema: ACT_ENDED_SCHEMA,
+          nonce: 'n',
+          intent: 'one-off-payment',
+          ended: 'done',
+          step: 6,
+          steps: 6,
+          relayed: 2,
+          unconfirmed: 0,
+          outcome
+        },
+        says: null,
+        abandoned: false
+      }) as never;
     render(<ActOver end={ended({ state: 'awaiting-approvals', approvals: 1, needed: 2 })} framed={false} />);
     /* RED WHEN: a payment still short of its approvals ends titled Done, saying all its steps ran. */
-    expect(document.querySelector('[data-ask-over]')?.textContent).toBe(words['act.one-off-payment.over.awaiting-title']);
-    expect(document.querySelector('[data-act-awaiting]')?.textContent).toBe('Proposed. Not paid yet: the payment needs 2 approvals and has 1. Once the others approve, a signer carries it out.');
+    expect(document.querySelector('[data-ask-over]')?.textContent).toBe(
+      words['act.one-off-payment.over.awaiting-title']
+    );
+    expect(document.querySelector('[data-act-awaiting]')?.textContent).toBe(
+      'Proposed. Not paid yet: the payment needs 2 approvals and has 1. Once the others approve, a signer carries it out.'
+    );
     expect(document.querySelector('[data-act-relayed]')).toBeNull();
     cleanup();
     render(<ActOver end={ended({ state: 'paid', approvals: 2, needed: 2 })} framed={false} />);
@@ -539,15 +730,26 @@ describe('the stopped window says truly what had left the wallet, and what press
 
   it('a done action shows every set of words its steps gave, in order', () => {
     const end = {
-      ended: { schema: ACT_ENDED_SCHEMA, nonce: 'n', intent: 'invite', ended: 'done', step: 4, steps: 4, relayed: 1, unconfirmed: 0, outcome: { state: 'filed' } },
-      says: { key: 'act.invite.over.link', values: { name: 'Dee', link: 'https://app.example/join/a#b' } }, more: [{ key: 'act.upkeep.left.seat-rights-unread', values: { seats: 's1' } }],
-      abandoned: false,
+      ended: {
+        schema: ACT_ENDED_SCHEMA,
+        nonce: 'n',
+        intent: 'invite',
+        ended: 'done',
+        step: 4,
+        steps: 4,
+        relayed: 1,
+        unconfirmed: 0,
+        outcome: { state: 'filed' }
+      },
+      says: { key: 'act.invite.over.link', values: { name: 'Dee', link: 'https://app.example/join/a#b' } },
+      more: [{ key: 'act.upkeep.left.seat-rights-unread', values: { seats: 's1' } }],
+      abandoned: false
     } as never;
     render(<ActOver end={end} framed={false} />);
     /* RED WHEN: an invitation's link, or a warning shown after it, is not on the window once the action is done. */
     expect([...document.querySelectorAll('[data-act-shown-at-the-end]')].map((p) => p.textContent)).toEqual([
       words['act.invite.over.link']!.replace('{name}', 'Dee').replace('{link}', 'https://app.example/join/a#b'),
-      words['act.upkeep.left.seat-rights-unread']!.replace('{seats}', 's1'),
+      words['act.upkeep.left.seat-rights-unread']!.replace('{seats}', 's1')
     ]);
   });
 });
@@ -555,8 +757,18 @@ describe('the stopped window says truly what had left the wallet, and what press
 describe('the running window lists a passed step that had nothing to do as not needed', () => {
   it('lists passed steps done, or not needed when the step says nothing was owed of it', async () => {
     const { stepStateOf } = await import('./runner-screen.js');
-    const step = { title: { key: 'k' }, run: async () => {}, notNeeded: (told: Readonly<Record<string, string | number>>) => told['state'] === 'awaiting-approvals' };
-    const at = (n: number, told?: Record<string, string | number>) => ({ step: n, steps: 6, relayed: 0, unconfirmed: 0, ...(told ? { told } : {}) });
+    const step = {
+      title: { key: 'k' },
+      run: async () => {},
+      notNeeded: (told: Readonly<Record<string, string | number>>) => told['state'] === 'awaiting-approvals'
+    };
+    const at = (n: number, told?: Record<string, string | number>) => ({
+      step: n,
+      steps: 6,
+      relayed: 0,
+      unconfirmed: 0,
+      ...(told ? { told } : {})
+    });
     /* RED WHEN: a charge or payment the action never made, the payment awaiting approvals, is listed as done. */
     expect(stepStateOf(step, 4, at(6, { state: 'awaiting-approvals' }))).toBe('not-needed');
     /* RED WHEN: a step that ran is listed as not needed. */
@@ -567,7 +779,7 @@ describe('the running window lists a passed step that had nothing to do as not n
   });
 });
 
-describe('a framed wallet\'s Confirm is held like its Approve, from the moment it appears', () => {
+describe("a framed wallet's Confirm is held like its Approve, from the moment it appears", () => {
   const identity = identityFromSecret(newSecret());
   const SECRET = newSecret();
   const framedPage = () => {
@@ -579,24 +791,52 @@ describe('a framed wallet\'s Confirm is held like its Approve, from the moment i
         posted.push(m);
         if (m['schema'] === ACT_RELAY_SCHEMA) {
           const data = { schema: ACT_RELAYED_SCHEMA, nonce: m['nonce'], n: m['n'], outcome: 'relayed' };
-          setTimeout(() => { for (const h of handlers) h({ source: parent, origin: ASKER, data } as unknown as MessageEvent); }, 0);
+          setTimeout(() => {
+            for (const h of handlers) h({ source: parent, origin: ASKER, data } as unknown as MessageEvent);
+          }, 0);
         }
-      },
+      }
     };
     const view = {
-      opener: null, parent, self: undefined as unknown, location: { ancestorOrigins: [ASKER] },
-      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { handlers.push(h); }, removeEventListener: () => {},
+      opener: null,
+      parent,
+      self: undefined as unknown,
+      location: { ancestorOrigins: [ASKER] },
+      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {}
     };
     view.self = view;
-    const ask = (data: unknown) => act(() => { for (const h of handlers) h({ source: parent, origin: ASKER, data } as unknown as MessageEvent); });
+    const ask = (data: unknown) =>
+      act(() => {
+        for (const h of handlers) h({ source: parent, origin: ASKER, data } as unknown as MessageEvent);
+      });
     return { view: view as unknown as ChannelWindow, ask };
   };
-  const pause = (ms: number) => act(() => new Promise<void>((r) => { setTimeout(r, ms); }));
+  const pause = (ms: number) =>
+    act(
+      () =>
+        new Promise<void>((r) => {
+          setTimeout(r, ms);
+        })
+    );
   const toTheConfirm = async (): Promise<HTMLButtonElement> => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 460 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
     const { view, ask } = framedPage();
-    render(<SessionProvider><Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => Date.now()} embedder={ASKER} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve
+          identity={identity}
+          secret={SECRET}
+          port={watchedStore()}
+          view={view}
+          now={() => Date.now()}
+          embedder={ASKER}
+        />
+      </SessionProvider>
+    );
     ask({ ...actAsk(), intent: { name: 'read-then-sign', vault: VAULT } });
     await settled();
     /* The wallet was open when the ask came, so the account that pays any fee is picked here first. */
@@ -623,7 +863,9 @@ describe('a framed wallet\'s Confirm is held like its Approve, from the moment i
   it('a frame shrunk too small to read never lets the Confirm be pressed', async () => {
     const confirm = await toTheConfirm();
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 40 });
-    act(() => { window.dispatchEvent(new Event('resize')); });
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
     await pause(DWELL_MS + 100);
     expect(confirm.disabled).toBe(true);
     expect(document.querySelector('[data-consent-refused]')?.textContent).toContain('too small');

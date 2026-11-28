@@ -38,16 +38,27 @@ const OTHER = 'acc_OtherCompany';
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const seat = (n: string) => ({
-  signerId: `sig_${n}`, signingSecret: toHex(randomBytes(32)), wrappingSecret: toHex(randomBytes(32)), blinding: toHex(randomBytes(32)), scope: '44'.repeat(32),
+  signerId: `sig_${n}`,
+  signingSecret: toHex(randomBytes(32)),
+  wrappingSecret: toHex(randomBytes(32)),
+  blinding: toHex(randomBytes(32)),
+  scope: '44'.repeat(32)
 });
 const SEATS: Record<string, ReturnType<typeof seat>> = { [OWN]: seat('own'), [OTHER]: seat('other') };
 const VIEWING: Record<string, string> = { [OWN]: toHex(randomBytes(32)), [OTHER]: toHex(randomBytes(32)) };
 const KEY = savedKeysSealKey(identity, { requester: { origin: US, name: 'x', rdns: 'x' }, person: A.id } as never);
 const BUNDLE = sealKeyring({ accounts: SEATS }, KEY as never).sealed;
-const listed = (inboxOf: (id: string) => string) => [OWN, OTHER].map((id) => ({
-  id, inboxPublicKey: inboxOf(id),
-  wrappedKeys: [{ signerId: SEATS[id]!.signerId, ...wrapKey(VIEWING[id]!, toHex(x25519.getPublicKey(fromHex(SEATS[id]!.wrappingSecret)))) }],
-}));
+const listed = (inboxOf: (id: string) => string) =>
+  [OWN, OTHER].map((id) => ({
+    id,
+    inboxPublicKey: inboxOf(id),
+    wrappedKeys: [
+      {
+        signerId: SEATS[id]!.signerId,
+        ...wrapKey(VIEWING[id]!, toHex(x25519.getPublicKey(fromHex(SEATS[id]!.wrappingSecret))))
+      }
+    ]
+  }));
 
 /** A wallet that answers an action as this wallet's code does: what the saved keys hold that is not secret, and the served keys it believes. */
 class Wallet implements Openable {
@@ -56,13 +67,30 @@ class Wallet implements Openable {
   givesTheKeyOf: string | null = null;
   givesTheValue: string | null = null;
   private handler: ((event: MessageEvent) => void) | null = null;
-  private readonly tab = { postMessage: (m: unknown) => { void this.onAsk(m); } };
-  open(): Window | null { return this.tab as unknown as Window; }
-  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void { this.handler = h; queueMicrotask(() => this.deliver({ schema: READY_PING })); }
-  removeEventListener(): void { this.handler = null; }
-  setTimeout(): number { return 0; }
-  clearTimeout(): void { /* nothing to clear */ }
-  private deliver(data: unknown): void { this.handler?.({ origin: WALLET, source: this.tab, data } as unknown as MessageEvent); }
+  private readonly tab = {
+    postMessage: (m: unknown) => {
+      void this.onAsk(m);
+    }
+  };
+  open(): Window | null {
+    return this.tab as unknown as Window;
+  }
+  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
+    this.handler = h;
+    queueMicrotask(() => this.deliver({ schema: READY_PING }));
+  }
+  removeEventListener(): void {
+    this.handler = null;
+  }
+  setTimeout(): number {
+    return 0;
+  }
+  clearTimeout(): void {
+    /* nothing to clear */
+  }
+  private deliver(data: unknown): void {
+    this.handler?.({ origin: WALLET, source: this.tab, data } as unknown as MessageEvent);
+  }
   private async onAsk(message: unknown): Promise<void> {
     let answer: unknown = { schema: 'nothing-given' };
     try {
@@ -74,23 +102,38 @@ class Wallet implements Openable {
         const a = ask as ActRequest;
         const k = openKeyring(a.keyring!.sealed as never, KEY as never);
         answer = {
-          schema: ACT_ENDED_SCHEMA, nonce: a.nonce, intent: a.intent.name, ended: 'done', step: 1, steps: 1, relayed: 0, unconfirmed: 0,
+          schema: ACT_ENDED_SCHEMA,
+          nonce: a.nonce,
+          intent: a.intent.name,
+          ended: 'done',
+          step: 1,
+          steps: 1,
+          relayed: 0,
+          unconfirmed: 0,
           keys: {
             seats: seatsOf(k),
-            viewing: this.givesTheKeyOf === null ? servedKeysOpenedFrom(k, a.served ?? [])
-              : { [this.givesTheKeyOf]: this.givesTheValue ?? VIEWING[this.givesTheKeyOf] },
+            viewing:
+              this.givesTheKeyOf === null
+                ? servedKeysOpenedFrom(k, a.served ?? [])
+                : { [this.givesTheKeyOf]: this.givesTheValue ?? VIEWING[this.givesTheKeyOf] },
             metadata: metadataOf(k),
-            holder: keyringHolderFor(identity, a as never), resealed: null,
-          },
+            holder: keyringHolderFor(identity, a as never),
+            resealed: null
+          }
         };
       }
-    } catch { /* answered as nothing given */ }
+    } catch {
+      /* answered as nothing given */
+    }
     queueMicrotask(() => this.deliver(answer));
   }
 }
 
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; keyring.forgetLocally(); });
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  keyring.forgetLocally();
+});
 const aService = (inboxOf: (id: string) => string = (id) => inboxPublicKey(VIEWING[id]!, id)) => {
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const route = `${String(init?.method ?? 'GET')} ${url}`;
@@ -102,8 +145,13 @@ const aService = (inboxOf: (id: string) => string = (id) => inboxPublicKey(VIEWI
   }) as typeof fetch;
 };
 const signIn = () => keyring.signedInByAnotherScreen({ user: A, address: ADDRESS, created: true, session: {} });
-const createVault = (wallet: Wallet) => keyring.actOnACompanyInTheWallet(
-  { name: 'create-vault', record: OWN, company: LABEL, account: ACCOUNT }, WALLET, {}, wallet);
+const createVault = (wallet: Wallet) =>
+  keyring.actOnACompanyInTheWallet(
+    { name: 'create-vault', record: OWN, company: LABEL, account: ACCOUNT },
+    WALLET,
+    {},
+    wallet
+  );
 const finish = (wallet: Wallet) => creation.finishCompanyInTheWallet(OWN, WALLET, {}, wallet, US);
 
 /** What opening the company and reading its vault turn on in this tab: its seat, its viewing key, and that it may open it. */
@@ -114,7 +162,10 @@ const ownCompanyOpens = (): void => {
 };
 
 describe('AN ACTION WITH THE KEYS CLOSED OPENS ITS OWN COMPANY, AND ONLY THAT', () => {
-  for (const [name, run] of [['Create vault', createVault], ['Finish', finish]] as const) {
+  for (const [name, run] of [
+    ['Create vault', createVault],
+    ['Finish', finish]
+  ] as const) {
     it(`after a cold ${name}, the company opens and its vault reads with no keys window`, async () => {
       aService();
       signIn();
@@ -144,7 +195,7 @@ describe('AN ACTION WITH THE KEYS CLOSED OPENS ITS OWN COMPANY, AND ONLY THAT', 
     expect(keyring.seatHeldHere(OWN)).toBeNull();
   });
 
-  it('an end answer giving another company\'s key is not taken as a read at all', async () => {
+  it("an end answer giving another company's key is not taken as a read at all", async () => {
     aService();
     signIn();
     const wallet = new Wallet();
@@ -156,7 +207,7 @@ describe('AN ACTION WITH THE KEYS CLOSED OPENS ITS OWN COMPANY, AND ONLY THAT', 
     expect(keyring.seatHeldHere(OTHER)).toBeNull();
   });
 
-  it('in a tab whose saved keys were read, an end answer giving another company\'s key changes nothing held for it', async () => {
+  it("in a tab whose saved keys were read, an end answer giving another company's key changes nothing held for it", async () => {
     aService();
     signIn();
     const wallet = new Wallet();
@@ -172,18 +223,34 @@ describe('AN ACTION WITH THE KEYS CLOSED OPENS ITS OWN COMPANY, AND ONLY THAT', 
 
 describe('A PRIVATE DEPOSIT IS ASKED OF THE WALLET AS ONE ACTION', () => {
   /* RED WHEN: the amount reaches the wallet as anything but the whole number of the token's smallest units, or the ask names more than the company, the vault, the token and the amount. */
-  it('names the company, the vault, the token and the amount in the token\'s smallest units, written in decimal', async () => {
+  it("names the company, the vault, the token and the amount in the token's smallest units, written in decimal", async () => {
     aService();
     signIn();
     const wallet = new Wallet();
-    const vault = 'd1'.repeat(32), token = '02'.repeat(32);
-    await keyring.privateDepositInTheWallet({ record: OWN, company: LABEL, account: ACCOUNT as AccountAddress, vault, token, units: 12_345_678_901_234_567_890n }, WALLET, {}, wallet);
+    const vault = 'd1'.repeat(32),
+      token = '02'.repeat(32);
+    await keyring.privateDepositInTheWallet(
+      {
+        record: OWN,
+        company: LABEL,
+        account: ACCOUNT as AccountAddress,
+        vault,
+        token,
+        units: 12_345_678_901_234_567_890n
+      },
+      WALLET,
+      {},
+      wallet
+    );
     const ask = wallet.asks[0]!.body as ActRequest;
-    expect(ask.intent).toEqual({ name: 'private-deposit', fields: { record: OWN, company: LABEL, account: ACCOUNT, vault, token, amount: '12345678901234567890' } });
+    expect(ask.intent).toEqual({
+      name: 'private-deposit',
+      fields: { record: OWN, company: LABEL, account: ACCOUNT, vault, token, amount: '12345678901234567890' }
+    });
   });
 });
 
-describe('AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE\'S OWN TOKEN FOR AN EMPLOYEE OR A VENDOR, AND NONE FOR A SIGNER', () => {
+describe("AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE'S OWN TOKEN FOR AN EMPLOYEE OR A VENDOR, AND NONE FOR A SIGNER", () => {
   const at = { record: OWN, company: LABEL, account: ACCOUNT as AccountAddress };
   const token = '02'.repeat(32);
   const askOf = async (ask: InviteAsk) => {
@@ -194,16 +261,33 @@ describe('AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE\'S O
     return { made, intent: (wallet.asks[0]!.body as ActRequest).intent };
   };
 
-  it('an employee\'s details reach the wallet as the action\'s own fields, and the link is made here from the token handed in', async () => {
+  it("an employee's details reach the wallet as the action's own fields, and the link is made here from the token handed in", async () => {
     const { made, intent } = await askOf({
-      ...at, kind: 'employee', name: 'Ada', email: '', title: 'Engineer', asset: token, units: 5_000_000_000_000_000_000n, startDate: '2026-11-01',
-      classification: 'full-time',
+      ...at,
+      kind: 'employee',
+      name: 'Ada',
+      email: '',
+      title: 'Engineer',
+      asset: token,
+      units: 5_000_000_000_000_000_000n,
+      startDate: '2026-11-01',
+      classification: 'full-time'
     });
     /* RED WHEN: a field the wallet does not read is sent, an empty one is sent, or the pay is not the whole number of smallest units. */
-    expect(intent).toEqual({ name: 'invite', fields: {
-      ...at, token: intent.fields['token'], kind: 'employee', personName: 'Ada', title: 'Engineer', asset: token, amount: '5000000000000000000',
-      startDate: '2026-11-01', classification: 'full-time',
-    } });
+    expect(intent).toEqual({
+      name: 'invite',
+      fields: {
+        ...at,
+        token: intent.fields['token'],
+        kind: 'employee',
+        personName: 'Ada',
+        title: 'Engineer',
+        asset: token,
+        amount: '5000000000000000000',
+        startDate: '2026-11-01',
+        classification: 'full-time'
+      }
+    });
     /* RED WHEN: the link given to the person is not the one the token the wallet was handed makes. */
     expect(intent.fields['token']).toMatch(/^[0-9a-f]{64}$/u);
     expect(made.link).toBe(invitationLink(US, intent.fields['token'] as never));
@@ -211,7 +295,15 @@ describe('AN INVITATION IS ASKED OF THE WALLET AS ONE ACTION, WITH THE PAGE\'S O
   });
 
   it('a vendor paid monthly and a signer by address are asked with their own fields', async () => {
-    const vendor = (await askOf({ ...at, kind: 'vendor', name: 'Acme', startDate: '2026-11-01', terms: { kind: 'monthly', asset: token, units: 10n } })).intent;
+    const vendor = (
+      await askOf({
+        ...at,
+        kind: 'vendor',
+        name: 'Acme',
+        startDate: '2026-11-01',
+        terms: { kind: 'monthly', asset: token, units: 10n }
+      })
+    ).intent;
     expect(vendor.fields).toMatchObject({ kind: 'vendor', terms: 'monthly', termsAsset: token, termsAmount: '10' });
     const signer = (await askOf({ ...at, kind: 'signer', name: 'Dee', role: 'approver', address: ADDRESS })).intent;
     /* RED WHEN: a signer's address or role does not reach the wallet that checks them. */
@@ -233,17 +325,42 @@ describe('A SIGNER IS APPROVED AND ADMITTED BY ASKING THE WALLET ONE ACTION EACH
   };
 
   it('an approval names the proposal and exactly what the page showed it inviting', async () => {
-    const intent = await intentOf((w) => approveSignerInTheWallet({
-      ...at, proposal: 'prp_abcdefghijkl', name: 'Dee', role: 'limited', address: 'AA'.repeat(32), scope: 'BB'.repeat(32), coinKey: 'CC'.repeat(32),
-    }, WALLET, {}, w));
+    const intent = await intentOf((w) =>
+      approveSignerInTheWallet(
+        {
+          ...at,
+          proposal: 'prp_abcdefghijkl',
+          name: 'Dee',
+          role: 'limited',
+          address: 'AA'.repeat(32),
+          scope: 'BB'.repeat(32),
+          coinKey: 'CC'.repeat(32)
+        },
+        WALLET,
+        {},
+        w
+      )
+    );
     /* RED WHEN: what the page showed does not reach the wallet that holds the proposal to it, or reaches it in another case. */
-    expect(intent).toEqual({ name: 'approve-proposal', fields: {
-      ...at, proposal: 'prp_abcdefghijkl', kind: 'add-signer', personName: 'Dee', role: 'limited', address: 'aa'.repeat(32), scope: 'bb'.repeat(32), coinKey: 'cc'.repeat(32),
-    } });
+    expect(intent).toEqual({
+      name: 'approve-proposal',
+      fields: {
+        ...at,
+        proposal: 'prp_abcdefghijkl',
+        kind: 'add-signer',
+        personName: 'Dee',
+        role: 'limited',
+        address: 'aa'.repeat(32),
+        scope: 'bb'.repeat(32),
+        coinKey: 'cc'.repeat(32)
+      }
+    });
   });
 
   it('an admission names the person waiting and the name the page showed, and nothing read out', async () => {
-    const intent = await intentOf((w) => admitSignerInTheWallet({ ...at, signer: 'sig_dee', name: 'Dee' }, WALLET, {}, w));
+    const intent = await intentOf((w) =>
+      admitSignerInTheWallet({ ...at, signer: 'sig_dee', name: 'Dee' }, WALLET, {}, w)
+    );
     /* RED WHEN: the admission is asked with a field the wallet does not read, or without the person the page showed. */
     expect(intent).toEqual({ name: 'admit-signer', fields: { ...at, signer: 'sig_dee', personName: 'Dee' } });
   });
@@ -260,34 +377,101 @@ describe('A PERSON OR A VENDOR IS ADMITTED AND CHANGED BY ASKING THE WALLET ONE 
   };
 
   it('an admission names the person, their kind, the name the page showed and the fingerprint read out, or none for a claim', async () => {
-    const byFingerprint = await intentOf((w) => admitPersonInTheWallet({ ...at, kind: 'employee', person: 'emp_ada', name: 'Ada', fingerprint: ' ABCD-EFGH ' }, WALLET, {}, w));
+    const byFingerprint = await intentOf((w) =>
+      admitPersonInTheWallet(
+        { ...at, kind: 'employee', person: 'emp_ada', name: 'Ada', fingerprint: ' ABCD-EFGH ' },
+        WALLET,
+        {},
+        w
+      )
+    );
     /* RED WHEN: the fingerprint read out does not reach the wallet that checks it, or reaches it under another person. */
-    expect(byFingerprint).toEqual({ name: 'admit-person', fields: { ...at, kind: 'employee', person: 'emp_ada', personName: 'Ada', fingerprint: 'ABCD-EFGH' } });
-    const byClaim = await intentOf((w) => admitPersonInTheWallet({ ...at, kind: 'vendor', person: 'ven_acme', name: 'Acme' }, WALLET, {}, w));
-    expect(byClaim).toEqual({ name: 'admit-person', fields: { ...at, kind: 'vendor', person: 'ven_acme', personName: 'Acme' } });
+    expect(byFingerprint).toEqual({
+      name: 'admit-person',
+      fields: { ...at, kind: 'employee', person: 'emp_ada', personName: 'Ada', fingerprint: 'ABCD-EFGH' }
+    });
+    const byClaim = await intentOf((w) =>
+      admitPersonInTheWallet({ ...at, kind: 'vendor', person: 'ven_acme', name: 'Acme' }, WALLET, {}, w)
+    );
+    expect(byClaim).toEqual({
+      name: 'admit-person',
+      fields: { ...at, kind: 'vendor', person: 'ven_acme', personName: 'Acme' }
+    });
   });
 
   it('a change names each field the page changed, amounts in the smallest unit written in decimal, and a date taken off as cleared', async () => {
-    const employee = await intentOf((w) => changePersonInTheWallet({
-      ...at, kind: 'employee', person: 'emp_ada', name: 'Ada',
-      change: { pay: { amount: 6000n, asset: 'AA'.repeat(32), from: '2026-11-01' }, classification: { classification: 'part-time', from: '2026-11-01' }, endDate: null, leavingDate: null },
-    }, WALLET, {}, w));
+    const employee = await intentOf((w) =>
+      changePersonInTheWallet(
+        {
+          ...at,
+          kind: 'employee',
+          person: 'emp_ada',
+          name: 'Ada',
+          change: {
+            pay: { amount: 6000n, asset: 'AA'.repeat(32), from: '2026-11-01' },
+            classification: { classification: 'part-time', from: '2026-11-01' },
+            endDate: null,
+            leavingDate: null
+          }
+        },
+        WALLET,
+        {},
+        w
+      )
+    );
     /* RED WHEN: a date taken off reaches the wallet as no change, or an amount reaches it in another form than it reads. */
-    expect(employee).toEqual({ name: 'change-person', fields: {
-      ...at, kind: 'employee', person: 'emp_ada', personName: 'Ada', payAmount: '6000', asset: 'aa'.repeat(32), payFrom: '2026-11-01',
-      classification: 'part-time', classificationFrom: '2026-11-01', clear: 'endDate,leavingDate',
-    } });
-    const vendor = await intentOf((w) => changePersonInTheWallet({
-      ...at, kind: 'vendor', person: 'ven_acme', name: 'Acme', change: { terms: { kind: 'monthly', asset: 'BB'.repeat(32), amount: 900n }, endDate: '2027-01-31', status: 'leaver' },
-    }, WALLET, {}, w));
-    expect(vendor).toEqual({ name: 'change-person', fields: {
-      ...at, kind: 'vendor', person: 'ven_acme', personName: 'Acme', terms: 'monthly', termsAsset: 'bb'.repeat(32), termsAmount: '900', endDate: '2027-01-31', status: 'leaver',
-    } });
+    expect(employee).toEqual({
+      name: 'change-person',
+      fields: {
+        ...at,
+        kind: 'employee',
+        person: 'emp_ada',
+        personName: 'Ada',
+        payAmount: '6000',
+        asset: 'aa'.repeat(32),
+        payFrom: '2026-11-01',
+        classification: 'part-time',
+        classificationFrom: '2026-11-01',
+        clear: 'endDate,leavingDate'
+      }
+    });
+    const vendor = await intentOf((w) =>
+      changePersonInTheWallet(
+        {
+          ...at,
+          kind: 'vendor',
+          person: 'ven_acme',
+          name: 'Acme',
+          change: {
+            terms: { kind: 'monthly', asset: 'BB'.repeat(32), amount: 900n },
+            endDate: '2027-01-31',
+            status: 'leaver'
+          }
+        },
+        WALLET,
+        {},
+        w
+      )
+    );
+    expect(vendor).toEqual({
+      name: 'change-person',
+      fields: {
+        ...at,
+        kind: 'vendor',
+        person: 'ven_acme',
+        personName: 'Acme',
+        terms: 'monthly',
+        termsAsset: 'bb'.repeat(32),
+        termsAmount: '900',
+        endDate: '2027-01-31',
+        status: 'leaver'
+      }
+    });
   });
 });
 
-describe('THE WALLET HANDS THE COMPANY\'S KEYS TO THE SHARED CODE UNDER THE NAME IT READS THEM BY', () => {
-  it('a door keeps its own fields and carries the company\'s keys as the shared code reads them', () => {
+describe("THE WALLET HANDS THE COMPANY'S KEYS TO THE SHARED CODE UNDER THE NAME IT READS THEM BY", () => {
+  it("a door keeps its own fields and carries the company's keys as the shared code reads them", () => {
     const keys = { epoch: 0 } as never;
     /* RED WHEN: a door built in the wallet hands the shared code no company keys, or other ones, or drops its own fields. */
     expect(withCompanyKeys({ id: 'acc_1', keyEpoch: 0 }, keys)).toEqual({ id: 'acc_1', keyEpoch: 0, viewingKey: keys });
@@ -315,7 +499,9 @@ describe('A COMPANY KEY RELEASED TO THIS TAB IS TOLD TO WHAT WAITS FOR IT', () =
     aService();
     signIn();
     const told: string[] = [];
-    const stop = keyring.watchCompanyKeyReleased((id) => { told.push(id); });
+    const stop = keyring.watchCompanyKeyReleased((id) => {
+      told.push(id);
+    });
     await keyring.companyKeysForVaults(OWN, WALLET, new Wallet(), US);
     expect(keyring.companyKeyReleasedFor(OWN)).not.toBeNull();
     expect(told).toEqual([OWN]);
@@ -335,10 +521,19 @@ describe('A COMPANY KEY RELEASED TO THIS TAB IS TOLD TO WHAT WAITS FOR IT', () =
 describe('WHOEVER HOLDS A READ OF A COMPANY IS TOLD WHEN IT IS STALE', () => {
   const told: ReadsStale[] = [];
   let stop = (): void => {};
-  afterEach(() => { stop(); told.length = 0; });
-  const watch = (): void => { told.length = 0; stop(); stop = watchReadsStale((stale) => { told.push(stale); }); };
+  afterEach(() => {
+    stop();
+    told.length = 0;
+  });
+  const watch = (): void => {
+    told.length = 0;
+    stop();
+    stop = watchReadsStale((stale) => {
+      told.push(stale);
+    });
+  };
 
-  it('tells every company\'s holder that the sign-in ended, with nobody signed in to read again as', () => {
+  it("tells every company's holder that the sign-in ended, with nobody signed in to read again as", () => {
     signIn();
     watch();
     keyring.forgetLocally();
@@ -346,14 +541,17 @@ describe('WHOEVER HOLDS A READ OF A COMPANY IS TOLD WHEN IT IS STALE', () => {
     expect(told).toEqual([{ company: null, why: STALE.signInEnded, signedIn: false }]);
   });
 
-  it('tells every company\'s holder when somebody signs in, so nothing is read as whoever was signed in before', () => {
+  it("tells every company's holder when somebody signs in, so nothing is read as whoever was signed in before", () => {
     watch();
     signIn();
     /* RED WHEN: a new sign-in is handed the view the person before it opened. */
     expect(told).toEqual([{ company: null, why: STALE.signedIn, signedIn: true }]);
   });
 
-  for (const [name, run] of [['Create vault', createVault], ['Finish', finish]] as const) {
+  for (const [name, run] of [
+    ['Create vault', createVault],
+    ['Finish', finish]
+  ] as const) {
     it(`tells the holder of the company a ${name} ran on, and of no other, once it has ended`, async () => {
       aService();
       signIn();
@@ -369,8 +567,10 @@ describe('WHOEVER HOLDS A READ OF A COMPANY IS TOLD WHEN IT IS STALE', () => {
       signIn();
       /* The saved keys cannot be fetched, so the action throws after its window has opened. */
       const served = globalThis.fetch;
-      globalThis.fetch = (async (url: string, init?: RequestInit) => (url === '/api/me/keys'
-        ? { ok: false, status: 500, json: async () => ({ error: 'not now' }) } as Response : served(url, init))) as typeof fetch;
+      globalThis.fetch = (async (url: string, init?: RequestInit) =>
+        url === '/api/me/keys'
+          ? ({ ok: false, status: 500, json: async () => ({ error: 'not now' }) } as Response)
+          : served(url, init)) as typeof fetch;
       watch();
       await expect(run(new Wallet())).rejects.toThrow();
       /* RED WHEN: only an action that ended well ends the view, so one that stopped part way leaves the page reading what it may have changed. */

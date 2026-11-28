@@ -3,7 +3,10 @@
  * and the failure that says it may have been sent.
  */
 import type { Hex } from '../../../src/core/crypto.js';
-import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import type {
+  PrivatePaymentOnTheWire,
+  PrivatePaymentOrderOnTheWire
+} from '../../../src/midnight/private-payment-wire.js';
 import { handedOver, type HandOver } from './hand-over.js';
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import type { VaultBuilderClient } from './vault-worker-client.js';
@@ -22,10 +25,16 @@ import { fundableOrThrow } from './vault-fundable-here.js';
  * device, so there is nothing here to rebuild.
  */
 export class PublicPaymentNotYetSeen extends Error {
-  constructor(readonly vault: Hex, readonly txRef: string, why?: string) {
-    super(`the payment may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has not seen it land`
-      + `${why === undefined ? '' : ` (${why})`}, so it may still land. Do not pay this person again: open the run `
-      + 'later, and it shows them paid once the chain does.');
+  constructor(
+    readonly vault: Hex,
+    readonly txRef: string,
+    why?: string
+  ) {
+    super(
+      `the payment may have been sent${txRef === '' ? '' : ` (${txRef})`} and this device has not seen it land` +
+        `${why === undefined ? '' : ` (${why})`}, so it may still land. Do not pay this person again: open the run ` +
+        'later, and it shows them paid once the chain does.'
+    );
     this.name = 'PublicPaymentNotYetSeen';
   }
 }
@@ -60,7 +69,7 @@ interface PublicPayoutDoors extends Pacing {
  */
 export async function payPubliclyFromCompanyVault(
   doors: PublicPayoutDoors,
-  input: { readonly order: PrivatePaymentOrderOnTheWire; readonly payment: PrivatePaymentOnTheWire },
+  input: { readonly order: PrivatePaymentOrderOnTheWire; readonly payment: PrivatePaymentOnTheWire }
 ): Promise<{ txRef: string }> {
   const { order, payment } = input;
   const vault = order.vault.toLowerCase() as Hex;
@@ -68,33 +77,44 @@ export async function payPubliclyFromCompanyVault(
     throw new Error('this payment is not a public one, so it is not paid publicly. Nothing was sent.');
   }
   if (payment.paid === true) {
-    throw new Error('the company\'s account already records this person paid for this run. Nothing was sent.');
+    throw new Error("the company's account already records this person paid for this run. Nothing was sent.");
   }
   const seconds = BigInt(Math.floor((doors.now ?? (() => new Date()))().getTime() / 1000));
   if (seconds < BigInt(order.opensAt) || seconds >= BigInt(order.closesAt)) {
-    throw new Error('this run can be paid only inside the window its signers approved, and it is not open now. '
-      + 'Nothing was sent.');
+    throw new Error(
+      'this run can be paid only inside the window its signers approved, and it is not open now. ' + 'Nothing was sent.'
+    );
   }
   doors.progress?.('reading the chain');
   const answer = await fundableOrThrow(doors, vault);
   if (answer.of === 'not-on-chain') {
-    throw new Error('the chain, as this device read it, does not show this vault, so nothing is paid out of it. Nothing was '
-      + `sent. Reason: ${answer.why}`);
+    throw new Error(
+      'the chain, as this device read it, does not show this vault, so nothing is paid out of it. Nothing was ' +
+        `sent. Reason: ${answer.why}`
+    );
   }
   if (answer.of !== 'fundable') {
-    throw new Error('No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was '
-      + `sent. Reason: ${answer.why}`);
+    throw new Error(
+      'No payment can be made out of this vault yet, so none was prepared or recorded. Nothing was ' +
+        `sent. Reason: ${answer.why}`
+    );
   }
   const chain = await chainAtOneBlockHere(doors, vault);
 
   doors.progress?.('building the payment');
   const { payments: _all, ...round } = order;
   const built = await doors.builder.payoutPublicly({
-    vault, account: chain.account, order: round, payment,
+    vault,
+    account: chain.account,
+    order: round,
+    payment,
     chain: {
-      blockHash: chain.blockHash, vaultState: chain.vaultState, zswapState: chain.zswapState,
-      parameters: chain.parameters, accountState: chain.accountState,
-    },
+      blockHash: chain.blockHash,
+      vaultState: chain.vaultState,
+      zswapState: chain.zswapState,
+      parameters: chain.parameters,
+      accountState: chain.accountState
+    }
   });
 
   doors.progress?.('sending the payment');
@@ -102,8 +122,10 @@ export async function payPubliclyFromCompanyVault(
   try {
     const tx = built.tx;
     sent = await handedOver(doors.handOver, {
-      tx, call: { kind: 'public-payout', contract: vault, circuit: 'payoutUnshielded', account: doors.account },
-      viaService: () => doors.service.payoutPublicly(vault, tx), after: async () => NAMED_BY_NOTHING,
+      tx,
+      call: { kind: 'public-payout', contract: vault, circuit: 'payoutUnshielded', account: doors.account },
+      viaService: () => doors.service.payoutPublicly(vault, tx),
+      after: async () => NAMED_BY_NOTHING
     });
   } catch (e) {
     if (sentNothing(e)) throw e;

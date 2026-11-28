@@ -47,15 +47,17 @@ export function movementOfPayslip(circuits: PayslipCircuits, p: PayslipPayment):
   if (!isNetworkName(network)) throw new Error(`"${network}" is not a Midnight network.`);
   /* The kind is READ off the address, never taken from anything beside it. */
   const payee = payeeOf(p.paidTo, network);
-  const details = toHex(circuits.details[payee.kind](
-    fromHex(recipientOf(payee)), fromHex(p.token), BigInt(p.amount), fromHex(p.blinding)));
+  const details = toHex(
+    circuits.details[payee.kind](fromHex(recipientOf(payee)), fromHex(p.token), BigInt(p.amount), fromHex(p.blinding))
+  );
   return circuits.movementOf(circuits.leafOf({ details, nonce: p.nonce }));
 }
 
 /** The circuits of the contracts this build was compiled against, loaded the first time they are asked for. */
 export const contractCircuits = async (): Promise<PayslipCircuits> => {
   const [{ payoutLeafOf, paidMovementOfLeaf }, { vaultDetailsOf }] = await Promise.all([
-    import('../../../src/midnight/payout-tree.js'), import('../../../src/midnight/vault-details.js'),
+    import('../../../src/midnight/payout-tree.js'),
+    import('../../../src/midnight/vault-details.js')
   ]);
   return { details: await vaultDetailsOf(), leafOf: payoutLeafOf, movementOf: paidMovementOfLeaf };
 };

@@ -30,7 +30,9 @@ const resolved = (from: string, spec: string): string | null => {
   return [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`].find((c) => text.has(c)) ?? null;
 };
 const importsOf = (file: string, pattern: RegExp): string[] =>
-  [...text.get(file)!.matchAll(pattern)].map((m) => resolved(file, m[1] ?? m[2]!)).filter((p): p is string => p !== null);
+  [...text.get(file)!.matchAll(pattern)]
+    .map((m) => resolved(file, m[1] ?? m[2]!))
+    .filter((p): p is string => p !== null);
 const STATIC = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]/g;
 const DYNAMIC = /import\(\s*['"]([^'"]+)['"]\s*\)/g;
 
@@ -52,18 +54,28 @@ const OPENED_LATER = [...FIRST].flatMap((f) => importsOf(f, DYNAMIC)).filter((f)
 const EAGER = new Set([...FIRST, ...OPENED_LATER.flatMap((f) => [...reach(f, true, FIRST)])]);
 
 /** Each screen's module and the folder `onDemand` names for its words, read from the page list. */
-const SCREENS = [...text.get('pages.ts')!.matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[\w-]+)\.js'\), '\w+', '([\w-]+)'\)/g)]
-  .map((m) => ({ module: `${m[1]}.tsx`, folder: m[2]! }));
-const CLOSURE = new Map(SCREENS.map((s) => [s.folder, new Set([...reach(s.module, true, EAGER)].filter((f) => !EAGER.has(f)))]));
+const SCREENS = [
+  ...text.get('pages.ts')!.matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[\w-]+)\.js'\), '\w+', '([\w-]+)'\)/g)
+].map((m) => ({ module: `${m[1]}.tsx`, folder: m[2]! }));
+const CLOSURE = new Map(
+  SCREENS.map((s) => [s.folder, new Set([...reach(s.module, true, EAGER)].filter((f) => !EAGER.has(f)))])
+);
 
 const KEYS = new Map<string, string[]>();
 const keysIn = (f: string): string[] => {
-  if (!KEYS.has(f)) KEYS.set(f, keysAskedFor({ path: f, text: text.get(f)! } as Source).map((k) => k.key!));
+  if (!KEYS.has(f))
+    KEYS.set(
+      f,
+      keysAskedFor({ path: f, text: text.get(f)! } as Source).map((k) => k.key!)
+    );
   return KEYS.get(f)!;
 };
 const askedBy = (files: Iterable<string>): Set<string> => new Set([...files].flatMap(keysIn));
 const FOLDERS = [...new Set(SCREENS.map((s) => s.folder))];
-const jsonAt = (path: string): Record<string, string> => (existsSync(join(LOCALES, path)) ? JSON.parse(readFileSync(join(LOCALES, path), 'utf8')) as Record<string, string> : {});
+const jsonAt = (path: string): Record<string, string> =>
+  existsSync(join(LOCALES, path))
+    ? (JSON.parse(readFileSync(join(LOCALES, path), 'utf8')) as Record<string, string>)
+    : {};
 const SHELL = jsonAt('en.json');
 const COMMON = jsonAt('common/en.json');
 const PAGE = (folder: string): Record<string, string> => jsonAt(`pages/${folder}/en.json`);
@@ -77,7 +89,9 @@ describe('the words a screen loads', () => {
     expect(SCREENS.length).toBe(22);
     expect(SCREENS.filter((s) => basename(s.module, '.tsx') !== s.folder)).toEqual([]);
     expect([...CLOSURE.values()].every((c) => c.size > 0)).toBe(true);
-    expect(readdirSync(join(LOCALES, 'pages')).sort()).toEqual(FOLDERS.sort().filter((f) => Object.keys(PAGE(f)).length > 0));
+    expect(readdirSync(join(LOCALES, 'pages')).sort()).toEqual(
+      FOLDERS.sort().filter((f) => Object.keys(PAGE(f)).length > 0)
+    );
   });
 
   /* RED WHEN: code the first download carries asks for a word that is not in `locales/en.json`, so it shows the key until some screen has loaded the word. */
@@ -88,19 +102,23 @@ describe('the words a screen loads', () => {
   /* RED WHEN: a screen, or something it opens, asks for a word that is in none of the three files it loads, so a person sees the key. */
   it('has, for every screen, each word it asks for in the first download, the common file or its own', () => {
     for (const [folder, files] of CLOSURE) {
-      const missing = [...askedBy(files)].filter((k) => !holds(SHELL, k) && !holds(COMMON, k) && !holds(PAGE(folder), k));
+      const missing = [...askedBy(files)].filter(
+        (k) => !holds(SHELL, k) && !holds(COMMON, k) && !holds(PAGE(folder), k)
+      );
       expect(missing, folder).toEqual([]);
     }
   });
 
   /* RED WHEN: a page's own file holds a word its screen does not ask for, or one another screen asks for too (it belongs in the common file), or one the first download asks for. */
-  it('keeps in a page\'s file only what that page alone asks for', () => {
+  it("keeps in a page's file only what that page alone asks for", () => {
     const eager = askedBy(EAGER);
     for (const [folder, files] of CLOSURE) {
       const others = askedBy([...CLOSURE].filter(([f]) => f !== folder).flatMap(([, c]) => [...c]));
       const mine = askedBy(files);
       const base = (k: string): string => k.replace(/_(zero|one|two|few|many|other)$/, '');
-      const wrong = Object.keys(PAGE(folder)).filter((k) => !mine.has(base(k)) || others.has(base(k)) || eager.has(base(k)));
+      const wrong = Object.keys(PAGE(folder)).filter(
+        (k) => !mine.has(base(k)) || others.has(base(k)) || eager.has(base(k))
+      );
       expect(wrong, folder).toEqual([]);
     }
   });

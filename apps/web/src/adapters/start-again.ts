@@ -1,4 +1,8 @@
-import { NoCreationKeptHere, startAnUnfinishedCreationAgain, type StartedAgain } from 'vaults-web-shared/company-creation.js';
+import {
+  NoCreationKeptHere,
+  startAnUnfinishedCreationAgain,
+  type StartedAgain
+} from 'vaults-web-shared/company-creation.js';
 import { creationChanged } from './creation-standing.js';
 import { whileNothingIsSent } from './sends.js';
 import { theCreationBuilder } from './vault-builder.js';
@@ -37,7 +41,9 @@ export async function startAgain(personId: string, companyId: string | null): Pr
     const id = companyId;
     if (id === null) return { of: AGAIN.nothing };
     /* After any carry or press in flight ends, and with none starting until this is settled. */
-    const r = await whileNothingIsSent(async () => startAnUnfinishedCreationAgain(id, ACCOUNT_ORIGIN, await theCreationBuilder()));
+    const r = await whileNothingIsSent(async () =>
+      startAnUnfinishedCreationAgain(id, ACCOUNT_ORIGIN, await theCreationBuilder())
+    );
     if (r.of === 'dropped') creationChanged(id);
     return startedOver(r);
   } catch (e) {

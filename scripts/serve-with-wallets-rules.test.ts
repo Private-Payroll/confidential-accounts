@@ -6,15 +6,29 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { PAGES_START_WITHIN_MS, pagesVerdict, somethingAlreadyServes, waitForThePages, parametersBeforeServing, postureFrom, refuseToServe, seedsAreOneParty, showNoTokenInTheConsole, POSTURE_NOT_CARRIED, POSTURE_REQUIRED } from './serve-with-wallets-rules.js';
+import {
+  PAGES_START_WITHIN_MS,
+  pagesVerdict,
+  somethingAlreadyServes,
+  waitForThePages,
+  parametersBeforeServing,
+  postureFrom,
+  refuseToServe,
+  seedsAreOneParty,
+  showNoTokenInTheConsole,
+  POSTURE_NOT_CARRIED,
+  POSTURE_REQUIRED
+} from './serve-with-wallets-rules.js';
 import { refuseIncompleteSetup } from './create-company-rules.js';
 import { servedCircuits } from '../src/server/proving-parameters.js';
 import { PAIR_NETWORK } from '../src/midnight/network.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const ALL_PRESENT = {
-  fundedSeed: true, maintenanceAuthority: true,
-  compiledContract: true, proofServer: true,
+  fundedSeed: true,
+  maintenanceAuthority: true,
+  compiledContract: true,
+  proofServer: true
 };
 const DEV = String(JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts.dev);
 
@@ -27,8 +41,7 @@ describe('the posture is read off the development script', () => {
     const p = postureFrom(DEV);
     for (const name of POSTURE_REQUIRED) expect(p[name], `${name} not read`).toBeTruthy();
     expect(p).not.toHaveProperty('ALLOW_SIMULATED_COMPANY_ADDRESS');
-    expect(postureFrom('ALLOW_SIMULATED_COMPANY_ADDRESS=1 A=b sh -c x'))
-      .toEqual({ A: 'b' });
+    expect(postureFrom('ALLOW_SIMULATED_COMPANY_ADDRESS=1 A=b sh -c x')).toEqual({ A: 'b' });
   });
 
   /*
@@ -40,7 +53,10 @@ describe('the posture is read off the development script', () => {
     const p = postureFrom(DEV);
     expect(p['VITE_DEV_ERROR_SINK']).toBe('1');
     expect(p['ALLOW_WEB_CONSOLE_SINK']).toBe('1');
-    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      ''
+    );
     const setForServer = launcher.indexOf('for (const [k, v] of Object.entries(posture)) process.env[k] = v;');
     expect(setForServer, 'the server does not get them').toBeGreaterThan(-1);
     expect(setForServer).toBeLessThan(launcher.indexOf('await startTheServer(ROOT)'));
@@ -70,10 +86,11 @@ describe('refusals before anything is brought up', () => {
   });
 
   /* RED WHEN: machine preconditions stop being asked, or only the first refusal is named. */
-  it('names every missing piece at once, its own and the machine\'s', () => {
+  it("names every missing piece at once, its own and the machine's", () => {
     const r = refuseToServe({
-      network: 'preview', posture: {},
-      present: { ...ALL_PRESENT, proofServer: false, fundedSeed: false },
+      network: 'preview',
+      posture: {},
+      present: { ...ALL_PRESENT, proofServer: false, fundedSeed: false }
     })!;
     expect(r).toContain(`serves ${PAIR_NETWORK}`);
     expect(r).toMatch(/no longer declares/);
@@ -83,8 +100,7 @@ describe('refusals before anything is brought up', () => {
 
   /* RED WHEN: a complete machine is refused. */
   it('answers null when everything is in place', () => {
-    expect(refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: postureFrom(DEV) }))
-      .toBeNull();
+    expect(refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: postureFrom(DEV) })).toBeNull();
   });
 
   /*
@@ -110,15 +126,21 @@ describe('refusals before anything is brought up', () => {
    * paying wallet had synced.
    */
   it('refuses origins it cannot start before anything is brought up', () => {
-    const onePort = { ...postureFrom(DEV), WALLET_ORIGIN: 'http://localhost:5173', VITE_WALLET_ORIGIN: 'http://localhost:5173' };
+    const onePort = {
+      ...postureFrom(DEV),
+      WALLET_ORIGIN: 'http://localhost:5173',
+      VITE_WALLET_ORIGIN: 'http://localhost:5173'
+    };
     const r = refuseToServe({ network: PAIR_NETWORK, present: ALL_PRESENT, posture: onePort });
     expect(r).toMatch(/origins cannot be started as they are: .*are on one port/);
   });
 });
 
 describe('the launcher hands the pair over before the server exists', () => {
-  const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    ''
+  );
 
   /*
    * RED WHEN: the server is imported before the hand-in. The server reads the
@@ -168,8 +190,9 @@ describe('the launcher hands the pair over before the server exists', () => {
     const bringUp = launcher.indexOf('bringUpWallet(');
     expect(ceiling, 'the launcher does not read the ceiling').toBeGreaterThan(-1);
     expect(ceiling, 'the launcher brings a wallet up before reading the ceiling').toBeLessThan(bringUp);
-    expect(launcher, 'the launcher does not pass the ceiling to the fee payer')
-      .toMatch(/(fundedPartiesOver|feePayerOver|feePayerHeldOver)\([\s\S]*?\bceiling,\s*\)/);
+    expect(launcher, 'the launcher does not pass the ceiling to the fee payer').toMatch(
+      /(fundedPartiesOver|feePayerOver|feePayerHeldOver)\([\s\S]*?\bceiling,\s*\)/
+    );
   });
 
   /*
@@ -188,7 +211,9 @@ describe('the launcher hands the pair over before the server exists', () => {
   it('refuses to report ready unless the server says it can write', () => {
     const check = launcher.indexOf("refuseWhatTheServerSaid('can write', said, port)");
     expect(check).toBeGreaterThan(-1);
-    expect(check, 'the pages are started before the server is checked').toBeLessThan(launcher.indexOf('startThePages('));
+    expect(check, 'the pages are started before the server is checked').toBeLessThan(
+      launcher.indexOf('startThePages(')
+    );
   });
 
   /*
@@ -204,28 +229,53 @@ describe('the launcher hands the pair over before the server exists', () => {
   });
 });
 
-describe('the new application\'s proving files, before it is served', () => {
+describe("the new application's proving files, before it is served", () => {
   const none = { present: [], fetched: [], setAside: [], missing: [], unread: [] };
-  const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    ''
+  );
 
   /* RED WHEN: a complete outcome is reported as incomplete, or a fetch is not said. */
   it('says they are in place when they are, and what it fetched', () => {
-    const r = parametersBeforeServing({ ...none, present: ['bls_midnight_2p10'], fetched: [{ name: 'bls_midnight_2p9', from: 'https://srs.midnight.network', bytes: 98692 }], setAside: [{ from: '/p/bls_midnight_2p9', to: '/p/bls_midnight_2p9.not-genuine-1' }] }, '/p');
+    const r = parametersBeforeServing(
+      {
+        ...none,
+        present: ['bls_midnight_2p10'],
+        fetched: [{ name: 'bls_midnight_2p9', from: 'https://srs.midnight.network', bytes: 98692 }],
+        setAside: [{ from: '/p/bls_midnight_2p9', to: '/p/bls_midnight_2p9.not-genuine-1' }]
+      },
+      '/p'
+    );
     expect(r.inPlace).toBe(true);
     expect(r.lines).toEqual([
       'fetched bls_midnight_2p9 (98692 bytes) from https://srs.midnight.network, checked against its published digest',
       '/p/bls_midnight_2p9 was not the published file; it was renamed to /p/bls_midnight_2p9.not-genuine-1 and replaced',
-      'every circuit the page proves has its proving parameters here, checked',
+      'every circuit the page proves has its proving parameters here, checked'
     ]);
   });
 
   /* RED WHEN: a file that could not be fetched is not said, or not said with what it breaks and what fixes it. */
   it('says plainly what could not be fetched, what fails, and what fixes it', () => {
-    const r = parametersBeforeServing({ ...none, missing: [{ name: 'bls_midnight_2p9', circuits: ['depositUnshielded (vault)'], why: 'https://srs.midnight.network answered 404' }] }, '/p');
+    const r = parametersBeforeServing(
+      {
+        ...none,
+        missing: [
+          {
+            name: 'bls_midnight_2p9',
+            circuits: ['depositUnshielded (vault)'],
+            why: 'https://srs.midnight.network answered 404'
+          }
+        ]
+      },
+      '/p'
+    );
     expect(r.inPlace).toBe(false);
     const said = r.lines.join('\n');
     expect(said).toMatch(/THE PAGE WILL BE SERVED, BUT NOT EVERYTHING IT PROVES WITH IS IN PLACE/);
-    expect(said).toMatch(/bls_midnight_2p9 is not here and could not be fetched: https:\/\/srs.midnight.network answered 404/);
+    expect(said).toMatch(
+      /bls_midnight_2p9 is not here and could not be fetched: https:\/\/srs.midnight.network answered 404/
+    );
     expect(said).toMatch(/These will fail when the page proves them: depositUnshielded \(vault\)/);
     expect(said).toMatch(/MIDNIGHT_PARAM_SOURCE/);
   });
@@ -234,14 +284,27 @@ describe('the new application\'s proving files, before it is served', () => {
    * RED WHEN: the network's own circuits being absent is reported as a damaged
    * build, or not reported - every private deposit would fail with nothing said.
    */
-  it('names the network\'s own circuits apart, because nothing fetches them', () => {
+  it("names the network's own circuits apart, because nothing fetches them", () => {
     /* The network's label as the server's own list writes it, so a renamed label is caught here and not only there. */
-    const network = servedCircuits({ compiled: '/c', account: '/a', params: '/p' }).filter((c) => c.label.endsWith('(network)'));
+    const network = servedCircuits({ compiled: '/c', account: '/a', params: '/p' }).filter((c) =>
+      c.label.endsWith('(network)')
+    );
     expect(network.length).toBeGreaterThan(0);
-    const r = parametersBeforeServing({ ...none, unread: [`${network[0]!.label}: its compiled circuit is not here`, 'deposit (vault): its compiled circuit is not here'] }, '/elsewhere/params');
+    const r = parametersBeforeServing(
+      {
+        ...none,
+        unread: [
+          `${network[0]!.label}: its compiled circuit is not here`,
+          'deposit (vault): its compiled circuit is not here'
+        ]
+      },
+      '/elsewhere/params'
+    );
     expect(r.inPlace).toBe(false);
     const said = r.lines.join('\n');
-    expect(said).toMatch(/network's own shielded circuits could not be read from \/elsewhere\/params\/zswap\/9, so every private deposit/);
+    expect(said).toMatch(
+      /network's own shielded circuits could not be read from \/elsewhere\/params\/zswap\/9, so every private deposit/
+    );
     expect(said).toMatch(/deposit \(vault\): its compiled circuit is not here, so the page cannot prove this circuit/);
     expect(said).not.toContain(`${network[0]!.label}: its compiled circuit is not here, so the page`);
   });
@@ -266,8 +329,13 @@ describe('the new application\'s proving files, before it is served', () => {
 
 describe('ready means every page answers', () => {
   const labels = ['the application', 'the wallet'];
-  const so = (over: Partial<import('./serve-with-wallets-rules.js').PagesSoFar>) =>
-    ({ labels, answered: [], ended: [], waitedMs: 0, ...over });
+  const so = (over: Partial<import('./serve-with-wallets-rules.js').PagesSoFar>) => ({
+    labels,
+    answered: [],
+    ended: [],
+    waitedMs: 0,
+    ...over
+  });
 
   /* RED WHEN: the launcher can be ready while a page it started has not answered. */
   it('is ready only when every page answered, and waits while one has not', () => {
@@ -278,21 +346,30 @@ describe('ready means every page answers', () => {
   /* RED WHEN: a page whose process ended is waited on, or reported ready because it had answered once, or not named. */
   it('refuses the moment a page ends, naming it and how, even one that had answered', () => {
     const v = pagesVerdict(so({ answered: labels, ended: [{ label: 'the wallet', code: 1, signal: null }] }));
-    expect(v).toEqual({ refusal: expect.stringMatching(/^the wallet stopped \(exit 1\), so nothing was offered as ready\. What resolves it: /) });
-    expect(pagesVerdict(so({ ended: [{ label: 'the application', code: null, signal: 'SIGKILL' }] })))
-      .toEqual({ refusal: expect.stringContaining('the application stopped (signal SIGKILL)') });
+    expect(v).toEqual({
+      refusal: expect.stringMatching(
+        /^the wallet stopped \(exit 1\), so nothing was offered as ready\. What resolves it: /
+      )
+    });
+    expect(pagesVerdict(so({ ended: [{ label: 'the application', code: null, signal: 'SIGKILL' }] }))).toEqual({
+      refusal: expect.stringContaining('the application stopped (signal SIGKILL)')
+    });
   });
 
   /* RED WHEN: the wait never ends, or ends without naming the page that never answered. */
   it('gives up at the limit, naming what never answered', () => {
     const v = pagesVerdict(so({ answered: ['the application'], waitedMs: PAGES_START_WITHIN_MS }));
-    expect(v).toEqual({ refusal: expect.stringMatching(/^the wallet did not answer within 180 seconds of being started/) });
+    expect(v).toEqual({
+      refusal: expect.stringMatching(/^the wallet did not answer within 180 seconds of being started/)
+    });
   });
 
   /* RED WHEN: the launcher starts its pages without first asking whether something already serves there, or prints READY before it has waited for them. */
   it('the launcher asks what already serves, starts its pages, waits for them, and only then says READY', () => {
     const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8');
-    const asked = launcher.indexOf('const taken = await somethingAlreadyServes(plan.starts, answersAt);\n  if (taken) throw new Error(taken);');
+    const asked = launcher.indexOf(
+      'const taken = await somethingAlreadyServes(plan.starts, answersAt);\n  if (taken) throw new Error(taken);'
+    );
     const start = launcher.indexOf('const started = startThePages(ROOT, plan.starts, ');
     const wait = launcher.indexOf('await waitForThePages({ starts: plan.starts, started, answersAt });');
     expect(asked).toBeGreaterThan(-1);
@@ -300,21 +377,36 @@ describe('ready means every page answers', () => {
     expect(wait).toBeGreaterThan(start);
     expect(launcher.indexOf('READY.')).toBeGreaterThan(wait);
     /* A page counts as answering only on a success status. */
-    expect(launcher).toMatch(/async function answersAt\(origin: string\): Promise<boolean> \{\n  try \{\n    const r = await fetch\(`\$\{origin\}\/`, \{ signal: AbortSignal\.timeout\(2000\) \}\);\n    await r\.body\?\.cancel\(\);\n    return r\.ok;/);
+    expect(launcher).toMatch(
+      /async function answersAt\(origin: string\): Promise<boolean> \{\n  try \{\n    const r = await fetch\(`\$\{origin\}\/`, \{ signal: AbortSignal\.timeout\(2000\) \}\);\n    await r\.body\?\.cancel\(\);\n    return r\.ok;/
+    );
   });
 });
 
 describe('the wait itself, driven', () => {
-  const STARTS = [{ label: 'the application', origin: 'http://a' }, { label: 'the wallet', origin: 'http://w' }];
+  const STARTS = [
+    { label: 'the application', origin: 'http://a' },
+    { label: 'the wallet', origin: 'http://w' }
+  ];
   /** A clock the wait moves forward itself, one second per pause, and a pause that takes no time. */
-  const clock = () => { let t = 0; return { now: () => t, pause: async (ms: number) => { t += ms; } }; };
+  const clock = () => {
+    let t = 0;
+    return {
+      now: () => t,
+      pause: async (ms: number) => {
+        t += ms;
+      }
+    };
+  };
   const kids = () => [new EventEmitter(), new EventEmitter()];
 
   /* RED WHEN: something answering where a page is about to be served is not refused, or is not named. */
-  it('refuses before starting anything when something already answers at a page\'s origin', async () => {
+  it("refuses before starting anything when something already answers at a page's origin", async () => {
     expect(await somethingAlreadyServes(STARTS, async () => false)).toBeNull();
     const r = await somethingAlreadyServes(STARTS, async (o) => o === 'http://w');
-    expect(r).toMatch(/^something is already serving at http:\/\/w \(the wallet\), before this launcher started its own page there/);
+    expect(r).toMatch(
+      /^something is already serving at http:\/\/w \(the wallet\), before this launcher started its own page there/
+    );
   });
 
   /* RED WHEN: the wait returns before every origin has answered, or returns on the first pass it saw them all. */
@@ -322,9 +414,16 @@ describe('the wait itself, driven', () => {
     const c = clock();
     const asked: string[] = [];
     let passes = 0;
-    await waitForThePages({ starts: STARTS, started: kids(), ...c, answersAt: async (o) => {
-      asked.push(o); if (o === 'http://w') passes += 1; return o === 'http://a' || passes >= 3;
-    } });
+    await waitForThePages({
+      starts: STARTS,
+      started: kids(),
+      ...c,
+      answersAt: async (o) => {
+        asked.push(o);
+        if (o === 'http://w') passes += 1;
+        return o === 'http://a' || passes >= 3;
+      }
+    });
     expect(passes).toBe(3);
     expect(c.now()).toBe(3000);
   });
@@ -332,8 +431,15 @@ describe('the wait itself, driven', () => {
   /* RED WHEN: a response that is not a success is counted as the page serving. */
   it('keeps waiting while an origin answers only with a failure, then refuses at the limit naming it', async () => {
     const c = clock();
-    await expect(waitForThePages({ starts: STARTS, started: kids(), ...c, limitMs: 5000, answersAt: async (o) => o === 'http://a' }))
-      .rejects.toThrow(/^the wallet did not answer within 5 seconds/);
+    await expect(
+      waitForThePages({
+        starts: STARTS,
+        started: kids(),
+        ...c,
+        limitMs: 5000,
+        answersAt: async (o) => o === 'http://a'
+      })
+    ).rejects.toThrow(/^the wallet did not answer within 5 seconds/);
   });
 
   /* RED WHEN: a page that ends is waited on, or the wrong page is named as the one that ended. */
@@ -341,9 +447,18 @@ describe('the wait itself, driven', () => {
     const c = clock();
     const started = kids();
     let n = 0;
-    await expect(waitForThePages({ starts: STARTS, started, ...c, answersAt: async () => {
-      n += 1; if (n === 3) started[1]!.emit('exit', 1, null); return false;
-    } })).rejects.toThrow(/^the wallet stopped \(exit 1\)/);
+    await expect(
+      waitForThePages({
+        starts: STARTS,
+        started,
+        ...c,
+        answersAt: async () => {
+          n += 1;
+          if (n === 3) started[1]!.emit('exit', 1, null);
+          return false;
+        }
+      })
+    ).rejects.toThrow(/^the wallet stopped \(exit 1\)/);
   });
 
   /* RED WHEN: a page that answers and then dies straight away - between the pass that saw every page and the next - is reported ready. */
@@ -353,19 +468,30 @@ describe('the wait itself, driven', () => {
     let ended = false;
     const pause = async (ms: number) => {
       await c.pause(ms);
-      if (!ended) { ended = true; started[0]!.emit('exit', null, 'SIGTERM'); }
+      if (!ended) {
+        ended = true;
+        started[0]!.emit('exit', null, 'SIGTERM');
+      }
     };
-    await expect(waitForThePages({ starts: STARTS, started, now: c.now, pause, answersAt: async () => true }))
-      .rejects.toThrow(/^the application stopped \(signal SIGTERM\)/);
+    await expect(
+      waitForThePages({ starts: STARTS, started, now: c.now, pause, answersAt: async () => true })
+    ).rejects.toThrow(/^the application stopped \(signal SIGTERM\)/);
   });
 });
 
-describe('the launcher\'s console shows no project token', () => {
+describe("the launcher's console shows no project token", () => {
   const TOKEN = 'SECRET123';
   const LEVELS = ['log', 'info', 'warn', 'error', 'debug'] as const;
   const fake = () => {
     const seen: unknown[][] = [];
-    const target = Object.fromEntries(LEVELS.map((level) => [level, (...parts: unknown[]) => { seen.push([level, ...parts]); }])) as unknown as Pick<Console, (typeof LEVELS)[number]>;
+    const target = Object.fromEntries(
+      LEVELS.map((level) => [
+        level,
+        (...parts: unknown[]) => {
+          seen.push([level, ...parts]);
+        }
+      ])
+    ) as unknown as Pick<Console, (typeof LEVELS)[number]>;
     return { seen, target };
   };
 
@@ -373,7 +499,8 @@ describe('the launcher\'s console shows no project token', () => {
     const { seen, target } = fake();
     showNoTokenInTheConsole(target);
     const object = { says: 'an object is printed as it is' };
-    for (const level of LEVELS) target[level](`disconnected from wss://node.example.org/ws?project_id=${TOKEN}.`, 7, object);
+    for (const level of LEVELS)
+      target[level](`disconnected from wss://node.example.org/ws?project_id=${TOKEN}.`, 7, object);
     const e = new Error(`could not reach https://idx.example.org/api?project_id=${TOKEN}`);
     target.error(e);
     /* RED WHEN: the node library's own disconnect line prints the node address with its query on the service's console. */
@@ -384,7 +511,7 @@ describe('the launcher\'s console shows no project token', () => {
   });
 
   // RED WHEN: a caller's own rule for a token outside any address is not run on what the console prints.
-  it('runs a caller\'s own rule after the addresses are shown, for a token outside any address', () => {
+  it("runs a caller's own rule after the addresses are shown, for a token outside any address", () => {
     const { seen, target } = fake();
     showNoTokenInTheConsole(target, (text) => text.split(TOKEN).join('<project token>'));
     target.warn(`the library said ${TOKEN} on its own`);
@@ -392,7 +519,10 @@ describe('the launcher\'s console shows no project token', () => {
   });
 
   it('is done by the launcher before it prints or starts anything', () => {
-    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const launcher = readFileSync(join(ROOT, 'scripts', 'serve-with-wallets.ts'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      ''
+    );
     const at = launcher.indexOf('showNoTokenInTheConsole(console);');
     /* RED WHEN: the launcher never wraps its console, or wraps it after it has started something that prints. */
     expect(at, 'the launcher does not wrap its console').toBeGreaterThan(-1);

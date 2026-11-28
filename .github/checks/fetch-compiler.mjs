@@ -97,7 +97,7 @@ const response = await fetch(url, { redirect: 'follow' });
 if (!response.ok) {
   refuse(
     `the pinned compiler could not be downloaded: the release answered ${response.status}. ` +
-      'Fetch the asset above by hand, unpack it anywhere, and point COMPACT_HOME at the directory holding compactc.',
+      'Fetch the asset above by hand, unpack it anywhere, and point COMPACT_HOME at the directory holding compactc.'
   );
 }
 const bytes = Buffer.from(await response.arrayBuffer());
@@ -123,7 +123,7 @@ try {
   refuse(
     `the downloaded compiler could not be unpacked: ${error instanceof Error ? error.message : String(error)}. ` +
       'This needs `unzip`, which is on the machines this is written for; install it, or unpack the asset by hand ' +
-      'and point COMPACT_HOME at the directory holding compactc.',
+      'and point COMPACT_HOME at the directory holding compactc.'
   );
 }
 
@@ -157,7 +157,7 @@ const reported = reports(join(dir, 'compactc'));
 if (reported === null) {
   refuse(
     `the compiler was unpacked into ${dir} and did not run. ` +
-      'Remove that directory and try again, or unpack the asset by hand and point COMPACT_HOME at it.',
+      'Remove that directory and try again, or unpack the asset by hand and point COMPACT_HOME at it.'
   );
 }
 const problem = versionProblem(reported);

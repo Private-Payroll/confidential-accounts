@@ -8,6 +8,7 @@ import type { CompanyReach } from './company-reach.js';
  * chain's time, never this device's clock, decides whether a proposal's raise may still land or a run has begun.
  */
 export const chainTimeOf = (r: Pick<CompanyReach, 'builder' | 'account' | 'chain'>) => async (): Promise<number> => {
-  if (r.builder.accountPresence === undefined) throw new Error('this wallet cannot read the chain\'s time.');
-  return (await r.builder.accountPresence({ account: r.account, indexer: r.chain.indexer, transactions: [] })).blockTime;
+  if (r.builder.accountPresence === undefined) throw new Error("this wallet cannot read the chain's time.");
+  return (await r.builder.accountPresence({ account: r.account, indexer: r.chain.indexer, transactions: [] }))
+    .blockTime;
 };

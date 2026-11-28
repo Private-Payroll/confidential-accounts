@@ -8,27 +8,65 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  boundaryKeyOfEntry, EMPTY_HEAD, entryIdOf, filedKindOfEntry, manifestEntryRefusal, recordKeyOf,
-  type DirectoryAsAnchored, type ManifestEntry, type ManifestEntryBody,
+  boundaryKeyOfEntry,
+  EMPTY_HEAD,
+  entryIdOf,
+  filedKindOfEntry,
+  manifestEntryRefusal,
+  recordKeyOf,
+  type DirectoryAsAnchored,
+  type ManifestEntry,
+  type ManifestEntryBody
 } from '../../../src/midnight/record-manifest.js';
 import { filingRefusalOf } from '../../../src/midnight/seat-directory.js';
 import {
-  pastTheRaisedBoundary, type DirectoryBelieved, type HeldAsAnchored, type LeavingBoundaries, type RecordsHeldHere,
+  pastTheRaisedBoundary,
+  type DirectoryBelieved,
+  type HeldAsAnchored,
+  type LeavingBoundaries,
+  type RecordsHeldHere
 } from './vault-page-doors.js';
 import type { AnchorsOnChain } from './governed-call-builder.js';
 import type { CheckedHeads, StartedFrom } from './tree-kept-here.js';
 import {
-  checkedAfter, GENESIS, headStepOf, HEADERS_AT_ONCE, PROVEN_AT_ONCE, provenRefusal, transitionRefusal,
-  treeHeaderReadable, type CheckedHead, type KindAsked, type RecordName, type TransitionInput, type TreeHeader,
-  type TreeLeaf,
+  checkedAfter,
+  GENESIS,
+  headStepOf,
+  HEADERS_AT_ONCE,
+  PROVEN_AT_ONCE,
+  provenRefusal,
+  transitionRefusal,
+  treeHeaderReadable,
+  type CheckedHead,
+  type KindAsked,
+  type RecordName,
+  type TransitionInput,
+  type TreeHeader,
+  type TreeLeaf
 } from '../../../src/midnight/record-tree.js';
 import {
-  DIRECTORY, directoryVersionsOf, kindKeyOf, recordsProvenFor, versionsOf, type DirectoryVersionHeld, type HeldVersion, type RecordsAsked,
+  DIRECTORY,
+  directoryVersionsOf,
+  kindKeyOf,
+  recordsProvenFor,
+  versionsOf,
+  type DirectoryVersionHeld,
+  type HeldVersion,
+  type RecordsAsked
 } from '../../../src/midnight/records-held.js';
 import { checkedForwardHere, seatOfAsAnchored } from './held-checked-forward.js';
 import {
-  directoryAsAnchoredHere, headsHere, heldKey, NOT_PROVEN, olderOf, ROOT_NOT_KEPT, seatsHere,
-  type DirectoryAsAnchoredHere, type HeadsHere, type HeldDoors, type SeatsHere,
+  directoryAsAnchoredHere,
+  headsHere,
+  heldKey,
+  NOT_PROVEN,
+  olderOf,
+  ROOT_NOT_KEPT,
+  seatsHere,
+  type DirectoryAsAnchoredHere,
+  type HeadsHere,
+  type HeldDoors,
+  type SeatsHere
 } from './held-heads-here.js';
 import { AnchorNotMade, seatAsAnchoredHere, headOn, type ReadHere } from './records-as-anchored.js';
 
@@ -47,8 +85,16 @@ const seatOfHere = (here: DirectoryBelieved, held: HeldAsAnchored) => {
     if (asAnchored !== undefined) return seatAsAnchoredHere(here, asAnchored, publicKey, entry, held);
     const seat = now.seats.find((x) => x.signingKey === publicKey.toLowerCase());
     if (seat === undefined || entry === undefined) return null;
-    return filingRefusalOf(now, here.holders, publicKey, filedKindOfEntry(entry), boundaryKeyOfEntry(entry), entry.version) === null
-      ? seat.seat : null;
+    return filingRefusalOf(
+      now,
+      here.holders,
+      publicKey,
+      filedKindOfEntry(entry),
+      boundaryKeyOfEntry(entry),
+      entry.version
+    ) === null
+      ? seat.seat
+      : null;
   };
 };
 
@@ -60,8 +106,13 @@ export interface StartHere {
 }
 
 /** What a device keeps from the moment it starts at `start`: that head alone, its seq the first of its heads. */
-const keptAt = (start: StartHere): CheckedHeads =>
-  ({ latest: start.from, fromZero: null, heads: [start.from.head], base: start.from.seq, from: start.said });
+const keptAt = (start: StartHere): CheckedHeads => ({
+  latest: start.from,
+  fromZero: null,
+  heads: [start.from.head],
+  base: start.from.seq,
+  from: start.said
+});
 
 /** A start a device passed over: the record its run vouched with does not prove into the root reached from it. */
 class PassedOver extends Error {}
@@ -126,16 +177,29 @@ async function* startsHere(doors: HeldDoors, now: AnchorsOnChain): AsyncGenerato
   for (const c of claims) {
     const { run } = c;
     const id = await doors.vouching.identity({
-      root: run.root, payees: String(run.payees), opensAt: String(run.opensAt), closesAt: String(run.closesAt), required: String(run.required),
-      vault: run.vault, head: run.vouched.head, r: run.vouched.r,
+      root: run.root,
+      payees: String(run.payees),
+      opensAt: String(run.opensAt),
+      closesAt: String(run.closesAt),
+      required: String(run.required),
+      vault: run.vault,
+      head: run.vouched.head,
+      r: run.vouched.r
     });
     if (id === null || id.toLowerCase() !== c.chainId) continue;
     const header = await headerAtHead(doors, run.vouched.head, order.get(run.vouched.head)! - 1);
     if (header === null) continue;
     const from = checkedAfter(header, run.vouched.head);
     yield {
-      from, said: { by: 'vouched', seq: from.seq, head: from.head, run: c.chainId, ...(at.get(c.chainId) === undefined ? {} : { at: at.get(c.chainId)! }) },
-      holds: { name: { store: 'proposal', kind: 'proposal', id: c.proposal }, digest: c.entryDigest },
+      from,
+      said: {
+        by: 'vouched',
+        seq: from.seq,
+        head: from.head,
+        run: c.chainId,
+        ...(at.get(c.chainId) === undefined ? {} : { at: at.get(c.chainId)! })
+      },
+      holds: { name: { store: 'proposal', kind: 'proposal', id: c.proposal }, digest: c.entryDigest }
     };
   }
 }
@@ -193,7 +257,8 @@ async function provenAt(doors: HeldDoors, root: Hex, names: readonly RecordName[
     if (given === null) throw new AnchorNotMade(ROOT_NOT_KEPT);
     const partLeaves = part.map((name, k) => ({ name, leaf: given.records[k] ?? null }));
     const partKindLeaves = partKinds.map((kind, k) => ({ kind, leaves: [...(given.kinds[k] ?? [])] }));
-    if (provenRefusal(root, { records: partLeaves, kinds: partKindLeaves }, given.proof) !== null) throw new AnchorNotMade(NOT_PROVEN);
+    if (provenRefusal(root, { records: partLeaves, kinds: partKindLeaves }, given.proof) !== null)
+      throw new AnchorNotMade(NOT_PROVEN);
     leaves.push(...partLeaves);
     if (i === 0) kindLeaves = partKindLeaves;
     olderGiven.push(...given.older);
@@ -211,7 +276,12 @@ async function provenAt(doors: HeldDoors, root: Hex, names: readonly RecordName[
 
 /** **THE READ ITSELF**, from what this device kept (`kept`), or from a start it chose (`start`), or from the company's first header. */
 async function heldFrom(
-  doors: HeldDoors, asked: RecordsAsked, now: AnchorsOnChain, here: DirectoryBelieved, keptBefore: CheckedHeads | null, chosen: StartHere | null,
+  doors: HeldDoors,
+  asked: RecordsAsked,
+  now: AnchorsOnChain,
+  here: DirectoryBelieved,
+  keptBefore: CheckedHeads | null,
+  chosen: StartHere | null
 ): Promise<ReadHere> {
   const company = doors.accountId;
   const { landed } = now;
@@ -221,7 +291,11 @@ async function heldFrom(
   const heads = headsHere(doors, landed, kept);
   const { headsBySeq, headsBefore } = heads;
   /* The chain as the wallet's indexer shows it, behind a head this device already checked: nobody's doing yet, and nothing is read. */
-  if (from.seq >= 0 && head !== from.head && (head === EMPTY_HEAD || [...headsBySeq].some(([seq, h]) => h === head && seq < from.seq))) {
+  if (
+    from.seq >= 0 &&
+    head !== from.head &&
+    (head === EMPTY_HEAD || [...headsBySeq].some(([seq, h]) => h === head && seq < from.seq))
+  ) {
     throw new AnchorNotMade(INDEXER_BEHIND);
   }
   const seats = seatsHere(doors);
@@ -232,12 +306,14 @@ async function heldFrom(
     await headsBefore([...dirAt.values()].map((d) => d.batch));
   }
   const { seatOf, servedShort: shortOf } = seatOfAsAnchored(here, anchored);
-  const checked = await checkedForwardHere({ doors, landed, head, here, kept, chosen, heads, seats, anchored, seatOf }, from);
+  const checked = await checkedForwardHere(
+    { doors, landed, head, here, kept, chosen, heads, seats, anchored, seatOf },
+    from
+  );
   const { forward, reached, stop, first } = checked;
   kept = checked.kept;
-  const { pending, wanted, kindKeys, history, directory, held, leaving, notYetAnchored, seenWaiting } = await heldAtTheRoot(
-    doors, asked, chosen, reached, stop, here, anchored, seats, heads,
-  );
+  const { pending, wanted, kindKeys, history, directory, held, leaving, notYetAnchored, seenWaiting } =
+    await heldAtTheRoot(doors, asked, chosen, reached, stop, here, anchored, seats, heads);
   const founding = await foundingAsked(doors, asked, reached, first, seatOf, heads, seats, landed);
   const servedShort = shortOf();
   /* A start this device chose is kept only now, the read from it holding what it must. */
@@ -248,21 +324,36 @@ async function heldFrom(
   const records: RecordsHeldHere = {
     ...(kept?.from === undefined ? {} : { checkedFrom: kept.from }),
     ...(forward.recovered === undefined ? {} : { recovered: forward.recovered }),
-    head, reached, stopped: stop,
+    head,
+    reached,
+    stopped: stop,
     asked: { records: wanted, kinds: kindKeys },
-    history, notYetAnchored, seenWaiting, directory, held, deployed: now.deployed ?? null, ...founding,
+    history,
+    notYetAnchored,
+    seenWaiting,
+    directory,
+    held,
+    deployed: now.deployed ?? null,
+    ...founding,
     ...(leaving === undefined ? {} : { leaving }),
     seqOfHead: heads.seqOfHead,
     newestLandedBy: heads.newestLandedBy,
-    ...(stop !== null && servedShort !== undefined ? { directoryServed: servedShort } : {}),
+    ...(stop !== null && servedShort !== undefined ? { directoryServed: servedShort } : {})
   };
   return { landed, now, here, records, pending: new Set(pending.map(entryIdOf)) };
 }
 
 /** **WHAT THE ROOT REACHED HOLDS** of what the read asked: the entries not yet anchored at it, and every leaf the read needs, proven. */
 async function heldAtTheRoot(
-  doors: HeldDoors, asked: RecordsAsked, chosen: StartHere | null, reached: CheckedHead, stop: RecordsHeldHere['stopped'],
-  here: DirectoryBelieved, anchored: DirectoryAsAnchoredHere, seats: SeatsHere, heads: HeadsHere,
+  doors: HeldDoors,
+  asked: RecordsAsked,
+  chosen: StartHere | null,
+  reached: CheckedHead,
+  stop: RecordsHeldHere['stopped'],
+  here: DirectoryBelieved,
+  anchored: DirectoryAsAnchoredHere,
+  seats: SeatsHere,
+  heads: HeadsHere
 ) {
   const company = doors.accountId;
   const { dirAt, accountHeldOf } = anchored;
@@ -274,13 +365,18 @@ async function heldAtTheRoot(
   const pending = pendingGiven.filter((e) => manifestEntryRefusal(company, e) === null) as ManifestEntry[];
   const names = recordsProvenFor(asked);
   /* From a vouched head: the proposal its run's approvers approved, which must prove into the root reached. */
-  if (chosen?.holds !== undefined && !names.some((n) => recordKeyOf(n) === recordKeyOf(chosen.holds!.name))) names.push(chosen.holds.name);
+  if (chosen?.holds !== undefined && !names.some((n) => recordKeyOf(n) === recordKeyOf(chosen.holds!.name)))
+    names.push(chosen.holds.name);
   const wanted = new Set(names.map(recordKeyOf));
   const kinds = asked.kinds ?? [];
   const kindKeys = new Set(kinds.map(kindKeyOf));
-  const ofAsked = (e: ManifestEntryBody) => asked.everyPending === true || wanted.has(recordKeyOf(e)) || kindKeys.has(kindKeyOf(e));
+  const ofAsked = (e: ManifestEntryBody) =>
+    asked.everyPending === true || wanted.has(recordKeyOf(e)) || kindKeys.has(kindKeyOf(e));
   for (const e of pending) {
-    if (asked.everyPending === true && !wanted.has(recordKeyOf(e))) { wanted.add(recordKeyOf(e)); names.push({ store: e.store, kind: e.kind, id: e.id }); }
+    if (asked.everyPending === true && !wanted.has(recordKeyOf(e))) {
+      wanted.add(recordKeyOf(e));
+      names.push({ store: e.store, kind: e.kind, id: e.id });
+    }
   }
   /*
    * One request for what the read asked; an anchoring read asking every
@@ -288,7 +384,10 @@ async function heldAtTheRoot(
    * part proven against the same root.
    */
   const { leaves, older, history } = await provenAt(doors, reached.root, names, kinds);
-  if (chosen?.holds !== undefined && !(history.get(recordKeyOf(chosen.holds.name)) ?? []).some((v) => v.digest === chosen.holds!.digest)) {
+  if (
+    chosen?.holds !== undefined &&
+    !(history.get(recordKeyOf(chosen.holds.name)) ?? []).some((v) => v.digest === chosen.holds!.digest)
+  ) {
     throw new PassedOver();
   }
   const dirLeaf = leaves.find((x) => recordKeyOf(x.name) === recordKeyOf(DIRECTORY))!.leaf;
@@ -309,20 +408,40 @@ async function heldAtTheRoot(
 
   const leaving = await doors.leaving?.();
   const notYetAnchored = waitingAmong(pending, history, ofAsked, seatOfHere(here, held), leaving);
-  return { pending, wanted, kindKeys, history, directory, held, leaving, notYetAnchored, seenWaiting: newestWaitingOf(pending, ofAsked) };
+  return {
+    pending,
+    wanted,
+    kindKeys,
+    history,
+    directory,
+    held,
+    leaving,
+    notYetAnchored,
+    seenWaiting: newestWaitingOf(pending, ofAsked)
+  };
 }
 
 /** The newest version of each asked record the service gave as waiting, whether this read believed that entry or left it out. */
-export const newestWaitingOf = (pending: readonly ManifestEntry[], ofAsked: (e: ManifestEntryBody) => boolean): ReadonlyMap<string, number> => {
+export const newestWaitingOf = (
+  pending: readonly ManifestEntry[],
+  ofAsked: (e: ManifestEntryBody) => boolean
+): ReadonlyMap<string, number> => {
   const newest = new Map<string, number>();
-  for (const e of pending) if (ofAsked(e)) newest.set(recordKeyOf(e), Math.max(e.version, newest.get(recordKeyOf(e)) ?? 0));
+  for (const e of pending)
+    if (ofAsked(e)) newest.set(recordKeyOf(e), Math.max(e.version, newest.get(recordKeyOf(e)) ?? 0));
   return newest;
 };
 
 /** Who founded the company, when the read asked it. */
 async function foundingAsked(
-  doors: HeldDoors, asked: RecordsAsked, reached: CheckedHead, first: TreeHeader | undefined, seatOf: TransitionInput['seatOf'],
-  heads: HeadsHere, seats: SeatsHere, landed: ReadHere['landed'],
+  doors: HeldDoors,
+  asked: RecordsAsked,
+  reached: CheckedHead,
+  first: TreeHeader | undefined,
+  seatOf: TransitionInput['seatOf'],
+  heads: HeadsHere,
+  seats: SeatsHere,
+  landed: ReadHere['landed']
 ) {
   const { headsBySeq } = heads;
   const { readSeats, seatsByHeld } = seats;
@@ -332,7 +451,9 @@ async function foundingAsked(
     if (reached.seq < 0) {
       founding = { first: null };
     } else {
-      const h0 = first ?? await firstHeaderHere(doors, seatOf, headsBySeq.get(0) ?? (landed[0]?.head.toLowerCase() as Hex | undefined));
+      const h0 =
+        first ??
+        (await firstHeaderHere(doors, seatOf, headsBySeq.get(0) ?? (landed[0]?.head.toLowerCase() as Hex | undefined)));
       await readSeats([h0.held]);
       founding = { first: h0, firstSeats: seatsByHeld.get(heldKey(h0.held)) ?? null };
     }
@@ -349,9 +470,11 @@ async function foundingAsked(
  * directory version is judged by its own replay, never by a boundary.
  */
 const waitingAmong = (
-  pending: readonly ManifestEntry[], history: ReadonlyMap<string, readonly HeldVersion[]>,
-  ofAsked: (e: ManifestEntryBody) => boolean, seatNow: (publicKey: Hex, entry: ManifestEntryBody) => string | null,
-  leaving?: LeavingBoundaries,
+  pending: readonly ManifestEntry[],
+  history: ReadonlyMap<string, readonly HeldVersion[]>,
+  ofAsked: (e: ManifestEntryBody) => boolean,
+  seatNow: (publicKey: Hex, entry: ManifestEntryBody) => string | null,
+  leaving?: LeavingBoundaries
 ): ManifestEntry[] => {
   const out: ManifestEntry[] = [];
   const named = new Set<string>();
@@ -362,7 +485,11 @@ const waitingAmong = (
     const anchored = at === undefined || at.length === 0 ? 0 : at[at.length - 1]!.version;
     if (!ofAsked(e) || anchored >= e.version || named.has(`${key}@${e.version}`)) continue;
     if (seatNow(e.filedBy.publicKey, e) === null || (seen.get(key) ?? []).includes(e.digest)) continue;
-    if (e.store !== 'directory' && pastTheRaisedBoundary(leaving, e.filedBy.publicKey, boundaryKeyOfEntry(e), e.version)) continue;
+    if (
+      e.store !== 'directory' &&
+      pastTheRaisedBoundary(leaving, e.filedBy.publicKey, boundaryKeyOfEntry(e), e.version)
+    )
+      continue;
     named.add(`${key}@${e.version}`);
     seen.set(key, [...(seen.get(key) ?? []), e.digest]);
     out.push(e);
@@ -370,28 +497,52 @@ const waitingAmong = (
   return out;
 };
 
-const INDEXER_BEHIND = 'the account\'s history at your wallet\'s indexer is behind what this device has already checked, so nothing is '
-  + 'read from it now. Wait a minute and reload the page; if it stays behind, your wallet\'s indexer is serving an older chain';
+const INDEXER_BEHIND =
+  "the account's history at your wallet's indexer is behind what this device has already checked, so nothing is " +
+  "read from it now. Wait a minute and reload the page; if it stays behind, your wallet's indexer is serving an older chain";
 
 /**
  * **THE COMPANY'S FIRST HEADER**, asked of the service and believed only once it
  * is an honest first step from the empty tree and the head after it is the
  * first head this device checked.
  */
-async function firstHeaderHere(doors: HeldDoors, seatOf: TransitionInput['seatOf'], firstHead: Hex | undefined): Promise<TreeHeader> {
+async function firstHeaderHere(
+  doors: HeldDoors,
+  seatOf: TransitionInput['seatOf'],
+  firstHead: Hex | undefined
+): Promise<TreeHeader> {
   const company = doors.accountId;
   const page = await doors.tree.headersAfter(company, -1, 1);
   /* Every first header the service keeps - one filed before a call the chain refused among them - and the one whose head the chain took. */
-  const candidates = (page.headers ?? []).filter((h) => treeHeaderReadable(h) && h.seq === 0 && h.previous === EMPTY_HEAD) as TreeHeader[];
-  const heads = candidates.length === 0 || firstHead === undefined ? []
-    : (await doors.builder.anchorHeads({ after: candidates.map(headStepOf) })).after;
+  const candidates = (page.headers ?? []).filter(
+    (h) => treeHeaderReadable(h) && h.seq === 0 && h.previous === EMPTY_HEAD
+  ) as TreeHeader[];
+  const heads =
+    candidates.length === 0 || firstHead === undefined
+      ? []
+      : (await doors.builder.anchorHeads({ after: candidates.map(headStepOf) })).after;
   const h0 = candidates.find((_, i) => String(heads[i] ?? '').toLowerCase() === firstHead);
-  const entries = new Map((page.entries ?? []).filter((e) => manifestEntryRefusal(company, e) === null).map((e) => [entryIdOf(e as ManifestEntry), e]));
-  const refused = h0 === undefined ? null
-    : transitionRefusal({ company, before: GENESIS, header: h0, entry: (id) => entries.get(id), priorChain: () => undefined, seatOf });
+  const entries = new Map(
+    (page.entries ?? [])
+      .filter((e) => manifestEntryRefusal(company, e) === null)
+      .map((e) => [entryIdOf(e as ManifestEntry), e])
+  );
+  const refused =
+    h0 === undefined
+      ? null
+      : transitionRefusal({
+          company,
+          before: GENESIS,
+          header: h0,
+          entry: (id) => entries.get(id),
+          priorChain: () => undefined,
+          seatOf
+        });
   if (h0 === undefined || refused !== null) {
-    throw new AnchorNotMade('the service did not give the company\'s first header as the chain holds it, so who founded the company '
-      + 'cannot be said. Reload the page; if it happens again, the service is withholding it');
+    throw new AnchorNotMade(
+      "the service did not give the company's first header as the chain holds it, so who founded the company " +
+        'cannot be said. Reload the page; if it happens again, the service is withholding it'
+    );
   }
   return h0;
 }
@@ -402,7 +553,7 @@ async function firstHeaderHere(doors: HeldDoors, seatOf: TransitionInput['seatOf
  * chain holds them, read now. What every reader is handed with the directory
  * (`DirectoryHereDeps.anchored`).
  */
-export const heldFor = (
-  doors: Omit<HeldDoors, 'directory'>,
-) => async (directory: DirectoryBelieved, asked: RecordsAsked): Promise<RecordsHeldHere> =>
-  (await recordsHeldHere({ ...doors, directory: async () => directory }, asked)).records;
+export const heldFor =
+  (doors: Omit<HeldDoors, 'directory'>) =>
+  async (directory: DirectoryBelieved, asked: RecordsAsked): Promise<RecordsHeldHere> =>
+    (await recordsHeldHere({ ...doors, directory: async () => directory }, asked)).records;

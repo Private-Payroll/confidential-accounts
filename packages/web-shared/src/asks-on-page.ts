@@ -5,7 +5,12 @@
  * `records-source.ts`; this file only binds them to the page. The person's own asks are bound in `person-on-page.ts`.
  */
 import {
-  creationAsks, invitationSource, superAdminAsks, type CreationAsks, type InvitationSource, type SuperAdminAsks,
+  creationAsks,
+  invitationSource,
+  superAdminAsks,
+  type CreationAsks,
+  type InvitationSource,
+  type SuperAdminAsks
 } from './records-source.js';
 import { indexerNamedByTheWallet } from './chain-before-a-view.js';
 import { serviceAnswered, serviceCall, type PageSend } from './service-transport.js';
@@ -27,7 +32,11 @@ export const superAdminOnPage = (company: string, walletOrigin: string): SuperAd
   superAdminAsks(serviceCall, company, (where) => indexerNamedByTheWallet(walletOrigin, where));
 
 /** A call the wallet hands the page to send, as it named it. */
-interface WalletCall { readonly method: 'GET' | 'PUT' | 'POST'; readonly path: string; readonly body?: string }
+interface WalletCall {
+  readonly method: 'GET' | 'PUT' | 'POST';
+  readonly path: string;
+  readonly body?: string;
+}
 
 /**
  * The calls the wallet hands the page in an action, each sent as the wallet named it, for the person `signedInAs`; the
@@ -35,5 +44,6 @@ interface WalletCall { readonly method: 'GET' | 'PUT' | 'POST'; readonly path: s
  */
 export const walletCallsOnPage = (signedInAs: () => string | null) => {
   const send = serviceAnswered(signedInAs);
-  return (request: WalletCall): ReturnType<PageSend> => send(request.path, { method: request.method, ...(request.body === undefined ? {} : { body: request.body }) });
+  return (request: WalletCall): ReturnType<PageSend> =>
+    send(request.path, { method: request.method, ...(request.body === undefined ? {} : { body: request.body }) });
 };

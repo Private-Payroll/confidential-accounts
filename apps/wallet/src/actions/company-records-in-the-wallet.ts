@@ -40,11 +40,13 @@ export const pureCircuits = (): Promise<PureCircuits> => {
   pureLoaded ??= (async () => {
     const [account, vault] = await Promise.all([
       import('../../../../contracts/managed/contract/index.js'),
-      import('../../../../contracts/managed-vault/contract/index.js'),
+      import('../../../../contracts/managed-vault/contract/index.js')
     ]);
     return { account: account.pureCircuits, details: detailsOfKind(vault.pureCircuits) };
   })();
-  pureLoaded.catch(() => { pureLoaded = null; });
+  pureLoaded.catch(() => {
+    pureLoaded = null;
+  });
   return pureLoaded;
 };
 
@@ -78,43 +80,58 @@ export function companyRecordsFor(r: CompanyReach, reach: RecordsReach, pure: Pu
   const store = new HttpCompanyRecordStore(r.accountId, readsJoinedIn(r.stepView), null, judge);
   return {
     directory,
-    people: () => readPeopleHere({
-      company: withCompanyKeys({ id: r.accountId, label: r.label }, r.companyKeys), view: r.stepView.current(), directory, network,
-      claimRefusal: signedClaimRefusal,
-    }),
-    vendors: () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
-      view: r.stepView.current(), directory, network, claimRefusal: signedClaimRefusal,
-    }),
+    people: () =>
+      readPeopleHere({
+        company: withCompanyKeys({ id: r.accountId, label: r.label }, r.companyKeys),
+        view: r.stepView.current(),
+        directory,
+        network,
+        claimRefusal: signedClaimRefusal
+      }),
+    vendors: () =>
+      readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
+        view: r.stepView.current(),
+        directory,
+        network,
+        claimRefusal: signedClaimRefusal
+      }),
     state: (id) => firstFiledThrough(r.stepView, r.accountId, 'state', id),
-    runs: async () => await r.stepView.current().list('runs') as readonly SealedRun[],
+    runs: async () => (await r.stepView.current().list('runs')) as readonly SealedRun[],
     proposals: proposalsInTheView(r),
-    roundsOnChain: (chainIds) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret }),
+    roundsOnChain: (chainIds) =>
+      r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret }),
     checked: () => (reach.treeKept ?? treeKeptHere)().checked.read(r.accountId),
     payments: {
       paidOnceOf: (nonce) => pure.account.paidOnceOf(nonce),
       paidMovementOf: (leaf) => pure.account.paidMovementOf(leaf),
       read: async (entries) => {
-        if (r.chain.payments === undefined) throw new Error('this wallet cannot read the account\'s record of payments.');
+        if (r.chain.payments === undefined)
+          throw new Error("this wallet cannot read the account's record of payments.");
         const read = await r.chain.payments(r.account, r.label, entries);
         if ('key' in read) throw new StepRefused(read);
         return read;
-      },
+      }
     },
     roundIdentity: pure.account,
     policy: async () => (await r.roster()).policy,
     registry,
     spendingPolicies: policiesInTheWallet(r),
     oneOffs: {
-      at: (kind, id, version) => store.at(kind, id, version), keys: r.companyKeys, detailsOf: pure.details, registry,
-      open: openOneOff, treeOf: buildOneOffRun,
-    },
+      at: (kind, id, version) => store.at(kind, id, version),
+      keys: r.companyKeys,
+      detailsOf: pure.details,
+      registry,
+      open: openOneOff,
+      treeOf: buildOneOffRun
+    }
   };
 }
 
 /** Which of these leaves the account records as paid, read from the chain through this wallet's own indexer. */
-export const paidAmongFor = (records: CompanyRecordsHere, pure: PureCircuits) => async (leaves: readonly Hex[]): Promise<PaymentsAmong> => {
-  const entries = leaves.map((leaf) => toHex(pure.account.paidMovementOf(fromHex(leaf))).toLowerCase());
-  const held = new Set((await records.payments.read(entries)).held.map((e) => e.toLowerCase()));
-  return { known: true, paid: leaves.filter((_leaf, i) => held.has(entries[i]!)) as Hex[] };
-};
-
+export const paidAmongFor =
+  (records: CompanyRecordsHere, pure: PureCircuits) =>
+  async (leaves: readonly Hex[]): Promise<PaymentsAmong> => {
+    const entries = leaves.map((leaf) => toHex(pure.account.paidMovementOf(fromHex(leaf))).toLowerCase());
+    const held = new Set((await records.payments.read(entries)).held.map((e) => e.toLowerCase()));
+    return { known: true, paid: leaves.filter((_leaf, i) => held.has(entries[i]!)) as Hex[] };
+  };

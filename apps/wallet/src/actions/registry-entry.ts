@@ -50,7 +50,9 @@ export interface SeatToEnter {
 
 /** Whether this seat's entry is owed: the page's account is the pinned one, the seat's leaf is seated now, and no entry was found written for it. */
 export function registryEntryOwed(
-  seat: Pick<SeatToEnter, 'leaf' | 'mark'>, pin: { readonly pinned: string | null; readonly page: string }, leaves: readonly string[],
+  seat: Pick<SeatToEnter, 'leaf' | 'mark'>,
+  pin: { readonly pinned: string | null; readonly page: string },
+  leaves: readonly string[]
 ): boolean {
   if (pin.pinned === null || bare(pin.pinned) !== bare(pin.page)) return false;
   if (!leaves.some((l) => bare(l) === bare(seat.leaf))) return false;
@@ -80,19 +82,33 @@ export type RegistryWrite =
   | { readonly of: 'owed'; readonly why: string };
 
 const entryOf = (seat: SeatToEnter): RegistryEntry => ({
-  label: seat.label, account: bare(seat.account), n: seat.n, scope: bare(seat.scope),
-  ...(seat.rights === undefined ? {} : { rights: seat.rights }),
+  label: seat.label,
+  account: bare(seat.account),
+  n: seat.n,
+  scope: bare(seat.scope),
+  ...(seat.rights === undefined ? {} : { rights: seat.rights })
 });
 
 /** Whether `found` is this seat's entry: this company, its account, and the seat its leaf is drawn from. */
 const namesTheSeat = (found: RegistryEntry, seat: SeatToEnter): boolean =>
-  found.label === seat.label && found.account === bare(seat.account) && found.n === seat.n && found.scope === bare(seat.scope);
+  found.label === seat.label &&
+  found.account === bare(seat.account) &&
+  found.n === seat.n &&
+  found.scope === bare(seat.scope);
 
 /** The index of this seat's entry among the person's tags, or the lowest free index, read off one state of the registry. */
-async function searched(d: RegistryWriteDoors, seat: SeatToEnter, registryState: string): Promise<{ readonly found: number } | { readonly free: number } | null> {
+async function searched(
+  d: RegistryWriteDoors,
+  seat: SeatToEnter,
+  registryState: string
+): Promise<{ readonly found: number } | { readonly free: number } | null> {
   for (let from = 0; from < MOST_TAGS_READ; from += TAGS_A_READ) {
     const indexes = Array.from({ length: TAGS_A_READ }, (_, i) => from + i);
-    const read = await d.build({ ask: 'registry-values', registryState, tags: indexes.map((i) => tagAt(d.identity, d.network, i)) });
+    const read = await d.build({
+      ask: 'registry-values',
+      registryState,
+      tags: indexes.map((i) => tagAt(d.identity, d.network, i))
+    });
     for (const [k, value] of read.values.entries()) {
       if (value === null) return { free: indexes[k]! };
       const opened = openEntry(d.identity, d.network, indexes[k]!, base64.decode(value));
@@ -119,14 +135,24 @@ export async function registryEntryWritten(d: RegistryWriteDoors, seat: SeatToEn
     if (sent !== undefined && d.now() - Date.parse(sent.at) < SENT_HOLDS_MS) return { of: 'held', index: sent.index };
     const value = sealEntry(d.identity, d.network, where.free, entryOf(seat));
     const built = await d.build({
-      ask: 'registry-put', network: d.network, registry, tag: tagAt(d.identity, d.network, where.free), value: base64.encode(value),
-      chain: { registryState: at.registryState, parameters: at.parameters },
+      ask: 'registry-put',
+      network: d.network,
+      registry,
+      tag: tagAt(d.identity, d.network, where.free),
+      value: base64.encode(value),
+      chain: { registryState: at.registryState, parameters: at.parameters }
     });
     const call: ChainCall = { kind: 'registry-put', contract: registry, circuit: REGISTRY_PUT };
     const send = d.handOver.path === 'service' ? d.handOver.fallback?.toChain : d.handOver.toChain;
-    if (d.handOver.refused !== undefined || send === undefined) return { of: 'owed', why: d.handOver.refused ?? 'this wallet has no way to send the write' };
+    if (d.handOver.refused !== undefined || send === undefined)
+      return { of: 'owed', why: d.handOver.refused ?? 'this wallet has no way to send the write' };
     /* The note is kept before the write leaves, so a write let go after its hand-over still holds a second one back. */
-    await d.keyring.keep((k) => withRegistryMark(k, seat.accountId, { leaf: seat.leaf, sent: { index: where.free, at: new Date(d.now()).toISOString() } }));
+    await d.keyring.keep((k) =>
+      withRegistryMark(k, seat.accountId, {
+        leaf: seat.leaf,
+        sent: { index: where.free, at: new Date(d.now()).toISOString() }
+      })
+    );
     try {
       await send(built.tx, call);
     } catch (e) {
@@ -143,10 +169,15 @@ export async function registryEntryWritten(d: RegistryWriteDoors, seat: SeatToEn
 }
 
 /* The fee routes as the one fee path writes them: an answer that is not a success thrown with its body, as every write is. */
-const feeWrites = (fees: FeeSource, company: string) => async (w: RecordWrite): Promise<unknown> => {
-  if (w.to !== 'fee' && w.to !== 'fee-done') throw Object.assign(new Error('only the fee routes are written here, so nothing was sent.'), { nothingWasSent: true });
-  return takenOrThrown(w.to === 'fee-done' ? await fees.feeDone(company, w.body) : await fees.fee(company, w.body));
-};
+const feeWrites =
+  (fees: FeeSource, company: string) =>
+  async (w: RecordWrite): Promise<unknown> => {
+    if (w.to !== 'fee' && w.to !== 'fee-done')
+      throw Object.assign(new Error('only the fee routes are written here, so nothing was sent.'), {
+        nothingWasSent: true
+      });
+    return takenOrThrown(w.to === 'fee-done' ? await fees.feeDone(company, w.body) : await fees.fee(company, w.body));
+  };
 
 /** What an action hands the write: its builder, its network, its read of a contract at one block, and the person's own wallet. */
 export interface RegistryWriteParts {
@@ -162,12 +193,31 @@ export interface RegistryWriteParts {
  * The write of `seat`'s entry, through the context the run hands it after the steps: the fee paid on the one fee path
  * every call takes (`handOverFor`, our sponsorship through `ctx.fees`, the person's own DUST on their yes).
  */
-export function registryWriteThrough(ctx: StepContext, parts: RegistryWriteParts, seat: SeatToEnter): Promise<RegistryWrite> {
+export function registryWriteThrough(
+  ctx: StepContext,
+  parts: RegistryWriteParts,
+  seat: SeatToEnter
+): Promise<RegistryWrite> {
   if (ctx.keyring === null) return Promise.resolve({ of: 'owed', why: 'the ask carried no saved keys to mark' });
   const sponsor = ctx.fees === undefined ? undefined : sponsorFor(ctx.intent, feeWrites(ctx.fees, parts.accountId));
-  const handOver = handOverFor(ctx, { ...(parts.ownWallet === undefined ? {} : { ownWallet: parts.ownWallet }) }, undefined, parts.now, sponsor);
-  return registryEntryWritten({
-    identity: ctx.held.identity, network: networkName(parts.network), registries: networkRecord(parts.network).registries,
-    read: parts.read, build: parts.build, handOver, keyring: ctx.keyring, now: parts.now,
-  }, seat);
+  const handOver = handOverFor(
+    ctx,
+    { ...(parts.ownWallet === undefined ? {} : { ownWallet: parts.ownWallet }) },
+    undefined,
+    parts.now,
+    sponsor
+  );
+  return registryEntryWritten(
+    {
+      identity: ctx.held.identity,
+      network: networkName(parts.network),
+      registries: networkRecord(parts.network).registries,
+      read: parts.read,
+      build: parts.build,
+      handOver,
+      keyring: ctx.keyring,
+      now: parts.now
+    },
+    seat
+  );
 }

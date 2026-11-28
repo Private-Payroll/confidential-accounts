@@ -33,12 +33,17 @@ const raise = async (sim: AccountSimulator, seed: number, payload = LOWER_TO_ONE
 };
 
 describe('the company-change mark', () => {
-  it('RED WHEN: the mark stored beside a company change equals a value a circuit reads as a run\'s state, or zero', () => {
+  it("RED WHEN: the mark stored beside a company change equals a value a circuit reads as a run's state, or zero", () => {
     const mark = toHex(pureCircuits.companyChangeMark());
     for (const other of [
-      pureCircuits.clearedMark(), pureCircuits.chargedMark(), pureCircuits.paidFromMark(),
-      pureCircuits.releasedMark(), pureCircuits.policyOnMark(), new Uint8Array(32),
-    ]) expect(mark).not.toBe(toHex(other));
+      pureCircuits.clearedMark(),
+      pureCircuits.chargedMark(),
+      pureCircuits.paidFromMark(),
+      pureCircuits.releasedMark(),
+      pureCircuits.policyOnMark(),
+      new Uint8Array(32)
+    ])
+      expect(mark).not.toBe(toHex(other));
   });
 });
 
@@ -53,7 +58,7 @@ describe('a change to the company raised through its own circuit', () => {
     expect(toHex(sim.ledger.openProposals.lookup(id))).toBe(toHex(pureCircuits.companyChangeMark()));
   });
 
-  it('RED WHEN: the raiser\'s approval is not counted, or the raiser can approve again', async () => {
+  it("RED WHEN: the raiser's approval is not counted, or the raiser can approve again", async () => {
     const sim = await live();
     const { id } = await raise(sim, 12);
     expect(sim.approvalsFor(id)).toBe(1n);
@@ -62,7 +67,7 @@ describe('a change to the company raised through its own circuit', () => {
     expect(sim.approvalsFor(id)).toBe(2n);
   });
 
-  it('RED WHEN: the hold is not the account threshold, the removals so far and the raiser\'s withdraw key', async () => {
+  it("RED WHEN: the hold is not the account threshold, the removals so far and the raiser's withdraw key", async () => {
     const sim = await live([A, B, C], 2n);
     /* One removal first, so the removals so far are not the zero a fresh account starts at. */
     const r = change(0n, 13);
@@ -90,10 +95,14 @@ describe('a change to the company raised through its own circuit', () => {
     const deadline = BigInt(NOW + 600);
     const c = change(0n, 15);
     const id = sim.proposalId(LOWER_TO_ONE, c.salt);
-    await expect(sim.at(deadline).as(sim.applying(A, c)).proposeCompanyChange(LOWER_TO_ONE, deadline))
-      .rejects.toThrow(REFUSED_LATE);
+    await expect(sim.at(deadline).as(sim.applying(A, c)).proposeCompanyChange(LOWER_TO_ONE, deadline)).rejects.toThrow(
+      REFUSED_LATE
+    );
     expect(sim.isOpen(id)).toBe(false);
-    await sim.at(deadline - 1n).as(sim.applying(A, c)).proposeCompanyChange(LOWER_TO_ONE, deadline);
+    await sim
+      .at(deadline - 1n)
+      .as(sim.applying(A, c))
+      .proposeCompanyChange(LOWER_TO_ONE, deadline);
     expect(sim.isOpen(id)).toBe(true);
   });
 

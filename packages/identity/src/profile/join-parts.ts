@@ -48,12 +48,26 @@ export function readJoinParts(value: unknown): JoinParts | null {
   if (typeof value !== 'object' || value === null) return null;
   const p = value as Record<string, unknown>;
   const keys = Object.keys(p).sort().join(',');
-  if (p.kind === 'signer' && keys === 'kind,leafCommitment,signingPublicKey,wrappingPublicKey'
-    && [p.signingPublicKey, p.wrappingPublicKey, p.leafCommitment].every((k) => typeof k === 'string' && HEX64.test(k))) {
-    return Object.freeze({ kind: 'signer', signingPublicKey: p.signingPublicKey as string, wrappingPublicKey: p.wrappingPublicKey as string, leafCommitment: p.leafCommitment as string });
+  if (
+    p.kind === 'signer' &&
+    keys === 'kind,leafCommitment,signingPublicKey,wrappingPublicKey' &&
+    [p.signingPublicKey, p.wrappingPublicKey, p.leafCommitment].every((k) => typeof k === 'string' && HEX64.test(k))
+  ) {
+    return Object.freeze({
+      kind: 'signer',
+      signingPublicKey: p.signingPublicKey as string,
+      wrappingPublicKey: p.wrappingPublicKey as string,
+      leafCommitment: p.leafCommitment as string
+    });
   }
-  if (p.kind === 'payee' && keys === 'address,kind,payslipKey'
-    && typeof p.address === 'string' && ADDRESS.test(p.address) && typeof p.payslipKey === 'string' && HEX64.test(p.payslipKey)) {
+  if (
+    p.kind === 'payee' &&
+    keys === 'address,kind,payslipKey' &&
+    typeof p.address === 'string' &&
+    ADDRESS.test(p.address) &&
+    typeof p.payslipKey === 'string' &&
+    HEX64.test(p.payslipKey)
+  ) {
     return Object.freeze({ kind: 'payee', address: p.address, payslipKey: p.payslipKey });
   }
   if (p.kind === 'reader' && keys === 'kind,readerKey' && typeof p.readerKey === 'string' && HEX64.test(p.readerKey)) {
@@ -74,4 +88,3 @@ export function readAskedParts(value: unknown): AskedParts | null {
   const read = readJoinParts(value);
   return read === null || read.kind === 'reader' ? null : read;
 }
-

@@ -12,8 +12,14 @@ import type { PayoutChainOnTheWire } from './vault-worker-client.js';
 
 /** The page's ask for a vault's retire: the approved proposal, its salt, and both contracts at one block, as base64. */
 export interface RetireAsk {
-  readonly id: number; readonly network: string; readonly ask: 'retire';
-  readonly vault: string; readonly account: string; readonly proposal: string; readonly salt: string; readonly chain: PayoutChainOnTheWire;
+  readonly id: number;
+  readonly network: string;
+  readonly ask: 'retire';
+  readonly vault: string;
+  readonly account: string;
+  readonly proposal: string;
+  readonly salt: string;
+  readonly chain: PayoutChainOnTheWire;
 }
 
 const bytes32Of = (what: string, value: unknown): Uint8Array => {
@@ -28,7 +34,13 @@ const bytes32Of = (what: string, value: unknown): Uint8Array => {
  */
 export async function buildRetire(
   deps: VaultBuilderDeps,
-  input: { readonly vault: string; readonly account: string; readonly proposal: string; readonly salt: string; readonly chain: PayoutChain },
+  input: {
+    readonly vault: string;
+    readonly account: string;
+    readonly proposal: string;
+    readonly salt: string;
+    readonly chain: PayoutChain;
+  }
 ): Promise<{ proven: Uint8Array }> {
   const vault = String(input.vault).toLowerCase();
   const account = String(input.account).toLowerCase();
@@ -40,13 +52,23 @@ export async function buildRetire(
 
 /** The worker's answer to a retire, with the proven transaction as base64. */
 export async function retireAnswered(
-  deps: VaultBuilderDeps, ask: RetireAsk,
+  deps: VaultBuilderDeps,
+  ask: RetireAsk
 ): Promise<{ id: number; ok: true; ask: 'retire'; tx: string }> {
   const c = ask.chain;
   const chain = {
-    blockHash: c.blockHash, vaultState: fromBase64(c.vaultState), zswapState: fromBase64(c.zswapState),
-    parameters: fromBase64(c.parameters), accountState: fromBase64(c.accountState),
+    blockHash: c.blockHash,
+    vaultState: fromBase64(c.vaultState),
+    zswapState: fromBase64(c.zswapState),
+    parameters: fromBase64(c.parameters),
+    accountState: fromBase64(c.accountState)
   };
-  const built = await buildRetire(deps, { vault: ask.vault, account: ask.account, proposal: ask.proposal, salt: ask.salt, chain });
+  const built = await buildRetire(deps, {
+    vault: ask.vault,
+    account: ask.account,
+    proposal: ask.proposal,
+    salt: ask.salt,
+    chain
+  });
   return { id: ask.id, ok: true, ask: ask.ask, tx: toBase64(built.proven) };
 }

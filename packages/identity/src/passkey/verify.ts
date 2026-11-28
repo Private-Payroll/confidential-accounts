@@ -74,7 +74,7 @@ export const Algorithms = {
   /** Ed25519. Some hardware keys. */
   EdDSA: -8,
   /** RSA PKCS#1 v1.5 with SHA-256. Windows Hello, historically. */
-  RS256: -257,
+  RS256: -257
 } as const;
 
 /**
@@ -221,9 +221,7 @@ interface AuthenticatorData {
 
 function readAuthenticatorData(bytes: Uint8Array): AuthenticatorData {
   if (bytes.length < 37) {
-    throw new PasskeyError(
-      'malformed',
-      `authenticator data is at least 37 bytes; got ${bytes.length}`);
+    throw new PasskeyError('malformed', `authenticator data is at least 37 bytes; got ${bytes.length}`);
   }
   const flags = bytes[32] as number;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -233,7 +231,7 @@ function readAuthenticatorData(bytes: Uint8Array): AuthenticatorData {
     userVerified: (flags & FLAG_USER_VERIFIED) !== 0,
     syncsToACloud: (flags & FLAG_BACKUP_ELIGIBLE) !== 0,
     backedUpNow: (flags & FLAG_BACKED_UP) !== 0,
-    signCount: view.getUint32(33, false),
+    signCount: view.getUint32(33, false)
   };
 }
 
@@ -256,8 +254,7 @@ function readClientData(bytes: Uint8Array): ClientData {
     throw new PasskeyError('malformed', 'clientDataJSON is not JSON');
   }
   const data = parsed as Partial<ClientData>;
-  if (typeof data?.type !== 'string' || typeof data?.challenge !== 'string'
-    || typeof data?.origin !== 'string') {
+  if (typeof data?.type !== 'string' || typeof data?.challenge !== 'string' || typeof data?.origin !== 'string') {
     throw new PasskeyError('malformed', 'clientDataJSON is missing type, challenge or origin');
   }
   return {
@@ -265,7 +262,7 @@ function readClientData(bytes: Uint8Array): ClientData {
     challenge: data.challenge,
     origin: data.origin,
     crossOrigin: data.crossOrigin === true,
-    topOrigin: typeof data.topOrigin === 'string' ? data.topOrigin : null,
+    topOrigin: typeof data.topOrigin === 'string' ? data.topOrigin : null
   };
 }
 
@@ -273,29 +270,29 @@ async function checkCommon(
   clientDataJSON: Uint8Array,
   authenticatorData: Uint8Array,
   expected: Expectations,
-  ceremony: 'webauthn.create' | 'webauthn.get',
+  ceremony: 'webauthn.create' | 'webauthn.get'
 ): Promise<AuthenticatorData> {
   const client = readClientData(clientDataJSON);
 
   if (client.type !== ceremony) {
     throw new PasskeyError(
       'wrong-ceremony',
-      `this is a "${client.type}" and a "${ceremony}" was asked for. `
-      + 'The ceremony is inside the signed data, so this is a replay of the wrong kind.');
+      `this is a "${client.type}" and a "${ceremony}" was asked for. ` +
+        'The ceremony is inside the signed data, so this is a replay of the wrong kind.'
+    );
   }
 
   if (client.challenge !== expected.challenge) {
-    throw new PasskeyError(
-      'challenge-mismatch',
-      'this answers a different challenge from the one that was issued.');
+    throw new PasskeyError('challenge-mismatch', 'this answers a different challenge from the one that was issued.');
   }
 
   const origins = typeof expected.origin === 'string' ? [expected.origin] : expected.origin;
   if (!origins.includes(client.origin)) {
     throw new PasskeyError(
       'origin-mismatch',
-      `this ceremony happened on ${client.origin}, which is not ${origins.join(' or ')}. `
-      + 'This is the check that makes a passkey unphishable and nothing else performs it.');
+      `this ceremony happened on ${client.origin}, which is not ${origins.join(' or ')}. ` +
+        'This is the check that makes a passkey unphishable and nothing else performs it.'
+    );
   }
 
   if (client.crossOrigin) {
@@ -303,18 +300,19 @@ async function checkCommon(
     if (!client.topOrigin || !allowed.includes(client.topOrigin)) {
       throw new PasskeyError(
         'origin-mismatch',
-        `this ceremony ran inside a frame on ${client.topOrigin ?? 'an undisclosed page'}. `
-        + 'The origin matched because the frame was ours; the page around it was not.');
+        `this ceremony ran inside a frame on ${client.topOrigin ?? 'an undisclosed page'}. ` +
+          'The origin matched because the frame was ours; the page around it was not.'
+      );
     }
   }
 
   const auth = readAuthenticatorData(authenticatorData);
 
   const expectedRpIdHash = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', asBuffer(new TextEncoder().encode(expected.rpId))));
+    await crypto.subtle.digest('SHA-256', asBuffer(new TextEncoder().encode(expected.rpId)))
+  );
   if (!sameBytes(auth.rpIdHash, expectedRpIdHash)) {
-    throw new PasskeyError(
-      'rp-mismatch', `this credential does not belong to ${expected.rpId}.`);
+    throw new PasskeyError('rp-mismatch', `this credential does not belong to ${expected.rpId}.`);
   }
 
   if (!auth.userPresent) {
@@ -323,7 +321,8 @@ async function checkCommon(
   if ((expected.requireUserVerification ?? true) && !auth.userVerified) {
     throw new PasskeyError(
       'user-not-verified',
-      'the authenticator did not check who was holding it — no face, fingerprint or PIN.');
+      'the authenticator did not check who was holding it — no face, fingerprint or PIN.'
+    );
   }
 
   return auth;
@@ -337,18 +336,16 @@ async function checkCommon(
  * depends on the answer — and asking for it means parsing CBOR from an
  * untrusted source to learn something we would not act on.
  */
-export async function verifyRegistration(
-  input: RegistrationInput, expected: Expectations,
-): Promise<Passkey> {
-  const auth = await checkCommon(
-    input.clientDataJSON, input.authenticatorData, expected, 'webauthn.create');
+export async function verifyRegistration(input: RegistrationInput, expected: Expectations): Promise<Passkey> {
+  const auth = await checkCommon(input.clientDataJSON, input.authenticatorData, expected, 'webauthn.create');
 
   if (!input.publicKeySpki || input.publicKeySpki.length === 0) {
     throw new PasskeyError(
       'no-public-key',
-      'the browser did not hand back a public key for this credential. '
-      + 'Rather than decoding the attestation object by hand, this is refused: '
-      + 'the person should try a different device or authenticator.');
+      'the browser did not hand back a public key for this credential. ' +
+        'Rather than decoding the attestation object by hand, this is refused: ' +
+        'the person should try a different device or authenticator.'
+    );
   }
   /* Refused HERE, at registration, rather than at the first sign-in — a key we
    * cannot verify with is a credential that would work exactly once. */
@@ -357,8 +354,8 @@ export async function verifyRegistration(
   if (!input.personHandle) {
     throw new PasskeyError(
       'malformed',
-      'a registration must say whose it is. Pass the same value that was used as '
-      + 'user.id in the ceremony.');
+      'a registration must say whose it is. Pass the same value that was used as ' + 'user.id in the ceremony.'
+    );
   }
 
   return Object.freeze({
@@ -372,7 +369,7 @@ export async function verifyRegistration(
     rpId: expected.rpId,
     syncsToACloud: auth.syncsToACloud,
     backedUpNow: auth.backedUpNow,
-    transports: Object.freeze([...(input.transports ?? [])]),
+    transports: Object.freeze([...(input.transports ?? [])])
   });
 }
 
@@ -388,27 +385,31 @@ export async function verifyRegistration(
  * cannot be caught this way and we do not pretend otherwise.**
  */
 export async function verifyAssertion(
-  input: AssertionInput, passkey: Passkey, expected: Expectations,
+  input: AssertionInput,
+  passkey: Passkey,
+  expected: Expectations
 ): Promise<AssertionResult> {
   if (input.credentialId !== passkey.credentialId) {
     throw new PasskeyError(
       'wrong-credential',
-      'this assertion is from a different credential than the one it was checked against.');
+      'this assertion is from a different credential than the one it was checked against.'
+    );
   }
 
-  const auth = await checkCommon(
-    input.clientDataJSON, input.authenticatorData, expected, 'webauthn.get');
+  const auth = await checkCommon(input.clientDataJSON, input.authenticatorData, expected, 'webauthn.get');
 
   const key = await importVerificationKey(passkey.publicKeySpki, passkey.algorithm);
-  const clientDataHash = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', asBuffer(input.clientDataJSON)));
+  const clientDataHash = new Uint8Array(await crypto.subtle.digest('SHA-256', asBuffer(input.clientDataJSON)));
   const signed = new Uint8Array(input.authenticatorData.length + clientDataHash.length);
   signed.set(input.authenticatorData, 0);
   signed.set(clientDataHash, input.authenticatorData.length);
 
   const ok = await crypto.subtle.verify(
-    verifyParams(passkey.algorithm), key,
-    signatureFor(passkey.algorithm, input.signature), asBuffer(signed));
+    verifyParams(passkey.algorithm),
+    key,
+    signatureFor(passkey.algorithm, input.signature),
+    asBuffer(signed)
+  );
   if (!ok) {
     throw new PasskeyError('bad-signature', 'the signature does not match this credential.');
   }
@@ -430,27 +431,27 @@ export async function verifyAssertion(
   if (!input.userHandle) {
     throw new PasskeyError(
       'no-user-handle',
-      'this authenticator did not say whose credential it is. A discoverable '
-      + 'credential always does, and without it a sign-in names no person.');
+      'this authenticator did not say whose credential it is. A discoverable ' +
+        'credential always does, and without it a sign-in names no person.'
+    );
   }
   if (input.userHandle !== passkey.personHandle) {
-    throw new PasskeyError(
-      'wrong-person',
-      'this credential belongs to somebody else.');
+    throw new PasskeyError('wrong-person', 'this credential belongs to somebody else.');
   }
 
   if (signCountLooksCloned(passkey.signCount, auth.signCount)) {
     throw new PasskeyError(
       'sign-count-went-backwards',
-      `this authenticator reported ${auth.signCount} after ${passkey.signCount}. `
-      + 'A counter that does not move forward is the one hint that a credential has been copied.');
+      `this authenticator reported ${auth.signCount} after ${passkey.signCount}. ` +
+        'A counter that does not move forward is the one hint that a credential has been copied.'
+    );
   }
 
   const updated: Passkey = Object.freeze({
     ...passkey,
     signCount: auth.signCount,
     provenBySignIn: true,
-    backedUpNow: auth.backedUpNow,
+    backedUpNow: auth.backedUpNow
   });
 
   return Object.freeze({
@@ -458,7 +459,7 @@ export async function verifyAssertion(
     signCount: auth.signCount,
     userVerified: auth.userVerified,
     backedUpNow: auth.backedUpNow,
-    passkey: updated,
+    passkey: updated
   });
 }
 
@@ -501,22 +502,29 @@ export function signCountLooksCloned(stored: number, reported: number): boolean 
 
 function importParams(algorithm: number): EcKeyImportParams | RsaHashedImportParams | Algorithm {
   switch (algorithm) {
-    case Algorithms.ES256: return { name: 'ECDSA', namedCurve: 'P-256' };
-    case Algorithms.RS256: return { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
-    case Algorithms.EdDSA: return { name: 'Ed25519' };
+    case Algorithms.ES256:
+      return { name: 'ECDSA', namedCurve: 'P-256' };
+    case Algorithms.RS256:
+      return { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
+    case Algorithms.EdDSA:
+      return { name: 'Ed25519' };
     default:
       throw new PasskeyError(
         'unsupported-algorithm',
-        `this credential signs with COSE algorithm ${algorithm}, which is not one of `
-        + `${Object.values(Algorithms).join(', ')}.`);
+        `this credential signs with COSE algorithm ${algorithm}, which is not one of ` +
+          `${Object.values(Algorithms).join(', ')}.`
+      );
   }
 }
 
 function verifyParams(algorithm: number): AlgorithmIdentifier | EcdsaParams {
   switch (algorithm) {
-    case Algorithms.ES256: return { name: 'ECDSA', hash: 'SHA-256' };
-    case Algorithms.RS256: return { name: 'RSASSA-PKCS1-v1_5' };
-    default: return { name: 'Ed25519' };
+    case Algorithms.ES256:
+      return { name: 'ECDSA', hash: 'SHA-256' };
+    case Algorithms.RS256:
+      return { name: 'RSASSA-PKCS1-v1_5' };
+    default:
+      return { name: 'Ed25519' };
   }
 }
 
@@ -525,9 +533,7 @@ async function importVerificationKey(spki: Uint8Array, algorithm: number): Promi
   try {
     return await crypto.subtle.importKey('spki', asBuffer(spki), params, false, ['verify']);
   } catch (e) {
-    throw new PasskeyError(
-      'no-public-key',
-      `this credential's public key could not be read: ${(e as Error).message}`);
+    throw new PasskeyError('no-public-key', `this credential's public key could not be read: ${(e as Error).message}`);
   }
 }
 

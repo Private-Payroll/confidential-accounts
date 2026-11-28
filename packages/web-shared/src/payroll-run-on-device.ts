@@ -10,16 +10,45 @@
  * a run may still be withdrawn.
  */
 import type { KeysHeld } from '../../../src/core/company-key.js';
-import { assets as theAssets, symbolOf, type AssetId, type AssetRegistry, type LedgerForm } from '../../../src/core/assets.js';
-import { refuseWhatTheVaultCannotPay, type PaymentAsked, type VaultHoldings } from '../../../src/core/vault-holdings.js';
-import { DEVICE_RAISE_VERSION, WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED, paymentsCheckedDigest, type PaymentChecked } from '../../../src/core/device-raise.js';
+import {
+  assets as theAssets,
+  symbolOf,
+  type AssetId,
+  type AssetRegistry,
+  type LedgerForm
+} from '../../../src/core/assets.js';
+import {
+  refuseWhatTheVaultCannotPay,
+  type PaymentAsked,
+  type VaultHoldings
+} from '../../../src/core/vault-holdings.js';
+import {
+  DEVICE_RAISE_VERSION,
+  WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED,
+  paymentsCheckedDigest,
+  type PaymentChecked
+} from '../../../src/core/device-raise.js';
 import type { RaiseRunOrder } from './governed-call-builder.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { handedOver } from './hand-over.js';
 import { raiseLegHere, raiseRetryHere, type LegRaiseDoors } from './run-raised-here.js';
 import { paysCommitmentOf } from '../../../src/core/proposal-filing.js';
-import { legPaymentsHere, raiseOrderHere, retryOrderHere, retryPaymentsHere, NotMadeHere } from './material-made-here.js';
-import { filerHere, type GovernedCallDoors, onChainHere, opensFor, type RoundOnThePage, theRoundAsked, waitFor } from './governed-call-on-device.js';
+import {
+  legPaymentsHere,
+  raiseOrderHere,
+  retryOrderHere,
+  retryPaymentsHere,
+  NotMadeHere
+} from './material-made-here.js';
+import {
+  filerHere,
+  type GovernedCallDoors,
+  onChainHere,
+  opensFor,
+  type RoundOnThePage,
+  theRoundAsked,
+  waitFor
+} from './governed-call-on-device.js';
 
 /** A proposal written down and not yet sent, as the service hands it to the device that builds it. */
 export interface RaiseOrderOnTheWire {
@@ -53,25 +82,47 @@ export interface LegPaymentsOnTheWire {
 
 /** What a raise or a retry is built from and checked against, each made on this device. */
 interface MadeHereDoors {
-  legPayments(runId: string, viewingKey: KeysHeld, which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
-  retryPayments(runId: string, viewingKey: KeysHeld, indices: readonly number[], which?: { asset?: string; form?: LedgerForm }): Promise<LegPaymentsOnTheWire>;
-  raiseOrder(runId: string, viewingKey: KeysHeld, which?: { asset?: string; form?: LedgerForm }): Promise<RaiseOrderOnTheWire>;
-  retryOrder(runId: string, viewingKey: KeysHeld, proposalId: string, which?: { asset?: string; form?: LedgerForm }): Promise<RetryOrderOnTheWire>;
+  legPayments(
+    runId: string,
+    viewingKey: KeysHeld,
+    which?: { asset?: string; form?: LedgerForm }
+  ): Promise<LegPaymentsOnTheWire>;
+  retryPayments(
+    runId: string,
+    viewingKey: KeysHeld,
+    indices: readonly number[],
+    which?: { asset?: string; form?: LedgerForm }
+  ): Promise<LegPaymentsOnTheWire>;
+  raiseOrder(
+    runId: string,
+    viewingKey: KeysHeld,
+    which?: { asset?: string; form?: LedgerForm }
+  ): Promise<RaiseOrderOnTheWire>;
+  retryOrder(
+    runId: string,
+    viewingKey: KeysHeld,
+    proposalId: string,
+    which?: { asset?: string; form?: LedgerForm }
+  ): Promise<RetryOrderOnTheWire>;
 }
 
 /** Everything a raise or a retry is made from, from the company's records this device opens. */
 const madeFromTheRecords = (records: CompanyRecordsHere, accountId: string): MadeHereDoors => ({
   legPayments: (runId, viewingKey, which) => legPaymentsHere(records, accountId, runId, viewingKey, which),
-  retryPayments: (runId, viewingKey, indices, which) => retryPaymentsHere(records, accountId, runId, viewingKey, indices, which),
+  retryPayments: (runId, viewingKey, indices, which) =>
+    retryPaymentsHere(records, accountId, runId, viewingKey, indices, which),
   raiseOrder: (runId, viewingKey, which) => raiseOrderHere(records, accountId, runId, viewingKey, which),
-  retryOrder: (runId, viewingKey, proposalId, which) => retryOrderHere(records, accountId, runId, viewingKey, proposalId, which),
+  retryOrder: (runId, viewingKey, proposalId, which) =>
+    retryOrderHere(records, accountId, runId, viewingKey, proposalId, which)
 });
 
 /** What this device makes a raise or a retry from: the company's records, and nothing else. */
 const madeFor = (doors: GovernedCallDoors): MadeHereDoors => {
   if (doors.records === undefined) {
-    throw new NotMadeHere('This page cannot read the company\'s records, so it cannot make a raise or a retry here. Reload '
-      + 'the page to get the current version.');
+    throw new NotMadeHere(
+      "This page cannot read the company's records, so it cannot make a raise or a retry here. Reload " +
+        'the page to get the current version.'
+    );
   }
   return madeFromTheRecords(doors.records, doors.accountId);
 };
@@ -84,7 +135,9 @@ const madeFor = (doors: GovernedCallDoors): MadeHereDoors => {
 function refuseAnOrderThatIsNotThisRaise(order: RaiseOrderOnTheWire): void {
   const o = order.order as { circuit?: unknown; proposal?: unknown };
   if (o.circuit !== 'propose' || String(o.proposal).toLowerCase() !== String(order.chainId).toLowerCase()) {
-    throw new Error('what the company handed this device is not the proposal it wrote down. Nothing was built or sent.');
+    throw new Error(
+      'what the company handed this device is not the proposal it wrote down. Nothing was built or sent.'
+    );
   }
 }
 
@@ -100,8 +153,11 @@ function refuseAnOrderThatIsNotThisRaise(order: RaiseOrderOnTheWire): void {
 export async function sendRaiseFromDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm;
-  },
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+  }
 ): Promise<RoundOnThePage> {
   const { service } = doors;
   const asked = legAsked(input);
@@ -109,9 +165,15 @@ export async function sendRaiseFromDevice(
   refuseAnOrderThatIsNotThisRaise(order);
   doors.progress?.('checking-the-vault');
   await refuseALegTheVaultCannotPay(doors, {
-    runId: input.runId, viewingKey: input.viewingKey, ...asked, vault: order.order.run.vault, order,
+    runId: input.runId,
+    viewingKey: input.viewingKey,
+    ...asked,
+    vault: order.order.run.vault,
+    order
   });
-  return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
+  return buildAndSend(doors, order, input.viewingKey, (tx) =>
+    service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) })
+  );
 }
 
 /**
@@ -119,21 +181,28 @@ export async function sendRaiseFromDevice(
  * and waits for the chain to hold it.
  */
 async function buildAndSend(
-  doors: GovernedCallDoors, order: RaiseOrderOnTheWire, viewingKey: KeysHeld,
-  send: (tx: string) => Promise<RoundOnThePage>,
+  doors: GovernedCallDoors,
+  order: RaiseOrderOnTheWire,
+  viewingKey: KeysHeld,
+  send: (tx: string) => Promise<RoundOnThePage>
 ): Promise<RoundOnThePage> {
   const opened = await opensFor(doors)(order.proposalId, viewingKey, true);
   doors.progress?.('reading-the-chain');
   const chain = await doors.service.callState(doors.accountId);
   doors.progress?.('building');
   const { tx } = await doors.builder.governedCall({
-    account: chain.account, order: order.order, material: doors.material, chain, opened,
+    account: chain.account,
+    order: order.order,
+    material: doors.material,
+    chain,
+    opened
   });
   doors.progress?.('sending');
   const answer = await handedOver(doors.handOver, {
-    tx, call: { kind: 'account-call', contract: chain.account, circuit: order.order.circuit },
+    tx,
+    call: { kind: 'account-call', contract: chain.account, circuit: order.order.circuit },
     viaService: () => send(tx),
-    after: () => doors.service.standing(order.proposalId),
+    after: () => doors.service.standing(order.proposalId)
   });
   const sent = await onChainHere(doors, theRoundAsked(answer, order.proposalId, opened.chainId));
   if (sent.raisedAt) return sent;
@@ -157,7 +226,7 @@ const DIGITS = /^[0-9]+$/u;
  */
 const legAsked = (input: { asset?: string; form?: LedgerForm }): { asset?: string; form?: LedgerForm } => ({
   ...(input.asset === undefined ? {} : { asset: input.asset }),
-  ...(input.form === undefined ? {} : { form: input.form }),
+  ...(input.form === undefined ? {} : { form: input.form })
 });
 
 /**
@@ -171,7 +240,14 @@ const legAsked = (input: { asset?: string; form?: LedgerForm }): { asset?: strin
  */
 async function refuseALegTheVaultCannotPay(
   doors: RaiseDoors,
-  input: { runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire },
+  input: {
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+    vault: string;
+    order?: RaiseOrderOnTheWire;
+  }
 ): Promise<string> {
   const leg = await madeFor(doors).legPayments(input.runId, input.viewingKey, legAsked(input));
   return refusePaymentsTheVaultCannotPay(doors, leg, input);
@@ -189,21 +265,29 @@ async function refuseALegTheVaultCannotPay(
  * service compares what it writes down with the digest this returns.
  */
 async function refusePaymentsTheVaultCannotPay(
-  doors: RaiseDoors, leg: LegPaymentsOnTheWire, input: { asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire },
+  doors: RaiseDoors,
+  leg: LegPaymentsOnTheWire,
+  input: { asset?: string; form?: LedgerForm; vault: string; order?: RaiseOrderOnTheWire }
 ): Promise<string> {
-  if ((input.asset !== undefined && leg.asset !== input.asset)
-    || (input.form !== undefined && leg.form !== undefined && leg.form !== input.form)) {
+  if (
+    (input.asset !== undefined && leg.asset !== input.asset) ||
+    (input.form !== undefined && leg.form !== undefined && leg.form !== input.form)
+  ) {
     const registry = doors.assets ?? theAssets;
     const named = (asset: string, form: LedgerForm | undefined) =>
       `${form === undefined ? '' : `${form === 'shielded' ? 'private' : 'public'} `}${symbolOf(asset, registry)}`;
-    throw new Error(`The service returned the ${named(leg.asset, leg.form)} payments when the `
-      + `${named(input.asset ?? leg.asset, input.form)} payments were asked for. Nothing was sent for approval and no fee was spent.`);
+    throw new Error(
+      `The service returned the ${named(leg.asset, leg.form)} payments when the ` +
+        `${named(input.asset ?? leg.asset, input.form)} payments were asked for. Nothing was sent for approval and no fee was spent.`
+    );
   }
   const payments = leg.payments.map((p, at): PaymentAsked => {
     const kind = p.kind;
     if ((kind !== 'shielded' && kind !== 'unshielded') || !DIGITS.test(String(p.amount))) {
-      throw new Error(`payment ${at + 1} on this run came back from the company in a shape this device cannot `
-        + 'check. Nothing was raised and no fee was spent.');
+      throw new Error(
+        `payment ${at + 1} on this run came back from the company in a shape this device cannot ` +
+          'check. Nothing was raised and no fee was spent.'
+      );
     }
     return { payee: { kind }, token: String(p.token), amount: BigInt(p.amount) };
   });
@@ -219,27 +303,37 @@ async function refusePaymentsTheVaultCannotPay(
     const half = input.order.order.half as { proposalSalt?: unknown; assetBlinding?: unknown } | undefined;
     const salt = String(half?.proposalSalt ?? '');
     const assetBlinding = String(half?.assetBlinding ?? '');
-    if (!/^[0-9a-f]{64}$/u.test(salt) || !/^[0-9a-f]{64}$/iu.test(assetBlinding)
-      || paysCommitmentOf({ vault: input.vault, asset: leg.asset, payments: leg.payments }, salt, assetBlinding) !== String(input.order.pays).toLowerCase()) {
+    if (
+      !/^[0-9a-f]{64}$/u.test(salt) ||
+      !/^[0-9a-f]{64}$/iu.test(assetBlinding) ||
+      paysCommitmentOf({ vault: input.vault, asset: leg.asset, payments: leg.payments }, salt, assetBlinding) !==
+        String(input.order.pays).toLowerCase()
+    ) {
       throw new Error(WRITTEN_DOWN_IS_NOT_WHAT_IS_CHECKED);
     }
     if (!DIGITS.test(String(input.order.order.run.payees))) {
-      throw new Error('the proposal written down for this run does not say how many people it pays, so this device cannot '
-        + 'check it. Nothing was built or sent. Reload the page and send it again. If this comes back, withdraw the '
-        + 'proposal and raise the run again.');
+      throw new Error(
+        'the proposal written down for this run does not say how many people it pays, so this device cannot ' +
+          'check it. Nothing was built or sent. Reload the page and send it again. If this comes back, withdraw the ' +
+          'proposal and raise the run again.'
+      );
     }
     payees = BigInt(input.order.order.run.payees);
     /* A retry is raised over its leg's own tree and pays only the people it names. */
     const named = (input.order as { indices?: unknown }).indices;
     if (Array.isArray(named)) payees = BigInt(named.length);
   }
-  await refuseWhatTheVaultCannotPay(doors.holdings, {
-    vault: input.vault,
-    asset: (doors.assets ?? theAssets).require(leg.asset as AssetId),
-    total: payments.reduce((a, p) => a + p.amount, 0n),
-    payees,
-    payments,
-  }, ['shielded', 'unshielded']);
+  await refuseWhatTheVaultCannotPay(
+    doors.holdings,
+    {
+      vault: input.vault,
+      asset: (doors.assets ?? theAssets).require(leg.asset as AssetId),
+      total: payments.reduce((a, p) => a + p.amount, 0n),
+      payees,
+      payments
+    },
+    ['shielded', 'unshielded']
+  );
   return checked;
 }
 
@@ -252,7 +346,15 @@ async function refusePaymentsTheVaultCannotPay(
  */
 export async function raiseRunOnDevice(
   doors: LegRaiseDoors,
-  input: { runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; vault: string; opensAt: string; closesAt: string },
+  input: {
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+    vault: string;
+    opensAt: string;
+    closesAt: string;
+  }
 ): Promise<RoundOnThePage> {
   const sent = await onChainHere(doors, await raiseLegHere(doors, input));
   if (sent.raisedAt) return sent;
@@ -274,23 +376,25 @@ export async function raiseRunOnDevice(
  * company refuses both. So the people offered are the view's `stranded` - owed,
  * with nothing left that can pay them - and none of its `outstanding` beyond.
  */
-export function unpaidToRetry(view: {
-  readonly answered: boolean;
-  readonly status?: {
-    readonly verified: boolean;
-    readonly outstanding: ReadonlyArray<{ readonly index: number; readonly state: string }>;
-    readonly phase?: string;
-    readonly stranded?: ReadonlyArray<{ readonly index: number; readonly state: string }>;
-  };
-},
-/**
- * People a retry not yet seen on chain already covers: written down and not
- * sent, sent and not yet seen, or whose raise did not answer. The view counts
- * only retries the chain holds, so it still lists these people as stranded;
- * the company refuses a second retry over them while that one's window is
- * open. They are not offered here - their own retry is, to be sent.
- */
-covered: ReadonlyArray<number> = []): number[] {
+export function unpaidToRetry(
+  view: {
+    readonly answered: boolean;
+    readonly status?: {
+      readonly verified: boolean;
+      readonly outstanding: ReadonlyArray<{ readonly index: number; readonly state: string }>;
+      readonly phase?: string;
+      readonly stranded?: ReadonlyArray<{ readonly index: number; readonly state: string }>;
+    };
+  },
+  /**
+   * People a retry not yet seen on chain already covers: written down and not
+   * sent, sent and not yet seen, or whose raise did not answer. The view counts
+   * only retries the chain holds, so it still lists these people as stranded;
+   * the company refuses a second retry over them while that one's window is
+   * open. They are not offered here - their own retry is, to be sent.
+   */
+  covered: ReadonlyArray<number> = []
+): number[] {
   if (!view.answered || !view.status?.verified) return [];
   if (view.status.phase !== 'closed') return [];
   const taken = new Set(covered);
@@ -308,21 +412,32 @@ covered: ReadonlyArray<number> = []): number[] {
 export async function sendRetryFromDevice(
   doors: RaiseDoors,
   input: {
-    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; proposalId: string;
-  },
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+    proposalId: string;
+  }
 ): Promise<RoundOnThePage> {
   const { service } = doors;
   const asked = legAsked(input);
   const order = await madeFor(doors).retryOrder(input.runId, input.viewingKey, input.proposalId, asked);
   if (order.proposalId !== input.proposalId) {
-    throw new Error('the retry this device was handed is not the one on record. Reload the page and try again. Nothing '
-      + 'was built or sent.');
+    throw new Error(
+      'the retry this device was handed is not the one on record. Reload the page and try again. Nothing ' +
+        'was built or sent.'
+    );
   }
   refuseAnOrderThatIsNotThisRaise(order);
   doors.progress?.('checking-the-vault');
-  await refusePaymentsTheVaultCannotPay(doors,
-    await madeFor(doors).retryPayments(input.runId, input.viewingKey, order.indices, asked), { ...asked, vault: order.order.run.vault, order });
-  return buildAndSend(doors, order, input.viewingKey, (tx) => service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) }));
+  await refusePaymentsTheVaultCannotPay(
+    doors,
+    await madeFor(doors).retryPayments(input.runId, input.viewingKey, order.indices, asked),
+    { ...asked, vault: order.order.run.vault, order }
+  );
+  return buildAndSend(doors, order, input.viewingKey, (tx) =>
+    service.send(order.proposalId, { tx, version: DEVICE_RAISE_VERSION, filer: filerHere(doors) })
+  );
 }
 
 /**
@@ -334,9 +449,15 @@ export async function sendRetryFromDevice(
 export async function raiseRetryOnDevice(
   doors: LegRaiseDoors,
   input: {
-    runId: string; viewingKey: KeysHeld; asset?: string; form?: LedgerForm; indices: ReadonlyArray<number>;
-    vault: string; opensAt: string; closesAt: string;
-  },
+    runId: string;
+    viewingKey: KeysHeld;
+    asset?: string;
+    form?: LedgerForm;
+    indices: ReadonlyArray<number>;
+    vault: string;
+    opensAt: string;
+    closesAt: string;
+  }
 ): Promise<RoundOnThePage> {
   const sent = await onChainHere(doors, await raiseRetryHere(doors, input));
   if (sent.raisedAt) return sent;

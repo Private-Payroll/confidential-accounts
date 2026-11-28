@@ -26,13 +26,11 @@ const COMING: Partial<Record<RouteName, Coming>> = {
     milestone: 'a future release',
     body: (
       <p className="muted">
-        Every payment this wallet has made and received. The wallet SDK already
-        answers for it — this is a screen to build, not a capability to invent —
-        and like the balances it reads from the indexer only when you ask.
-        Payments still waiting for an answer will appear here as well as on your
-        wallet.
+        Every payment this wallet has made and received. The wallet SDK already answers for it — this is a screen to
+        build, not a capability to invent — and like the balances it reads from the indexer only when you ask. Payments
+        still waiting for an answer will appear here as well as on your wallet.
       </p>
-    ),
+    )
   },
   /*
    * `explore` IS A SCREEN NOW (`screens/explore.js`), AND THIS ENTRY IS
@@ -50,12 +48,11 @@ const COMING: Partial<Record<RouteName, Coming>> = {
     milestone: 'a future release',
     body: (
       <p className="muted">
-        Earning, prediction markets, prices — and whatever comes after them.
-        Everything that grows arrives in this room rather than as another tab
-        along the bottom. Nothing outside is asked anything until you open it,
-        and whatever it asks will name the hosts it asks on this screen.
+        Earning, prediction markets, prices — and whatever comes after them. Everything that grows arrives in this room
+        rather than as another tab along the bottom. Nothing outside is asked anything until you open it, and whatever
+        it asks will name the hosts it asks on this screen.
       </p>
-    ),
+    )
   },
   /* `settings` WAS HERE AND IS GONE — IT IS BUILT. A `COMING` entry for a
    * screen that exists is a sentence waiting to be shown to somebody: this map
@@ -77,26 +74,23 @@ const COMING: Partial<Record<RouteName, Coming>> = {
     milestone: 'a future release',
     body: (
       <p className="muted">
-        The people you pay, so an address is never typed twice. One book shared
-        across your wallets — a person is the same person whichever wallet pays
-        them — and it is managed in Settings, used inline when you send, and
-        reached from your wallet here. A name in it will help you FIND an
-        address; it will never stand in place of one on the screen that approves
-        a payment.
+        The people you pay, so an address is never typed twice. One book shared across your wallets — a person is the
+        same person whichever wallet pays them — and it is managed in Settings, used inline when you send, and reached
+        from your wallet here. A name in it will help you FIND an address; it will never stand in place of one on the
+        screen that approves a payment.
       </p>
-    ),
+    )
   },
   advanced: {
     title: 'Advanced',
     milestone: 'a later milestone',
     body: (
       <p className="muted">
-        The twenty-four-word recovery phrase — shown only after a deliberate,
-        warned act, because anyone who reads it owns the account — and the recovery
-        key you can publish so someone can lock a piece to your wallet.
+        The twenty-four-word recovery phrase — shown only after a deliberate, warned act, because anyone who reads it
+        owns the account — and the recovery key you can publish so someone can lock a piece to your wallet.
       </p>
-    ),
-  },
+    )
+  }
 };
 
 export function NotBuilt({ route }: { readonly route: RouteName }): ReactNode {

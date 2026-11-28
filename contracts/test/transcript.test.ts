@@ -23,13 +23,17 @@
  * not covered.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  createConstructorContext, createCircuitContext, sampleContractAddress,
-} from '@midnight-ntwrk/compact-runtime';
+import { createConstructorContext, createCircuitContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { Contract as Vault, pureCircuits as vaultCircuits } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf, vaultRunOf,
+  AccountSimulator,
+  privateStateFor,
+  change,
+  type Change,
+  payoutTreeOf,
+  sumArgsOf,
+  vaultRunOf
 } from './simulator.js';
 import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vault.js';
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
@@ -72,7 +76,10 @@ interface VaultPrivate {
 }
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }) => [ctx.privateState, ctx.privateState.coin],
-  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [
+    ctx.privateState,
+    ctx.privateState.secret ?? TEST_VAULT_SECRET
+  ]
 };
 const govChange = (seed: number): Change => change(0n, seed);
 
@@ -80,9 +87,13 @@ const govChange = (seed: number): Change => change(0n, seed);
 const started = async (sim: AccountSimulator, vault: any, vaultAddr: string, state: unknown): Promise<unknown> => {
   let vaultState = state;
   await startTheVault({
-    sim, vault: Uint8Array.from(Buffer.from(vaultAddr, 'hex')), approvers: [A, B], now: NOW,
+    sim,
+    vault: Uint8Array.from(Buffer.from(vaultAddr, 'hex')),
+    approvers: [A, B],
+    now: NOW,
     call: async (circuit, ...a) => {
-      const r: any = await vault.impureCircuits[circuit](createCircuitContext({
+      const r: any = await vault.impureCircuits[circuit](
+        createCircuitContext({
           circuitId: circuit as never,
           contractAddress: vaultAddr as never,
           coinPublicKeyOrZswapState: BLOCK,
@@ -90,11 +101,13 @@ const started = async (sim: AccountSimulator, vault: any, vaultAddr: string, sta
           privateState: {} as never,
           crossContract: sim.crossContract(),
           time: NOW,
-          parentBlockHash: BLOCK,
-        }), ...a);
+          parentBlockHash: BLOCK
+        }),
+        ...a
+      );
       vaultState = r.context.callContext.currentQueryContext.state;
       carryTheAccount(sim, r.context);
-    },
+    }
   });
   return vaultState;
 };
@@ -146,8 +159,11 @@ describe('§2 — the positive control: the instrument can find what IS publishe
     const tree = payoutTreeOf([{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }]);
 
     await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: bytes(0xa1),
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      vault: bytes(0xa1)
     });
 
     /*
@@ -158,7 +174,7 @@ describe('§2 — the positive control: the instrument can find what IS publishe
      */
     tape.last.assertPublishes({
       'the moment the run window opens': WIN_FROM,
-      'the moment the run window closes': WIN_UNTIL,
+      'the moment the run window closes': WIN_UNTIL
     });
     tape.stop();
   });
@@ -178,79 +194,87 @@ describe('§2 — the positive control: the instrument can find what IS publishe
   });
 });
 
-describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('§3 — the three privacy priorities, over a real cross-contract payout [needs contracts/managed/keys; `npm run compact` builds them]', () => {
-  /*
-   * THE CALL IS THE PRODUCT'S OWN MONEY PATH, NOT A FIXTURE SHAPED LIKE ONE: a
-   * vault pays one payee of an approved run by calling into the account, both
-   * contracts execute, and the returned context carries the transcript of BOTH.
-   * `vault-payout.test.ts` is where that arrangement is established and
-   * explained; this borrows it to read the other channel.
-   *
-   * The three, in the words they were set in:
-   *   "how much is the company paying out"  — COVERED, §3a
-   *   "who is it paying to"                 — COVERED, §3b
-   *   "how many payouts is it issuing"      — NOT COVERED, §3c, and why
-   */
-  let sim: AccountSimulator;
-  let vault: any;
-  let vaultAddr: string;
-  let vaultState: any;
-  let priv: VaultPrivate;
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)(
+  '§3 — the three privacy priorities, over a real cross-contract payout [needs contracts/managed/keys; `npm run compact` builds them]',
+  () => {
+    /*
+     * THE CALL IS THE PRODUCT'S OWN MONEY PATH, NOT A FIXTURE SHAPED LIKE ONE: a
+     * vault pays one payee of an approved run by calling into the account, both
+     * contracts execute, and the returned context carries the transcript of BOTH.
+     * `vault-payout.test.ts` is where that arrangement is established and
+     * explained; this borrows it to read the other channel.
+     *
+     * The three, in the words they were set in:
+     *   "how much is the company paying out"  — COVERED, §3a
+     *   "who is it paying to"                 — COVERED, §3b
+     *   "how many payouts is it issuing"      — NOT COVERED, §3c, and why
+     */
+    let sim: AccountSimulator;
+    let vault: any;
+    let vaultAddr: string;
+    let vaultState: any;
+    let priv: VaultPrivate;
 
-
-  beforeEach(async () => {
-    sim = await AccountSimulator.liveAccount([A, B], 2n);
-    sim.at(NOW);
-    vault = new (Vault as any)(vaultWitnesses as never);
-    vaultAddr = sampleContractAddress() as never as string;
-    const init = await vault.initialState(
-      createConstructorContext({} as VaultPrivate, BLOCK),
-      { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
-    vaultState = await started(sim, vault, vaultAddr, init.currentContractState);
-    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 5_000n };
-    priv = { coin: { ...coin, mt_index: 0n } };
-    const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>({
+    beforeEach(async () => {
+      sim = await AccountSimulator.liveAccount([A, B], 2n);
+      sim.at(NOW);
+      vault = new (Vault as any)(vaultWitnesses as never);
+      vaultAddr = sampleContractAddress() as never as string;
+      const init = await vault.initialState(createConstructorContext({} as VaultPrivate, BLOCK), {
+        bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex'))
+      } as never);
+      vaultState = await started(sim, vault, vaultAddr, init.currentContractState);
+      const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 5_000n };
+      priv = { coin: { ...coin, mt_index: 0n } };
+      const dep = await vault.impureCircuits.deposit(
+        createCircuitContext<VaultPrivate>({
           circuitId: 'deposit' as never,
           contractAddress: vaultAddr as never,
           coinPublicKeyOrZswapState: BLOCK,
           contractState: vaultState,
-          privateState: priv,
+          privateState: priv
         }),
-      coin);
-    vaultState = dep.context.callContext.currentQueryContext.state;
-  });
-
-  /** A three-payee run, approved, and everything a payer needs to pay one. */
-  const approvedRun = async (c: Change) => {
-    const payments = [
-      { to: ALICE, amount: TO_ALICE, nonce: 0xc1 },
-      { to: BOB, amount: TO_BOB, nonce: 0xc2 },
-      { to: CAROL, amount: TO_CAROL, nonce: 0xc3 },
-    ];
-    const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
-      details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
-      nonce: toHex(bytes(p.nonce)),
-    }));
-    /* The run's root commits to the token it pays in, which the vault hands the account. */
-    const tree = payoutTreeOf(leaves, payments.map((p) => p.amount), TOKEN_BYTES);
-    const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
-    const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
-    await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,
+        coin
+      );
+      vaultState = dep.context.callContext.currentQueryContext.state;
     });
-    const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(B, c)).approve(id);
-    return { tree, id, leaves, vaultBytes };
-  };
 
-  /** Pays ALICE her 250, through both contracts, and hands back the transcript. */
-  const payAlice = async (c: Change) => {
-    const run = await approvedRun(c);
-    const r = await vault.impureCircuits.payout(
-      createCircuitContext<VaultPrivate>({
+    /** A three-payee run, approved, and everything a payer needs to pay one. */
+    const approvedRun = async (c: Change) => {
+      const payments = [
+        { to: ALICE, amount: TO_ALICE, nonce: 0xc1 },
+        { to: BOB, amount: TO_BOB, nonce: 0xc2 },
+        { to: CAROL, amount: TO_CAROL, nonce: 0xc3 }
+      ];
+      const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
+        details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
+        nonce: toHex(bytes(p.nonce))
+      }));
+      /* The run's root commits to the token it pays in, which the vault hands the account. */
+      const tree = payoutTreeOf(
+        leaves,
+        payments.map((p) => p.amount),
+        TOKEN_BYTES
+      );
+      const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
+      const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
+      await sim.as(sim.applying(A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: WIN_FROM,
+        until: WIN_UNTIL,
+        vault: vaultBytes
+      });
+      const id = sim.proposalId(payload, c.salt, vaultBytes);
+      await sim.as(sim.applying(B, c)).approve(id);
+      return { tree, id, leaves, vaultBytes };
+    };
+
+    /** Pays ALICE her 250, through both contracts, and hands back the transcript. */
+    const payAlice = async (c: Change) => {
+      const run = await approvedRun(c);
+      const r = await vault.impureCircuits.payout(
+        createCircuitContext<VaultPrivate>({
           circuitId: 'payout' as never,
           contractAddress: vaultAddr as never,
           coinPublicKeyOrZswapState: BLOCK,
@@ -258,150 +282,163 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('§3 — the three privacy priorities, ov
           privateState: priv,
           crossContract: sim.crossContract(),
           time: NOW,
-          parentBlockHash: BLOCK,
+          parentBlockHash: BLOCK
         }),
-      vaultRunOf({
-        proposal: run.id, vault: run.vaultBytes, tree: run.tree, i: 0,
-        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
-      }),
-      ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40), noFurtherNote());
-    return { run, transcript: Transcript.of(r.context) };
-  };
+        vaultRunOf({
+          proposal: run.id,
+          vault: run.vaultBytes,
+          tree: run.tree,
+          i: 0,
+          opensAt: WIN_FROM,
+          closesAt: WIN_UNTIL,
+          salt: c.salt,
+          nonce: bytes(0xc1)
+        }),
+        ALICE,
+        TOKEN_BYTES,
+        TO_ALICE,
+        bytes(0x40),
+        noFurtherNote()
+      );
+      return { run, transcript: Transcript.of(r.context) };
+    };
 
-  it('THE HEADLINE: a real payout publishes neither the amount nor the payee', async () => {
-    const { transcript } = await payAlice(govChange(51));
+    it('THE HEADLINE: a real payout publishes neither the amount nor the payee', async () => {
+      const { transcript } = await payAlice(govChange(51));
 
-    /*
-     * BOTH CONTRACTS' TRANSCRIPTS, not just the entry circuit's. The trace is
-     * depth-first, so the account's `recordPaymentFromVault` is first and the vault's
-     * `payout` is last. A check that read only one of them would be a check
-     * that stops at the contract boundary, which is the boundary money crosses.
-     */
-    transcript.assertNotVacuous();
-    /* RED WHEN the payment no longer reaches the account, or the trace drops either contract. */
-    expect(transcript.calls.map((c) => c.circuitId)).toEqual(['recordPaymentFromVault', 'payout']);
+      /*
+       * BOTH CONTRACTS' TRANSCRIPTS, not just the entry circuit's. The trace is
+       * depth-first, so the account's `recordPaymentFromVault` is first and the vault's
+       * `payout` is last. A check that read only one of them would be a check
+       * that stops at the contract boundary, which is the boundary money crosses.
+       */
+      transcript.assertNotVacuous();
+      /* RED WHEN the payment no longer reaches the account, or the trace drops either contract. */
+      expect(transcript.calls.map((c) => c.circuitId)).toEqual(['recordPaymentFromVault', 'payout']);
 
-    transcript.assertAbsent({
-      // §3a — HOW MUCH.
-      'the amount paid to this payee': TO_ALICE,
-      'an amount approved for another payee in the same run': TO_BOB,
-      'a third amount in the same run': TO_CAROL,
-      // §3b — WHO.
-      'the payee being paid': ALICE,
-      'another payee of the same run': BOB,
-      'a third payee of the same run': CAROL,
-      // and the asset, which that list treats as part of "how much".
-      'the token being paid in': TOKEN_BYTES,
+      transcript.assertAbsent({
+        // §3a — HOW MUCH.
+        'the amount paid to this payee': TO_ALICE,
+        'an amount approved for another payee in the same run': TO_BOB,
+        'a third amount in the same run': TO_CAROL,
+        // §3b — WHO.
+        'the payee being paid': ALICE,
+        'another payee of the same run': BOB,
+        'a third payee of the same run': CAROL,
+        // and the asset, which that list treats as part of "how much".
+        'the token being paid in': TOKEN_BYTES
+      });
     });
-  });
 
-  it('§3a HOW MUCH — the amount survives being the thing the whole call is about', async () => {
-    /*
-     * The amount is an argument to `payout` and it is in `PartialProofData.input`
-     * in the clear. **`input` IS NOT PUBLIC** — it is the proof's witness, and
-     * a proof witness is not chain data, and that is the standing distinction. What
-     * this asserts is the public half: no operation in either contract's
-     * transcript carries the number.
-     *
-     * **AND THE HONEST BOUND, WHICH IS §5's SUBJECT: the shielded OUTPUT that
-     * actually moves the money is a Zswap coin, and Zswap outputs are not in
-     * this transcript at all.** So the sentence this test earns is *the two
-     * contracts do not publish the amount*, and not *nobody can see it*.
-     */
-    const { transcript } = await payAlice(govChange(52));
-    expect(transcript.occurrences(TO_ALICE)).toHaveLength(0);
-    expect(transcript.occurrences(5_000n)).toHaveLength(0); // nor the vault's balance
-  });
-
-  it('§3b WHO — the payee is thirty-two bytes and none of them reach the transcript', async () => {
-    /*
-     * A 32-byte needle cannot collide with a ledger field index or a small
-     * constant, so a hit here would not need reading. **THAT IS A STATEMENT
-     * ABOUT COLLISIONS AND NOT ABOUT SOUNDNESS**, and §6 is the reason the
-     * distinction is written out: a needle at the wrong WIDTH misses silently,
-     * and the first version of this file had exactly that defect.
-     */
-    const { transcript, run } = await payAlice(govChange(53));
-    for (const who of [ALICE, BOB, CAROL]) {
-      expect(transcript.occurrences(who)).toHaveLength(0);
-    }
-    /* Nor the payout leaf, which commits to the payee and the amount together. */
-    expect(transcript.occurrences(fromHex(run.tree.leaves[0]!))).toHaveLength(0);
-
-    /*
-     * **AND THE SENTENCE THAT ABSENCE ALONE WOULD LET A READER GET WRONG.**
-     * The leaf is not published; a DOMAIN-SEPARATED, UNBLINDED HASH OF IT is —
-     * `paidMovementOf(leaf) = persistentHash(["…:paid:", leaf])`,
-     * `ConfidentialAccount.compact:1083-1086`, inserted into `movements`.
-     * **So anyone who can reconstruct a candidate leaf can confirm from public
-     * data that that payment happened, and by design every signer can**
-     * (the accepted privacy position rests on that). An instrument that reported
-     * only "the leaf is absent" would be telling the truth and leaving a reader
-     * with a false impression.
-     */
-    transcript.assertPublishes({
-      'the movement, which is an unblinded hash of the payout leaf':
-        pureCircuits.paidMovementOf(fromHex(run.tree.leaves[0]!)),
+    it('§3a HOW MUCH — the amount survives being the thing the whole call is about', async () => {
+      /*
+       * The amount is an argument to `payout` and it is in `PartialProofData.input`
+       * in the clear. **`input` IS NOT PUBLIC** — it is the proof's witness, and
+       * a proof witness is not chain data, and that is the standing distinction. What
+       * this asserts is the public half: no operation in either contract's
+       * transcript carries the number.
+       *
+       * **AND THE HONEST BOUND, WHICH IS §5's SUBJECT: the shielded OUTPUT that
+       * actually moves the money is a Zswap coin, and Zswap outputs are not in
+       * this transcript at all.** So the sentence this test earns is *the two
+       * contracts do not publish the amount*, and not *nobody can see it*.
+       */
+      const { transcript } = await payAlice(govChange(52));
+      expect(transcript.occurrences(TO_ALICE)).toHaveLength(0);
+      expect(transcript.occurrences(5_000n)).toHaveLength(0); // nor the vault's balance
     });
-  });
 
-  it('and BOTH contract addresses are published, which absence claims must not obscure', async () => {
-    /*
-     * It is already accepted that which contract a transaction calls is public
-     * on Midnight. This is that fact, measured for the first time rather than
-     * read: the cross-contract call publishes the callee's address, and the
-     * vault publishes its own. A privacy document may say the payee is
-     * private; it may not say the transaction is unattributable to a company.
-     */
-    const { transcript } = await payAlice(govChange(55));
-    transcript.assertPublishes({
-      'the account contract being called': Uint8Array.from(Buffer.from(String(sim.address), 'hex')),
-      'the vault contract making the call': Uint8Array.from(Buffer.from(vaultAddr, 'hex')),
+    it('§3b WHO — the payee is thirty-two bytes and none of them reach the transcript', async () => {
+      /*
+       * A 32-byte needle cannot collide with a ledger field index or a small
+       * constant, so a hit here would not need reading. **THAT IS A STATEMENT
+       * ABOUT COLLISIONS AND NOT ABOUT SOUNDNESS**, and §6 is the reason the
+       * distinction is written out: a needle at the wrong WIDTH misses silently,
+       * and the first version of this file had exactly that defect.
+       */
+      const { transcript, run } = await payAlice(govChange(53));
+      for (const who of [ALICE, BOB, CAROL]) {
+        expect(transcript.occurrences(who)).toHaveLength(0);
+      }
+      /* Nor the payout leaf, which commits to the payee and the amount together. */
+      expect(transcript.occurrences(fromHex(run.tree.leaves[0]!))).toHaveLength(0);
+
+      /*
+       * **AND THE SENTENCE THAT ABSENCE ALONE WOULD LET A READER GET WRONG.**
+       * The leaf is not published; a DOMAIN-SEPARATED, UNBLINDED HASH OF IT is —
+       * `paidMovementOf(leaf) = persistentHash(["…:paid:", leaf])`,
+       * `ConfidentialAccount.compact:1083-1086`, inserted into `movements`.
+       * **So anyone who can reconstruct a candidate leaf can confirm from public
+       * data that that payment happened, and by design every signer can**
+       * (the accepted privacy position rests on that). An instrument that reported
+       * only "the leaf is absent" would be telling the truth and leaving a reader
+       * with a false impression.
+       */
+      transcript.assertPublishes({
+        'the movement, which is an unblinded hash of the payout leaf': pureCircuits.paidMovementOf(
+          fromHex(run.tree.leaves[0]!)
+        )
+      });
     });
-  });
 
-  it('§3c HOW MANY — NOT COVERED, and this test records why rather than pretending', async () => {
-    const { transcript, run } = await payAlice(govChange(54));
-    expect(run.tree.payees).toBe(3n);
+    it('and BOTH contract addresses are published, which absence claims must not obscure', async () => {
+      /*
+       * It is already accepted that which contract a transaction calls is public
+       * on Midnight. This is that fact, measured for the first time rather than
+       * read: the cross-contract call publishes the callee's address, and the
+       * vault publishes its own. A privacy document may say the payee is
+       * private; it may not say the transaction is unattributable to a company.
+       */
+      const { transcript } = await payAlice(govChange(55));
+      transcript.assertPublishes({
+        'the account contract being called': Uint8Array.from(Buffer.from(String(sim.address), 'hex')),
+        'the vault contract making the call': Uint8Array.from(Buffer.from(vaultAddr, 'hex'))
+      });
+    });
 
-    /*
-     * **TWO SEPARATE REASONS, AND ONLY THE SECOND IS THE REAL ONE.**
-     *
-     * (1) WIDTH. A `Uint<64>` of 3 encodes as the single byte `03`, and so does
-     *     the ledger field index of `approvalCounts`. The instrument therefore
-     *     reports occurrences of `03` in every transcript that touches that
-     *     field, and every one of them is structural. Absence claims stay
-     *     sound — a value that is not there is not there — but a PRESENCE
-     *     claim at this width is unreadable without opening the op, which is
-     *     why `Published` carries its op index and kind.
-     *
-     * (2) **THE COUNT IS NOT A SINGLE-TRANSACTION FACT**, and that was
-     *     accepted deliberately for v1: the payout COUNT and the run TIMING
-     *     are public and the headcount is inferable from settlement
-     *     transactions. A run of three payees is three `recordPaymentFromVault`
-     *     transactions on chain. **No instrument that reads one transaction's
-     *     transcript can see that, and an instrument that reported this
-     *     priority GREEN would be claiming exactly what the accepted position
-     *     says is false.**
-     *
-     * So this test asserts the measurement it can make — that the count is not
-     * pushed as a value by these two circuits — and refuses the claim it
-     * cannot.
-     */
-    const three = transcript.occurrences(3n);
-    /*
-     * **THIS LINE FIRST, AND IT IS NOT DECORATION.** Without it both
-     * assertions below pass over an empty result set and the comment above
-     * them claims a collision the test never required to exist — a check that
-     * cannot fail, in the file whose whole subject is checks that cannot fail.
-     */
-    expect(three.length).toBeGreaterThan(0);
-    const asValue = three.filter((p) => p.kind === 'push');
-    expect(asValue).toHaveLength(0);
-    /* And every hit is structural, which is why this priority is open. */
-    expect(three.every((p) => p.kind === 'key' || p.kind === 'popeq')).toBe(true);
-  });
-});
+    it('§3c HOW MANY — NOT COVERED, and this test records why rather than pretending', async () => {
+      const { transcript, run } = await payAlice(govChange(54));
+      expect(run.tree.payees).toBe(3n);
+
+      /*
+       * **TWO SEPARATE REASONS, AND ONLY THE SECOND IS THE REAL ONE.**
+       *
+       * (1) WIDTH. A `Uint<64>` of 3 encodes as the single byte `03`, and so does
+       *     the ledger field index of `approvalCounts`. The instrument therefore
+       *     reports occurrences of `03` in every transcript that touches that
+       *     field, and every one of them is structural. Absence claims stay
+       *     sound — a value that is not there is not there — but a PRESENCE
+       *     claim at this width is unreadable without opening the op, which is
+       *     why `Published` carries its op index and kind.
+       *
+       * (2) **THE COUNT IS NOT A SINGLE-TRANSACTION FACT**, and that was
+       *     accepted deliberately for v1: the payout COUNT and the run TIMING
+       *     are public and the headcount is inferable from settlement
+       *     transactions. A run of three payees is three `recordPaymentFromVault`
+       *     transactions on chain. **No instrument that reads one transaction's
+       *     transcript can see that, and an instrument that reported this
+       *     priority GREEN would be claiming exactly what the accepted position
+       *     says is false.**
+       *
+       * So this test asserts the measurement it can make — that the count is not
+       * pushed as a value by these two circuits — and refuses the claim it
+       * cannot.
+       */
+      const three = transcript.occurrences(3n);
+      /*
+       * **THIS LINE FIRST, AND IT IS NOT DECORATION.** Without it both
+       * assertions below pass over an empty result set and the comment above
+       * them claims a collision the test never required to exist — a check that
+       * cannot fail, in the file whose whole subject is checks that cannot fail.
+       */
+      expect(three.length).toBeGreaterThan(0);
+      const asValue = three.filter((p) => p.kind === 'push');
+      expect(asValue).toHaveLength(0);
+      /* And every hit is structural, which is why this priority is open. */
+      expect(three.every((p) => p.kind === 'key' || p.kind === 'popeq')).toBe(true);
+    });
+  }
+);
 
 describe('§4 — the worked example: what a LEDGER READ does to the transcript', () => {
   /*
@@ -456,8 +493,11 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     const tree = payoutTreeOf(payments);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: VAULT,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      vault: VAULT
     });
     const id = sim.proposalId(payload, c.salt, VAULT);
     await sim.as(sim.applying(B, c)).approve(id);
@@ -465,13 +505,20 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     /* Only the payment is recorded, so the fixture's own calls do not count. */
     const tape = Transcript.watch(sim.contract).clear();
     const before = JSON.stringify(sim.ledger, (_k, v) =>
-      v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v);
+      v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v
+    );
 
     await sim.as(sim.applying(A, c)).recordPaymentFromVault({
-      proposal: id, vault: VAULT, root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
-      details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
-      ...sumArgsOf(tree, 0),
+      proposal: id,
+      vault: VAULT,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      salt: c.salt,
+      details: fromHex(payments[0]!.details),
+      nonce: fromHex(payments[0]!.nonce),
+      ...sumArgsOf(tree, 0)
     });
 
     const t = tape.last;
@@ -491,12 +538,13 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
      * no change, because the read stored nothing.
      */
     const after = JSON.stringify(sim.ledger, (_k, v) =>
-      v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v);
+      v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v
+    );
     const occurrences = (hay: string, needle: string) => hay.split(needle).length - 1;
     expect(occurrences(after, hex(VAULT))).toBe(occurrences(before, hex(VAULT)));
   });
 
-  it('and `propose` READS the vault: a run records its vault\'s bar when it is raised', async () => {
+  it("and `propose` READS the vault: a run records its vault's bar when it is raised", async () => {
     /*
      * The other half of the measurement. A run now records the approvals it
      * needs at the moment it is raised, and for a run that is its vault's
@@ -516,8 +564,11 @@ describe('§4 — the worked example: what a LEDGER READ does to the transcript'
     const c = govChange(62);
     const tree = payoutTreeOf([{ details: toHex(bytes(1)), nonce: toHex(bytes(101)) }]);
     await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: VAULT,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      vault: VAULT
     });
     const t = tape.last;
     tape.stop();
@@ -566,8 +617,11 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
     const tree = payoutTreeOf(payments);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: LEAKED,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      vault: LEAKED
     });
     const id = sim.proposalId(payload, c.salt, LEAKED);
     await sim.as(sim.applying(B, c)).approve(id);
@@ -575,15 +629,21 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
     const tape = Transcript.watch(sim.contract).clear();
     /* The ledger channel, read exactly the way `signer-governance.test.ts:500`
      * reads it — same stringifier, same before/after occurrence count. */
-    const publicState = () => JSON.stringify(sim.ledger, (_k, v) =>
-      (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
+    const publicState = () =>
+      JSON.stringify(sim.ledger, (_k, v) => (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? String(v) : v));
     const before = publicState();
 
     await sim.as(sim.applying(A, c)).recordPaymentFromVault({
-      proposal: id, vault: LEAKED, root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
-      details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
-      ...sumArgsOf(tree, 0),
+      proposal: id,
+      vault: LEAKED,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      salt: c.salt,
+      details: fromHex(payments[0]!.details),
+      nonce: fromHex(payments[0]!.nonce),
+      ...sumArgsOf(tree, 0)
     });
     const t = tape.last;
     tape.stop();
@@ -596,7 +656,9 @@ describe('§5 — THE SENSITIVITY CONTROL: the instrument goes red, and what tha
     let caught: Error | undefined;
     try {
       t.assertAbsent({ 'the payee being paid': ALICE });
-    } catch (e) { caught = e as Error; }
+    } catch (e) {
+      caught = e as Error;
+    }
 
     expect(caught, 'THE INSTRUMENT DID NOT GO RED ON A VALUE IT CAN SEE').toBeDefined();
     expect(caught!.message).toContain('PUBLISHES A VALUE THIS TEST CALLS PRIVATE');
@@ -693,7 +755,7 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
    */
   const TRAILING_ZERO = (() => {
     const b = new Uint8Array(32).fill(0x0a);
-    b[31] = 0x00;                 // the one byte that broke it
+    b[31] = 0x00; // the one byte that broke it
     return b;
   })();
 
@@ -715,18 +777,27 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
     const tree = payoutTreeOf(payments);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
     await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: TRAILING_ZERO,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      vault: TRAILING_ZERO
     });
     const id = sim.proposalId(payload, c.salt, TRAILING_ZERO);
     await sim.as(sim.applying(B, c)).approve(id);
 
     const tape = Transcript.watch(sim.contract).clear();
     await sim.as(sim.applying(A, c)).recordPaymentFromVault({
-      proposal: id, vault: TRAILING_ZERO, root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, salt: c.salt,
-      details: fromHex(payments[0]!.details), nonce: fromHex(payments[0]!.nonce),
-      ...sumArgsOf(tree, 0),
+      proposal: id,
+      vault: TRAILING_ZERO,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: WIN_FROM,
+      until: WIN_UNTIL,
+      salt: c.salt,
+      details: fromHex(payments[0]!.details),
+      nonce: fromHex(payments[0]!.nonce),
+      ...sumArgsOf(tree, 0)
     });
     const t = tape.last;
     tape.stop();
@@ -742,62 +813,69 @@ describe('§6 — THE DEFECT FOUND IN THIS INSTRUMENT, PINNED', () => {
   });
 });
 
-describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('§7 — the tape keeps the whole call tree, not the entry circuit [needs contracts/managed/keys; `npm run compact` builds them]', () => {
-  /*
-   * **THE SECOND DEFECT FOUND HERE, AND IT WAS LATENT RATHER THAN LIVE.**
-   * `Tape` recorded `trace[trace.length - 1]`, which by the SDK's own
-   * depth-first ordering (`circuit-context.d.ts:81-85`) is the ROOT call
-   * alone, while the comment above it claimed it held *"this call and
-   * everything under it"*. Every callee was dropped.
-   *
-   * Nothing was wrong today — §3 reads the returned context directly and every
-   * other `Tape` use is a single-contract call. **It would have failed GREEN
-   * the first time anyone watched a vault through a payout**, which is the
-   * obvious next use of this instrument and the reason it is pinned now rather
-   * than left. A guard whose written reason no longer matches its behaviour.
-   */
-  it('one watched cross-contract payout hands back BOTH contracts\' transcripts', async () => {
-    const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    sim.at(NOW);
-    const vault: any = new (Vault as any)(vaultWitnesses as never);
-    const vaultAddr = sampleContractAddress() as never as string;
-    const init = await vault.initialState(
-      createConstructorContext({} as VaultPrivate, BLOCK),
-      { bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex')) } as never);
-    let vaultState: any = await started(sim, vault, vaultAddr, init.currentContractState);
-    const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 5_000n };
-    const priv: VaultPrivate = { coin: { ...coin, mt_index: 0n } };
-    const dep = await vault.impureCircuits.deposit(
-      createCircuitContext<VaultPrivate>({
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)(
+  '§7 — the tape keeps the whole call tree, not the entry circuit [needs contracts/managed/keys; `npm run compact` builds them]',
+  () => {
+    /*
+     * **THE SECOND DEFECT FOUND HERE, AND IT WAS LATENT RATHER THAN LIVE.**
+     * `Tape` recorded `trace[trace.length - 1]`, which by the SDK's own
+     * depth-first ordering (`circuit-context.d.ts:81-85`) is the ROOT call
+     * alone, while the comment above it claimed it held *"this call and
+     * everything under it"*. Every callee was dropped.
+     *
+     * Nothing was wrong today — §3 reads the returned context directly and every
+     * other `Tape` use is a single-contract call. **It would have failed GREEN
+     * the first time anyone watched a vault through a payout**, which is the
+     * obvious next use of this instrument and the reason it is pinned now rather
+     * than left. A guard whose written reason no longer matches its behaviour.
+     */
+    it("one watched cross-contract payout hands back BOTH contracts' transcripts", async () => {
+      const sim = await AccountSimulator.liveAccount([A, B], 2n);
+      sim.at(NOW);
+      const vault: any = new (Vault as any)(vaultWitnesses as never);
+      const vaultAddr = sampleContractAddress() as never as string;
+      const init = await vault.initialState(createConstructorContext({} as VaultPrivate, BLOCK), {
+        bytes: Uint8Array.from(Buffer.from(String(sim.address), 'hex'))
+      } as never);
+      let vaultState: any = await started(sim, vault, vaultAddr, init.currentContractState);
+      const coin = { nonce: bytes(0x77), color: TOKEN_BYTES, value: 5_000n };
+      const priv: VaultPrivate = { coin: { ...coin, mt_index: 0n } };
+      const dep = await vault.impureCircuits.deposit(
+        createCircuitContext<VaultPrivate>({
           circuitId: 'deposit' as never,
           contractAddress: vaultAddr as never,
           coinPublicKeyOrZswapState: BLOCK,
           contractState: vaultState,
-          privateState: priv,
+          privateState: priv
         }),
-      coin);
-    vaultState = dep.context.callContext.currentQueryContext.state;
+        coin
+      );
+      vaultState = dep.context.callContext.currentQueryContext.state;
 
-    const c = govChange(95);
-    const leaves: PayoutLeafInput[] = [{
-      details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40))),
-      nonce: toHex(bytes(0xc1)),
-    }];
-    const tree = payoutTreeOf(leaves, [TO_ALICE], TOKEN_BYTES);
-    const payload = pureCircuits.runPayload(
-      fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
-    const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
-    await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,
-    });
-    const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(B, c)).approve(id);
+      const c = govChange(95);
+      const leaves: PayoutLeafInput[] = [
+        {
+          details: toHex(vaultCircuits.payoutDetails(ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40))),
+          nonce: toHex(bytes(0xc1))
+        }
+      ];
+      const tree = payoutTreeOf(leaves, [TO_ALICE], TOKEN_BYTES);
+      const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
+      const vaultBytes = Uint8Array.from(Buffer.from(vaultAddr, 'hex'));
+      await sim.as(sim.applying(A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: WIN_FROM,
+        until: WIN_UNTIL,
+        vault: vaultBytes
+      });
+      const id = sim.proposalId(payload, c.salt, vaultBytes);
+      await sim.as(sim.applying(B, c)).approve(id);
 
-    /* THE POINT: watch the VAULT, make one call, and require two back. */
-    const tape = Transcript.watch(vault).clear();
-    await vault.impureCircuits.payout(
-      createCircuitContext<VaultPrivate>({
+      /* THE POINT: watch the VAULT, make one call, and require two back. */
+      const tape = Transcript.watch(vault).clear();
+      await vault.impureCircuits.payout(
+        createCircuitContext<VaultPrivate>({
           circuitId: 'payout' as never,
           contractAddress: vaultAddr as never,
           coinPublicKeyOrZswapState: BLOCK,
@@ -805,24 +883,36 @@ describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('§7 — the tape keeps the whole call tr
           privateState: priv,
           crossContract: sim.crossContract(),
           time: NOW,
-          parentBlockHash: BLOCK,
+          parentBlockHash: BLOCK
         }),
-      vaultRunOf({
-        proposal: id, vault: vaultBytes, tree, i: 0,
-        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(0xc1),
-      }),
-      ALICE, TOKEN_BYTES, TO_ALICE, bytes(0x40), noFurtherNote());
+        vaultRunOf({
+          proposal: id,
+          vault: vaultBytes,
+          tree,
+          i: 0,
+          opensAt: WIN_FROM,
+          closesAt: WIN_UNTIL,
+          salt: c.salt,
+          nonce: bytes(0xc1)
+        }),
+        ALICE,
+        TOKEN_BYTES,
+        TO_ALICE,
+        bytes(0x40),
+        noFurtherNote()
+      );
 
-    const t = tape.last;
-    tape.stop();
+      const t = tape.last;
+      tape.stop();
 
-    /* Before the fix this was ['payout'] and the callee's 41 ops were gone. */
-    /* RED WHEN the tape keeps only the entry circuit, or the payment no longer reaches the account. */
-    expect(t.calls.map((x) => x.circuitId)).toEqual(['recordPaymentFromVault', 'payout']);
-    /* And the absence claim still holds when it is made over the whole tree. */
-    t.assertAbsent({ 'the payee': ALICE, 'the amount': TO_ALICE });
-  });
-});
+      /* Before the fix this was ['payout'] and the callee's 41 ops were gone. */
+      /* RED WHEN the tape keeps only the entry circuit, or the payment no longer reaches the account. */
+      expect(t.calls.map((x) => x.circuitId)).toEqual(['recordPaymentFromVault', 'payout']);
+      /* And the absence claim still holds when it is made over the whole tree. */
+      t.assertAbsent({ 'the payee': ALICE, 'the amount': TO_ALICE });
+    });
+  }
+);
 
 describe('§8 — what sealing the pay-record key publishes', () => {
   /*
@@ -848,7 +938,8 @@ describe('§8 — what sealing the pay-record key publishes', () => {
   };
   const entryKeys = (sim: AccountSimulator, sk: Uint8Array) =>
     [0n, 1n, 2n, 3n].map((part) =>
-      pureCircuits.payKeyWrapKeyOf(Uint8Array.from(Buffer.from(String(sim.address), 'hex')), sk, part));
+      pureCircuits.payKeyWrapKeyOf(Uint8Array.from(Buffer.from(String(sim.address), 'hex')), sk, part)
+    );
 
   it('THE FIRST COPY publishes the commitment, the proposal it closes, and four entry keys and four parts', async () => {
     const { sim, c, id } = await sealing();
@@ -865,20 +956,27 @@ describe('§8 — what sealing the pay-record key publishes', () => {
     t.assertPublishes({
       'the commitment to the pay-record key': commitment,
       'the proposal the first copy closes': id,
-      'part 1 of the sealed copy': wrap[0]!, 'part 2': wrap[1]!, 'part 3': wrap[2]!, 'part 4': wrap[3]!,
-      'entry key 1': keys[0]!, 'entry key 2': keys[1]!, 'entry key 3': keys[2]!, 'entry key 4': keys[3]!,
+      'part 1 of the sealed copy': wrap[0]!,
+      'part 2': wrap[1]!,
+      'part 3': wrap[2]!,
+      'part 4': wrap[3]!,
+      'entry key 1': keys[0]!,
+      'entry key 2': keys[1]!,
+      'entry key 3': keys[2]!,
+      'entry key 4': keys[3]!
     });
     /* RED WHEN the key itself, or the signer's secret key, reaches the transcript. */
     t.assertAbsent({
       'the pay-record key itself': fromHex(KEY),
-      'the sealing signer\'s secret key': A.secretKey,
+      "the sealing signer's secret key": A.secretKey
     });
   });
 
   it('A LATER COPY names the stored commitment and its own four entries, and closes no proposal', async () => {
     const { sim, c, id } = await sealing();
-    await sim.as(sim.applying(A, c)).sealPayKey(
-      sealPayKeyTo(KEY, newWrappingKeypair().publicKey).map(fromHex), commitment, id);
+    await sim
+      .as(sim.applying(A, c))
+      .sealPayKey(sealPayKeyTo(KEY, newWrappingKeypair().publicKey).map(fromHex), commitment, id);
     const wrapB = sealPayKeyTo(KEY, newWrappingKeypair().publicKey).map(fromHex);
     const tape = Transcript.watch(sim.contract).clear();
     await sim.as(B).sealPayKey(wrapB, commitment);
@@ -888,14 +986,17 @@ describe('§8 — what sealing the pay-record key publishes', () => {
     const keys = entryKeys(sim, B.secretKey);
     t.assertPublishes({
       'the commitment it is compared with': commitment,
-      'part 1': wrapB[0]!, 'part 4': wrapB[3]!, 'entry key 1': keys[0]!, 'entry key 4': keys[3]!,
+      'part 1': wrapB[0]!,
+      'part 4': wrapB[3]!,
+      'entry key 1': keys[0]!,
+      'entry key 4': keys[3]!
     });
     /* RED WHEN a later copy starts reading or writing the proposal again. */
     expect(t.occurrences(id)).toEqual([]);
     t.assertAbsent({
       'the pay-record key itself': fromHex(KEY),
-      'B\'s secret key': B.secretKey,
-      'A\'s entry key, which B has no business naming': entryKeys(sim, A.secretKey)[0]!,
+      "B's secret key": B.secretKey,
+      "A's entry key, which B has no business naming": entryKeys(sim, A.secretKey)[0]!
     });
   });
 });

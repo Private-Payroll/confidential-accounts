@@ -10,5 +10,8 @@ import { inTheSettings, screensCountedOn } from './screen-counts.test-support.js
 const company = aCompanyOf({ people: 520, vendors: 4, vaults: 4, proposals: 2, anchoredBatches: 8 });
 
 screensCountedOn(company, {
-  pins: SCREEN_PINS, more: { 'route POST /api/accounts/:record/manifest/newest': 2 }, only: (page) => !inTheSettings(page), labels: ['at the first size', 'with 520 people'],
+  pins: SCREEN_PINS,
+  more: { 'route POST /api/accounts/:record/manifest/newest': 2 },
+  only: (page) => !inTheSettings(page),
+  labels: ['at the first size', 'with 520 people']
 });

@@ -1,28 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import {
-  advance, cancelRecovery, completeRecovery, offerPiece, progress, startRecovery, withdrawPiece,
+  advance,
+  cancelRecovery,
+  completeRecovery,
+  offerPiece,
+  progress,
+  startRecovery,
+  withdrawPiece
 } from './session.js';
 import type { RecoverySession } from './session.js';
 import { combinePieces, splitSecret } from './pieces.js';
 import type { Placement } from './pieces.js';
 import { identityFromSecret, newSecret, secretFromWords, wordsFromSecret } from '../keys/derivation.js';
 
-const hex = (b: Uint8Array): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 const THREE: readonly Placement[] = [
   { label: 'Your Google account', holder: 'google:person@example.com' },
   { label: 'Printed', holder: 'paper' },
-  { label: 'My other laptop', holder: 'device:laptop-2' },
+  { label: 'My other laptop', holder: 'device:laptop-2' }
 ];
 
 const T0 = 1_700_000_000_000;
 const secret = secretFromWords(TEST_MNEMONIC);
 const pieces = async () => (await splitSecret(secret, THREE, 2)).pieces;
 
-const offer = (p: { placement: Placement; bytes: Uint8Array }) =>
-  ({ holder: p.placement.holder, bytes: p.bytes });
+const offer = (p: { placement: Placement; bytes: Uint8Array }) => ({ holder: p.placement.holder, bytes: p.bytes });
 
 describe('a recovery that finishes', () => {
   it('walks gathering → ready → completed, and gives back the account', async () => {
@@ -60,18 +64,20 @@ describe('a recovery that finishes', () => {
      * actually do: start on a laptop, finish where the pieces are.
      */
     const [google, , laptop] = await pieces();
-    const started = offerPiece(
-      startRecovery({ id: 'r2', threshold: 2, now: T0 }), offer(google!), T0);
+    const started = offerPiece(startRecovery({ id: 'r2', threshold: 2, now: T0 }), offer(google!), T0);
 
-    const carried: RecoverySession = JSON.parse(JSON.stringify({
-      ...started,
-      gathered: started.gathered.map((p) => ({ holder: p.holder, bytes: Array.from(p.bytes) })),
-    })) as never;
+    const carried: RecoverySession = JSON.parse(
+      JSON.stringify({
+        ...started,
+        gathered: started.gathered.map((p) => ({ holder: p.holder, bytes: Array.from(p.bytes) }))
+      })
+    ) as never;
     const restored: RecoverySession = {
       ...carried,
       gathered: carried.gathered.map((p) => ({
-        holder: p.holder, bytes: Uint8Array.from(p.bytes as unknown as number[]),
-      })),
+        holder: p.holder,
+        bytes: Uint8Array.from(p.bytes as unknown as number[])
+      }))
     };
 
     const finished = offerPiece(restored, offer(laptop!), T0 + 60_000);
@@ -83,10 +89,9 @@ describe('a recovery that finishes', () => {
 describe('what a recovery refuses', () => {
   it('will not finish before the threshold is met', async () => {
     const [google] = await pieces();
-    const session = offerPiece(
-      startRecovery({ id: 'r3', threshold: 2, now: T0 }), offer(google!), T0);
+    const session = offerPiece(startRecovery({ id: 'r3', threshold: 2, now: T0 }), offer(google!), T0);
     await expect(completeRecovery(session, T0 + 1)).rejects.toMatchObject({
-      code: 'not-enough-pieces',
+      code: 'not-enough-pieces'
     });
   });
 
@@ -112,8 +117,7 @@ describe('what a recovery refuses', () => {
   });
 
   it('refuses a threshold of one at the door', () => {
-    expect(() => startRecovery({ id: 'r5', threshold: 1, now: T0 }))
-      .toThrow(/not a threshold/u);
+    expect(() => startRecovery({ id: 'r5', threshold: 1, now: T0 })).toThrow(/not a threshold/u);
   });
 
   it('refuses a piece that does not say where it came from', async () => {
@@ -167,7 +171,7 @@ describe('what a finished recovery leaves behind', () => {
     expect(progress(done)).toEqual({ have: 2, need: 2, state: 'completed' });
   });
 
-  it('REFUSES A BLOB THE LIBRARY CANNOT READ AT THE DOOR, in the library\'s words', async () => {
+  it("REFUSES A BLOB THE LIBRARY CANNOT READ AT THE DOOR, in the library's words", async () => {
     /*
      * The door used to peek at one byte: anything whose first two bytes looked
      * right was accepted for its threshold. Now the same header read the
@@ -175,12 +179,12 @@ describe('what a finished recovery leaves behind', () => {
      * offered — not after somebody has gathered everything else.
      */
     const session = startRecovery({ id: 'c81a', threshold: 2, now: T0 });
-    expect(() => offerPiece(session, { holder: 'the safe', bytes: new Uint8Array(10) }, T0))
-      .toThrow(/a recovery piece is more than/u);
+    expect(() => offerPiece(session, { holder: 'the safe', bytes: new Uint8Array(10) }, T0)).toThrow(
+      /a recovery piece is more than/u
+    );
     const wrongFormat = new Uint8Array(20);
     wrongFormat[0] = 2;
-    expect(() => offerPiece(session, { holder: 'the safe', bytes: wrongFormat }, T0))
-      .toThrow(/format 2/u);
+    expect(() => offerPiece(session, { holder: 'the safe', bytes: wrongFormat }, T0)).toThrow(/format 2/u);
   });
 
   it('REFUSES A PIECE THAT DISAGREES ABOUT THE THRESHOLD, and names it', async () => {
@@ -199,8 +203,9 @@ describe('what a finished recovery leaves behind', () => {
 
     const altered = Uint8Array.from(paper!.bytes);
     altered[1] = 9;
-    expect(() => offerPiece(session, { holder: 'the safe', bytes: altered }, T0))
-      .toThrow(/says 9 pieces are needed, and the piece already in says 2/u);
+    expect(() => offerPiece(session, { holder: 'the safe', bytes: altered }, T0)).toThrow(
+      /says 9 pieces are needed, and the piece already in says 2/u
+    );
     /* And nothing moved: the count still describes the pieces that are in. */
     expect(session.threshold).toBe(2);
     expect(session.gathered).toHaveLength(1);
@@ -217,9 +222,9 @@ describe('what a finished recovery leaves behind', () => {
     const foreign = await splitSecret(newSecret(), THREE, 2);
     let session = startRecovery({ id: 'c83a', threshold: 2, now: T0 });
     session = offerPiece(session, offer(google!), T0);
-    expect(() => offerPiece(
-      session, { holder: 'the safe', bytes: foreign.pieces[1]!.bytes }, T0))
-      .toThrow(/from a DIFFERENT ACCOUNT/u);
+    expect(() => offerPiece(session, { holder: 'the safe', bytes: foreign.pieces[1]!.bytes }, T0)).toThrow(
+      /from a DIFFERENT ACCOUNT/u
+    );
     expect(session.gathered).toHaveLength(1);
     expect(session.state).toBe('gathering');
   });
@@ -235,9 +240,9 @@ describe('what a finished recovery leaves behind', () => {
     const recut = await splitSecret(secret, THREE, 2);
     let session = startRecovery({ id: 'c83b', threshold: 2, now: T0 });
     session = offerPiece(session, offer(google!), T0);
-    expect(() => offerPiece(
-      session, { holder: 'the safe', bytes: recut.pieces[1]!.bytes }, T0))
-      .toThrow(/different cut of the same account/u);
+    expect(() => offerPiece(session, { holder: 'the safe', bytes: recut.pieces[1]!.bytes }, T0)).toThrow(
+      /different cut of the same account/u
+    );
     /* Never "enough pieces" from a mixture that cannot combine. */
     expect(session.state).toBe('gathering');
     expect(session.gathered).toHaveLength(1);
@@ -260,14 +265,14 @@ describe('what a finished recovery leaves behind', () => {
       startedAt: T0,
       readyAt: null,
       waitMs: 0,
-      cancelledBecause: null,
+      cancelledBecause: null
     });
     const corrected = withdrawPiece(lying, 'nobody-of-that-name', T0 + 1);
     expect(corrected.threshold).toBe(2);
     expect(corrected.gathered).toHaveLength(1);
   });
 
-  it('TAKES THE THRESHOLD OFF THE PIECES, not out of somebody\'s memory', async () => {
+  it("TAKES THE THRESHOLD OFF THE PIECES, not out of somebody's memory", async () => {
     /*
      * Every piece carries its own threshold precisely so nobody would
      * have to remember it, and the session in front of it still asked. A 2-of-3
@@ -298,28 +303,26 @@ describe('the waiting period, which is what the chain version needs — §7.11',
     expect(session.state).toBe('ready');
   });
 
-  it('holds a session in WAITING until the window is up, and refuses to finish early',
-    async () => {
-      /*
-       * Switched on, this is the whole veto: enough pieces are in, and the
-       * account still does not move for two days, during which any device the
-       * real owner still holds can stop it. Nothing about the flow changes —
-       * which is the property this file exists to guarantee.
-       */
-      const [google, paper] = await pieces();
-      let session = startRecovery({ id: 'w1', threshold: 2, now: T0, waitMs: WAIT });
-      session = offerPiece(session, offer(google!), T0);
-      session = offerPiece(session, offer(paper!), T0);
+  it('holds a session in WAITING until the window is up, and refuses to finish early', async () => {
+    /*
+     * Switched on, this is the whole veto: enough pieces are in, and the
+     * account still does not move for two days, during which any device the
+     * real owner still holds can stop it. Nothing about the flow changes —
+     * which is the property this file exists to guarantee.
+     */
+    const [google, paper] = await pieces();
+    let session = startRecovery({ id: 'w1', threshold: 2, now: T0, waitMs: WAIT });
+    session = offerPiece(session, offer(google!), T0);
+    session = offerPiece(session, offer(paper!), T0);
 
-      expect(session.state).toBe('waiting');
-      expect(session.readyAt).toBe(T0 + WAIT);
-      await expect(completeRecovery(session, T0 + WAIT - 1))
-        .rejects.toThrow(/waiting period/u);
+    expect(session.state).toBe('waiting');
+    expect(session.readyAt).toBe(T0 + WAIT);
+    await expect(completeRecovery(session, T0 + WAIT - 1)).rejects.toThrow(/waiting period/u);
 
-      const later = advance(session, T0 + WAIT);
-      expect(later.state).toBe('ready');
-      expect(hex((await completeRecovery(later, T0 + WAIT)).secret)).toBe(hex(secret));
-    });
+    const later = advance(session, T0 + WAIT);
+    expect(later.state).toBe('ready');
+    expect(hex((await completeRecovery(later, T0 + WAIT)).secret)).toBe(hex(secret));
+  });
 
   it('CAN BE VETOED while it waits, and the veto is final', async () => {
     const [google, paper] = await pieces();

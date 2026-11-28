@@ -1,66 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import jsQR from 'jsqr';
 import QRCode from 'qrcode';
-import * as jsqrNamespace from 'jsqr';
-import { CopyButton } from './ui.js';
+import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
 import { describeFailure } from '../lib/failure-text.js';
+import { CopyButton } from './ui.js';
 
-/* `jsqr` ships CommonJS with a default export; the bundler hands back the
- * function (sometimes under `.default`), the typechecker sees the namespace.
- * One narrow cast here, typed to exactly the call the scanner makes. */
-type JsQrFn = (
-  data: Uint8ClampedArray, width: number, height: number,
-) => { readonly data: string } | null;
-const jsQR: JsQrFn =
-  (((jsqrNamespace as { default?: unknown }).default) ?? jsqrNamespace) as JsQrFn;
+/* Pairing payloads shown as QR codes with a text form, and read back. The two comparison digits must never pass
+ * through here: each device computes its own number and a person compares them. */
 
-/**
- * THE TWO HALVES OF "SCAN A CODE" — showing one, and reading one.
- *
- * §1 says scan a code; the old harness's four copy-paste blobs are
- * the thing this replaces. Every message that crosses between the two devices
- * during pairing is shown as a QR code with the same payload available as
- * text underneath — because the machine doing the reading may have no camera
- * (a desktop, a headless test, a phone whose camera is refused), and a person
- * with no camera still deserves the flow.
- *
- * WHAT IS AND IS NOT ALLOWED THROUGH HERE. Pairing payloads — the code, the
- * commitment, the nonce, the revealed key, the sealed keys — are designed to
- * travel; showing them is the protocol working. THE TWO DIGITS ARE NOT A
- * PAYLOAD and must never pass through these components: each device computes
- * its own number and a person compares them. There is deliberately no
- * component here for "display a number that arrived in a message" — and
- * A test pins the rendered surface, not this comment.
- */
-
-/**
- * A QR code for a payload THIS device produced, with the text underneath.
- * The SVG is generated locally by `qrcode` from our own base64url string —
- * nothing remote, nothing user-controlled beyond the payload itself.
- */
-export function QrPanel({ payload, caption, testId, bare = false }: {
+/** A QR code, with its text underneath, for a payload this device produced. */
+export function QrPanel({
+  payload,
+  caption,
+  testId,
+  bare = false
+}: {
   readonly payload: string;
   readonly caption: string;
   readonly testId: string;
-  /**
-   * DROP THE TEXT REVEAL AND ITS COPY BUTTON, for a caller that already
-   * has both. The pairing screens need them: the machine reading the code may
-   * have no camera, and the payload has nowhere else to be shown. Home's
-   * Receive popup is the opposite case — the address is printed in full on the
-   * same panel, with its own copy control naming WHOSE address it is,
-   * and this component's generic *"Copy it"* beside it would be a second,
-   * weaker confirmation of the same value. Default `false`, so every existing
-   * caller is unchanged.
-   */
+  /** Leaves out the text form and its copy button, for a caller that already shows both. */
   readonly bare?: boolean;
 }): ReactNode {
   const [svg, setSvg] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
     QRCode.toString(payload, { type: 'svg', errorCorrectionLevel: 'M', margin: 1 })
-      .then((drawn) => { if (!stale) setSvg(drawn); })
-      .catch(() => { if (!stale) setSvg(null); });
-    return () => { stale = true; };
+      .then((drawn) => {
+        if (!stale) setSvg(drawn);
+      })
+      .catch(() => {
+        if (!stale) setSvg(null);
+      });
+    return () => {
+      stale = true;
+    };
   }, [payload]);
   return (
     <div className="qr-block">
@@ -69,7 +43,7 @@ export function QrPanel({ payload, caption, testId, bare = false }: {
           className="qr-panel"
           role="img"
           aria-label={caption}
-          /* Locally generated SVG from this device's own payload — see above. */
+          /* Safe: the SVG is drawn locally from this device's own payload. */
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       )}
@@ -77,7 +51,9 @@ export function QrPanel({ payload, caption, testId, bare = false }: {
       {!bare && (
         <details className="reveal">
           <summary>No camera on the other machine? Show it as text</summary>
-          <div className="mono qr-text" data-testid={testId}>{payload}</div>
+          <div className="mono qr-text" data-testid={testId}>
+            {payload}
+          </div>
           <CopyButton text={payload} label="Copy it" />
         </details>
       )}
@@ -85,22 +61,13 @@ export function QrPanel({ payload, caption, testId, bare = false }: {
   );
 }
 
-/**
- * Read a payload the OTHER device is showing: point the camera at its QR
- * code, or type/paste the text form. The camera path only appears where the
- * browser offers one; the typed path always exists.
- *
- * The video element and the scan loop are wired up in an EFFECT keyed
- * on the stream, never inside the async click handler — a state update after
- * an `await` is not flushed by the next line, so the version that read
- * `videoRef.current` right after `setScanning(true)` found null, returned
- * with the stream live, and never scheduled a single frame. The camera light
- * came on and nothing ever scanned. The effect runs after the `<video>` has
- * committed, and its cleanup is the single place the stream is stopped — so
- * unmounting mid-scan, pressing stop, and a successful decode all release
- * the camera through the same line.
- */
-export function ScanInput({ label, actionLabel, onPayload, disabled }: {
+/** Reads a payload the other device shows, by camera where the browser offers one or by typing it. */
+export function ScanInput({
+  label,
+  actionLabel,
+  onPayload,
+  disabled
+}: {
   readonly label: string;
   readonly actionLabel: string;
   onPayload(text: string): void;
@@ -111,18 +78,24 @@ export function ScanInput({ label, actionLabel, onPayload, disabled }: {
   const [cameraProblem, setCameraProblem] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mountedRef = useRef(true);
-  /* The handler for a decoded payload, kept fresh without re-running the
-   * camera effect when a parent re-renders. */
+  /* The latest handler, so a parent's re-render does not restart the camera. */
   const onPayloadRef = useRef(onPayload);
-  onPayloadRef.current = onPayload;
+  useEffect(() => {
+    onPayloadRef.current = onPayload;
+  });
 
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    []
+  );
 
   const startCamera = async (): Promise<void> => {
     setCameraProblem(null);
     try {
       const granted = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: { facingMode: 'environment' }
       });
       /* A permission granted AFTER this input has gone away must not leave
        * the camera running for the life of the page. */
@@ -136,6 +109,8 @@ export function ScanInput({ label, actionLabel, onPayload, disabled }: {
     }
   };
 
+  /* Wired after the <video> mounts, never in the click handler, where the ref is still null after an await.
+   * Its cleanup is the one place the stream is stopped: on unmount, on stop and on a decode. */
   useEffect(() => {
     if (stream === null) return undefined;
     const video = videoRef.current;
@@ -146,7 +121,9 @@ export function ScanInput({ label, actionLabel, onPayload, disabled }: {
       return undefined;
     }
     video.srcObject = stream;
-    void Promise.resolve(video.play()).catch(() => { /* autoplay refusals are fine */ });
+    void Promise.resolve(video.play()).catch(() => {
+      /* autoplay refusals are fine */
+    });
 
     const canvas = document.createElement('canvas');
     let live = true;
@@ -180,28 +157,36 @@ export function ScanInput({ label, actionLabel, onPayload, disabled }: {
     };
   }, [stream]);
 
-  const cameraPossible = typeof navigator !== 'undefined'
-    && Boolean(navigator.mediaDevices?.getUserMedia);
+  const cameraPossible = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
 
   return (
     <div className="scan-input">
       {cameraPossible && stream === null && (
         <p style={{ marginBottom: '0.6rem' }}>
-          <button type="button" onClick={() => { void startCamera(); }} disabled={disabled}>
+          <button
+            type="button"
+            onClick={() => {
+              void startCamera();
+            }}
+            disabled={disabled}
+          >
             Scan it with this machine&rsquo;s camera
           </button>
         </p>
       )}
       {stream !== null && (
         <div className="scan-video-wrap">
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video ref={videoRef} className="scan-video" playsInline muted />
           <button type="button" className="quiet" onClick={() => setStream(null)}>
             Stop the camera
           </button>
         </div>
       )}
-      {cameraProblem !== null && <div className="error" role="alert">{cameraProblem}</div>}
+      {cameraProblem !== null && (
+        <div className="error" role="alert">
+          {cameraProblem}
+        </div>
+      )}
       <textarea
         rows={2}
         autoComplete="off"

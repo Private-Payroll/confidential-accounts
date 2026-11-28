@@ -1,8 +1,22 @@
 import type { ReactNode } from 'react';
 import {
-  Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu,
-  SidebarMenuButton, SidebarMenuItem, Tooltip, TooltipContent, TooltipTrigger, useSidebar,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  useSidebar
 } from 'vaults-ui';
 import { GLYPH, Glyph } from '../glyphs.js';
 import type { IconSvgElement } from '../glyphs.js';
@@ -47,7 +61,7 @@ export const PLACES: readonly Place[] = [
   { route: 'home', label: 'Home', icon: GLYPH.home },
   { route: 'activity', label: 'Activity', icon: GLYPH.activity },
   { route: 'explore', label: 'Explore', icon: GLYPH.explore },
-  { route: 'settings', label: 'Settings', icon: GLYPH.settings },
+  { route: 'settings', label: 'Settings', icon: GLYPH.settings }
 ];
 
 interface Action {
@@ -63,14 +77,11 @@ const ACTIONS: readonly Action[] = [
     route: 'send',
     label: 'Send',
     says: 'Pay an address from the wallet that is open',
-    icon: GLYPH.send,
-  },
+    icon: GLYPH.send
+  }
 ];
 
-function ActionMenu({ side, trigger }: {
-  readonly side: 'top' | 'right';
-  readonly trigger: ReactNode;
-}): ReactNode {
+function ActionMenu({ side, trigger }: { readonly side: 'top' | 'right'; readonly trigger: ReactNode }): ReactNode {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
@@ -102,7 +113,7 @@ function RailAction({ collapsed }: { readonly collapsed: boolean }): ReactNode {
   return (
     <ActionMenu
       side="right"
-      trigger={(
+      trigger={
         <Button
           type="button"
           aria-label={NEW_ACTION_LABEL}
@@ -112,7 +123,7 @@ function RailAction({ collapsed }: { readonly collapsed: boolean }): ReactNode {
           <Glyph icon={GLYPH.newAction} />
           {!collapsed && <span>New</span>}
         </Button>
-      )}
+      }
     />
   );
 }
@@ -121,11 +132,11 @@ function BarAction(): ReactNode {
   return (
     <ActionMenu
       side="top"
-      trigger={(
+      trigger={
         <Button type="button" aria-label={NEW_ACTION_LABEL} size="icon-lg" className="size-11 rounded-full">
           <Glyph icon={GLYPH.newAction} className="size-5" />
         </Button>
-      )}
+      }
     />
   );
 }
@@ -134,7 +145,11 @@ function BarAction(): ReactNode {
  * A place in the sidebar. Folded, it keeps its name as the link's own label
  * and shows it beside the icon on hover and focus.
  */
-function SidebarPlace({ place, current, collapsed }: {
+function SidebarPlace({
+  place,
+  current,
+  collapsed
+}: {
   readonly place: Place;
   readonly current: boolean;
   readonly collapsed: boolean;
@@ -157,10 +172,7 @@ function SidebarPlace({ place, current, collapsed }: {
 }
 
 /** A place in the phone's bar: the icon over its name. */
-function BarPlace({ place, current }: {
-  readonly place: Place;
-  readonly current: boolean;
-}): ReactNode {
+function BarPlace({ place, current }: { readonly place: Place; readonly current: boolean }): ReactNode {
   return (
     <a
       href={hrefOf(place.route)}
@@ -171,7 +183,7 @@ function BarPlace({ place, current }: {
         'rounded-md text-xs no-underline transition-colors',
         current
           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-          : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+          : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
       ].join(' ')}
     >
       <Glyph icon={place.icon} className="size-5" />
@@ -184,7 +196,15 @@ function BarPlace({ place, current }: {
  * The sidebar. Its fold state is the wallet's own remembered preference,
  * handed to the kit's sidebar by the shell.
  */
-export function Rail({ current, identity, secret, theme, choice, onTheme, onLock }: {
+export function Rail({
+  current,
+  identity,
+  secret,
+  theme,
+  choice,
+  onTheme,
+  onLock
+}: {
   readonly current: RouteName;
   readonly identity: Identity;
   readonly secret: Secret;
@@ -212,18 +232,10 @@ export function Rail({ current, identity, secret, theme, choice, onTheme, onLock
           <RailAction collapsed={collapsed} />
           {/* `data-collapsed` names the state of the navigation for anything
               that reads it, rather than a class name it would have to know. */}
-          <nav
-            aria-label="Places"
-            data-collapsed={collapsed ? 'true' : 'false'}
-          >
+          <nav aria-label="Places" data-collapsed={collapsed ? 'true' : 'false'}>
             <SidebarMenu>
               {PLACES.map((place) => (
-                <SidebarPlace
-                  key={place.route}
-                  place={place}
-                  current={place.route === current}
-                  collapsed={collapsed}
-                />
+                <SidebarPlace key={place.route} place={place} current={place.route === current} collapsed={collapsed} />
               ))}
             </SidebarMenu>
           </nav>
@@ -240,10 +252,7 @@ export function Rail({ current, identity, secret, theme, choice, onTheme, onLock
   );
 }
 
-function LockControl({ collapsed, onLock }: {
-  readonly collapsed: boolean;
-  readonly onLock: () => void;
-}): ReactNode {
+function LockControl({ collapsed, onLock }: { readonly collapsed: boolean; readonly onLock: () => void }): ReactNode {
   const button = (
     <Button
       type="button"
@@ -261,7 +270,9 @@ function LockControl({ collapsed, onLock }: {
   return (
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8}>Lock the wallet</TooltipContent>
+      <TooltipContent side="right" sideOffset={8}>
+        Lock the wallet
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -276,7 +287,7 @@ export function BottomBar({ current }: { readonly current: RouteName }): ReactNo
         'sticky bottom-0 z-30 flex items-center gap-1 border-t bg-sidebar px-2 pt-1',
         'pb-[calc(0.25rem+env(safe-area-inset-bottom))]',
         'md:hidden',
-        'print:hidden',
+        'print:hidden'
       ].join(' ')}
     >
       {first && <BarPlace place={first} current={first.route === current} />}

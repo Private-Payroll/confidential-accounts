@@ -13,42 +13,73 @@ import type { OpenedRound, RoundOnChain } from './governed-call-builder.js';
 import { NotOpenedOnThisDevice, openTheRoundHere } from './round-opened-here.js';
 import { handedOver, notThroughOurService } from './hand-over.js';
 import { raiseMayStillLandAt } from '../../../src/core/proposal-filing.js';
-import { closedOnRecord, closesOnRecord, filerHere, type GovernedCallDoors, onChainHere, type RoundOnThePage, SentAndNotYetSeen, theRoundAsked } from './governed-call-on-device.js';
+import {
+  closedOnRecord,
+  closesOnRecord,
+  filerHere,
+  type GovernedCallDoors,
+  onChainHere,
+  type RoundOnThePage,
+  SentAndNotYetSeen,
+  theRoundAsked
+} from './governed-call-on-device.js';
 
 /** Why this device refuses a withdrawal before anything is built or sent: each in words the person can act on. */
 export type WithdrawalStop =
-  'closed' | 'started' | 'sent-not-yet-seen' | 'filed-by-another' | 'not-raised-here' | 'raiser-not-read' | 'retirement-filed'
-  | 'chain-time-not-read' | 'started-may-be-paid' | 'started-charged' | 'clock-ahead' | 'may-still-land';
+  | 'closed'
+  | 'started'
+  | 'sent-not-yet-seen'
+  | 'filed-by-another'
+  | 'not-raised-here'
+  | 'raiser-not-read'
+  | 'retirement-filed'
+  | 'chain-time-not-read'
+  | 'started-may-be-paid'
+  | 'started-charged'
+  | 'clock-ahead'
+  | 'may-still-land';
 
 const WITHDRAWAL_STOPS: Readonly<Record<WithdrawalStop, string>> = {
-  closed: 'the chain no longer holds this proposal: it was carried out, withdrawn or closed already, so there is nothing to withdraw.',
-  started: 'this run\'s time to be paid has begun, and from then on the chain lets nobody withdraw it. It does not have the '
-    + 'approvals it was raised needing: leave it unapproved, and it closes when its time ends.',
-  'started-may-be-paid': 'this run\'s time to be paid has begun, and from then on the chain lets nobody withdraw it. It has the '
-    + 'approvals it was raised needing, or this wallet could not read how many it needs, so it may be paid now with no other '
-    + 'approval. A signer whose seat may hold runs on its vault can still hold it on the chain until it is '
-    + 'charged or paid.',
-  'started-charged': 'this run has been charged to its period and can be paid, so the chain lets nobody withdraw it or hold it.',
-  'clock-ahead': 'this device\'s clock is ahead of the chain\'s time. The chain would still take this run\'s withdrawal, but this '
-    + 'device checks the withdrawal against its own clock as it builds it, and by that clock the run\'s time to be paid has begun. '
-    + 'Set this device\'s clock right and try again.',
-  'sent-not-yet-seen': 'this proposal was sent to the chain and the chain does not show it yet, so it may still arrive. Wait until '
-    + 'the chain shows it, then withdraw it.',
-  'may-still-land': 'the chain does not show this proposal, and a raise of it sent from a device may still reach the chain '
-    + 'until {until}, by the chain\'s time. Withdrawn now, the company\'s records would say it is withdrawn while the chain may '
-    + 'still open it. Withdraw it after that time.',
-  'filed-by-another': 'another signer wrote this proposal down and it has not been sent to the chain. Only the signer who wrote it '
-    + 'down withdraws it before then: ask them.',
-  'not-raised-here': 'this change to the company was raised by another signer, and the chain lets only the signer who raised it '
-    + 'withdraw it: ask them.',
-  'retirement-filed': 'the signer this removal takes off is already written down as retired in the company\'s directory, ready '
-    + 'for the removal to be carried out. Withdrawn now, the directory would say they left while the chain still seats them, '
-    + 'and every later change to the company would be refused. Carry the removal out instead.',
-  'raiser-not-read': 'this wallet could not read from the chain who raised this proposal, so it cannot tell whether the chain '
-    + 'would take your withdrawal. Reload and try again.',
-  'chain-time-not-read': 'this wallet could not read the chain\'s time, so it cannot tell whether a run\'s time to be paid '
-    + 'has begun, from when the chain takes no withdrawal of it, or whether a raise of a proposal the chain does not show may '
-    + 'still reach it. Reload and try again.',
+  closed:
+    'the chain no longer holds this proposal: it was carried out, withdrawn or closed already, so there is nothing to withdraw.',
+  started:
+    "this run's time to be paid has begun, and from then on the chain lets nobody withdraw it. It does not have the " +
+    'approvals it was raised needing: leave it unapproved, and it closes when its time ends.',
+  'started-may-be-paid':
+    "this run's time to be paid has begun, and from then on the chain lets nobody withdraw it. It has the " +
+    'approvals it was raised needing, or this wallet could not read how many it needs, so it may be paid now with no other ' +
+    'approval. A signer whose seat may hold runs on its vault can still hold it on the chain until it is ' +
+    'charged or paid.',
+  'started-charged':
+    'this run has been charged to its period and can be paid, so the chain lets nobody withdraw it or hold it.',
+  'clock-ahead':
+    "this device's clock is ahead of the chain's time. The chain would still take this run's withdrawal, but this " +
+    "device checks the withdrawal against its own clock as it builds it, and by that clock the run's time to be paid has begun. " +
+    "Set this device's clock right and try again.",
+  'sent-not-yet-seen':
+    'this proposal was sent to the chain and the chain does not show it yet, so it may still arrive. Wait until ' +
+    'the chain shows it, then withdraw it.',
+  'may-still-land':
+    'the chain does not show this proposal, and a raise of it sent from a device may still reach the chain ' +
+    "until {until}, by the chain's time. Withdrawn now, the company's records would say it is withdrawn while the chain may " +
+    'still open it. Withdraw it after that time.',
+  'filed-by-another':
+    'another signer wrote this proposal down and it has not been sent to the chain. Only the signer who wrote it ' +
+    'down withdraws it before then: ask them.',
+  'not-raised-here':
+    'this change to the company was raised by another signer, and the chain lets only the signer who raised it ' +
+    'withdraw it: ask them.',
+  'retirement-filed':
+    "the signer this removal takes off is already written down as retired in the company's directory, ready " +
+    'for the removal to be carried out. Withdrawn now, the directory would say they left while the chain still seats them, ' +
+    'and every later change to the company would be refused. Carry the removal out instead.',
+  'raiser-not-read':
+    'this wallet could not read from the chain who raised this proposal, so it cannot tell whether the chain ' +
+    'would take your withdrawal. Reload and try again.',
+  'chain-time-not-read':
+    "this wallet could not read the chain's time, so it cannot tell whether a run's time to be paid " +
+    'has begun, from when the chain takes no withdrawal of it, or whether a raise of a proposal the chain does not show may ' +
+    'still reach it. Reload and try again.'
 };
 
 /** A withdrawal this device refused before anything was built or sent, naming why. */
@@ -56,8 +87,13 @@ export class WithdrawalRefused extends Error {
   readonly nothingWasSent = true;
   /** For `may-still-land`: the chain time, as an ISO date, until which a raise of the proposal may still land. */
   readonly until?: string;
-  constructor(readonly why: WithdrawalStop, until?: string) {
-    super(`${WITHDRAWAL_STOPS[why].replace(/^./u, (c) => c.toUpperCase()).replace('{until}', until ?? '')} Nothing was sent.`);
+  constructor(
+    readonly why: WithdrawalStop,
+    until?: string
+  ) {
+    super(
+      `${WITHDRAWAL_STOPS[why].replace(/^./u, (c) => c.toUpperCase()).replace('{until}', until ?? '')} Nothing was sent.`
+    );
     this.name = 'WithdrawalRefused';
     if (until !== undefined) this.until = until;
   }
@@ -77,12 +113,14 @@ export class WithdrawalRefused extends Error {
  *     raises, so one it held may still land open. Its raiser can then withdraw it on the chain; a run also stops being
  *     payable once its window closes, but a change to the company has no window, so only that withdrawal closes it.
  */
-export type WithdrawalOutcome = 'withdrawn' | 'withdrawn-or-closed' | 'closed-otherwise' | 'records-withdrawn-not-on-chain';
+export type WithdrawalOutcome =
+  'withdrawn' | 'withdrawn-or-closed' | 'closed-otherwise' | 'records-withdrawn-not-on-chain';
 
 /** The chain's time in milliseconds, or a refusal: a time that was not read, or is not a whole positive number, decides nothing. */
 const chainTimeRead = async (read: (() => Promise<number>) | undefined): Promise<number> => {
   const at = read === undefined ? undefined : await read().catch(() => undefined);
-  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0) throw new WithdrawalRefused('chain-time-not-read');
+  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0)
+    throw new WithdrawalRefused('chain-time-not-read');
   return at;
 };
 
@@ -106,16 +144,20 @@ const outcomeOfAClose = (closedBy: readonly string[]): WithdrawalOutcome => {
 
 /** What a withdrawal is asked for: the proposal as the page shows it, the company's keys, the chain's time and the caller's own check. */
 type WithdrawalAsked = {
-  round: { readonly id: string; readonly chainId?: string }; viewingKey: KeysHeld;
+  round: { readonly id: string; readonly chainId?: string };
+  viewingKey: KeysHeld;
   chainTime?: () => Promise<number>;
   check?: (opened: OpenedRound, onChain: RoundOnChain) => void;
 };
 
 /** The company's records as a withdrawal reads them: with where its proposals stand on the chain. */
-type HeldWithTheChain = NonNullable<GovernedCallDoors['records']> & { readonly roundsOnChain: NonNullable<NonNullable<GovernedCallDoors['records']>['roundsOnChain']> };
+type HeldWithTheChain = NonNullable<GovernedCallDoors['records']> & {
+  readonly roundsOnChain: NonNullable<NonNullable<GovernedCallDoors['records']>['roundsOnChain']>;
+};
 
 /** Whether the records this page was given read where the company's proposals stand on the chain. */
-const holdsTheChain = (records: GovernedCallDoors['records']): records is HeldWithTheChain => records?.roundsOnChain !== undefined;
+const holdsTheChain = (records: GovernedCallDoors['records']): records is HeldWithTheChain =>
+  records?.roundsOnChain !== undefined;
 
 /**
  * **THE PROPOSAL A WITHDRAWAL IS ASKED FOR, READ BEFORE ANYTHING IS DECIDED**: as the service names it, as this device
@@ -125,24 +167,39 @@ const holdsTheChain = (records: GovernedCallDoors['records']): records is HeldWi
 async function withdrawalReadHere(doors: GovernedCallDoors, input: WithdrawalAsked) {
   const { service } = doors;
   if (service.cancel === undefined) {
-    throw new Error('This page cannot withdraw proposals. Reload the page to get the current version. Nothing was sent.');
+    throw new Error(
+      'This page cannot withdraw proposals. Reload the page to get the current version. Nothing was sent.'
+    );
   }
   const served = theRoundAsked(await service.standing(input.round.id), input.round.id, input.round.chainId);
-  const opened = await openTheRoundHere(doors.service, doors.accountId, input.round.id, input.viewingKey, false, doors.records, doors.leaves, true);
+  const opened = await openTheRoundHere(
+    doors.service,
+    doors.accountId,
+    input.round.id,
+    input.viewingKey,
+    false,
+    doors.records,
+    doors.leaves,
+    true
+  );
   if (String(opened.chainId).toLowerCase() !== String(served.chainId).toLowerCase()) {
     throw new Error('the company now names another proposal than the one shown here. Nothing was built or sent.');
   }
   const chainId = String(opened.chainId).toLowerCase();
   if (!holdsTheChain(doors.records)) {
-    throw new NotOpenedOnThisDevice('This page cannot read where the company\'s proposals stand on the chain, so it cannot '
-      + 'withdraw one. Reload the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read where the company's proposals stand on the chain, so it cannot " +
+        'withdraw one. Reload the page to get the current version.'
+    );
   }
   doors.progress?.('reading-the-chain');
   const records = doors.records;
   const onChain = (await records.roundsOnChain([chainId]))[chainId];
   if (onChain === undefined) {
-    throw new NotOpenedOnThisDevice('Where this proposal stands on the chain was not read, so nothing is decided from it. '
-      + 'Reload the page and try again.');
+    throw new NotOpenedOnThisDevice(
+      'Where this proposal stands on the chain was not read, so nothing is decided from it. ' +
+        'Reload the page and try again.'
+    );
   }
   input.check?.(opened, onChain);
   /*
@@ -163,7 +220,9 @@ async function withdrawalReadHere(doors: GovernedCallDoors, input: WithdrawalAsk
  * wrote it down and only once no raise of it can still land; refused otherwise, saying until when.
  */
 async function withdrawnFromTheRecordsHere(
-  doors: GovernedCallDoors, input: WithdrawalAsked, read: { served: RoundOnThePage; opened: OpenedRound; chainId: string; records: HeldWithTheChain },
+  doors: GovernedCallDoors,
+  input: WithdrawalAsked,
+  read: { served: RoundOnThePage; opened: OpenedRound; chainId: string; records: HeldWithTheChain }
 ): Promise<RoundOnThePage & { readonly withdrawal: WithdrawalOutcome }> {
   const { service } = doors;
   const { served, opened, chainId, records } = read;
@@ -181,9 +240,11 @@ async function withdrawnFromTheRecordsHere(
     if (sent) throw new WithdrawalRefused('sent-not-yet-seen');
     if (!mine) throw new WithdrawalRefused('filed-by-another');
     if (raiseByMs === undefined) {
-      throw new NotOpenedOnThisDevice('This proposal\'s record does not say when it was written down, so this device cannot tell until '
-        + 'when a raise of it may still reach the chain. Write the change down again from this device, and withdraw this one once the '
-        + 'new one is on the chain.');
+      throw new NotOpenedOnThisDevice(
+        "This proposal's record does not say when it was written down, so this device cannot tell until " +
+          'when a raise of it may still reach the chain. Write the change down again from this device, and withdraw this one once the ' +
+          'new one is on the chain.'
+      );
     }
     if (chainNow === undefined) throw new WithdrawalRefused('chain-time-not-read');
     throw new WithdrawalRefused('may-still-land', new Date(raiseByMs).toISOString());
@@ -196,23 +257,39 @@ async function withdrawnFromTheRecordsHere(
    */
   const again = (await records.roundsOnChain([chainId]))[chainId];
   if (again === undefined) {
-    throw new NotOpenedOnThisDevice('Where this proposal stands on the chain was not read again after the chain\'s time, so it is not '
-      + 'withdrawn. Nothing was withdrawn. Reload the page and try again.');
+    throw new NotOpenedOnThisDevice(
+      "Where this proposal stands on the chain was not read again after the chain's time, so it is not " +
+        'withdrawn. Nothing was withdrawn. Reload the page and try again.'
+    );
   }
   if (again.held !== 'never') {
-    throw new NotOpenedOnThisDevice('the chain now shows this proposal, which it did not when first read, so it is not withdrawn here. '
-      + 'Nothing was withdrawn. Open it again to see where it stands.');
+    throw new NotOpenedOnThisDevice(
+      'the chain now shows this proposal, which it did not when first read, so it is not withdrawn here. ' +
+        'Nothing was withdrawn. Open it again to see where it stands.'
+    );
   }
-  const answer = theRoundAsked(await service.cancel!(input.round.id, { filer: filerHere(doors) }), input.round.id, chainId);
+  const answer = theRoundAsked(
+    await service.cancel!(input.round.id, { filer: filerHere(doors) }),
+    input.round.id,
+    chainId
+  );
   if (answer.status !== 'cancelled') {
-    throw new Error('the company\'s records did not mark this proposal withdrawn. Open it again to see where it stands.');
+    throw new Error(
+      "the company's records did not mark this proposal withdrawn. Open it again to see where it stands."
+    );
   }
   return { ...answer, withdrawal: 'records-withdrawn-not-on-chain' };
 }
 
 /** Waits until the chain no longer holds a proposal whose withdrawal was sent, and returns where it stands then; says it was sent and not yet seen when the wait runs out. */
-async function withdrawalSeenHere(doors: GovernedCallDoors, records: HeldWithTheChain, chainId: string, sent: RoundOnThePage): Promise<RoundOnChain> {
-  const gone = (r: RoundOnChain | undefined): r is RoundOnChain => r !== undefined && r.held !== 'open' && r.held !== 'cleared';
+async function withdrawalSeenHere(
+  doors: GovernedCallDoors,
+  records: HeldWithTheChain,
+  chainId: string,
+  sent: RoundOnThePage
+): Promise<RoundOnChain> {
+  const gone = (r: RoundOnChain | undefined): r is RoundOnChain =>
+    r !== undefined && r.held !== 'open' && r.held !== 'cleared';
   const sleep = doors.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const waitMs = doors.waitMs ?? 5 * 60_000;
   const everyMs = doors.everyMs ?? 6_000;
@@ -253,7 +330,7 @@ async function withdrawalSeenHere(doors: GovernedCallDoors, records: HeldWithThe
  */
 export async function withdrawOnDevice(
   doors: GovernedCallDoors,
-  input: WithdrawalAsked,
+  input: WithdrawalAsked
 ): Promise<RoundOnThePage & { readonly withdrawal: WithdrawalOutcome }> {
   const { service } = doors;
   const { served, opened, chainId, onChain, records } = await withdrawalReadHere(doors, input);
@@ -275,27 +352,44 @@ export async function withdrawOnDevice(
    * clock, since no block time can be handed to it. The chain's time already said the window has not opened, so the
    * contract's own refusal here means this device's clock is ahead of the chain's.
    */
-  const { tx } = await doors.builder.governedCall({
-    account: chain.account, order: { circuit: 'cancel', proposal: opened.chainId }, material: doors.material, chain, opened,
-  }).catch((e: unknown) => {
-    if (onChain.opensAt !== undefined && RUN_STARTED.test(String((e as { message?: unknown } | null)?.message ?? e))) {
-      throw new WithdrawalRefused('clock-ahead');
-    }
-    throw e;
-  });
+  const { tx } = await doors.builder
+    .governedCall({
+      account: chain.account,
+      order: { circuit: 'cancel', proposal: opened.chainId },
+      material: doors.material,
+      chain,
+      opened
+    })
+    .catch((e: unknown) => {
+      if (
+        onChain.opensAt !== undefined &&
+        RUN_STARTED.test(String((e as { message?: unknown } | null)?.message ?? e))
+      ) {
+        throw new WithdrawalRefused('clock-ahead');
+      }
+      throw e;
+    });
   doors.progress?.('sending');
-  const sent = theRoundAsked(await handedOver(doors.handOver, {
-    tx, call: { kind: 'account-call', contract: chain.account, circuit: 'cancel' },
-    viaService: () => service.cancel!(input.round.id, { tx, filer: filerHere(doors) }),
-    before: async () => { closesOnRecord(service); },
-    after: () => service.standing(input.round.id),
-  }), input.round.id, chainId);
+  const sent = theRoundAsked(
+    await handedOver(doors.handOver, {
+      tx,
+      call: { kind: 'account-call', contract: chain.account, circuit: 'cancel' },
+      viaService: () => service.cancel!(input.round.id, { tx, filer: filerHere(doors) }),
+      before: async () => {
+        closesOnRecord(service);
+      },
+      after: () => service.standing(input.round.id)
+    }),
+    input.round.id,
+    chainId
+  );
   const now = await withdrawalSeenHere(doors, records, chainId, sent);
   const withdrawal = outcomeOfAClose(now.closedBy ?? []);
   /* Sent any way but through our service, our service's record is closed from its own read of the chain once it is gone. */
-  const kept = notThroughOurService(doors.handOver) && withdrawal === 'withdrawn'
-    ? await closedOnRecord(service, input.round.id, chainId, filerHere(doors), 'withdrawn').catch(() => sent)
-    : sent;
+  const kept =
+    notThroughOurService(doors.handOver) && withdrawal === 'withdrawn'
+      ? await closedOnRecord(service, input.round.id, chainId, filerHere(doors), 'withdrawn').catch(() => sent)
+      : sent;
   const standing = await onChainHere(doors, kept);
   return { ...standing, withdrawal };
 }

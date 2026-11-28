@@ -12,7 +12,7 @@ import { LiveNotice } from './send-notices.js';
 const record = vi.hoisted(() => ({ real: false }));
 vi.mock('../../../../src/core/networks.js', async (importActual) => ({
   ...(await importActual<typeof import('../../../../src/core/networks.js')>()),
-  networkIsReal: () => record.real,
+  networkIsReal: () => record.real
 }));
 
 afterEach(cleanup);

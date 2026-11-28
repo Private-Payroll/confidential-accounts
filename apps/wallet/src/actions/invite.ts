@@ -5,21 +5,48 @@ import { NETWORK } from 'midnight-identity/network';
 import { assets as theAssets, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { fromHex, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import {
-  EMPLOYEE_CLASSIFICATIONS, invitationIdOf, invitationLink, invitationThresholdRefusal, newInvitationToken, type EmployeeClassification,
+  EMPLOYEE_CLASSIFICATIONS,
+  invitationIdOf,
+  invitationLink,
+  invitationThresholdRefusal,
+  newInvitationToken,
+  type EmployeeClassification
 } from '../../../../src/core/invitation.js';
 import { refusalSaid, seatThresholdRefusal, type SeatRights } from '../../../../src/core/vault-approvers.js';
-import { invitedSeatRightsOf, NO_VAULT_COUNTED, RIGHTS_VAULT_PLACES, scopeOfRole, vaultsOfferedRefusal } from '../../../../src/core/seat-rights.js';
+import {
+  invitedSeatRightsOf,
+  NO_VAULT_COUNTED,
+  RIGHTS_VAULT_PLACES,
+  scopeOfRole,
+  vaultsOfferedRefusal
+} from '../../../../src/core/seat-rights.js';
 import { isSignerRole, type SignerRole } from '../../../../src/core/roles.js';
 import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import {
-  filedRecordEnteredHere, firstAskRefusal, INVITATION_UNDER_THIS_LINK_CLOSED, InvitationNotMade, InvitationRaisedNotFiled, InvitationRefused, inviteHere, SeatMayNotInvite,
-  openTheFiledOffer, type InviteOptions, type InviteSpecs, type InvitingCompany, type InvitingSeat, type KeptSeatInvitation,
+  filedRecordEnteredHere,
+  firstAskRefusal,
+  INVITATION_UNDER_THIS_LINK_CLOSED,
+  InvitationNotMade,
+  InvitationRaisedNotFiled,
+  InvitationRefused,
+  inviteHere,
+  SeatMayNotInvite,
+  openTheFiledOffer,
+  type InviteOptions,
+  type InviteSpecs,
+  type InvitingCompany,
+  type InvitingSeat,
+  type KeptSeatInvitation
 } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { InvitationNotBound } from '../../../../packages/web-shared/src/company-change-on-device.js';
 import { signerByAddressDoorsOf } from '../../../../packages/web-shared/src/seat-invited-on-device.js';
-import { keptSeatInvitationForAddress, withoutSeatInvitationsKept, withSeatInvitationKept } from '../../../../packages/web-shared/src/kept-seat-invitations.js';
+import {
+  keptSeatInvitationForAddress,
+  withoutSeatInvitationsKept,
+  withSeatInvitationKept
+} from '../../../../packages/web-shared/src/kept-seat-invitations.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { seatHereIn } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { readVendorsWithKeys } from '../../../../packages/web-shared/src/vendors-on-device.js';
@@ -31,10 +58,26 @@ import { checkShieldedAddress } from 'midnight-identity/wallet/address-shape';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 import { chainTimeOf } from './chain-time.js';
 import { approversHere, runsOutrunHere } from './approvers-here.js';
-import { companyReachFor, enteredFor, governanceDoorsFor, keptReach, listsOfTheStep, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
+import {
+  companyReachFor,
+  enteredFor,
+  governanceDoorsFor,
+  keptReach,
+  listsOfTheStep,
+  writesOfTheStep,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
 import type { CompanyWrites } from '../../../../packages/web-shared/src/records-source.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { watchFor } from '../keyring/nothing-secret-crosses.js';
 import { anchorDirectoryDoorIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -72,10 +115,16 @@ export interface InviteReach {
 }
 
 /** Where the invitation got to, as the action tells the page. */
-export const INVITE_STATE = { kept: 'kept', filed: 'filed', alreadyFiled: 'already-filed', raisedNotFiled: 'raised-not-filed' } as const;
+export const INVITE_STATE = {
+  kept: 'kept',
+  filed: 'filed',
+  alreadyFiled: 'already-filed',
+  raisedNotFiled: 'raised-not-filed'
+} as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.invite.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.invite.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -92,7 +141,12 @@ type Asked =
 const vaultsAskedOf = (listed: string | undefined): readonly Hex[] | Words | undefined => {
   if (listed === undefined) return undefined;
   const vaults = listed.split(',').map((v) => v.trim().toLowerCase());
-  if (vaults.length > RIGHTS_VAULT_PLACES || vaults.some((v) => !HEX64.test(v)) || new Set(vaults).size !== vaults.length) return why('not-vaults');
+  if (
+    vaults.length > RIGHTS_VAULT_PLACES ||
+    vaults.some((v) => !HEX64.test(v)) ||
+    new Set(vaults).size !== vaults.length
+  )
+    return why('not-vaults');
   return vaults as Hex[];
 };
 
@@ -110,17 +164,26 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
   switch (f['kind']) {
     case 'employee': {
       const asset = f['asset'];
-      if (asset === undefined || !HEX64.test(asset) || registry.find(asset as AssetId) === null) return why('not-an-asset');
+      if (asset === undefined || !HEX64.test(asset) || registry.find(asset as AssetId) === null)
+        return why('not-an-asset');
       if (f['amount'] === undefined || BigInt(f['amount']) <= 0n) return why('no-pay');
       const classification = f['classification'] as EmployeeClassification | undefined;
-      if (classification === undefined || !EMPLOYEE_CLASSIFICATIONS.includes(classification)) return why('no-classification');
+      if (classification === undefined || !EMPLOYEE_CLASSIFICATIONS.includes(classification))
+        return why('no-classification');
       if (opt('startDate') === undefined) return why('no-start');
       return {
         kind: 'employee',
         spec: {
-          name, email, title: f['title'] ?? '', asset: asset as AssetId, baseAmount: BigInt(f['amount']), startDate: f['startDate']!, classification,
-          ...(opt('endDate') === undefined ? {} : { endDate: opt('endDate')! }), ...(opt('address') === undefined ? {} : { address: opt('address')! }),
-        },
+          name,
+          email,
+          title: f['title'] ?? '',
+          asset: asset as AssetId,
+          baseAmount: BigInt(f['amount']),
+          startDate: f['startDate']!,
+          classification,
+          ...(opt('endDate') === undefined ? {} : { endDate: opt('endDate')! }),
+          ...(opt('address') === undefined ? {} : { address: opt('address')! })
+        }
       };
     }
     case 'vendor': {
@@ -128,7 +191,8 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
       if (f['terms'] === 'one-off') terms = { kind: 'one-off' };
       else if (f['terms'] === 'monthly') {
         const asset = f['termsAsset'];
-        if (asset === undefined || !HEX64.test(asset) || registry.find(asset as AssetId) === null) return why('not-an-asset');
+        if (asset === undefined || !HEX64.test(asset) || registry.find(asset as AssetId) === null)
+          return why('not-an-asset');
         if (f['termsAmount'] === undefined || BigInt(f['termsAmount']) <= 0n) return why('no-pay');
         terms = { kind: 'monthly', asset: asset as AssetId, amount: BigInt(f['termsAmount']) };
       } else return why('no-terms');
@@ -136,9 +200,14 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
       return {
         kind: 'vendor',
         spec: {
-          name, email, startDate: f['startDate']!, terms, network,
-          ...(opt('endDate') === undefined ? {} : { endDate: opt('endDate')! }), ...(opt('address') === undefined ? {} : { address: opt('address')! }),
-        },
+          name,
+          email,
+          startDate: f['startDate']!,
+          terms,
+          network,
+          ...(opt('endDate') === undefined ? {} : { endDate: opt('endDate')! }),
+          ...(opt('address') === undefined ? {} : { address: opt('address')! })
+        }
       };
     }
     case 'signer': {
@@ -149,20 +218,27 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
       const vaults = vaultsAskedOf(opt('vaults'));
       if (vaults !== undefined && 'key' in vaults) return vaults;
       /* A scope the page names must be exactly the rights the role gives on the vaults named, or on every vault. */
-      if (opt('scope') !== undefined && f['scope']!.toLowerCase() !== scopeOfRole(role, vaults)) return why('wider-scope');
+      if (opt('scope') !== undefined && f['scope']!.toLowerCase() !== scopeOfRole(role, vaults))
+        return why('wider-scope');
       /* "0", like none, keeps the threshold in force; anything else is the approvals needed once the seat is taken. */
       const threshold = opt('threshold') === '0' ? undefined : opt('threshold');
       if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) return why('not-a-threshold');
       return {
         kind: 'signer',
         spec: {
-          name, role, person: 'by-address', address: address.trim(),
-          ...(vaults === undefined ? {} : { vaults }), ...(threshold === undefined ? {} : { threshold }),
-        },
+          name,
+          role,
+          person: 'by-address',
+          address: address.trim(),
+          ...(vaults === undefined ? {} : { vaults }),
+          ...(threshold === undefined ? {} : { threshold })
+        }
       };
     }
-    case 'super-admin': return why('super-admin');
-    default: return why('not-a-kind');
+    case 'super-admin':
+      return why('super-admin');
+    default:
+      return why('not-a-kind');
   }
 }
 
@@ -173,7 +249,11 @@ function askedOf(intent: ActIntent, network: NetworkName, registry: AssetRegistr
  * the seat's opening). Refuses a seat whose saved keys keep no opening, in the calling action's `words`: its inviter
  * record could not be checked.
  */
-export async function invitingSeatOf(ctx: StepContext, r: CompanyReach, words: (key: string) => Words = why): Promise<InvitingSeat> {
+export async function invitingSeatOf(
+  ctx: StepContext,
+  r: CompanyReach,
+  words: (key: string) => Words = why
+): Promise<InvitingSeat> {
   if (r.seat.opening === undefined) throw new StepRefused(words('no-opening'));
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const held = await seatHereIn(directory, r.seat.signingSecret);
@@ -181,10 +261,18 @@ export async function invitingSeatOf(ctx: StepContext, r: CompanyReach, words: (
   return {
     signingSecret: r.seat.signingSecret,
     entered: enteredFor(r),
-    ...(held === null ? {} : { held: { role: held.role, retired: held.retired !== null && held.retired !== undefined, rights: held.rights ?? NO_VAULT_COUNTED } }),
+    ...(held === null
+      ? {}
+      : {
+          held: {
+            role: held.role,
+            retired: held.retired !== null && held.retired !== undefined,
+            rights: held.rights ?? NO_VAULT_COUNTED
+          }
+        }),
     committeeKey: committeeKeyFor(ctx.held.identity, r.label) as { tag: string; value: string },
     statement: signDirectoryEntry(ctx.held.identity, r.label, r.account, fromHex(r.companyKey), signingKey, r.leaf),
-    opening: r.seat.opening,
+    opening: r.seat.opening
   };
 }
 
@@ -200,7 +288,11 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
     headline: 'act.invite.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => {
       const f = intent.fields;
-      const page = (key: string, values: Readonly<Record<string, string>>): ShownLine => ({ key: `act.invite.shown.${key}`, values, from: 'page' });
+      const page = (key: string, values: Readonly<Record<string, string>>): ShownLine => ({
+        key: `act.invite.shown.${key}`,
+        values,
+        from: 'page'
+      });
       const kind = f['kind'] ?? '';
       const details: ShownLine[] = [
         page('kind', { kind }),
@@ -209,31 +301,41 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
           .filter((k) => f[k] !== undefined && f[k] !== '')
           .map((k) => page(k, { [k]: f[k]! })),
         ...(f['amount'] === undefined ? [] : [page('amount', { amount: f['amount'], asset: f['asset'] ?? '' })]),
-        ...(f['termsAmount'] === undefined ? [] : [page('terms-amount', { amount: f['termsAmount'], asset: f['termsAsset'] ?? '' })]),
+        ...(f['termsAmount'] === undefined
+          ? []
+          : [page('terms-amount', { amount: f['termsAmount'], asset: f['termsAsset'] ?? '' })])
       ];
-      const threshold = f['threshold'] === undefined || f['threshold'] === '' || f['threshold'] === '0' ? null : f['threshold'];
+      const threshold =
+        f['threshold'] === undefined || f['threshold'] === '' || f['threshold'] === '0' ? null : f['threshold'];
       const vaults = f['vaults'] === undefined || f['vaults'] === '' ? null : f['vaults'];
-      const signer: ShownLine[] = kind !== 'signer' ? [] : [
-        ...(vaults === null ? [] : [page('vaults', { vaults })]),
-        ...(f['scope'] !== undefined ? [page('scope', { scope: f['scope'] })] : vaults === null ? [{ key: 'act.invite.shown.every-vault', from: 'action' as const }] : []),
-        ...(threshold === null ? [] : [page('threshold', { threshold })]),
-        { key: 'act.invite.shown.signer-checks', from: 'action' },
-        { key: 'act.invite.shown.kept', from: 'action' },
-        { key: 'act.invite.shown.raise', from: 'action' },
-      ];
+      const signer: ShownLine[] =
+        kind !== 'signer'
+          ? []
+          : [
+              ...(vaults === null ? [] : [page('vaults', { vaults })]),
+              ...(f['scope'] !== undefined
+                ? [page('scope', { scope: f['scope'] })]
+                : vaults === null
+                  ? [{ key: 'act.invite.shown.every-vault', from: 'action' as const }]
+                  : []),
+              ...(threshold === null ? [] : [page('threshold', { threshold })]),
+              { key: 'act.invite.shown.signer-checks', from: 'action' },
+              { key: 'act.invite.shown.kept', from: 'action' },
+              { key: 'act.invite.shown.raise', from: 'action' }
+            ];
       return [
         ...details,
         ...signer,
         { key: 'act.invite.shown.sealed', from: 'action' },
         ...upkeepShown(),
-        { key: 'act.invite.shown.nothing-else', from: 'action' },
+        { key: 'act.invite.shown.nothing-else', from: 'action' }
       ];
     },
     checks: [
       { key: 'act.invite.check.seat' },
       { key: 'act.invite.check.sealed' },
       { key: 'act.invite.check.signer' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
@@ -243,10 +345,14 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
       return 'key' in asked ? asked : null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.invite.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const invite: ActionStep = {
@@ -257,24 +363,34 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
           if ('key' in asked) throw new StepRefused(asked);
           if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
           const writes = writesOfTheStep(r);
-          const vendors = () => readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
-            view: listsOfTheStep(r), directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster), network, claimRefusal: signedClaimRefusal,
-          });
+          const vendors = () =>
+            readVendorsWithKeys({ id: r.accountId, label: r.label }, r.companyKeys, {
+              view: listsOfTheStep(r),
+              directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster),
+              network,
+              claimRefusal: signedClaimRefusal
+            });
           /*
            * A press again under a token already used goes on only with the first press's ask, judged before anything
            * is signed: against the seat offer kept in the saved keys for its id, and against the offer filed under it,
            * whose employee's or vendor's record is entered before the press is told done.
            */
-          const notTheFirstAsk = (no: string): StepRefused => new StepRefused(why('not-made', { says: said(new InvitationNotMade(no)) }));
-          const notEntered = (e: FiledNotEntered): StepRefused => new StepRefused(why('filed-not-entered', { says: e.why }));
-          const given = asked.kind === 'signer' ? own?.token ?? null : intent.fields['token']!.toLowerCase() as Hex;
+          const notTheFirstAsk = (no: string): StepRefused =>
+            new StepRefused(why('not-made', { says: said(new InvitationNotMade(no)) }));
+          const notEntered = (e: FiledNotEntered): StepRefused =>
+            new StepRefused(why('filed-not-entered', { says: e.why }));
+          const given = asked.kind === 'signer' ? (own?.token ?? null) : (intent.fields['token']!.toLowerCase() as Hex);
           const found = await keptInvitationFor(ctx, r, reach.now(), asked, given);
           if ('refused' in found) throw notTheFirstAsk(found.refused);
           const { kept, token } = found;
           watchFor(token);
           const id = invitationIdOf(token);
           const linkShown = (): void => {
-            if (asked.kind === 'signer') ctx.show({ key: 'act.invite.over.link', values: { name: asked.spec.name, link: invitationLink(ctx.asker.origin, token) } });
+            if (asked.kind === 'signer')
+              ctx.show({
+                key: 'act.invite.over.link',
+                values: { name: asked.spec.name, link: invitationLink(ctx.asker.origin, token) }
+              });
           };
           if (kept !== undefined) {
             const no = firstAskRefusal(kept.offer.offer.for, asked.kind, asked.spec as never);
@@ -282,16 +398,30 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
           }
           const filedAlready = await ctx.invitations.offer(id);
           if (filedAlready.status === 200) {
-            const opened = openTheFiledOffer((filedAlready.body as { offer?: unknown } | null)?.offer, token, r.accountId, asked.kind, asked.spec as never,
-              kept === undefined ? {} : { kept });
+            const opened = openTheFiledOffer(
+              (filedAlready.body as { offer?: unknown } | null)?.offer,
+              token,
+              r.accountId,
+              asked.kind,
+              asked.spec as never,
+              kept === undefined ? {} : { kept }
+            );
             if ('refused' in opened) throw notTheFirstAsk(opened.refused);
             /* An employee's or a vendor's record filed with it is entered now if the first press did not keep its entry. */
             if (asked.kind !== 'signer') {
               let no: string | null;
               try {
-                no = await filedRecordEnteredHere(withCompanyKeys({ id: r.accountId }, r.companyKeys), asked.kind, opened.filed, asked.spec as never,
+                no = await filedRecordEnteredHere(
+                  withCompanyKeys({ id: r.accountId }, r.companyKeys),
+                  asked.kind,
+                  opened.filed,
+                  asked.spec as never,
                   { signingSecret: r.seat.signingSecret, entered: enteredFor(r) },
-                  { records: (asked) => r.stepView.current().records(asked), newest: (names) => r.stepView.current().newest(names) });
+                  {
+                    records: (asked) => r.stepView.current().records(asked),
+                    newest: (names) => r.stepView.current().newest(names)
+                  }
+                );
               } catch (e) {
                 if (e instanceof FiledNotEntered) throw notEntered(e);
                 throw e;
@@ -304,17 +434,36 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
             return;
           }
           if (filedAlready.status === 410) throw notTheFirstAsk(INVITATION_UNDER_THIS_LINK_CLOSED);
-          if (filedAlready.status !== 404) throw new StepRefused(why('offer-not-read', { status: filedAlready.status }));
-          const company: InvitingCompany = withCompanyKeys({
-            id: r.accountId, name: (await r.roster()).name, label: r.label, account: r.account, keyEpoch: r.companyKeys.epoch,
-          }, r.companyKeys);
+          if (filedAlready.status !== 404)
+            throw new StepRefused(why('offer-not-read', { status: filedAlready.status }));
+          const company: InvitingCompany = withCompanyKeys(
+            {
+              id: r.accountId,
+              name: (await r.roster()).name,
+              label: r.label,
+              account: r.account,
+              keyEpoch: r.companyKeys.epoch
+            },
+            r.companyKeys
+          );
           const inviting = await invitingSeatOf(ctx, r);
           const handed: Handed = { over: false };
           try {
             if (asked.kind === 'employee') {
-              await inviteHere(company, inviting, 'employee', asked.spec, ctx.asker.origin, writes, undefined, { token });
+              await inviteHere(company, inviting, 'employee', asked.spec, ctx.asker.origin, writes, undefined, {
+                token
+              });
             } else if (asked.kind === 'vendor') {
-              await inviteHere(company, inviting, 'vendor', asked.spec, ctx.asker.origin, writes, { vendors }, { token });
+              await inviteHere(
+                company,
+                inviting,
+                'vendor',
+                asked.spec,
+                ctx.asker.origin,
+                writes,
+                { vendors },
+                { token }
+              );
             } else {
               await inviteASigner(ctx, r, reach, company, inviting, asked.spec, token, writes, handed);
             }
@@ -329,15 +478,18 @@ export function inviteAction(reach: InviteReach, own?: { readonly token: Hex }):
               throw new StepRefused(why(handed.over ? 'may-be-sent' : 'not-made', { says: said(e) }));
             }
             if (e instanceof InvitationRefused) throw new StepRefused(why('not-filed', { says: said(e) }));
-            throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? 'not-made' : 'may-be-sent', { says: said(e) }));
+            throw new StepRefused(
+              why(!handed.over || nothingWasSentBy(e) ? 'not-made' : 'may-be-sent', { says: said(e) })
+            );
           }
           ctx.tell({ state: INVITE_STATE.filed });
           linkShown();
-          if (asked.kind === 'signer') await tellTheBar(ctx, r, ctx.keyring.open().read().seatInvitationsKept?.[id]?.offer.offer.for);
-        },
+          if (asked.kind === 'signer')
+            await tellTheBar(ctx, r, ctx.keyring.open().read().seatInvitationsKept?.[id]?.offer.offer.for);
+        }
       };
       return [upkeep.first, seat, invite, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }
 
@@ -381,7 +533,11 @@ const holdsTheCoinKeyOf = (identity: Identity, network: NetworkName, address: st
  * a new one made here.
  */
 async function keptInvitationFor(
-  ctx: StepContext, r: CompanyReach, now: number, asked: Asked, given: Hex | null,
+  ctx: StepContext,
+  r: CompanyReach,
+  now: number,
+  asked: Asked,
+  given: Hex | null
 ): Promise<{ readonly kept: KeptSeatInvitation | undefined; readonly token: Hex } | { readonly refused: string }> {
   const keyring = ctx.keyring!;
   const byToken = given === null ? undefined : keyring.open().read().seatInvitationsKept?.[invitationIdOf(given)];
@@ -390,18 +546,31 @@ async function keptInvitationFor(
   const stillOpen = async (x: KeptSeatInvitation): Promise<boolean> => {
     const answer = await ctx.invitations.offer(x.id);
     if (answer.status === 410) return false;
-    if (answer.status !== 200 && answer.status !== 404) throw new StepRefused(why('offer-not-read', { status: answer.status }));
+    if (answer.status !== 200 && answer.status !== 404)
+      throw new StepRefused(why('offer-not-read', { status: answer.status }));
     const forWhom = x.offer.offer.for;
     const proposal = forWhom.kind === 'signer' ? String(forWhom.invited.terms.proposal ?? '').toLowerCase() : '';
     if (proposal === '') return true;
     try {
-      const round = (await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [proposal] }))[proposal];
+      const round = (
+        await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [proposal] })
+      )[proposal];
       return round?.held !== 'closed';
     } catch (e) {
-      throw new StepRefused(why('not-made', { says: `the chain could not be read for the proposal kept for this address (${said(e)}): press again` }));
+      throw new StepRefused(
+        why('not-made', {
+          says: `the chain could not be read for the proposal kept for this address (${said(e)}): press again`
+        })
+      );
     }
   };
-  const found = await keptSeatInvitationForAddress(keyring.open().read(), r.accountId, asked.spec.address, now, stillOpen);
+  const found = await keptSeatInvitationForAddress(
+    keyring.open().read(),
+    r.accountId,
+    asked.spec.address,
+    now,
+    stillOpen
+  );
   if (found.passedOver.length > 0) await keyring.keep((k) => withoutSeatInvitationsKept(k, found.passedOver));
   if (found.refused !== null) return { refused: found.refused };
   if (found.kept === null) return { kept: undefined, token: given ?? newInvitationToken() };
@@ -409,17 +578,29 @@ async function keptInvitationFor(
 }
 
 async function inviteASigner(
-  ctx: StepContext, r: CompanyReach, reach: InviteReach, company: InvitingCompany, inviting: InvitingSeat,
-  spec: InviteSpecs['signer'] & { readonly address: string }, token: Hex, writes: CompanyWrites, handed: Handed,
+  ctx: StepContext,
+  r: CompanyReach,
+  reach: InviteReach,
+  company: InvitingCompany,
+  inviting: InvitingSeat,
+  spec: InviteSpecs['signer'] & { readonly address: string },
+  token: Hex,
+  writes: CompanyWrites,
+  handed: Handed
 ): Promise<void> {
   const network = reach.network ?? (NETWORK as NetworkName);
   if (holdsTheCoinKeyOf(ctx.held.identity, network, spec.address)) throw new StepRefused(why('own-address'));
   const commitments = await reach.commitments();
   /* Offered only within the inviting seat's own rights as its directory holds them: the one check on this path (`vaultsOfferedRefusal`). */
-  if (vaultsOfferedRefusal(inviting.held?.rights ?? NO_VAULT_COUNTED, spec.vaults) !== null) throw new StepRefused(why('wider-scope'));
+  if (vaultsOfferedRefusal(inviting.held?.rights ?? NO_VAULT_COUNTED, spec.vaults) !== null)
+    throw new StepRefused(why('wider-scope'));
   await refuseVaultsNotAdopted(r, spec.vaults);
   if (spec.threshold !== undefined) {
-    await refuseASeatThresholdInTheWallet(r, invitedSeatRightsOf(spec, scopeOfRole(spec.role as SignerRole, spec.vaults)), Number(spec.threshold));
+    await refuseASeatThresholdInTheWallet(
+      r,
+      invitedSeatRightsOf(spec, scopeOfRole(spec.role as SignerRole, spec.vaults)),
+      Number(spec.threshold)
+    );
   }
   const keep = async (kept: KeptSeatInvitation): Promise<void> => {
     if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
@@ -428,17 +609,30 @@ async function inviteASigner(
   };
   const doors = {
     ...governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
-      ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
+      ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }),
+      ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs })
     }),
-    anchorDirectory: anchorDirectoryDoorIn(r, handed),
+    anchorDirectory: anchorDirectoryDoorIn(r, handed)
   };
   const resume = ctx.keyring?.open().read().seatInvitationsKept?.[invitationIdOf(token)];
   const opts: InviteOptions = { token, ...(resume === undefined ? {} : { resume }) };
-  await inviteHere(company, inviting, 'signer', spec, ctx.asker.origin, writes, signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep, chainTimeOf(r)), opts);
+  await inviteHere(
+    company,
+    inviting,
+    'signer',
+    spec,
+    ctx.asker.origin,
+    writes,
+    signerByAddressDoorsOf(doors, r.companyKeys, network, commitments, keep, chainTimeOf(r)),
+    opts
+  );
 }
 
 /** The vaults of `vaults` the company's account does not hold among `adopted`; none where `vaults` names every vault. */
-export const vaultsNotAdopted = (adopted: readonly string[], vaults: readonly string[] | undefined): readonly string[] => {
+export const vaultsNotAdopted = (
+  adopted: readonly string[],
+  vaults: readonly string[] | undefined
+): readonly string[] => {
   if (vaults === undefined) return [];
   const held = new Set(adopted.map((v) => String(v).toLowerCase()));
   return vaults.filter((v) => !held.has(v.toLowerCase()));
@@ -457,9 +651,17 @@ const refuseVaultsNotAdopted = async (r: CompanyReach, vaults: readonly Hex[] | 
  * the vaults it names (`invitedSeatRightsOf`), and the signers removed since an open run was raised counted against
  * every vault. The shared code checks it again before every send (`refuseASeatThresholdHere`).
  */
-export const refuseASeatThresholdInTheWallet = async (r: CompanyReach, rights: SeatRights, threshold: number): Promise<void> => {
+export const refuseASeatThresholdInTheWallet = async (
+  r: CompanyReach,
+  rights: SeatRights,
+  threshold: number
+): Promise<void> => {
   const [roster, held] = await Promise.all([approversHere(r, () => runsOutrunHere(r)), r.holders()]);
-  const no = seatThresholdRefusal(roster, { seats: held.seats.length }, { kind: 'seatAndThreshold', rights, threshold });
+  const no = seatThresholdRefusal(
+    roster,
+    { seats: held.seats.length },
+    { kind: 'seatAndThreshold', rights, threshold }
+  );
   if (no !== null) throw new StepRefused(why('threshold-refused', { says: refusalSaid(no) }));
 };
 
@@ -474,7 +676,9 @@ const tellTheBar = async (ctx: StepContext, r: CompanyReach, offered: unknown): 
   if (typeof proposal !== 'string') return;
   const chainId = proposal.toLowerCase();
   try {
-    const round = (await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [chainId] }))[chainId];
+    const round = (
+      await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [chainId] })
+    )[chainId];
     if (round === undefined || (round.held !== 'open' && round.held !== 'cleared')) return;
     const held = await r.holders();
     ctx.tell({ approvals: round.approvals, needed: Math.max(round.needed ?? 0, held.approvals, held.seatBar) });

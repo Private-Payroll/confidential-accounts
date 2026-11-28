@@ -8,7 +8,10 @@
 export const WHO_IS_SIGNED_IN = '/api/me';
 
 /** A request as a page's asks send it: a path, and how to ask it. */
-export type PathAsk<R> = (path: string, init?: { readonly method?: 'GET' | 'PUT' | 'POST'; readonly body?: string; readonly signal?: AbortSignal }) => Promise<R>;
+export type PathAsk<R> = (
+  path: string,
+  init?: { readonly method?: 'GET' | 'PUT' | 'POST'; readonly body?: string; readonly signal?: AbortSignal }
+) => Promise<R>;
 
 /**
  * What the person signed in asks of the service for themself, before and beside any company's view: their sign-in (its
@@ -30,19 +33,23 @@ export interface PersonAsks<R> {
 }
 
 /** How an ask that posts is sent: as a POST, with `body` as its JSON when there is one. */
-export const posted = (body?: unknown) => ({ method: 'POST' as const, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+export const posted = (body?: unknown) => ({
+  method: 'POST' as const,
+  ...(body === undefined ? {} : { body: JSON.stringify(body) })
+});
 
 /** The person's own asks, through `call`. */
-export const personAsks = <R>(call: PathAsk<R>): PersonAsks<R> => Object.freeze<PersonAsks<R>>({
-  challenge: () => call('/api/auth/wallet/challenge', posted()),
-  signIn: (answer) => call('/api/auth/wallet', posted(answer)),
-  me: (signal) => call(WHO_IS_SIGNED_IN, signal === undefined ? undefined : { method: 'GET', signal }),
-  signOut: () => call('/api/auth/logout', posted()),
-  sessions: () => call('/api/me/sessions'),
-  endSession: (session) => call(`/api/me/sessions/${session}/revoke`, posted()),
-  endOtherSessions: () => call('/api/me/sessions/others/revoke', posted()),
-  savedKeys: () => call('/api/me/keys'),
-  keepSavedKeys: (kept) => call('/api/me/keys', { method: 'PUT', body: JSON.stringify(kept) }),
-  companies: () => call('/api/accounts'),
-  companyNamed: (company) => call(`/api/accounts/${company}/unlock`, posted()),
-});
+export const personAsks = <R>(call: PathAsk<R>): PersonAsks<R> =>
+  Object.freeze<PersonAsks<R>>({
+    challenge: () => call('/api/auth/wallet/challenge', posted()),
+    signIn: (answer) => call('/api/auth/wallet', posted(answer)),
+    me: (signal) => call(WHO_IS_SIGNED_IN, signal === undefined ? undefined : { method: 'GET', signal }),
+    signOut: () => call('/api/auth/logout', posted()),
+    sessions: () => call('/api/me/sessions'),
+    endSession: (session) => call(`/api/me/sessions/${session}/revoke`, posted()),
+    endOtherSessions: () => call('/api/me/sessions/others/revoke', posted()),
+    savedKeys: () => call('/api/me/keys'),
+    keepSavedKeys: (kept) => call('/api/me/keys', { method: 'PUT', body: JSON.stringify(kept) }),
+    companies: () => call('/api/accounts'),
+    companyNamed: (company) => call(`/api/accounts/${company}/unlock`, posted())
+  });

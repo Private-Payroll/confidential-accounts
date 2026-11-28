@@ -4,7 +4,13 @@
  * outrun, and which seat each invitation took. Nothing here is taken from the company's service.
  */
 import {
-  accountDeployedIn, anchorsLandedIn, batchHoldersIn, runsOutrunIn, seatsNamedBy, vouchingRunsIn, type AnchorsOnChain,
+  accountDeployedIn,
+  anchorsLandedIn,
+  batchHoldersIn,
+  runsOutrunIn,
+  seatsNamedBy,
+  vouchingRunsIn,
+  type AnchorsOnChain
 } from './governed-call-builder.js';
 import { seatingsIn, seatsInvitedIn, type Seating } from './seats-invited-in.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -20,7 +26,12 @@ import type { WorkerDeps } from './vault-worker-deps.js';
  */
 type HistorySteps = Awaited<ReturnType<import('../../../src/midnight/contract-history.js').ContractHistory['of']>>;
 /** One history read, with what is worked out from it once and kept while it stands: its anchors, and its seatings. */
-type HistoryRead = { readonly latest: string; readonly steps: HistorySteps; anchors?: AnchorsOnChain; seatings?: readonly Seating[] };
+type HistoryRead = {
+  readonly latest: string;
+  readonly steps: HistorySteps;
+  anchors?: AnchorsOnChain;
+  seatings?: readonly Seating[];
+};
 const historiesRead = new Map<string, HistoryRead>();
 
 /**
@@ -31,10 +42,11 @@ const historiesRead = new Map<string, HistoryRead>();
 export async function historyHere(
   d: Pick<WorkerDeps, 'historyAt'>,
   ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
-  what: string,
+  what: string
 ): Promise<HistoryRead> {
   const account = String(ask.account).toLowerCase();
-  if (!/^[0-9a-f]{64}$/u.test(account)) throw new Error(`${what} not read: that is not a company account this device can name.`);
+  if (!/^[0-9a-f]{64}$/u.test(account))
+    throw new Error(`${what} not read: that is not a company account this device can name.`);
   const { indexerContractHistory } = await import('../../../src/midnight/contract-history.js');
   const history = (d.historyAt ?? ((i) => indexerContractHistory(i.indexerUri, i.indexerWsUri)))(ask.indexer);
   const key = `${ask.indexer.indexerUri}|${account}`;
@@ -60,21 +72,29 @@ export async function historyHere(
  */
 async function anchorsOnChainHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
-  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } }
 ): Promise<AnchorsOnChain> {
-  const history = await historyHere(d, ask, 'the account\'s anchors were');
+  const history = await historyHere(d, ask, "the account's anchors were");
   if (history.anchors !== undefined) return history.anchors;
   const { steps } = history;
   const { governanceInAccountState, seatsInAccountState } = await import('midnight-identity/profile/account-state');
   const { policyBarKey } = d.accountPure as unknown as { policyBarKey?: () => Uint8Array };
   if (typeof policyBarKey !== 'function') {
-    throw new Error('this device was not given the account\'s function for the key its policy bar is kept under, so its anchors were not read.');
+    throw new Error(
+      "this device was not given the account's function for the key its policy bar is kept under, so its anchors were not read."
+    );
   }
   const barKey = Array.from(policyBarKey(), (b) => b.toString(16).padStart(2, '0')).join('');
   const landed = anchorsLandedIn(d, steps, (state) => governanceInAccountState(state, barKey).seatBar);
   const now = batchHoldersIn(d, steps[steps.length - 1]!.state);
   const deployed = accountDeployedIn(d, steps, seatsInAccountState);
-  const read: AnchorsOnChain = { landed, now, seatsNow: seatsNamedBy(d, now.signers), deployed, vouching: vouchingRunsIn(d, steps) };
+  const read: AnchorsOnChain = {
+    landed,
+    now,
+    seatsNow: seatsNamedBy(d, now.signers),
+    deployed,
+    vouching: vouchingRunsIn(d, steps)
+  };
   history.anchors = read;
   return read;
 }
@@ -92,24 +112,36 @@ async function anchorsOnChainHere(
  */
 async function paidLeavesHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
-  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly leaves: readonly string[] },
+  ask: {
+    readonly account: string;
+    readonly indexer: { indexerUri: string; indexerWsUri: string };
+    readonly leaves: readonly string[];
+  }
 ): Promise<Record<string, boolean>> {
   const movementOf = d.accountPure.paidMovementOf;
   if (d.accountLedger === undefined || typeof movementOf !== 'function') {
-    throw new Error('this device was not given the account\'s reader, so which payments the account records was not read. Reload the page');
+    throw new Error(
+      "this device was not given the account's reader, so which payments the account records was not read. Reload the page"
+    );
   }
   const leaves = ask.leaves.map((l) => String(l).toLowerCase());
-  if (leaves.some((l) => !/^[0-9a-f]{64}$/u.test(l))) throw new Error('a payment was asked about by a leaf that is not thirty-two bytes');
+  if (leaves.some((l) => !/^[0-9a-f]{64}$/u.test(l)))
+    throw new Error('a payment was asked about by a leaf that is not thirty-two bytes');
   const { steps } = await historyHere(d, ask, 'which payments the account records was');
   const { recordedAt } = await import('./recorded-payments.js');
   const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   const bytes = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
   const latest = steps[steps.length - 1]!.state;
   const paid = await recordedAt(
-    { queryContractState: async () => d.runtimeState.deserialize(latest) }, d.accountLedger, String(ask.account),
-    leaves.map((l) => hex(movementOf.call(d.accountPure, bytes(l))) as Hex),
+    { queryContractState: async () => d.runtimeState.deserialize(latest) },
+    d.accountLedger,
+    String(ask.account),
+    leaves.map((l) => hex(movementOf.call(d.accountPure, bytes(l))) as Hex)
   );
-  if (paid === null) throw new Error('which payments the account records was not read: its latest state at the indexer your wallet names could not be read. Read again.');
+  if (paid === null)
+    throw new Error(
+      'which payments the account records was not read: its latest state at the indexer your wallet names could not be read. Read again.'
+    );
   return Object.fromEntries(leaves.map((l, i) => [l, paid[i]!]));
 }
 
@@ -119,7 +151,7 @@ async function paidLeavesHere(
  */
 async function runsOutrunHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt'>,
-  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } },
+  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string } }
 ): Promise<Record<string, number>> {
   const { steps } = await historyHere(d, ask, 'which runs open on the chain a removal has outrun was');
   return runsOutrunIn(d, steps);
@@ -132,7 +164,11 @@ async function runsOutrunHere(
  */
 async function invitedSeatsHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt' | 'ledger'>,
-  ask: { readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly proposals: readonly string[] },
+  ask: {
+    readonly account: string;
+    readonly indexer: { indexerUri: string; indexerWsUri: string };
+    readonly proposals: readonly string[];
+  }
 ): Promise<Record<string, string | null>> {
   const history = await historyHere(d, ask, 'which seat each invitation took on the chain was');
   history.seatings ??= seatingsIn(d, history.steps, ask.account);
@@ -140,7 +176,11 @@ async function invitedSeatsHere(
 }
 
 /** The asks answered from the account's history; any other ask is answered elsewhere, so this gives undefined. */
-export const accountHistoryAnswered = async (d: WorkerDeps, _withNetwork: VaultBuilderDeps, ask: VaultAsk): Promise<VaultAnswer | undefined> => {
+export const accountHistoryAnswered = async (
+  d: WorkerDeps,
+  _withNetwork: VaultBuilderDeps,
+  ask: VaultAsk
+): Promise<VaultAnswer | undefined> => {
   switch (ask.ask) {
     case 'anchors-on-chain':
       return { id: ask.id, ok: true, ask: 'anchors-on-chain', ...(await anchorsOnChainHere(d, ask)) };

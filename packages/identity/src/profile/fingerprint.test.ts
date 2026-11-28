@@ -6,9 +6,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { sampleContractAddress } from '@midnightntwrk/ledger-v9';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords } from '../keys/derivation.js';
-import {
-  FingerprintError, addressFingerprint, companyFingerprint, tidyFingerprint,
-} from './fingerprint.js';
+import { FingerprintError, addressFingerprint, companyFingerprint, tidyFingerprint } from './fingerprint.js';
 import { addressFor } from '../index.js';
 import { NETWORK } from '../wallet/network.js';
 import { parseAsk } from './request.js';
@@ -40,15 +38,20 @@ const A = 'https://payroll-a.example';
 const NOW = 1_755_000_000_000;
 const identity = identityFromWords(TEST_MNEMONIC);
 
-const askFor = (company: string): UnlockRequest => parseAsk({
-  schema: 'midnight-identity/disclosure-request/v1',
-  kind: 'unlock',
-  requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-  purpose: 'So we can show you your payslips.',
-  company,
-  nonce: 'n1',
-  expiresAt: NOW + 60_000,
-}, A, NOW) as UnlockRequest;
+const askFor = (company: string): UnlockRequest =>
+  parseAsk(
+    {
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'unlock',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      purpose: 'So we can show you your payslips.',
+      company,
+      nonce: 'n1',
+      expiresAt: NOW + 60_000
+    },
+    A,
+    NOW
+  ) as UnlockRequest;
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 const labelOf = (address: string): CompanyLabel => `co_${address}` as CompanyLabel;
@@ -69,8 +72,9 @@ describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHIN
      */
     const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
     const independent = (label: string, account: string): string => {
-      const digest = sha256(new TextEncoder()
-        .encode(`midnight-identity/company-fingerprint/v2/${label}/${account.toLowerCase()}`));
+      const digest = sha256(
+        new TextEncoder().encode(`midnight-identity/company-fingerprint/v2/${label}/${account.toLowerCase()}`)
+      );
       let bits = 0n;
       for (let i = 0; i < 13; i += 1) bits = (bits << 8n) | BigInt(digest[i] as number);
       bits >>= 4n;
@@ -97,7 +101,7 @@ describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHIN
     expect(companyFingerprint(CO_B, ADDRESS_B)).toBe('NJTE-0KNH-Q1WT-8GAE-5PPS');
   });
 
-  it('THE SAME LABEL ON ANOTHER ACCOUNT IS ANOTHER FINGERPRINT, SO ONE COMPANY CANNOT WEAR ANOTHER\'S', () => {
+  it("THE SAME LABEL ON ANOTHER ACCOUNT IS ANOTHER FINGERPRINT, SO ONE COMPANY CANNOT WEAR ANOTHER'S", () => {
     /* RED WHEN: the account is left out of what is rendered. */
     expect(companyFingerprint(CO_A, ADDRESS_B)).not.toBe(companyFingerprint(CO_A, ADDRESS_A));
     /* RED WHEN: the label is left out of what is rendered. */
@@ -114,7 +118,10 @@ describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHIN
       for (const digit of '0123456789abcdef') {
         if (ADDRESS_A[at] === digit) continue;
         const near = `${ADDRESS_A.slice(0, at)}${digit}${ADDRESS_A.slice(at + 1)}`;
-        for (const print of [companyFingerprint(CO_A, near as AccountAddress), companyFingerprint(labelOf(near), ADDRESS_A)]) {
+        for (const print of [
+          companyFingerprint(CO_A, near as AccountAddress),
+          companyFingerprint(labelOf(near), ADDRESS_A)
+        ]) {
           expect(seen.has(print), `${near} collided`).toBe(false);
           seen.add(print);
           checked += 1;
@@ -126,7 +133,9 @@ describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHIN
   });
 
   it('IS THE SAME FOR BOTH SPELLINGS OF ONE ACCOUNT, AND A LABEL HAS ONLY ONE', () => {
-    expect(companyFingerprint(CO_A, ADDRESS_A.toUpperCase() as AccountAddress)).toBe(companyFingerprint(CO_A, ADDRESS_A));
+    expect(companyFingerprint(CO_A, ADDRESS_A.toUpperCase() as AccountAddress)).toBe(
+      companyFingerprint(CO_A, ADDRESS_A)
+    );
     /* RED WHEN: the label is folded rather than refused. */
     expect(() => companyFingerprint(CO_A.toUpperCase() as CompanyLabel, ADDRESS_A)).toThrow(FingerprintError);
   });
@@ -145,7 +154,9 @@ describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHIN
     expect(print).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/u);
     expect(print.replace(/-/gu, '')).toHaveLength(20);
     for (let i = 0; i < 200; i += 1) {
-      expect(companyFingerprint(labelOf(sampleContractAddress()), sampleContractAddress() as AccountAddress)).not.toMatch(/[ILOU]/u);
+      expect(
+        companyFingerprint(labelOf(sampleContractAddress()), sampleContractAddress() as AccountAddress)
+      ).not.toMatch(/[ILOU]/u);
     }
   });
 
@@ -156,7 +167,14 @@ describe('IT IS A RENDERING OF THE LABEL AND THE ACCOUNT TOGETHER, AND OF NOTHIN
     for (const bad of ['', 'payroll-a', ADDRESS_A, CO_A.slice(0, 66), `${CO_A}0`, `0x${ADDRESS_A}`]) {
       expect(() => companyFingerprint(bad as CompanyLabel, ADDRESS_A), bad).toThrow(FingerprintError);
     }
-    for (const bad of ['', CO_A, ADDRESS_A.slice(0, 63), `${ADDRESS_A}0`, `0x${ADDRESS_A}`, ADDRESS_A.replace('d', 'g')]) {
+    for (const bad of [
+      '',
+      CO_A,
+      ADDRESS_A.slice(0, 63),
+      `${ADDRESS_A}0`,
+      `0x${ADDRESS_A}`,
+      ADDRESS_A.replace('d', 'g')
+    ]) {
       expect(() => companyFingerprint(CO_A, bad as AccountAddress), bad).toThrow(FingerprintError);
     }
   });
@@ -172,8 +190,7 @@ describe('AND IT IS NEVER AN INPUT TO THE KEY', () => {
      * independent walk — and this says the same thing about the code, so a
      * reader does not have to run the suite to see it.
      */
-    const source = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
+    const source = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
     expect(source).not.toContain('fingerprint');
     expect(source).not.toContain('companyFingerprint');
   });
@@ -181,10 +198,12 @@ describe('AND IT IS NEVER AN INPUT TO THE KEY', () => {
   it('and the released bytes are unchanged by any of this', () => {
     /* The keys for these two labels, recorded from an independent walk of
      * the derivation: if the fingerprint ever reached the derivation these move. */
-    expect(hex(unlockKeyFor(identity, askFor(CO_A))))
-      .toBe('347b798eae3ae0772f06e919328963fbd56fac95fb3062eb8d6c3880e6d408c9');
-    expect(hex(unlockKeyFor(identity, askFor(CO_B))))
-      .toBe('c681c227b3601a75ac543579ee6eb50708e6ae777009c4ff028ce9475e629a6e');
+    expect(hex(unlockKeyFor(identity, askFor(CO_A)))).toBe(
+      '347b798eae3ae0772f06e919328963fbd56fac95fb3062eb8d6c3880e6d408c9'
+    );
+    expect(hex(unlockKeyFor(identity, askFor(CO_B)))).toBe(
+      'c681c227b3601a75ac543579ee6eb50708e6ae777009c4ff028ce9475e629a6e'
+    );
   });
 });
 
@@ -199,8 +218,7 @@ describe('AND IT IS NEVER AN INPUT TO THE KEY', () => {
  */
 describe('§2 — THE CODE FOR A RECEIVING ADDRESS', () => {
   /** Real shielded addresses, out of the wallet's own derivation. */
-  const shielded = (account: number): string =>
-    addressFor(identity.moneyAt(account).zswap, NETWORK).bech32;
+  const shielded = (account: number): string => addressFor(identity.moneyAt(account).zswap, NETWORK).bech32;
 
   it('TWO DIFFERENT ADDRESSES NEVER RENDER THE SAME CODE', () => {
     /*
@@ -220,8 +238,10 @@ describe('§2 — THE CODE FOR A RECEIVING ADDRESS', () => {
     const distinct = (address: string): void => {
       const code = addressFingerprint(address);
       const already = seen.get(code);
-      expect(already === undefined || already === address,
-        `${address} renders the same code as ${String(already)}`).toBe(true);
+      expect(
+        already === undefined || already === address,
+        `${address} renders the same code as ${String(already)}`
+      ).toBe(true);
       seen.set(code, address);
     };
 
@@ -254,8 +274,9 @@ describe('§2 — THE CODE FOR A RECEIVING ADDRESS', () => {
      */
     const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
     const independent = (address: string): string => {
-      const digest = sha256(new TextEncoder().encode(
-        `midnight-identity/receiving-address-fingerprint/v1/${address.toLowerCase()}`));
+      const digest = sha256(
+        new TextEncoder().encode(`midnight-identity/receiving-address-fingerprint/v1/${address.toLowerCase()}`)
+      );
       let bits = 0n;
       for (let i = 0; i < 13; i += 1) bits = (bits << 8n) | BigInt(digest[i] as number);
       bits >>= 4n;
@@ -279,8 +300,7 @@ describe('§2 — THE CODE FOR A RECEIVING ADDRESS', () => {
      * SAME sixty-four hex characters read as a company and as an address must
      * not collide. */
     const address = shielded(2);
-    expect(addressFingerprint(address))
-      .toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/u);
+    expect(addressFingerprint(address)).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/u);
     expect(addressFingerprint(address).replace(/-/gu, '')).toHaveLength(20);
     const bothWays = `${CO_A}/${ADDRESS_A}`;
     expect(addressFingerprint(bothWays)).not.toBe(companyFingerprint(CO_A, ADDRESS_A));
@@ -290,16 +310,14 @@ describe('§2 — THE CODE FOR A RECEIVING ADDRESS', () => {
     /* Same rule as its neighbour and for the same reason: a code computed from
      * a string that is not an address is a code somebody would compare and
      * believe. */
-    for (const bad of ['', 'nowhere', CO_A.slice(0, 39), `mn_shield addr_${CO_A}`,
-      `mn_shield-addr_${CO_A}\n`]) {
+    for (const bad of ['', 'nowhere', CO_A.slice(0, 39), `mn_shield addr_${CO_A}`, `mn_shield-addr_${CO_A}\n`]) {
       expect(() => addressFingerprint(bad), JSON.stringify(bad)).toThrow(FingerprintError);
     }
   });
 });
 
 describe('§2 — a code as somebody pasted it', () => {
-  const shielded = (account: number): string =>
-    addressFor(identity.moneyAt(account).zswap, NETWORK).bech32;
+  const shielded = (account: number): string => addressFor(identity.moneyAt(account).zswap, NETWORK).bech32;
 
   it('THE SPELLINGS OF ONE CODE ARE ONE CODE, AND A HALF-CODE IS NOT A CODE', () => {
     /*
@@ -311,15 +329,29 @@ describe('§2 — a code as somebody pasted it', () => {
      */
     const code = addressFingerprint(shielded(2));
     const bare = code.replace(/-/gu, '');
-    for (const spelling of [code, ` ${code} `, `${code}\n`, code.toLowerCase(), bare,
-      bare.toLowerCase(), code.replace(/-/gu, ' '), `"${code}"`]) {
+    for (const spelling of [
+      code,
+      ` ${code} `,
+      `${code}\n`,
+      code.toLowerCase(),
+      bare,
+      bare.toLowerCase(),
+      code.replace(/-/gu, ' '),
+      `"${code}"`
+    ]) {
       expect(tidyFingerprint(spelling), JSON.stringify(spelling)).toBe(code);
     }
 
     /* And what is NOT one comes back null, so a screen can say so while the
      * person is still standing in front of it. */
-    for (const bad of ['', 'not a code', bare.slice(0, 19), `${bare}Z`,
-      bare.replace(/[0-9A-Z]$/u, 'I'), bare.replace(/[0-9A-Z]$/u, 'U')]) {
+    for (const bad of [
+      '',
+      'not a code',
+      bare.slice(0, 19),
+      `${bare}Z`,
+      bare.replace(/[0-9A-Z]$/u, 'I'),
+      bare.replace(/[0-9A-Z]$/u, 'U')
+    ]) {
       expect(tidyFingerprint(bad), JSON.stringify(bad)).toBeNull();
     }
   });

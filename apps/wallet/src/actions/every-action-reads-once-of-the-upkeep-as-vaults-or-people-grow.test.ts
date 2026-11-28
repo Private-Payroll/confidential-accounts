@@ -6,6 +6,10 @@
 import { describe } from 'vitest';
 import { upkeepAfterAnAdmissionCountedByWhatGrows } from './actions-set-up-first.test-support.js';
 
-describe('THE UPKEEP AFTER AN ADMISSION WRITES FOR EACH VAULT AND READS THE SAME AS VAULTS OR PEOPLE GROW ALONE', { timeout: 160_000 }, () => {
-  upkeepAfterAnAdmissionCountedByWhatGrows(import.meta.url);
-});
+describe(
+  'THE UPKEEP AFTER AN ADMISSION WRITES FOR EACH VAULT AND READS THE SAME AS VAULTS OR PEOPLE GROW ALONE',
+  { timeout: 160_000 },
+  () => {
+    upkeepAfterAnAdmissionCountedByWhatGrows(import.meta.url);
+  }
+);

@@ -8,7 +8,7 @@ export const STEP = {
   finishCompany: 'finishCompany',
   signers: 'signers',
   vault: 'vault',
-  people: 'people',
+  people: 'people'
 } as const;
 
 export type StepId = (typeof STEP)[keyof typeof STEP];

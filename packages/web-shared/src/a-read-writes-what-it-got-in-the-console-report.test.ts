@@ -24,13 +24,19 @@ beforeEach(() => {
   vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
   console.warn = () => {};
   console.error = () => {};
-  installErrorSink({
-    addEventListener: () => {},
-    fetch: async () => ({ ok: true, status: 204 }),
-    console,
-    location: { href: 'http://localhost:5173/' },
-    setTimeout: (fn: () => void) => { fn(); return 0; },
-  } as unknown as SinkWindow, (body) => appendWebConsole(body.page, body.entries));
+  installErrorSink(
+    {
+      addEventListener: () => {},
+      fetch: async () => ({ ok: true, status: 204 }),
+      console,
+      location: { href: 'http://localhost:5173/' },
+      setTimeout: (fn: () => void) => {
+        fn();
+        return 0;
+      }
+    } as unknown as SinkWindow,
+    (body) => appendWebConsole(body.page, body.entries)
+  );
 });
 afterEach(() => {
   console.warn = consoleWas.warn;
@@ -41,18 +47,24 @@ afterEach(() => {
 
 const report = (): string => readFileSync(logPath, 'utf8');
 const hangs = (signal: AbortSignal): Promise<never> =>
-  new Promise((_, refuse) => { signal.addEventListener('abort', () => refuse(new DOMException('The read was stopped.', 'AbortError'))); });
+  new Promise((_, refuse) => {
+    signal.addEventListener('abort', () => refuse(new DOMException('The read was stopped.', 'AbortError')));
+  });
 
 describe('a read the page makes writes what it got in the console report', () => {
   it('a read that answers is written with what it read, its status and how long it took, and nothing of its body', async () => {
     const read = serviceRead('The service (/api/accounts/acc_7Qx/records)', async () => {
-      await new Promise((done) => { setTimeout(done, 312); });
+      await new Promise((done) => {
+        setTimeout(done, 312);
+      });
       return { status: 200, body: { note: HIDDEN_BODY_WORD } };
     });
     await vi.advanceTimersByTimeAsync(312);
     await read;
     /* RED WHEN: a read that answered is not written with what it read, its status and its time. */
-    expect(report()).toContain('console.warn   read The service (/api/accounts/acc_7Qx/records): answered 200 in 312 ms');
+    expect(report()).toContain(
+      'console.warn   read The service (/api/accounts/acc_7Qx/records): answered 200 in 312 ms'
+    );
     /* RED WHEN: a line carries what the read answered. */
     expect(report()).not.toContain(HIDDEN_BODY_WORD);
   });
@@ -63,17 +75,23 @@ describe('a read the page makes writes what it got in the console report', () =>
     await vi.advanceTimersByTimeAsync(SERVICE_READ_BOUND_MS);
     expect(await seen).toBeInstanceOf(ReadRanOutOfTime);
     /* RED WHEN: a read the bound gave up on is not written, or not with its name and its time. */
-    expect(report()).toContain('console.warn   read The service (/api/me): did not answer within 20 seconds, so the page stopped waiting for it');
+    expect(report()).toContain(
+      'console.warn   read The service (/api/me): did not answer within 20 seconds, so the page stopped waiting for it'
+    );
   });
 
   it('a read bounded elsewhere that runs out of time is written the same way', () => {
     void new ReadRanOutOfTime('The network (vault-state)');
     /* RED WHEN: a read that runs out of time outside this file's bound writes nothing. */
-    expect(report()).toContain('read The network (vault-state): did not answer within 20 seconds, so the page stopped waiting for it');
+    expect(report()).toContain(
+      'read The network (vault-state): did not answer within 20 seconds, so the page stopped waiting for it'
+    );
   });
 
   it('a read that fails is written with its time and its error', async () => {
-    const read = boundedRead('The network indexer', async () => { throw new TypeError('Failed to fetch'); }).catch(() => undefined);
+    const read = boundedRead('The network indexer', async () => {
+      throw new TypeError('Failed to fetch');
+    }).catch(() => undefined);
     await read;
     /* RED WHEN: a read that failed is not written with what failed and why. */
     expect(report()).toContain('read The network indexer: failed after 0 ms: TypeError: Failed to fetch');

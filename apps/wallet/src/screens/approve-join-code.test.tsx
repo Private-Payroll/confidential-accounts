@@ -39,39 +39,106 @@ const ORIGIN = 'https://payroll-a.example';
 const CO = `co_${'d5'.repeat(32)}` as CompanyLabel;
 const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8' as AccountAddress;
 /* The chain, as this wallet reads it: the account carries the company's label. */
-const carries: LabelReader = async (account) => (account === ACCOUNT ? { of: 'carries', label: CO } : { of: 'no-account' });
-const SIGNER = { kind: 'signer', signingPublicKey: '11'.repeat(32), wrappingPublicKey: '22'.repeat(32), leafCommitment: '33'.repeat(32) } as const;
+const carries: LabelReader = async (account) =>
+  account === ACCOUNT ? { of: 'carries', label: CO } : { of: 'no-account' };
+const SIGNER = {
+  kind: 'signer',
+  signingPublicKey: '11'.repeat(32),
+  wrappingPublicKey: '22'.repeat(32),
+  leafCommitment: '33'.repeat(32)
+} as const;
 const ADDRESS = `mn_shield-addr_test1${'r'.repeat(60)}`;
-const ask = (parts: unknown = SIGNER) => parseAsk({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code',
-  requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To join.',
-  nonce: 'j1', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, person: 'usr_cleo', parts,
-}, ORIGIN, NOW) as JoinCodeRequest;
-const channelFor = (answers: unknown[]): Channel => ({
-  answer: (a) => { answers.push(a); }, refuse: (r) => { answers.push({ refused: r }); }, stop: () => {},
-} as Channel);
+const ask = (parts: unknown = SIGNER) =>
+  parseAsk(
+    {
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'join-code',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      purpose: 'To join.',
+      nonce: 'j1',
+      expiresAt: NOW + 600_000,
+      company: CO,
+      account: ACCOUNT,
+      person: 'usr_cleo',
+      parts
+    },
+    ORIGIN,
+    NOW
+  ) as JoinCodeRequest;
+const channelFor = (answers: unknown[]): Channel =>
+  ({
+    answer: (a) => {
+      answers.push(a);
+    },
+    refuse: (r) => {
+      answers.push({ refused: r });
+    },
+    stop: () => {}
+  }) as Channel;
 /** The payslip key this wallet gives for the company, by the one derivation the wallet hands in. */
 const OWN_PAYSLIP_KEY = payslipKeyOfThisWallet(identity, ask());
-const draw = (answers: unknown[], request: JoinCodeRequest, receives: string[] = [], consent = { ok: true } as never, ownPayslipKey: string | null = OWN_PAYSLIP_KEY, readLabel: LabelReader = carries) => render(
-  <ApproveJoinCode request={request} identity={identity} channel={channelFor(answers)} consent={consent}
-    whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} receives={receives} ownPayslipKey={ownPayslipKey}
-    fingerprintClass="text-xl" now={() => NOW} readLabel={readLabel} />);
-const payeeParts = (payslipKey = OWN_PAYSLIP_KEY, address = ADDRESS): PayeeParts => ({ kind: 'payee', address, payslipKey });
-const payeeFingerprint = (parts: PayeeParts) => payeeCodeFingerprint({ committeeKey: committeeKeyFor(identity, CO), parts });
-const settle = async () => { await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); }); };
+const draw = (
+  answers: unknown[],
+  request: JoinCodeRequest,
+  receives: string[] = [],
+  consent = { ok: true } as never,
+  ownPayslipKey: string | null = OWN_PAYSLIP_KEY,
+  readLabel: LabelReader = carries
+) =>
+  render(
+    <ApproveJoinCode
+      request={request}
+      identity={identity}
+      channel={channelFor(answers)}
+      consent={consent}
+      whoIsAsking={<p>asker</p>}
+      onDecline={() => answers.push('declined')}
+      receives={receives}
+      ownPayslipKey={ownPayslipKey}
+      fingerprintClass="text-xl"
+      now={() => NOW}
+      readLabel={readLabel}
+    />
+  );
+const payeeParts = (payslipKey = OWN_PAYSLIP_KEY, address = ADDRESS): PayeeParts => ({
+  kind: 'payee',
+  address,
+  payslipKey
+});
+const payeeFingerprint = (parts: PayeeParts) =>
+  payeeCodeFingerprint({ committeeKey: committeeKeyFor(identity, CO), parts });
+const settle = async () => {
+  await act(async () => {
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  });
+};
 const button = (c: HTMLElement) => c.querySelector('[data-make-join-code]') as HTMLButtonElement;
 
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+});
 
 describe('THE PAYSLIP KEY THIS WALLET GIVES FOR A COMPANY', () => {
   /* RED WHEN: the key the wallet checks a payee's code against is not the payslip key its released company key gives, or does not follow the company. */
-  it('is the payslip key of the key this wallet releases for the company, and another company\'s is another', () => {
+  it("is the payslip key of the key this wallet releases for the company, and another company's is another", () => {
     const released = unlockKeyFor(identity, { ...ask(), kind: 'unlock' } as unknown as UnlockRequest);
     expect(OWN_PAYSLIP_KEY).toBe(payslipKeypairFrom(released).publicKey.toLowerCase());
-    const other = parseAsk({
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code', requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To join.',
-      nonce: 'j2', expiresAt: NOW + 600_000, company: `co_${'d6'.repeat(32)}`, account: ACCOUNT, person: 'usr_cleo', parts: SIGNER,
-    }, ORIGIN, NOW) as JoinCodeRequest;
+    const other = parseAsk(
+      {
+        schema: 'midnight-identity/disclosure-request/v1',
+        kind: 'join-code',
+        requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+        purpose: 'To join.',
+        nonce: 'j2',
+        expiresAt: NOW + 600_000,
+        company: `co_${'d6'.repeat(32)}`,
+        account: ACCOUNT,
+        person: 'usr_cleo',
+        parts: SIGNER
+      },
+      ORIGIN,
+      NOW
+    ) as JoinCodeRequest;
     expect(payslipKeyOfThisWallet(identity, other)).not.toBe(OWN_PAYSLIP_KEY);
   });
 });
@@ -88,7 +155,9 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(payeeFingerprint(payeeParts()));
     /* RED WHEN: the wallet answers before the person presses. */
     expect(answers).toEqual([]);
-    await act(async () => { fireEvent.click(button(container)); });
+    await act(async () => {
+      fireEvent.click(button(container));
+    });
     expect(answers).toHaveLength(1);
     const code = answers[0] as JoinCode;
     expect(joinCodeSignedBy(code)).toBe(true);
@@ -103,13 +172,17 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     const { container } = draw(answers, ask(), [ADDRESS]);
     await settle();
     /* RED WHEN: the wallet signs a seat's keys a page handed it, in a code no company can add anybody from. */
-    expect(container.querySelector('[data-join-code-not-yours]')?.textContent).toMatch(/does not make a code for a seat yet.*private address/u);
+    expect(container.querySelector('[data-join-code-not-yours]')?.textContent).toMatch(
+      /does not make a code for a seat yet.*private address/u
+    );
     expect(button(container).disabled).toBe(true);
-    await act(async () => { fireEvent.click(button(container)); });
+    await act(async () => {
+      fireEvent.click(button(container));
+    });
     expect(answers).toEqual([]);
   });
 
-  it('says a seat\'s code also carries what the seat\'s entry on the network is made from, and never that it holds only public halves', async () => {
+  it("says a seat's code also carries what the seat's entry on the network is made from, and never that it holds only public halves", async () => {
     const { container } = draw([], ask());
     await settle();
     const said = container.querySelector('[data-join-code-signs]')?.textContent ?? '';
@@ -119,35 +192,46 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     expect(said).toMatch(/whoever holds the code can see that seat is this wallet's/u);
   });
 
-  it('WILL NOT SIGN AN ADDRESS THIS WALLET DOES NOT RECEIVE AT, OR A PAYSLIP KEY IT DOES NOT GIVE, AS THE PERSON\'S', async () => {
+  it("WILL NOT SIGN AN ADDRESS THIS WALLET DOES NOT RECEIVE AT, OR A PAYSLIP KEY IT DOES NOT GIVE, AS THE PERSON'S", async () => {
     const answers: unknown[] = [];
     for (const [what, request, receives] of [
-      ['somebody else\'s address', ask(payeeParts()), []],
-      ['somebody else\'s payslip key', ask(payeeParts('aa'.repeat(32))), [ADDRESS]],
+      ["somebody else's address", ask(payeeParts()), []],
+      ["somebody else's payslip key", ask(payeeParts('aa'.repeat(32))), [ADDRESS]]
     ] as const) {
       const { container } = draw(answers, request, [...receives]);
       /* RED WHEN: a page can have this wallet sign somebody else's address, or seal their payslips to somebody else's key. */
       expect(container.querySelector('[data-join-code-not-yours]'), what).not.toBeNull();
       expect(button(container).disabled, what).toBe(true);
-      await act(async () => { fireEvent.click(button(container)); });
+      await act(async () => {
+        fireEvent.click(button(container));
+      });
       expect(answers, what).toEqual([]);
       cleanup();
     }
     const mine = draw(answers, ask(payeeParts()), [ADDRESS]);
     await settle();
     /* RED WHEN: a payee's fingerprint is not the one over the wallet, the address and the payslip key the code carries. */
-    expect(mine.container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(payeeFingerprint(payeeParts()));
-    await act(async () => { fireEvent.click(button(mine.container)); });
+    expect(mine.container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(
+      payeeFingerprint(payeeParts())
+    );
+    await act(async () => {
+      fireEvent.click(button(mine.container));
+    });
     expect((answers[0] as JoinCode).parts).toEqual(payeeParts());
   });
 
   it('A REFUSAL AT THE PRESS IS SAID, AND DECLINING ANSWERS ONLY THAT IT WAS DECLINED', async () => {
     const answers: unknown[] = [];
     /* An ask whose asker this wallet cannot tell is refused at the press, where the button does not stand in front of it. */
-    const refusing = { ...ask(payeeParts()), requester: { ...ask().requester, origin: 'not an origin' } } as JoinCodeRequest;
+    const refusing = {
+      ...ask(payeeParts()),
+      requester: { ...ask().requester, origin: 'not an origin' }
+    } as JoinCodeRequest;
     const again = draw(answers, refusing, [ADDRESS]);
     await settle();
-    await act(async () => { fireEvent.click(button(again.container)); });
+    await act(async () => {
+      fireEvent.click(button(again.container));
+    });
     /* RED WHEN: a press the wallet refuses answers anyway, or says nothing. */
     expect(answers).toEqual([]);
     expect(again.container.querySelector('[data-join-code-refused]')?.textContent).toMatch(/could not tell who asked/);
@@ -163,18 +247,38 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     const handlers: ((event: MessageEvent) => void)[] = [];
     const view: ChannelWindow = {
       opener: opener as ChannelWindow['opener'],
-      addEventListener: (_t, h) => { handlers.push(h); },
-      removeEventListener: () => {},
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {}
     };
     const { container } = render(
-      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={carries} embedder={ORIGIN} />);
+      <Approve
+        identity={identity}
+        secret={secretFromWords(TEST_MNEMONIC)}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        readLabel={carries}
+        embedder={ORIGIN}
+      />
+    );
     const parts = payeeParts(OWN_PAYSLIP_KEY, receivingAddressesOf(identity, NETWORK)[0]!);
     const wire = {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To join.',
-      nonce: 'j1', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, person: 'usr_cleo', parts,
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'join-code',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      purpose: 'To join.',
+      nonce: 'j1',
+      expiresAt: NOW + 600_000,
+      company: CO,
+      account: ACCOUNT,
+      person: 'usr_cleo',
+      parts
     };
-    await act(async () => { for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent); });
+    await act(async () => {
+      for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent);
+    });
     await settle();
     expect(container.querySelector('[data-join-code-not-yours]')).toBeNull();
     expect(button(container).disabled).toBe(false);
@@ -185,38 +289,70 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     expect(opener.sent.length).toBe(before + 1);
   });
 
-  it('MAKES A READER\'S CODE OVER THIS WALLET\'S OWN READER KEY FOR THE COMPANY, WHICH THE PAGE NEVER NAMES', async () => {
+  it("MAKES A READER'S CODE OVER THIS WALLET'S OWN READER KEY FOR THE COMPANY, WHICH THE PAGE NEVER NAMES", async () => {
     const opener = watchedOpener();
     const handlers: ((event: MessageEvent) => void)[] = [];
     const view: ChannelWindow = {
       opener: opener as ChannelWindow['opener'],
-      addEventListener: (_t, h) => { handlers.push(h); },
-      removeEventListener: () => {},
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {}
     };
     const { container } = render(
-      <Approve identity={identity} secret={secretFromWords(TEST_MNEMONIC)} port={watchedStore()} view={view} now={() => NOW} readLabel={carries} embedder={ORIGIN} />);
+      <Approve
+        identity={identity}
+        secret={secretFromWords(TEST_MNEMONIC)}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        readLabel={carries}
+        embedder={ORIGIN}
+      />
+    );
     const wire = {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'join-code',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To read.',
-      nonce: 'j3', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, person: 'usr_cleo', parts: { kind: 'reader' },
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'join-code',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      purpose: 'To read.',
+      nonce: 'j3',
+      expiresAt: NOW + 600_000,
+      company: CO,
+      account: ACCOUNT,
+      person: 'usr_cleo',
+      parts: { kind: 'reader' }
     };
-    await act(async () => { for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent); });
+    await act(async () => {
+      for (const h of handlers) h({ source: opener, origin: ORIGIN, data: wire } as unknown as MessageEvent);
+    });
     await settle();
     const own = readerKeyOfThisWallet(identity, CO);
     /* RED WHEN: the reader reads out a fingerprint that is not the one over this wallet, their sign-in and their own reader key. */
-    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent)
-      .toBe(readerCodeFingerprint({ committeeKey: committeeKeyFor(identity, CO), person: 'usr_cleo', parts: { readerKey: own } }));
-    expect(container.querySelector('[data-join-code-signs]')?.textContent).toMatch(/never kept and never leaves this wallet/u);
+    expect(container.querySelector('[data-join-code-fingerprint]')?.textContent).toBe(
+      readerCodeFingerprint({
+        committeeKey: committeeKeyFor(identity, CO),
+        person: 'usr_cleo',
+        parts: { readerKey: own }
+      })
+    );
+    expect(container.querySelector('[data-join-code-signs]')?.textContent).toMatch(
+      /never kept and never leaves this wallet/u
+    );
     expect(container.querySelector('[data-join-code-not-yours]')).toBeNull();
     const before = opener.sent.length;
-    await act(async () => { fireEvent.click(button(container)); });
+    await act(async () => {
+      fireEvent.click(button(container));
+    });
     await settle();
     /* RED WHEN: the code the wallet hands the page carries any key but this wallet's own reader key for the company. */
-    const made = opener.sent.slice(before).map((m) => JSON.stringify(m)).join('');
+    const made = opener.sent
+      .slice(before)
+      .map((m) => JSON.stringify(m))
+      .join('');
     expect(made).toContain(own);
   });
 
-  it('SHOWS THE COMPANY\'S FINGERPRINT FROM THE ACCOUNT AS READ OFF THE CHAIN, AND SIGNS NOTHING UNTIL THE ACCOUNT CARRIES THE LABEL', async () => {
+  it("SHOWS THE COMPANY'S FINGERPRINT FROM THE ACCOUNT AS READ OFF THE CHAIN, AND SIGNS NOTHING UNTIL THE ACCOUNT CARRIES THE LABEL", async () => {
     const answers: unknown[] = [];
     const { container } = draw(answers, ask(payeeParts()), [ADDRESS]);
     await settle();
@@ -225,11 +361,16 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     expect(button(container).disabled).toBe(false);
     cleanup();
     const elsewhere: unknown[] = [];
-    const other = draw(elsewhere, ask(payeeParts()), [ADDRESS], { ok: true } as never, OWN_PAYSLIP_KEY, async () => ({ of: 'carries', label: `co_${'d6'.repeat(32)}` as CompanyLabel }));
+    const other = draw(elsewhere, ask(payeeParts()), [ADDRESS], { ok: true } as never, OWN_PAYSLIP_KEY, async () => ({
+      of: 'carries',
+      label: `co_${'d6'.repeat(32)}` as CompanyLabel
+    }));
     await settle();
     /* RED WHEN: a code is signed while the account the page names carries another company's label. */
     expect(button(other.container).disabled).toBe(true);
-    await act(async () => { fireEvent.click(button(other.container)); });
+    await act(async () => {
+      fireEvent.click(button(other.container));
+    });
     expect(elsewhere).toEqual([]);
   });
 
@@ -237,16 +378,31 @@ describe('THE SCREEN FOR MAKING A JOIN CODE', () => {
     const answers: unknown[] = [];
     const { container } = draw(answers, ask(), [], { ok: false } as never);
     expect(button(container).disabled).toBe(true);
-    await act(async () => { fireEvent.click(button(container)); });
+    await act(async () => {
+      fireEvent.click(button(container));
+    });
     expect(answers).toEqual([]);
   });
 });
 
 describe('a join code approved before the passkey', () => {
-  const drawAtOnce = (answers: unknown[], request: JoinCodeRequest, receives: string[] = []) => render(
-    <ApproveJoinCode request={request} identity={identity} channel={channelFor(answers)} consent={{ ok: true } as never}
-      whoIsAsking={<p>asker</p>} onDecline={() => answers.push('declined')} receives={receives} ownPayslipKey={OWN_PAYSLIP_KEY}
-      fingerprintClass="text-xl" now={() => NOW} readLabel={carries} answerAtOnce />);
+  const drawAtOnce = (answers: unknown[], request: JoinCodeRequest, receives: string[] = []) =>
+    render(
+      <ApproveJoinCode
+        request={request}
+        identity={identity}
+        channel={channelFor(answers)}
+        consent={{ ok: true } as never}
+        whoIsAsking={<p>asker</p>}
+        onDecline={() => answers.push('declined')}
+        receives={receives}
+        ownPayslipKey={OWN_PAYSLIP_KEY}
+        fingerprintClass="text-xl"
+        now={() => NOW}
+        readLabel={carries}
+        answerAtOnce
+      />
+    );
 
   it('is made with no press once the account is read and carries the label', async () => {
     const answers: unknown[] = [];

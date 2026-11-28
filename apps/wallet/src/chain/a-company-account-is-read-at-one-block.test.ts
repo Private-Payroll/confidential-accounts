@@ -41,17 +41,22 @@ const readersOver = async (o: { block?: boolean; account?: boolean } = {}) => {
   const asked: string[] = [];
   vi.resetModules();
   vi.doMock(PUBLIC_DATA, async (original) => ({
-    ...await original<object>(),
+    ...(await original<object>()),
     publicDataProviderFor: async () => ({
-      queryBlock: async () => { asked.push('block'); return o.block === false ? null : { hash: BLOCK }; },
+      queryBlock: async () => {
+        asked.push('block');
+        return o.block === false ? null : { hash: BLOCK };
+      },
       queryZSwapAndContractState: async (address: string, at: { blockHash: string }) => {
         asked.push(`${address.slice(0, 4)} at ${at.blockHash.slice(0, 4)}`);
-        return o.account === false ? null : {
-          contractState: SerializedContractState.fromBytes('v9', accountBytes),
-          ledgerParameters: SerializedLedgerParameters.fromBytes('v9', parameterBytes),
-        };
-      },
-    }),
+        return o.account === false
+          ? null
+          : {
+              contractState: SerializedContractState.fromBytes('v9', accountBytes),
+              ledgerParameters: SerializedLedgerParameters.fromBytes('v9', parameterBytes)
+            };
+      }
+    })
   }));
   const { liveCreationChain } = await import('./creation-chain.js');
   const { liveCompanyChain } = await import('./company-chain.js');
@@ -63,34 +68,43 @@ afterEach(() => {
   vi.resetModules();
 });
 
-describe.skipIf(!ON_DISK)('A COMPANY\'S ACCOUNT IS READ AT THE BLOCK THE INDEXER NAMES FIRST [needs contracts/managed/keys; `npm run compact` builds them]', () => {
-  beforeAll(() => { accountBytes = finishedAccount().serialize(); });
-  it('a creation reads the account and the parameters at that block, and the account as finished from its decoded circuits', async () => {
-    const { asked, creation } = await readersOver();
-    const seen = await creation.account(ACCOUNT);
-    /* RED WHEN: the account is read at any moment but the block named first. */
-    expect(asked).toEqual(['block', 'c0c0 at b7b7']);
-    /* RED WHEN: the state or the parameters a call is built on are anything but the bytes the indexer served. */
-    expect([seen!.state, seen!.parameters]).toEqual([accountBytes, parameterBytes]);
-    /* RED WHEN: the circuits are read off the served bytes without decoding them, so a finished account reads as unfinished. */
-    expect(seen!.finished).toBe(true);
-  });
-
-  it('an action builds its call on the same read, each state as base64 of its bytes', async () => {
-    const { asked, company } = await readersOver();
-    const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64');
-    /* RED WHEN: the call state crosses as anything but the block and the two states read at it. */
-    expect(await company.callState(ACCOUNT as never)).toEqual({
-      blockHash: BLOCK, accountState: b64(accountBytes), parameters: b64(parameterBytes),
+describe.skipIf(!ON_DISK)(
+  "A COMPANY'S ACCOUNT IS READ AT THE BLOCK THE INDEXER NAMES FIRST [needs contracts/managed/keys; `npm run compact` builds them]",
+  () => {
+    beforeAll(() => {
+      accountBytes = finishedAccount().serialize();
     });
-    expect(asked).toEqual(['block', 'c0c0 at b7b7']);
-  });
+    it('a creation reads the account and the parameters at that block, and the account as finished from its decoded circuits', async () => {
+      const { asked, creation } = await readersOver();
+      const seen = await creation.account(ACCOUNT);
+      /* RED WHEN: the account is read at any moment but the block named first. */
+      expect(asked).toEqual(['block', 'c0c0 at b7b7']);
+      /* RED WHEN: the state or the parameters a call is built on are anything but the bytes the indexer served. */
+      expect([seen!.state, seen!.parameters]).toEqual([accountBytes, parameterBytes]);
+      /* RED WHEN: the circuits are read off the served bytes without decoding them, so a finished account reads as unfinished. */
+      expect(seen!.finished).toBe(true);
+    });
 
-  it('a block the indexer does not name, or an account it does not hold, is not read yet, by either reader', async () => {
-    for (const o of [{ block: false }, { account: false }]) {
-      const { creation, company } = await readersOver(o);
-      /* RED WHEN: an indexer with no block, or no account at it, is answered as an account. */
-      expect([await creation.account(ACCOUNT), await company.callState(ACCOUNT as never)], JSON.stringify(o)).toEqual([null, null]);
-    }
-  });
-});
+    it('an action builds its call on the same read, each state as base64 of its bytes', async () => {
+      const { asked, company } = await readersOver();
+      const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64');
+      /* RED WHEN: the call state crosses as anything but the block and the two states read at it. */
+      expect(await company.callState(ACCOUNT as never)).toEqual({
+        blockHash: BLOCK,
+        accountState: b64(accountBytes),
+        parameters: b64(parameterBytes)
+      });
+      expect(asked).toEqual(['block', 'c0c0 at b7b7']);
+    });
+
+    it('a block the indexer does not name, or an account it does not hold, is not read yet, by either reader', async () => {
+      for (const o of [{ block: false }, { account: false }]) {
+        const { creation, company } = await readersOver(o);
+        /* RED WHEN: an indexer with no block, or no account at it, is answered as an account. */
+        expect([await creation.account(ACCOUNT), await company.callState(ACCOUNT as never)], JSON.stringify(o)).toEqual(
+          [null, null]
+        );
+      }
+    });
+  }
+);

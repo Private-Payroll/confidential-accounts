@@ -11,7 +11,15 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { rotateTheCompanyKeyHere } from '../../../../packages/web-shared/src/company-key-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { rotationDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
@@ -23,7 +31,8 @@ export interface RepairCompanyKeyReach {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.repair-company-key.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.repair-company-key.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
@@ -42,19 +51,21 @@ export function repairCompanyKeyAction(reach: RepairCompanyKeyReach): ActionDefi
       { key: 'act.repair-company-key.shown.what', from: 'action' },
       { key: 'act.repair-company-key.shown.readers', from: 'action' },
       ...upkeepShown(),
-      { key: 'act.repair-company-key.shown.nothing-else', from: 'action' },
+      { key: 'act.repair-company-key.shown.nothing-else', from: 'action' }
     ],
     checks: [{ key: 'act.repair-company-key.check.newest' }, UPKEEP_CHECK],
     check: async (intent: ActIntent) => (intent.fields['record'] === undefined ? why('not-a-company') : null),
     steps: (): readonly ActionStep[] => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       let newestAtStart = 0;
       const seat: ActionStep = {
         title: { key: 'act.repair-company-key.step.seat' },
         run: async (ctx) => {
           newestAtStart = (await read.at(ctx)).companyKeys.newest;
           await ctx.confirm([{ key: 'act.repair-company-key.confirm.repair' }]);
-        },
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const repair: ActionStep = {
@@ -73,12 +84,13 @@ export function repairCompanyKeyAction(reach: RepairCompanyKeyReach): ActionDefi
             if (e instanceof ActionStopped) throw e;
             throw new StepRefused(why('not-repaired', { says: said(e) }), codeOfError(e));
           }
-          if (DECLINED.has(rotated.state)) throw new StepRefused(why(rotated.state, { says: 'why' in rotated ? rotated.why : '' }));
+          if (DECLINED.has(rotated.state))
+            throw new StepRefused(why(rotated.state, { says: 'why' in rotated ? rotated.why : '' }));
           ctx.tell({ state: rotated.state, ...('epoch' in rotated ? { epoch: rotated.epoch } : {}) });
           read.renew();
-        },
+        }
       };
       return [seat, upkeep.first, repair, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

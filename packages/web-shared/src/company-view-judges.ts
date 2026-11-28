@@ -25,7 +25,12 @@ import { heldFor, recordsHeldHere } from './records-held-here.js';
 import type { ListKind } from './records-source.js';
 import type { TreeKept } from './tree-kept-here.js';
 import {
-  directoryHere, directoryJudge, type DirectoryBelieved, type DirectoryHereDeps, type DirectoryRead, type RecordsHeldHere,
+  directoryHere,
+  directoryJudge,
+  type DirectoryBelieved,
+  type DirectoryHereDeps,
+  type DirectoryRead,
+  type RecordsHeldHere
 } from './vault-page-doors.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 
@@ -72,16 +77,28 @@ type HeldReads = Pick<JudgeReads, 'company' | 'tree' | 'manifest' | 'onChain' | 
 /** What a held read is given: `reads`' tree, manifest and anchors, the device's stores and its builder `b`. */
 const heldDoorsOf = (reads: HeldReads, doors: HeldDoorsHere, b: VaultBuilderClient) => {
   return {
-    accountId: reads.company, tree: reads.tree, manifest: reads.manifest, ...doors.kept(), onChain: reads.onChain,
-    builder: { anchorHeads: reads.anchorHeads, anchor: (input: Parameters<VaultBuilderClient['anchor']>[0]) => b.anchor(input),
-      anchorTag: (input: Parameters<VaultBuilderClient['anchorTag']>[0]) => b.anchorTag(input) },
+    accountId: reads.company,
+    tree: reads.tree,
+    manifest: reads.manifest,
+    ...doors.kept(),
+    onChain: reads.onChain,
+    builder: {
+      anchorHeads: reads.anchorHeads,
+      anchor: (input: Parameters<VaultBuilderClient['anchor']>[0]) => b.anchor(input),
+      anchorTag: (input: Parameters<VaultBuilderClient['anchorTag']>[0]) => b.anchorTag(input)
+    },
     ...(doors.vouching === undefined ? {} : { vouching: doors.vouching }),
-    ...(doors.tagSeats === undefined ? {} : { tagSeats: doors.tagSeats }),
+    ...(doors.tagSeats === undefined ? {} : { tagSeats: doors.tagSeats })
   };
 };
 
 /** Reads which records the company's anchor holds, through `reads`, with the device's stores and builder, judged against `directory`. */
-export const heldThrough = async (reads: HeldReads, doors: HeldDoorsHere, directory: DirectoryBelieved, asked: RecordsAsked): Promise<RecordsHeldHere> => {
+export const heldThrough = async (
+  reads: HeldReads,
+  doors: HeldDoorsHere,
+  directory: DirectoryBelieved,
+  asked: RecordsAsked
+): Promise<RecordsHeldHere> => {
   const kept = doors.kept();
   return heldFor(heldDoorsOf(reads, { ...doors, kept: () => kept }, await doors.builder()))(directory, asked);
 };
@@ -91,8 +108,10 @@ export const heldThrough = async (reads: HeldReads, doors: HeldDoorsHere, direct
  * judged against one holds for the other: the seats it believes (their keys, rights and retirements) and its key
  * changes, and who holds the account.
  */
-const judgedAs = (directory: DirectoryBelieved): string => JSON.stringify([directory.dir, directory.holders], (_k, v: unknown) =>
-  (v instanceof Map ? [...v] : v instanceof Set ? [...v] : typeof v === 'bigint' ? v.toString() : v));
+const judgedAs = (directory: DirectoryBelieved): string =>
+  JSON.stringify([directory.dir, directory.holders], (_k, v: unknown) =>
+    v instanceof Map ? [...v] : v instanceof Set ? [...v] : typeof v === 'bigint' ? v.toString() : v
+  );
 
 /** The directory a view's kept held read is judged against, with the filings it was built on and what it was judged as. */
 interface Handed {
@@ -102,12 +121,17 @@ interface Handed {
 }
 const handed = new WeakMap<object, Handed>();
 
-const STALE_DIRECTORY = 'the company\'s directory changed since the directory these records would be judged against was read, '
-  + 'so none of them is believed. Read the directory again';
+const STALE_DIRECTORY =
+  "the company's directory changed since the directory these records would be judged against was read, " +
+  'so none of them is believed. Read the directory again';
 
 /** The view's reads a held read goes through. */
 const heldReadsOf = (view: Pick<CompanyView<unknown>, 'company' | 'tree' | 'manifest' | 'doors'>): HeldReads => ({
-  company: view.company, tree: view.tree, manifest: view.manifest, onChain: () => view.doors.onChain(), anchorHeads: (ask) => view.doors.builder.anchorHeads(ask),
+  company: view.company,
+  tree: view.tree,
+  manifest: view.manifest,
+  onChain: () => view.doors.onChain(),
+  anchorHeads: (ask) => view.doors.builder.anchorHeads(ask)
 });
 
 /** The same filings: read again after a write that did not change them (a header filed again), they are still the ones the directory was read from. */
@@ -119,13 +143,18 @@ const sameFilings = (now: readonly DirectoryFiling[], then: readonly DirectoryFi
  * handed it, and refused when the view's filings have changed since that directory was read from them. It keeps and
  * files again from the view's own stores (`CompanyView.stores`), the ones an anchor through the same view signs into.
  */
-export const heldReaderOver = (doors: HeldDoorsHere): HeldReader => async (view, asked) => {
-  const kept = handed.get(view);
-  if (kept === undefined) throw new Error('the company\'s records were asked for before its directory was read, so none of them is believed.');
-  if (!sameFilings(await view.filings(), kept.filings)) throw new Error(STALE_DIRECTORY);
-  const held = heldDoorsOf(heldReadsOf(view), { ...doors, kept: () => view.stores }, await doors.builder());
-  return recordsHeldHere({ ...held, directory: async () => kept.directory }, asked);
-};
+export const heldReaderOver =
+  (doors: HeldDoorsHere): HeldReader =>
+  async (view, asked) => {
+    const kept = handed.get(view);
+    if (kept === undefined)
+      throw new Error(
+        "the company's records were asked for before its directory was read, so none of them is believed."
+      );
+    if (!sameFilings(await view.filings(), kept.filings)) throw new Error(STALE_DIRECTORY);
+    const held = heldDoorsOf(heldReadsOf(view), { ...doors, kept: () => view.stores }, await doors.builder());
+    return recordsHeldHere({ ...held, directory: async () => kept.directory }, asked);
+  };
 
 /**
  * Which records the company's anchor holds, judged against `directory`: the view's one kept held read when the
@@ -133,7 +162,10 @@ export const heldReaderOver = (doors: HeldDoorsHere): HeldReader => async (view,
  * read of its own, kept by nobody, with `doors`.
  */
 const anchoredInTheView = async (
-  view: JudgeView, doors: HeldDoorsHere | undefined, directory: DirectoryBelieved, asked: RecordsAsked,
+  view: JudgeView,
+  doors: HeldDoorsHere | undefined,
+  directory: DirectoryBelieved,
+  asked: RecordsAsked
 ): Promise<RecordsHeldHere> => {
   const filings = await view.filings();
   const as = judgedAs(directory);
@@ -147,20 +179,21 @@ const anchoredInTheView = async (
 };
 
 /** The judges' reads through `view`: one read of each thing for every judge of the step or screen. */
-const readsOfTheView = (view: JudgeView, held?: HeldDoorsHere): JudgeReads => Object.freeze<JudgeReads>({
-  company: view.company,
-  account: () => view.account(),
-  filings: () => view.filings(),
-  list: (kind) => view.list(kind),
-  holders: () => view.holders(),
-  grants: grantsReadWith((asked) => view.records(asked), view.company),
-  anchored: (directory, asked) => anchoredInTheView(view, held, directory, asked),
-  layer: (name, build) => view.layer(name, () => build()),
-  tree: view.tree,
-  manifest: view.manifest,
-  onChain: () => view.doors.onChain(),
-  anchorHeads: (ask) => view.doors.builder.anchorHeads(ask),
-});
+const readsOfTheView = (view: JudgeView, held?: HeldDoorsHere): JudgeReads =>
+  Object.freeze<JudgeReads>({
+    company: view.company,
+    account: () => view.account(),
+    filings: () => view.filings(),
+    list: (kind) => view.list(kind),
+    holders: () => view.holders(),
+    grants: grantsReadWith((asked) => view.records(asked), view.company),
+    anchored: (directory, asked) => anchoredInTheView(view, held, directory, asked),
+    layer: (name, build) => view.layer(name, () => build()),
+    tree: view.tree,
+    manifest: view.manifest,
+    onChain: () => view.doors.onChain(),
+    anchorHeads: (ask) => view.doors.builder.anchorHeads(ask)
+  });
 
 const notGiven = (what: string) => async (): Promise<never> => {
   throw new Error(`this read of the company was given no way to read ${what}, so it reads none.`);
@@ -168,11 +201,15 @@ const notGiven = (what: string) => async (): Promise<never> => {
 
 /** The judges' reads of company `companyId` through its view, which every judge of the step or screen shares. */
 export const judgeReadsOf = (
-  d: { readonly view: (companyId: string) => JudgeView }, companyId: string, held?: HeldDoorsHere,
+  d: { readonly view: (companyId: string) => JudgeView },
+  companyId: string,
+  held?: HeldDoorsHere
 ): JudgeReads => {
   const view = d.view(companyId);
   if (view.company !== companyId) {
-    throw new Error(`the read of company ${view.company} was handed in for company ${companyId}, so nothing of either is read through it.`);
+    throw new Error(
+      `the read of company ${view.company} was handed in for company ${companyId}, so nothing of either is read through it.`
+    );
   }
   return readsOfTheView(view, held);
 };
@@ -196,11 +233,16 @@ export interface OpenedInOrder<R> {
   judge(): Promise<FreshJudge>;
 }
 
-const readOf = (deps: DirectoryHereDeps): DirectoryRead => (asked) => directoryHere(deps, asked);
+const readOf =
+  (deps: DirectoryHereDeps): DirectoryRead =>
+  (asked) =>
+    directoryHere(deps, asked);
 
 /** The parts built on `reads`' filings in the one order, each under `name` (the seat and how its keys are asked for). */
 export function inOrder<R extends Pick<Account, 'signers'> | null>(
-  reads: Pick<JudgeReads, 'layer'>, name: string, steps: OpeningSteps<R>,
+  reads: Pick<JudgeReads, 'layer'>,
+  name: string,
+  steps: OpeningSteps<R>
 ): OpenedInOrder<R> {
   const part = <T>(which: string, build: () => Promise<T>): Promise<T> => reads.layer(`${name}:${which}`, build);
   const forKeys = () => part('directory-for-keys', steps.directoryForKeys);
@@ -212,6 +254,6 @@ export function inOrder<R extends Pick<Account, 'signers'> | null>(
     companyKeys,
     roster,
     directory: async () => readOf(await directory()),
-    judge: async () => directoryJudge(await directory()),
+    judge: async () => directoryJudge(await directory())
   });
 }

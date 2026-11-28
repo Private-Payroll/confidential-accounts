@@ -4,7 +4,10 @@ import type { KeysRead, SealedKeyring } from 'midnight-identity/profile/unlock';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { foundTheCompanyHere, type CompanyFounded } from '../../../../src/core/company-founding.js';
 import {
-  withCreation, withNewSeat, type AccountKeys, type SavedCreation,
+  withCreation,
+  withNewSeat,
+  type AccountKeys,
+  type SavedCreation
 } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { openHeldKeyring, type KeyringMarks } from './held-keyring.js';
 import { foundingSeatOf } from './founding-seat.js';
@@ -57,8 +60,10 @@ export async function foundTheCompanyInTheWallet(input: {
 }): Promise<FoundedHere> {
   const { identity, request, label } = input;
   if (request.founding === undefined || request.keyring === undefined) {
-    throw new NotFoundedHere('The page asked this wallet to start a company without saying what it is called, or without '
-      + 'handing over your saved keys to keep its seat in, so nothing was started. Reload the page and start the company again.');
+    throw new NotFoundedHere(
+      'The page asked this wallet to start a company without saying what it is called, or without ' +
+        'handing over your saved keys to keep its seat in, so nothing was started. Reload the page and start the company again.'
+    );
   }
   const seat = await foundingSeatOf(identity, label);
   const founded = foundTheCompanyHere({
@@ -68,7 +73,7 @@ export async function foundTheCompanyInTheWallet(input: {
     label,
     seat: { signingPublicKey: seat.signingPublicKey, wrappingPublicKey: seat.wrappingPublicKey, leaf: seat.leaf },
     signingSecret: seat.signingSecret,
-    ...(input.now === undefined ? {} : { now: input.now }),
+    ...(input.now === undefined ? {} : { now: input.now })
   });
   const accountId = founded.account.id;
   const mine: AccountKeys = {
@@ -77,7 +82,13 @@ export async function foundTheCompanyInTheWallet(input: {
     wrappingSecret: seat.wrappingSecret,
     blinding: seat.blinding,
     scope: seat.scope,
-    opening: { publicKey: seat.publicKey, scope: seat.scope, blinding: seat.blinding, walletKey: seat.walletKey, salt: seat.salt },
+    opening: {
+      publicKey: seat.publicKey,
+      scope: seat.scope,
+      blinding: seat.blinding,
+      walletKey: seat.walletKey,
+      salt: seat.salt
+    }
   };
   const creation: SavedCreation = {
     accountId,
@@ -90,25 +101,42 @@ export async function foundTheCompanyInTheWallet(input: {
       threshold: 1,
       companyLabel: label,
       foundingKey: seat.walletKey,
-      founding: founded,
+      founding: founded
     },
-    made: false, deploy: null, signed: null, recorded: false,
+    made: false,
+    deploy: null,
+    signed: null,
+    recorded: false
   };
   const held = openHeldKeyring({
-    identity, ask: { requester: request.requester, person: request.person }, handedIn: request.keyring, marks: input.marks,
+    identity,
+    ask: { requester: request.requester, person: request.person },
+    handedIn: request.keyring,
+    marks: input.marks
   });
   try {
     if (held.read().creations?.[accountId] !== undefined) {
-      throw new NotFoundedHere('Your saved keys already keep a company being created under the new company\'s id, so nothing '
-        + 'was started. Start the company again from the page.');
+      throw new NotFoundedHere(
+        "Your saved keys already keep a company being created under the new company's id, so nothing " +
+          'was started. Start the company again from the page.'
+      );
     }
     const write = (k: Parameters<typeof withNewSeat>[0]) => withCreation(withNewSeat(k, accountId, mine), creation);
-    const read = readFor(identity, request, write(held.read()), [{
-      accountId, inboxPublicKey: String(founded.account.inboxPublicKey),
-      wrappedKeys: founded.account.wrappedKeys as never,
-    }]);
+    const read = readFor(identity, request, write(held.read()), [
+      {
+        accountId,
+        inboxPublicKey: String(founded.account.inboxPublicKey),
+        wrappedKeys: founded.account.wrappedKeys as never
+      }
+    ]);
     const again = held.seal(write);
-    return Object.freeze({ accountId, founded, sealed: again.sealed, ifVersion: again.ifVersion, read: Object.freeze({ ...read, resealed: null }) });
+    return Object.freeze({
+      accountId,
+      founded,
+      sealed: again.sealed,
+      ifVersion: again.ifVersion,
+      read: Object.freeze({ ...read, resealed: null })
+    });
   } finally {
     held.letGo();
   }

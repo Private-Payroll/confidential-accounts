@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { onAMac, pressed, type Chord, type Press } from './shortcuts.js';
 
 /* One key pressed, with nothing held unless said. */
-const key = (over: Partial<Press>): Press => ({ key: '', code: '', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...over });
+const key = (over: Partial<Press>): Press => ({
+  key: '',
+  code: '',
+  metaKey: false,
+  ctrlKey: false,
+  altKey: false,
+  shiftKey: false,
+  ...over
+});
 const K: Chord = { key: 'k', code: 'KeyK', command: true };
 const HELP: Chord = { key: '?', code: 'Slash', shift: true };
 
@@ -25,8 +33,12 @@ describe('a press matches a chord', () => {
    */
   it('by the character typed, and by the place only when the keyboard types no Latin character there', () => {
     expect(pressed(K, key({ key: 'л', code: 'KeyK', metaKey: true }), true)).toBe(true);
-    expect(pressed({ key: 'a', code: 'KeyA', command: true }, key({ key: 'q', code: 'KeyA', metaKey: true }), true)).toBe(false);
-    expect(pressed({ key: 'q', code: 'KeyQ', command: true }, key({ key: 'q', code: 'KeyA', metaKey: true }), true)).toBe(true);
+    expect(
+      pressed({ key: 'a', code: 'KeyA', command: true }, key({ key: 'q', code: 'KeyA', metaKey: true }), true)
+    ).toBe(false);
+    expect(
+      pressed({ key: 'q', code: 'KeyQ', command: true }, key({ key: 'q', code: 'KeyA', metaKey: true }), true)
+    ).toBe(true);
   });
 
   /* RED WHEN: on a keyboard whose letters are not Latin, one key with and without Shift matches both / and ?, or neither. */
@@ -46,6 +58,11 @@ describe('a press matches a chord', () => {
 
   /* RED WHEN: a Mac is not told apart from another machine by its platform. */
   it('tells a Mac by its platform', () => {
-    expect([onAMac('MacIntel'), onAMac('iPhone'), onAMac('Win32'), onAMac('Linux x86_64')]).toEqual([true, true, false, false]);
+    expect([onAMac('MacIntel'), onAMac('iPhone'), onAMac('Win32'), onAMac('Linux x86_64')]).toEqual([
+      true,
+      true,
+      false,
+      false
+    ]);
   });
 });

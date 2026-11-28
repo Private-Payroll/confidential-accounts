@@ -20,7 +20,7 @@ import { firstReadsAnswered, stepOverItsCall } from './step-views.test-support.j
 const t = vi.hoisted(() => ({ roster: null as unknown }));
 vi.mock('../../../../packages/web-shared/src/company-judges.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/company-judges.js')>()),
-  companyJudges: () => ({ companyKeysFor: async () => ({}), openedHere: async () => t.roster }),
+  companyJudges: () => ({ companyKeysFor: async () => ({}), openedHere: async () => t.roster })
 }));
 
 const { companyReachFor } = await import('./company-reach.js');
@@ -35,51 +35,113 @@ const OTHERS = toHex(x25519.utils.randomSecretKey()) as Hex;
 /* The seat this wallet's words make for the company: the one it took by address. */
 const SIGNING = toHex(seatKeysFor(identity, LABEL, 0).signingSecret) as Hex;
 const WAITING = {
-  accountId: 'acc_1', signingPublicKey: signingPublicKeyOf(SIGNING).toLowerCase(), signingSecret: SIGNING, wrappingSecret: WRAPPING,
-  blinding: '03'.repeat(32), scope: '04'.repeat(32), seat: 0,
-  opening: { publicKey: '05'.repeat(32), scope: '04'.repeat(32), blinding: '03'.repeat(32), salt: '06'.repeat(32), walletKey: { tag: 'schnorr', value: '07'.repeat(32) } },
-  joining: { invitation: 'inv', acceptance: '08'.repeat(32), inbox: '09'.repeat(32), label: LABEL, account: ACCOUNT, offer: {}, confirmed: true as const },
+  accountId: 'acc_1',
+  signingPublicKey: signingPublicKeyOf(SIGNING).toLowerCase(),
+  signingSecret: SIGNING,
+  wrappingSecret: WRAPPING,
+  blinding: '03'.repeat(32),
+  scope: '04'.repeat(32),
+  seat: 0,
+  opening: {
+    publicKey: '05'.repeat(32),
+    scope: '04'.repeat(32),
+    blinding: '03'.repeat(32),
+    salt: '06'.repeat(32),
+    walletKey: { tag: 'schnorr', value: '07'.repeat(32) }
+  },
+  joining: {
+    invitation: 'inv',
+    acceptance: '08'.repeat(32),
+    inbox: '09'.repeat(32),
+    label: LABEL,
+    account: ACCOUNT,
+    offer: {},
+    confirmed: true as const
+  }
 };
-const wrapTo = (secretKey: Hex, signerId: string) => ({ signerId, ...wrapKey('11'.repeat(32), toHex(x25519.getPublicKey(Buffer.from(secretKey, 'hex'))) as Hex) });
-const SEALED = (wrapped: unknown[]) => ({ id: 'acc_1', companyLabel: LABEL, contractAddress: ACCOUNT, wrappedKeys: wrapped });
+const wrapTo = (secretKey: Hex, signerId: string) => ({
+  signerId,
+  ...wrapKey('11'.repeat(32), toHex(x25519.getPublicKey(Buffer.from(secretKey, 'hex'))) as Hex)
+});
+const SEALED = (wrapped: unknown[]) => ({
+  id: 'acc_1',
+  companyLabel: LABEL,
+  contractAddress: ACCOUNT,
+  wrappedKeys: wrapped
+});
 const why = (key: string) => ({ key });
-const activeAt = (id: string, leaf: string, status = 'active') => ({ id: 'acc_1', signers: [{ id: 'sgn_ada', status: 'active', leafCommitment: 'bb'.repeat(32) }, { id, status, leafCommitment: leaf }] });
+const activeAt = (id: string, leaf: string, status = 'active') => ({
+  id: 'acc_1',
+  signers: [
+    { id: 'sgn_ada', status: 'active', leafCommitment: 'bb'.repeat(32) },
+    { id, status, leafCommitment: leaf }
+  ]
+});
 
-const world = (o: { seats?: string[]; account?: { status: number; body: unknown }; roster?: unknown; waiting?: unknown } = {}) => {
+const world = (
+  o: { seats?: string[]; account?: { status: number; body: unknown }; roster?: unknown; waiting?: unknown } = {}
+) => {
   const waiting = o.waiting ?? WAITING;
   let keys: any = { accounts: {}, pendingSeats: { [WAITING.signingPublicKey]: waiting } };
   const order: string[] = [];
   const roster = o.roster ?? activeAt('sgn_dee', LEAF);
   const chain = {
     indexer: { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' },
-    holders: async () => ({ seats: o.seats ?? [LEAF, 'bb'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT, founding: 'bb'.repeat(32) }) as never,
-    callState: async () => null,
+    holders: async () =>
+      ({
+        seats: o.seats ?? [LEAF, 'bb'.repeat(32)],
+        committee: [],
+        threshold: 1,
+        approvals: 1,
+        vaultThresholds: [],
+        adoptedVaults: [],
+        account: ACCOUNT,
+        founding: 'bb'.repeat(32)
+      }) as never,
+    callState: async () => null
   };
-  const builder = { ownSeat: async (s: { signingSecret: string }) => (s.signingSecret === SIGNING ? LEAF : 'cc'.repeat(32)) } as never;
+  const builder = {
+    ownSeat: async (s: { signingSecret: string }) => (s.signingSecret === SIGNING ? LEAF : 'cc'.repeat(32))
+  } as never;
   const answer = o.account ?? { status: 200, body: SEALED([wrapTo(OTHERS, 'sgn_ada'), wrapTo(WRAPPING, 'sgn_dee')]) };
   const ctx = stepOverItsCall({
     intent: { name: 'give-vault-keys', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT } } as ActIntent,
-    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'dee',
-    held: { identity, secret }, at: { step: 1, steps: 3 }, signal: new AbortController().signal,
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'dee',
+    held: { identity, secret },
+    at: { step: 1, steps: 3 },
+    signal: new AbortController().signal,
     relay: async () => {},
     call: firstReadsAnswered(async () => answer),
     tell: () => {},
     keyring: {
       open: () => ({ read: () => structuredClone(keys) }),
-      keep: async (change: (k: any) => any) => { order.push('kept'); keys = change(structuredClone(keys)); },
-    },
+      keep: async (change: (k: any) => any) => {
+        order.push('kept');
+        keys = change(structuredClone(keys));
+      }
+    }
   }) as unknown as StepContext;
-  const reached = () => { t.roster = roster; return companyReachFor(ctx, chain as never, builder, why); };
+  const reached = () => {
+    t.roster = roster;
+    return companyReachFor(ctx, chain as never, builder, why);
+  };
   return { ctx, chain, builder, keysNow: () => keys, order, reached };
 };
 
 describe('a seat taken by address and admitted before its own wallet kept it is kept by the next act on the company', () => {
-  it('keeps the waiting seat as the company\'s seat, under the id of the wrap its seat opens, when the roster names it there', async () => {
+  it("keeps the waiting seat as the company's seat, under the id of the wrap its seat opens, when the roster names it there", async () => {
     const w = world();
     const r = await w.reached();
     /* RED WHEN: the seat stays only in the waiting seats, or is kept under another wrap's id. */
     expect(w.keysNow().accounts['acc_1']).toEqual({
-      signerId: 'sgn_dee', signingSecret: SIGNING, wrappingSecret: WRAPPING, blinding: WAITING.blinding, scope: WAITING.scope, seat: 0, opening: WAITING.opening,
+      signerId: 'sgn_dee',
+      signingSecret: SIGNING,
+      wrappingSecret: WRAPPING,
+      blinding: WAITING.blinding,
+      scope: WAITING.scope,
+      seat: 0,
+      opening: WAITING.opening
     });
     expect(r.seat.signerId).toBe('sgn_dee');
     expect(r.leaf).toBe(LEAF);
@@ -92,7 +154,10 @@ describe('a seat taken by address and admitted before its own wallet kept it is 
 
   it('never pins a waiting seat the person did not confirm, or one confirmed for another account, and refuses the reach', async () => {
     const { confirmed: _no, ...unconfirmed } = WAITING.joining;
-    for (const waiting of [{ ...WAITING, joining: unconfirmed }, { ...WAITING, joining: { ...WAITING.joining, account: 'c1'.repeat(32) } }]) {
+    for (const waiting of [
+      { ...WAITING, joining: unconfirmed },
+      { ...WAITING, joining: { ...WAITING.joining, account: 'c1'.repeat(32) } }
+    ]) {
       const w = world({ waiting });
       /* RED WHEN: a waiting seat is pinned, or reached, though the person never confirmed this company's fingerprint for it. */
       await expect(w.reached()).rejects.toMatchObject({ words: { key: 'no-pin' } });
@@ -106,7 +171,7 @@ describe('a seat taken by address and admitted before its own wallet kept it is 
       world({ roster: activeAt('sgn_dee', LEAF, 'leaver') }),
       world({ roster: activeAt('sgn_bo', LEAF) }),
       world({ account: { status: 403, body: { error: 'not a member' } } }),
-      world({ account: { status: 200, body: SEALED([wrapTo(OTHERS, 'sgn_dee')]) } }),
+      world({ account: { status: 200, body: SEALED([wrapTo(OTHERS, 'sgn_dee')]) } })
     ];
     for (const w of cases) {
       await expect(w.reached()).rejects.toMatchObject({ words: { key: 'no-seat' } });

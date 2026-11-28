@@ -25,14 +25,33 @@ export function Payroll({ children }: { children?: ReactNode }) {
   const panel = usePanel();
   if (children !== undefined) return <>{children}</>;
   const columns: DataTableColumn<RunRow>[] = [
-    { id: COLUMN.month, header: t('payroll.column.month'), cell: (r) => <PageLink to={PAGE.run} params={{ run: r.id }} className="font-medium underline-offset-4 hover:underline">{month(r.period)}</PageLink> },
-    { id: COLUMN.people, header: t('payroll.column.people'), cell: (r) => t('payroll.people', { count: r.payees.length }) },
+    {
+      id: COLUMN.month,
+      header: t('payroll.column.month'),
+      cell: (r) => (
+        <PageLink to={PAGE.run} params={{ run: r.id }} className="font-medium underline-offset-4 hover:underline">
+          {month(r.period)}
+        </PageLink>
+      )
+    },
+    {
+      id: COLUMN.people,
+      header: t('payroll.column.people'),
+      cell: (r) => t('payroll.people', { count: r.payees.length })
+    },
     { id: COLUMN.total, header: t('payroll.column.total'), cell: (r) => <RunMoney run={r} /> },
-    { id: COLUMN.status, header: t('payroll.column.status'), cell: (r) => <RunStatus run={r} /> },
+    { id: COLUMN.status, header: t('payroll.column.status'), cell: (r) => <RunStatus run={r} /> }
   ];
   return (
     <div className="flex flex-col gap-6" data-screen="payroll">
-      <PageHeader title={t('page.payroll.name')} actions={<Button data-action="new-run" onClick={() => panel.open({ title: t('raiseRun.title'), body: <RaiseRun /> })}>{t('payroll.newRun')}</Button>} />
+      <PageHeader
+        title={t('page.payroll.name')}
+        actions={
+          <Button data-action="new-run" onClick={() => panel.open({ title: t('raiseRun.title'), body: <RaiseRun /> })}>
+            {t('payroll.newRun')}
+          </Button>
+        }
+      />
       <WithRecords>
         {(records) => (
           <ReadOf read={records.runs}>

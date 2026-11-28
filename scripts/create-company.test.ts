@@ -17,8 +17,9 @@ describe('the company creator pays its fee through the one pair', () => {
     const bringUp = creator.indexOf('bringUpWallet(');
     expect(ceiling, 'the creator does not read the ceiling').toBeGreaterThan(-1);
     expect(ceiling, 'the creator brings a wallet up before reading the ceiling').toBeLessThan(bringUp);
-    expect(creator, 'the creator does not pass the ceiling to the fee payer')
-      .toMatch(/(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/);
+    expect(creator, 'the creator does not pass the ceiling to the fee payer').toMatch(
+      /(fundedPartiesOver|feePayerOver)\([\s\S]*?\bceiling,\s*\)/
+    );
   });
 
   /* RED WHEN: the creator goes back to building its own fee payer and company half, two constructions of one pair. */

@@ -45,19 +45,19 @@ import type { SealedHandover } from '../../../src/core/invite-handover.js';
 
 export type Accepted =
   | {
-    readonly of: 'opened';
-    /** What THIS machine works out, from the address that actually arrived. */
-    readonly ours: string;
-    /**
-     * What the person read off their own wallet and pasted into the join
-     * screen. **`null` is a real answer**, not a failure: a member who added
-     * themselves as a payee had no page, no second party and nothing to
-     * confirm, and a seeded record was never on anybody's device.
-     */
-    readonly theirs: string | null;
-    /** Equal strings. `null` when there is nothing to compare. */
-    readonly agree: boolean | null;
-  }
+      readonly of: 'opened';
+      /** What THIS machine works out, from the address that actually arrived. */
+      readonly ours: string;
+      /**
+       * What the person read off their own wallet and pasted into the join
+       * screen. **`null` is a real answer**, not a failure: a member who added
+       * themselves as a payee had no page, no second party and nothing to
+       * confirm, and a seeded record was never on anybody's device.
+       */
+      readonly theirs: string | null;
+      /** Equal strings. `null` when there is nothing to compare. */
+      readonly agree: boolean | null;
+    }
   /** The box would not open, or what came out was not a handover. The sentence
    * is the one the opener threw, because it is written for a person. */
   | { readonly of: 'unreadable'; readonly says: string };
@@ -71,7 +71,7 @@ interface Box {
 export function acceptedCodes(
   inbox: ({ ephemeral: Hex } & Sealed) | null,
   accountId: string,
-  viewingKey: KeysHeld,
+  viewingKey: KeysHeld
 ): Accepted | null {
   if (!inbox) return null;
   try {
@@ -82,7 +82,7 @@ export function acceptedCodes(
       of: 'opened',
       ours,
       theirs: handover.confirmation,
-      agree: handover.confirmation === null ? null : handover.confirmation === ours,
+      agree: handover.confirmation === null ? null : handover.confirmation === ours
     };
   } catch (e) {
     return { of: 'unreadable', says: e instanceof Error ? e.message : String(e) };

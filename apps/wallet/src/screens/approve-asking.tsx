@@ -38,11 +38,18 @@ export function askingParts(v: ScreenAsking<Ask>) {
    */
   const whoIsAsking = (
     <Card>
-      <CardHeader><CardTitle role="heading" aria-level={3}>Who is asking</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle role="heading" aria-level={3}>
+          Who is asking
+        </CardTitle>
+      </CardHeader>
       <CardContent>
         <p className="m-0">
           {'They call themselves '}
-          <strong className={CLAIM_TEXT} data-requester-name>{request.requester.name}</strong>.
+          <strong className={CLAIM_TEXT} data-requester-name>
+            {request.requester.name}
+          </strong>
+          .
         </p>
         <p className="m-0">
           {'This page actually came from '}
@@ -76,32 +83,36 @@ export function askingParts(v: ScreenAsking<Ask>) {
    * never refuses — reusing an address costs linkability, and linkability is
    * the person's to spend.
    */
-  const choice = profile === null
-    ? null : chooseSlot(profile, request.requester.origin);
-  const shared = profile === null
-    ? [] : alsoUsedBy(profile, subwallet, request.requester.origin);
+  const choice = profile === null ? null : chooseSlot(profile, request.requester.origin);
+  const shared = profile === null ? [] : alsoUsedBy(profile, subwallet, request.requester.origin);
 
   const whyThisWallet = (): string => {
     if (choseWallet || choice === null) return '';
     if (choice.because === 'already-theirs') {
-      return 'This is the wallet you used with them before, so what they already hold goes '
-        + 'on working.';
+      return 'This is the wallet you used with them before, so what they already hold goes ' + 'on working.';
     }
     if (choice.because === 'unused') {
       return 'This one has not been given to anybody, which is why it is the one offered.';
     }
-    return 'Every wallet here has already been given to somebody, so whichever you choose '
-      + 'is one another site can recognise.';
+    return (
+      'Every wallet here has already been given to somebody, so whichever you choose ' +
+      'is one another site can recognise.'
+    );
   };
 
   const whichWallet = (title: string, description: string, locked = false): ReactNode => (
     <Section list={false} box={false} aria-label={title} title={title} description={description}>
-      <Label htmlFor="approve-subwallet" className="mb-2">Wallet</Label>
+      <Label htmlFor="approve-subwallet" className="mb-2">
+        Wallet
+      </Label>
       <select
         id="approve-subwallet"
         value={String(subwallet)}
         disabled={locked}
-        onChange={(e) => { setChoseWallet(true); setSubwallet(Number(e.target.value)); }}
+        onChange={(e) => {
+          setChoseWallet(true);
+          setSubwallet(Number(e.target.value));
+        }}
         className="block w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground"
       >
         {WALLET_ACCOUNTS.map((account) => (
@@ -122,18 +133,19 @@ export function askingParts(v: ScreenAsking<Ask>) {
         <StatusAlert tone="warning" title="Another site already has this wallet's address">
           <div data-wallet-shared>
             {/* EACH ONE ON ITS OWN LINE — the same rule as the unlock screen's
-              * warning, and for the same reason: a value a person is being
-              * asked to recognise, wrapped mid-string, is unreadable. */}
+             * warning, and for the same reason: a value a person is being
+             * asked to recognise, wrapped mid-string, is unreadable. */}
             {shared.map((origin) => (
-              <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>
+              <p className="m-0 font-mono text-foreground" key={origin}>
+                {origin}
+              </p>
             ))}
           </div>
           <p className="m-0">
-            If you use this wallet here too, both of them are paying the same address, and
-            they could learn you work for both by comparing notes. That is sometimes exactly
-            what you want. Choosing a different wallet above is what keeps them apart — and
-            it keeps them apart from each other, not from us: it is one wallet signing in
-            either way.
+            If you use this wallet here too, both of them are paying the same address, and they could learn you work for
+            both by comparing notes. That is sometimes exactly what you want. Choosing a different wallet above is what
+            keeps them apart — and it keeps them apart from each other, not from us: it is one wallet signing in either
+            way.
           </p>
         </StatusAlert>
       )}

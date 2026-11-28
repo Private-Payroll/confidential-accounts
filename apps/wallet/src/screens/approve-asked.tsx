@@ -7,7 +7,15 @@ import { quietConsentFor } from '../framing.js';
 import { AnswerHolders } from './answer-holders.js';
 import type { ScreenAsking } from './approve-shape.js';
 import { askingParts } from './approve-asking.js';
-import { actView, addressesView, balanceView, committeeView, creationView, joinCodeView, recordsKeyView } from './approve-asked-views.js';
+import {
+  actView,
+  addressesView,
+  balanceView,
+  committeeView,
+  creationView,
+  joinCodeView,
+  recordsKeyView
+} from './approve-asked-views.js';
 import { unlockView } from './approve-unlock.js';
 import { keyringView } from './approve-keyring.js';
 import { disclosureView, signInView } from './approve-disclosure.js';

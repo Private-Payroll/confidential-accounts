@@ -23,16 +23,32 @@ vi.mock('../chain/facade.js', async (original) => {
   const real = await original<typeof import('../chain/facade.js')>();
   return {
     ...real,
-    facadeFor: async (_identity: unknown, account: number, _proving: unknown, _overrides: unknown, from: { restoreShieldedFrom?: string } = {}) => {
+    facadeFor: async (
+      _identity: unknown,
+      account: number,
+      _proving: unknown,
+      _overrides: unknown,
+      from: { restoreShieldedFrom?: string } = {}
+    ) => {
       asked.push({ account, restoreShieldedFrom: from.restoreShieldedFrom });
-      const part = (name: string) => ({ start: async () => { started.push(name); } });
+      const part = (name: string) => ({
+        start: async () => {
+          started.push(name);
+        }
+      });
       return {
-        shielded: part('shielded'), unshielded: part('unshielded'), dust: part('dust'),
+        shielded: part('shielded'),
+        unshielded: part('unshielded'),
+        dust: part('dust'),
         transactionLifecycleService: part('lifecycle'),
-        start: async () => { started.push('all three, DUST with them'); },
-        stop: async () => { started.push('stopped'); },
+        start: async () => {
+          started.push('all three, DUST with them');
+        },
+        stop: async () => {
+          started.push('stopped');
+        }
       };
-    },
+    }
   };
 });
 
@@ -50,11 +66,18 @@ beforeEach(() => {
   started.length = 0;
 });
 
-describe('THE DEPOSIT SCREEN\'S DOORS', () => {
-  it('RESTORE THE PRIVATE PART FROM THIS WALLET\'S OWN CHECKPOINT, AND START NO DUST', async () => {
+describe("THE DEPOSIT SCREEN'S DOORS", () => {
+  it("RESTORE THE PRIVATE PART FROM THIS WALLET'S OWN CHECKPOINT, AND START NO DUST", async () => {
     const identity = identityFromSecret(newSecret());
     const snapshot = snapshotForTest({ coinPublicKey: coinPublicKeyOf(identity, 0) });
-    expect(await saveWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, { serialized: snapshot, night: 5n, asOf: 1 }, ORIGINAL_SLOT)).toBe(true);
+    expect(
+      await saveWalletCheckpoint(
+        coinPublicKeyOf(identity, 0),
+        0,
+        { serialized: snapshot, night: 5n, asOf: 1 },
+        ORIGINAL_SLOT
+      )
+    ).toBe(true);
     const doors = liveBalanceDoors(identity, 0);
     await doors.facade();
     /* RED WHEN: the doors read the private chain from the beginning although this wallet has its own checkpoint. */

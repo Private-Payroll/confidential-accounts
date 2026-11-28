@@ -13,25 +13,31 @@ import { ENGLISH } from '../english.test-support.js';
  * the company's creation is set by each test, and the screen is read.
  */
 /* Set before any module is loaded, since the wallet's origin is read when the adapters are first loaded. */
-vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
+vi.hoisted(() => {
+  vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
+});
 const kr = vi.hoisted(() => ({
   who: null as { id: string } | null,
   /** What the service does when the creation of a company is read. */
-  answer: (async () => { throw new Error('unset'); }) as () => Promise<unknown>,
-  asked: 0,
+  answer: (async () => {
+    throw new Error('unset');
+  }) as () => Promise<unknown>,
+  asked: 0
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => {
   const keyring = await real<typeof import('vaults-web-shared/keyring.js')>();
   return {
     ...keyring,
     currentUser: () => kr.who,
-    forgetLocally: () => { kr.who = null; },
+    forgetLocally: () => {
+      kr.who = null;
+    },
     resumeSession: async () => kr.who,
-    canOpenCompanies: () => true,
+    canOpenCompanies: () => true
   };
 });
 vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
@@ -40,7 +46,10 @@ vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
   companyBeingCreated: () => true,
   companyBeingCreatedLabel: () => null,
   companyAwaitingItsSecondPress: (id: string) => ({ accountId: id, account: null }),
-  companyCreationStanding: async () => { kr.asked += 1; return kr.answer(); },
+  companyCreationStanding: async () => {
+    kr.asked += 1;
+    return kr.answer();
+  }
 }));
 vi.mock('../adapters/vault-builder.js', () => ({ theCreationBuilder: async () => null }));
 
@@ -54,35 +63,66 @@ const READING = 'Reading where the company stands.';
 const BOUND = 20_000;
 
 const sessionWith = (over: Partial<Session> = {}): Session => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(),
-  viewer: { signedIn: true, view: VIEWS.employee, signs: false }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-  choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}), ...over,
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.employee, signs: false },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {}),
+  ...over
 });
-const draw = (session: Session) => render(
-  <KitProvider languages={LANGUAGES} pick="en">
-    <SessionProvider session={session}><FinishCompany leadTo={() => {}} onChanged={() => {}} /></SessionProvider>
-  </KitProvider>,
-);
+const draw = (session: Session) =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <SessionProvider session={session}>
+        <FinishCompany leadTo={() => {}} onChanged={() => {}} />
+      </SessionProvider>
+    </KitProvider>
+  );
 /** Lets every promise the screen is waiting on settle, with the clock held. */
-const settle = async (ms = 0) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
+const settle = async (ms = 0) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
 const button = (c: HTMLElement, action: string) => c.querySelector(`[data-action=${action}]`) as HTMLElement | null;
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  Object.assign(kr, { who: { id: 'u1' }, asked: 0, answer: async () => { throw new Error('unset'); } });
+  Object.assign(kr, {
+    who: { id: 'u1' },
+    asked: 0,
+    answer: async () => {
+      throw new Error('unset');
+    }
+  });
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('the finishing step when the service cannot be read', () => {
   /* RED WHEN: a read the service refuses as signed out leaves the step on its reading words, or offers no way to sign in again. */
   it('says the person is signed out, and offers Sign in again, when the service refuses the read as signed out', async () => {
-    kr.answer = async () => { kr.who = null; throw new AuthError('not signed in'); };
+    kr.answer = async () => {
+      kr.who = null;
+      throw new AuthError('not signed in');
+    };
     const session = sessionWith();
     const view = draw(session);
     await settle();
     expect(view.container.textContent).not.toContain(READING);
-    expect(view.container.querySelector('[data-signed-out]')?.textContent).toContain(EN['setup.finishCompany.signedOut']);
+    expect(view.container.querySelector('[data-signed-out]')?.textContent).toContain(
+      EN['setup.finishCompany.signedOut']
+    );
     const again = button(view.container, 'sign-in-again');
     expect(again?.textContent).toBe('Sign in again');
     fireEvent.click(again!);
@@ -101,7 +141,9 @@ describe('the finishing step when the service cannot be read', () => {
 
   /* RED WHEN: a read the service answers with an error leaves the step on its reading words, or says nothing of what failed. */
   it('says the read failed, at once, when the service answers the read with an error', async () => {
-    kr.answer = async () => { throw new Error('request failed: 502'); };
+    kr.answer = async () => {
+      throw new Error('request failed: 502');
+    };
     const view = draw(sessionWith());
     await settle();
     expect(view.container.textContent).not.toContain(READING);
@@ -126,7 +168,9 @@ describe('the finishing step when the service cannot be read', () => {
 
   /* RED WHEN: Try again after a failed read does not read the service again, or a service that has come back is still shown as unread. */
   it('reads the service again on Try again, and shows where the company stands once it answers', async () => {
-    kr.answer = async () => { throw new Error('request failed: 502'); };
+    kr.answer = async () => {
+      throw new Error('request failed: 502');
+    };
     const view = draw(sessionWith());
     await settle();
     expect(kr.asked).toBe(1);

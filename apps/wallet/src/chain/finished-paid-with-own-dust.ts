@@ -2,7 +2,12 @@ import type { FinalizedTransactionRecipe, FinalizedTx, SignSegment, WalletFacade
 import { bytesFromBase64 } from './balance-for-page.js';
 import { carriedBy } from './carried.js';
 import {
-  addedMoreThanTheFeeRefusal, FEE_TTL_MS, FeeRefused, paidFromOwnDust, type AdoptedAs, type OwnFeeUnpaid,
+  addedMoreThanTheFeeRefusal,
+  FEE_TTL_MS,
+  FeeRefused,
+  paidFromOwnDust,
+  type AdoptedAs,
+  type OwnFeeUnpaid
 } from './sent-straight-to-the-chain.js';
 
 export type { OwnFeeUnpaid };
@@ -16,9 +21,17 @@ export type { OwnFeeUnpaid };
  */
 
 /** The parts of the wallet's facade the payment of a finished transaction's fee uses. */
-export type OwnFeeFacade = Pick<WalletFacade,
-  'dust' | 'state' | 'adoptTransaction' | 'estimateTransactionFee' | 'balanceFinalizedTransaction' | 'signRecipe'
-  | 'finalizeRecipe' | 'submitTransaction'>;
+export type OwnFeeFacade = Pick<
+  WalletFacade,
+  | 'dust'
+  | 'state'
+  | 'adoptTransaction'
+  | 'estimateTransactionFee'
+  | 'balanceFinalizedTransaction'
+  | 'signRecipe'
+  | 'finalizeRecipe'
+  | 'submitTransaction'
+>;
 
 export interface OwnFeeDoors {
   /** The paying account's facade with its DUST part started. */
@@ -37,13 +50,17 @@ export interface OwnFeeWay {
 
 /** This wallet paid no fee and sent nothing, and why. */
 export class OwnFeeNotPaid extends FeeRefused {
-  constructor(readonly why: OwnFeeUnpaid, message: string) {
+  constructor(
+    readonly why: OwnFeeUnpaid,
+    message: string
+  ) {
     super(message);
     this.name = 'OwnFeeNotPaid';
   }
 }
 
-const notPaid = (what: string): OwnFeeNotPaid => new OwnFeeNotPaid('not-paid', `${what}, so it paid nothing and sent nothing`);
+const notPaid = (what: string): OwnFeeNotPaid =>
+  new OwnFeeNotPaid('not-paid', `${what}, so it paid nothing and sent nothing`);
 
 /** The earliest deadline among a transaction's parts, or null when it names none this wallet can read. */
 export function deadlineOf(tx: unknown): number | null {
@@ -80,8 +97,11 @@ export function moreThanTheShownFeeRefusal(recipe: unknown, original: unknown, s
  */
 export async function finishedSentWithOwnDust(o: OwnFeeDoors, finished: string, way: OwnFeeWay): Promise<string> {
   return paidFromOwnDust<OwnFeeFacade, FinalizedTx, FinalizedTransactionRecipe, string>({
-    facade: () => o.facade(), signSegment: () => o.signSegment(), stillWanted: () => way.stillWanted(),
-    handed: { over: false }, handedOver: () => way.handedOver(),
+    facade: () => o.facade(),
+    signSegment: () => o.signSegment(),
+    stillWanted: () => way.stillWanted(),
+    handed: { over: false },
+    handedOver: () => way.handedOver(),
     refused: (why, message) => new OwnFeeNotPaid(why, message),
     adopt: (facade) => facade.adoptTransaction(bytesFromBase64(finished), 'Finalized'),
     unadopted: 'this wallet could not read the transaction it finished',
@@ -93,8 +113,11 @@ export async function finishedSentWithOwnDust(o: OwnFeeDoors, finished: string, 
       return new Date(Math.min(way.now() + FEE_TTL_MS, lives));
     },
     balance: (facade, original, options) => facade.balanceFinalizedTransaction(original, options),
-    confirm: { estimate: (facade, original, ttl) => facade.estimateTransactionFee(original, { ttl }), asked: (fee) => way.confirm(fee) },
+    confirm: {
+      estimate: (facade, original, ttl) => facade.estimateTransactionFee(original, { ttl }),
+      asked: (fee) => way.confirm(fee)
+    },
     names: { signed: 'the fee', sent: 'transaction' },
-    sender: (facade, done) => async () => String(await facade.submitTransaction(done)),
+    sender: (facade, done) => async () => String(await facade.submitTransaction(done))
   });
 }

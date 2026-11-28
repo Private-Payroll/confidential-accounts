@@ -26,7 +26,7 @@ import { serveJobs, changeReporter, type Port } from '../../../src/core/jobs-wor
  */
 export const selfPort = (scope: any): Port => ({
   postMessage: (m) => scope.postMessage(m),
-  onMessage: (h) => scope.addEventListener('message', (e: any) => h(e.data)),
+  onMessage: (h) => scope.addEventListener('message', (e: any) => h(e.data))
 });
 
 /**
@@ -67,7 +67,7 @@ export const startJobWorker = (scope: any, runner: JobRunner, dbName?: string) =
     every: (fn, ms) => {
       const id = scope.setInterval(fn, ms);
       return () => scope.clearInterval(id);
-    },
+    }
   });
 
   serveJobs(queue, port);
@@ -88,10 +88,17 @@ export const startJobWorker = (scope: any, runner: JobRunner, dbName?: string) =
     port.postMessage({
       kind: 'change',
       job: {
-        id: 'resume', accountId: '', kind: 'approve', state: 'failed', signerId: '',
-        payload: {}, attempts: 0, createdAt: '', updatedAt: '',
-        error: `work left over from a previous session could not be resumed: ${String((e as any)?.message ?? e)}`,
-      },
+        id: 'resume',
+        accountId: '',
+        kind: 'approve',
+        state: 'failed',
+        signerId: '',
+        payload: {},
+        attempts: 0,
+        createdAt: '',
+        updatedAt: '',
+        error: `work left over from a previous session could not be resumed: ${String((e as any)?.message ?? e)}`
+      }
     });
   });
 

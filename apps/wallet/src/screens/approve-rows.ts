@@ -66,27 +66,29 @@ export interface Row {
  * was chosen. A kind of its own could refuse to carry anything else with it; here every row is shown and approved
  * separately, and declining one is a normal answer.
  */
-export const rowsFor = (
-  request: Wanting, registry: Registry, profile: Profile, owned: OwnedAddress,
-): readonly Row[] => asked(request, registry).map(({ want, known }) => {
-  const definition = known ? registry.definitionOf(want.attribute) : null;
-  const isDerived = definition !== null && definition.source === 'derived';
-  const derived = isDerived ? derive(definition, owned) : null;
-  return {
-    attribute: want.attribute,
-    required: want.required,
-    reason: want.reason,
-    definition,
-    /* NOTHING DERIVED IS EVER IN `held`, so there is nothing to offer and no
-     * list to pick from. `heldAbout` would answer an empty array anyway; not
-     * calling it is what says the emptiness is by construction. */
-    options: definition === null || isDerived ? [] : heldAbout(profile, definition.name),
-    derived,
-    /* Computed from the value that is about to be sent and from
-     * nothing else — the same string the receiving side will compute from the
-     * same address, which is the whole of the comparison. */
-    code: (want.attribute === RECEIVING_ADDRESS || want.attribute === PUBLIC_RECEIVING_ADDRESS)
-      && derived !== null && derived.ok
-      ? addressFingerprint(derived.value) : null,
-  };
-});
+export const rowsFor = (request: Wanting, registry: Registry, profile: Profile, owned: OwnedAddress): readonly Row[] =>
+  asked(request, registry).map(({ want, known }) => {
+    const definition = known ? registry.definitionOf(want.attribute) : null;
+    const isDerived = definition !== null && definition.source === 'derived';
+    const derived = isDerived ? derive(definition, owned) : null;
+    return {
+      attribute: want.attribute,
+      required: want.required,
+      reason: want.reason,
+      definition,
+      /* NOTHING DERIVED IS EVER IN `held`, so there is nothing to offer and no
+       * list to pick from. `heldAbout` would answer an empty array anyway; not
+       * calling it is what says the emptiness is by construction. */
+      options: definition === null || isDerived ? [] : heldAbout(profile, definition.name),
+      derived,
+      /* Computed from the value that is about to be sent and from
+       * nothing else — the same string the receiving side will compute from the
+       * same address, which is the whole of the comparison. */
+      code:
+        (want.attribute === RECEIVING_ADDRESS || want.attribute === PUBLIC_RECEIVING_ADDRESS) &&
+        derived !== null &&
+        derived.ok
+          ? addressFingerprint(derived.value)
+          : null
+    };
+  });

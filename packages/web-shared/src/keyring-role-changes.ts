@@ -25,12 +25,25 @@ export const roleChangeKeyOf = (accountId: string, leaf: string): string => `${a
  * The saved keys keeping the role change of `leaf` this wallet confirmed when it raised the seat's removal. Raising
  * the same seat's removal again replaces what was kept for it, so there is never more than one entry for a seat.
  */
-export const withRoleChangeKept = (k: Keyring, accountId: string, leaf: string, coinPublicKey: string, role: SignerRole, token: string): Keyring => ({
+export const withRoleChangeKept = (
+  k: Keyring,
+  accountId: string,
+  leaf: string,
+  coinPublicKey: string,
+  role: SignerRole,
+  token: string
+): Keyring => ({
   ...k,
   roleChangesKept: {
     ...(k.roleChangesKept ?? {}),
-    [roleChangeKeyOf(accountId, leaf)]: { accountId, leaf: leaf.toLowerCase(), coinPublicKey: coinPublicKey.toLowerCase(), role, token: token.toLowerCase() },
-  },
+    [roleChangeKeyOf(accountId, leaf)]: {
+      accountId,
+      leaf: leaf.toLowerCase(),
+      coinPublicKey: coinPublicKey.toLowerCase(),
+      role,
+      token: token.toLowerCase()
+    }
+  }
 });
 
 /**

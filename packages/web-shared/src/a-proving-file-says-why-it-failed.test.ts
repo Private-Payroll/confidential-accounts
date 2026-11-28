@@ -16,26 +16,41 @@
 import { describe, it, expect } from 'vitest';
 import { httpKeyMaterialSource, IndexedDbArtefactCache, MemoryArtefactCache } from './key-material.js';
 
-type Answer = { status?: number; length?: string | null; encoding?: string; chunks?: number[][]; breaksAfter?: number; whole?: number[] };
+type Answer = {
+  status?: number;
+  length?: string | null;
+  encoding?: string;
+  chunks?: number[][];
+  breaksAfter?: number;
+  whole?: number[];
+};
 
 /** A response as a browser hands it over: a status, two headers, and a body read a piece at a time. */
 const answer = (a: Answer): Response => {
   let at = 0;
   const chunks = a.chunks ?? [];
-  const headers: Record<string, string | null> = { 'content-length': a.length ?? null, 'content-encoding': a.encoding ?? null };
+  const headers: Record<string, string | null> = {
+    'content-length': a.length ?? null,
+    'content-encoding': a.encoding ?? null
+  };
   return {
     ok: (a.status ?? 200) >= 200 && (a.status ?? 200) < 300,
     status: a.status ?? 200,
     headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
-    body: a.whole !== undefined ? null : {
-      getReader: () => ({
-        read: async () => {
-          if (a.breaksAfter !== undefined && at === a.breaksAfter) throw new TypeError('network error');
-          return at < chunks.length ? { done: false, value: new Uint8Array(chunks[at++]!) } : { done: true, value: undefined };
-        },
-      }),
-    },
-    arrayBuffer: async () => new Uint8Array(a.whole ?? chunks.flat()).buffer,
+    body:
+      a.whole !== undefined
+        ? null
+        : {
+            getReader: () => ({
+              read: async () => {
+                if (a.breaksAfter !== undefined && at === a.breaksAfter) throw new TypeError('network error');
+                return at < chunks.length
+                  ? { done: false, value: new Uint8Array(chunks[at++]!) }
+                  : { done: true, value: undefined };
+              }
+            })
+          },
+    arrayBuffer: async () => new Uint8Array(a.whole ?? chunks.flat()).buffer
   } as unknown as Response;
 };
 
@@ -45,9 +60,15 @@ describe('WHAT A FAILED PROVING FILE SAYS', () => {
      * asked for as well - the service never hands one out, so it is only ever a second refusal. */
     const asked: string[] = [];
     const src = httpKeyMaterialSource('/a', {
-      fetchImpl: (async (url: string) => { asked.push(url); return answer({ status: 503 }); }) as never,
+      fetchImpl: (async (url: string) => {
+        asked.push(url);
+        return answer({ status: 503 });
+      }) as never
     });
-    const said = await src.getParams(15).then(() => '', (e: Error) => e.message);
+    const said = await src.getParams(15).then(
+      () => '',
+      (e: Error) => e.message
+    );
     expect(said).toContain('bls_midnight_2p15: 503 for /a/params/bls_midnight_2p15');
     expect(asked).toEqual(['/a/params/bls_midnight_2p15']);
     expect(said).toContain('(k=15)');
@@ -59,53 +80,106 @@ describe('WHAT A FAILED PROVING FILE SAYS', () => {
     /* RED WHEN: the bytes that arrived are taken as the file whatever the server said its length was - four of
      * six bytes are then handed to the prover and kept for every proof after. */
     const cache = new MemoryArtefactCache();
-    const src = httpKeyMaterialSource('/a', { cache, fetchImpl: (async () => answer({ length: '6', chunks: [[1, 2, 3], [4]] })) as never });
-    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow('the download of /a/keys/deposit.prover stopped after 4 of 6 bytes');
+    const src = httpKeyMaterialSource('/a', {
+      cache,
+      fetchImpl: (async () => answer({ length: '6', chunks: [[1, 2, 3], [4]] })) as never
+    });
+    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(
+      'the download of /a/keys/deposit.prover stopped after 4 of 6 bytes'
+    );
     expect(await cache.get('artefact:prover:x/deposit')).toBeNull();
   });
 
   it('THE SAME IS TRUE WHERE THE BODY CAN ONLY BE READ WHOLE', async () => {
     /* RED WHEN: the whole-body path skips the length check the streaming path makes. */
-    const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => answer({ length: '6', whole: [1, 2, 3, 4] })) as never });
-    await expect(src.artefact('ir', 'x/deposit')).rejects.toThrow('the download of /a/zkir/deposit.bzkir stopped after 4 of 6 bytes');
+    const src = httpKeyMaterialSource('/a', {
+      fetchImpl: (async () => answer({ length: '6', whole: [1, 2, 3, 4] })) as never
+    });
+    await expect(src.artefact('ir', 'x/deposit')).rejects.toThrow(
+      'the download of /a/zkir/deposit.bzkir stopped after 4 of 6 bytes'
+    );
   });
 
   it('A BODY SENT AS IT IS, SAID SO BY NAME, IS HELD TO ITS LENGTH', async () => {
     /* RED WHEN: a body whose encoding is named as none is treated as encoded - its length is then never checked. */
-    const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => answer({ length: '6', encoding: 'identity', chunks: [[1, 2, 3], [4]] })) as never });
-    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow('the download of /a/keys/deposit.prover stopped after 4 of 6 bytes');
+    const src = httpKeyMaterialSource('/a', {
+      fetchImpl: (async () => answer({ length: '6', encoding: 'identity', chunks: [[1, 2, 3], [4]] })) as never
+    });
+    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(
+      'the download of /a/keys/deposit.prover stopped after 4 of 6 bytes'
+    );
   });
 
   it('A BODY THAT BREAKS WHILE BEING READ WHOLE SAYS SO, AND DOES NOT GUESS HOW MUCH HAD ARRIVED', async () => {
     /* RED WHEN: the whole-body failure reports a byte count - nothing counted the bytes, so any figure is invented. */
-    const broken = { ...answer({ length: '6', whole: [1] }), arrayBuffer: async () => { throw new TypeError('network error'); } } as unknown as Response;
+    const broken = {
+      ...answer({ length: '6', whole: [1] }),
+      arrayBuffer: async () => {
+        throw new TypeError('network error');
+      }
+    } as unknown as Response;
     const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => broken) as never });
-    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow('the download of /a/keys/deposit.prover broke before it could be read: network error');
+    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(
+      'the download of /a/keys/deposit.prover broke before it could be read: network error'
+    );
   });
 
   it('AN ENCODED BODY THAT BREAKS PART WAY DOES NOT SET WHAT ARRIVED AGAINST THE ENCODED LENGTH', async () => {
     /* RED WHEN: the encoded length is printed beside the decoded count - "4 of 3 bytes" reads as a measurement and is not one. */
-    const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => answer({ length: '3', encoding: 'gzip', chunks: [[1, 2, 3, 4], [5]], breaksAfter: 1 })) as never });
-    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(/^the download of \/a\/keys\/deposit\.prover stopped after 4 bytes: network error$/);
+    const src = httpKeyMaterialSource('/a', {
+      fetchImpl: (async () =>
+        answer({ length: '3', encoding: 'gzip', chunks: [[1, 2, 3, 4], [5]], breaksAfter: 1 })) as never
+    });
+    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(
+      /^the download of \/a\/keys\/deposit\.prover stopped after 4 bytes: network error$/
+    );
   });
 
   it('A BODY THAT WAS ENCODED ON THE WAY IS NOT HELD TO THE ENCODED LENGTH', async () => {
     /* RED WHEN: the length check ignores the encoding - the header counts the compressed bytes and the browser
      * hands over the decompressed ones, so every compressed file would be refused. */
-    const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => answer({ length: '3', encoding: 'gzip', chunks: [[1, 2, 3], [4, 5, 6]] })) as never });
-    expect([...await src.artefact('verifier', 'x/deposit')]).toEqual([1, 2, 3, 4, 5, 6]);
+    const src = httpKeyMaterialSource('/a', {
+      fetchImpl: (async () =>
+        answer({
+          length: '3',
+          encoding: 'gzip',
+          chunks: [
+            [1, 2, 3],
+            [4, 5, 6]
+          ]
+        })) as never
+    });
+    expect([...(await src.artefact('verifier', 'x/deposit'))]).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('A DOWNLOAD THAT BREAKS PART WAY SAYS WHICH FILE, HOW FAR IT GOT, AND WHY', async () => {
     /* RED WHEN: the reader's own failure is let through as it is - "network error", naming no file. */
-    const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => answer({ length: '6', chunks: [[1, 2, 3], [4, 5, 6]], breaksAfter: 1 })) as never });
-    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow('the download of /a/keys/deposit.prover stopped after 3 of 6 bytes: network error');
+    const src = httpKeyMaterialSource('/a', {
+      fetchImpl: (async () =>
+        answer({
+          length: '6',
+          chunks: [
+            [1, 2, 3],
+            [4, 5, 6]
+          ],
+          breaksAfter: 1
+        })) as never
+    });
+    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(
+      'the download of /a/keys/deposit.prover stopped after 3 of 6 bytes: network error'
+    );
   });
 
   it('A SERVER THAT CANNOT BE REACHED IS NAMED', async () => {
     /* RED WHEN: the fetch's own rejection is let through - "Failed to fetch", naming nothing. */
-    const src = httpKeyMaterialSource('/a', { fetchImpl: (async () => { throw new TypeError('Failed to fetch'); }) as never });
-    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow('/a/keys/deposit.prover could not be reached: Failed to fetch');
+    const src = httpKeyMaterialSource('/a', {
+      fetchImpl: (async () => {
+        throw new TypeError('Failed to fetch');
+      }) as never
+    });
+    await expect(src.artefact('prover', 'x/deposit')).rejects.toThrow(
+      '/a/keys/deposit.prover could not be reached: Failed to fetch'
+    );
   });
 });
 
@@ -118,7 +192,7 @@ describe('EVERY PROVING FILE THAT IS FETCHED IS CHECKED WITH THE SERVER', () => 
       fetchImpl: (async (url: string, init?: RequestInit) => {
         asked.push({ url, cache: init?.cache });
         return url.includes('midnight_2p9') ? answer({ status: 404 }) : answer({ length: '1', chunks: [[7]] });
-      }) as never,
+      }) as never
     });
     await src.lookupKey('x/deposit');
     await src.artefact('verifier', 'x/payout');
@@ -136,16 +210,20 @@ const aStoreThatRefuses = () => ({
     setTimeout(() => {
       request.result = {
         objectStoreNames: { contains: () => true },
-        transaction: () => { const e = new Error('the quota has been exceeded.'); e.name = 'QuotaExceededError'; throw e; },
+        transaction: () => {
+          const e = new Error('the quota has been exceeded.');
+          e.name = 'QuotaExceededError';
+          throw e;
+        }
       };
       request.onsuccess?.();
     }, 0);
     return request;
-  },
+  }
 });
 
-describe('THE BROWSER\'S OWN STORE REFUSING A FILE IS SAID, AND COSTS ONLY A DOWNLOAD', () => {
-  it('A REFUSAL TO KEEP OR HAND BACK A FILE IS TOLD, NAMING THE FILE AND THE STORE\'S REASON, AND NEVER THROWN', async () => {
+describe("THE BROWSER'S OWN STORE REFUSING A FILE IS SAID, AND COSTS ONLY A DOWNLOAD", () => {
+  it("A REFUSAL TO KEEP OR HAND BACK A FILE IS TOLD, NAMING THE FILE AND THE STORE'S REASON, AND NEVER THROWN", async () => {
     /* RED WHEN: the store's refusal is swallowed without being told - a file that is downloaded again for every
      * proof then looks exactly like one that was never kept. */
     const told: string[] = [];
@@ -154,13 +232,15 @@ describe('THE BROWSER\'S OWN STORE REFUSING A FILE IS SAID, AND COSTS ONLY A DOW
     await expect(cache.get('artefact:params:bls_midnight_2p15')).resolves.toBeNull();
     expect(told).toEqual([
       "this browser's store would not keep artefact:params:bls_midnight_2p15: the quota has been exceeded.",
-      "this browser's store would not hand back artefact:params:bls_midnight_2p15: the quota has been exceeded.",
+      "this browser's store would not hand back artefact:params:bls_midnight_2p15: the quota has been exceeded."
     ]);
   });
 
   it('WHOEVER IS TOLD CANNOT STOP THE CACHE', async () => {
     /* RED WHEN: a listener that throws is let throw - a failing console would then stop a proof. */
-    const cache = new IndexedDbArtefactCache(aStoreThatRefuses(), 'test', () => { throw new Error('nobody listening'); });
+    const cache = new IndexedDbArtefactCache(aStoreThatRefuses(), 'test', () => {
+      throw new Error('nobody listening');
+    });
     await expect(cache.put('k', new Uint8Array([1]))).resolves.toBeUndefined();
     await expect(cache.get('k')).resolves.toBeNull();
   });

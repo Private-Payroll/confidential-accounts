@@ -15,7 +15,8 @@ import { Intent, LedgerState, Transaction, TransactionContext, WellFormedStrictn
 const NOW = Date.now();
 const TTL = new Date(NOW + 10 * 60_000);
 /** One intent in its own segment, as the call is in segment 1 and a fee is added in a segment of its own. */
-const intentIn = (segment: number) => Transaction.fromParts('undeployed').addIntent({ tag: 'specific', value: segment }, Intent.new(TTL));
+const intentIn = (segment: number) =>
+  Transaction.fromParts('undeployed').addIntent({ tag: 'specific', value: segment }, Intent.new(TTL));
 
 describe('THE CALL IS KNOWN ON THE CHAIN BY WHAT THE WALLET HOLDS, WHOEVER PAID ITS FEE', () => {
   it('the identifiers of the call before its fee are among those of the bound transaction, its fee merged either way', () => {
@@ -30,7 +31,10 @@ describe('THE CALL IS KNOWN ON THE CHAIN BY WHAT THE WALLET HOLDS, WHOEVER PAID 
     const ownDust = call.bind().merge(intentIn(2).bind());
     /* Bound with its fee merged before binding. */
     const mergedFirst = call.merge(intentIn(2)).bind();
-    for (const [how, sent] of [['bound, then the fee merged', ownDust], ['the fee merged, then bound', mergedFirst]] as const) {
+    for (const [how, sent] of [
+      ['bound, then the fee merged', ownDust],
+      ['the fee merged, then bound', mergedFirst]
+    ] as const) {
       const onTheWire = Transaction.deserialize('signature', 'pre-proof', 'binding', sent.serialize());
       /* RED WHEN: the transaction that reaches the chain does not carry the identifiers the wallet looks for. */
       for (const id of held) expect(onTheWire.identifiers(), how).toContain(id);
@@ -51,9 +55,13 @@ describe('THE LEDGER TAKES ONE CALL ONCE, WHATEVER FEE CAME WITH IT', () => {
     return s;
   };
   const seconds = BigInt(Math.floor(NOW / 1000));
-  const contextOf = (state: LedgerState) => new TransactionContext(state, {
-    secondsSinceEpoch: seconds, secondsSinceEpochErr: 10, parentBlockHash: '00'.repeat(32), lastBlockTime: seconds - 6n,
-  });
+  const contextOf = (state: LedgerState) =>
+    new TransactionContext(state, {
+      secondsSinceEpoch: seconds,
+      secondsSinceEpochErr: 10,
+      parentBlockHash: '00'.repeat(32),
+      lastBlockTime: seconds - 6n
+    });
   const applied = (state: LedgerState, tx: ReturnType<typeof intentIn>) => {
     const sent = tx.eraseProofs();
     return state.apply(sent.wellFormed(state, strictness(), new Date(NOW)), contextOf(state));

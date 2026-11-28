@@ -14,16 +14,30 @@ import { ASKS_UNREAD, type AsksUnread, type ProposalAsks } from 'vaults-web-shar
 
 /** The purposes the service's records are sealed for, and the words of its answers: compared, never shown. */
 export const SERVICE = {
-  proposalsRecord: 'proposals', runsRecord: 'payroll', proposalKind: 'proposal',
-  active: 'active', pending: 'pending', leaver: 'leaver', shielded: 'shielded', unshielded: 'unshielded',
+  proposalsRecord: 'proposals',
+  runsRecord: 'payroll',
+  proposalKind: 'proposal',
+  active: 'active',
+  pending: 'pending',
+  leaver: 'leaver',
+  shielded: 'shielded',
+  unshielded: 'unshielded'
 } as const;
 
 /** How a payment is made, read from the address it goes to. */
-export const PAID = { privately: 'privately', publicly: 'publicly', notSetUp: 'not-set-up', notKnown: 'not-known' } as const;
+export const PAID = {
+  privately: 'privately',
+  publicly: 'publicly',
+  notSetUp: 'not-set-up',
+  notKnown: 'not-known'
+} as const;
 export type Paid = (typeof PAID)[keyof typeof PAID];
 
 /** A signer of the company, as its own record names them. */
-export interface SignerRow { id: string; name: string }
+export interface SignerRow {
+  id: string;
+  name: string;
+}
 
 /** What a proposal this device does not believe, or cannot open, is listed as: by its id alone, with nothing read from it. */
 export const UNREADABLE = 'unreadable' as const;
@@ -86,7 +100,13 @@ export { ASKS_UNREAD, type AsksUnread, type ProposalAsks };
  * person is shown, and is null for a token the registry does not name; `paid`
  * is not known for a round written before a run paid one form.
  */
-export interface RunPays { run: string; period: string; asset: string; symbol: string | null; paid: Paid }
+export interface RunPays {
+  run: string;
+  period: string;
+  asset: string;
+  symbol: string | null;
+  paid: Paid;
+}
 
 /** One token of a run: what it pays privately and what publicly, never added together. */
 export interface RunCurrency {
@@ -101,7 +121,12 @@ export interface RunCurrency {
 }
 
 /** A person in a run, and what the run pays them. */
-export interface RunPayee { id: string; name: string; amount: TokenAmount | null; paid: Paid }
+export interface RunPayee {
+  id: string;
+  name: string;
+  amount: TokenAmount | null;
+  paid: Paid;
+}
 
 /**
  * A leg of a run, paid in one token, in one form, from one vault. `code` is
@@ -110,7 +135,12 @@ export interface RunPayee { id: string; name: string; amount: TokenAmount | null
  * does not name.
  */
 export interface RunLeg {
-  code: string; asset: string; symbol: string | null; paid: Paid; vault: string; payees: number;
+  code: string;
+  asset: string;
+  symbol: string | null;
+  paid: Paid;
+  vault: string;
+  payees: number;
   /** Each person's payment on this leg as the account would record it paid, 64 lower-case hex digits; absent where the run records none. */
   leaves?: readonly string[];
   /** Every further attempt at this leg, oldest first: absent when there is none. */
@@ -156,7 +186,11 @@ export const PAID_STATE = { all: 2, some: 1, none: 0 } as const;
 export type PaidState = (typeof PAID_STATE)[keyof typeof PAID_STATE];
 
 /** One person's payment on a leg: what a public payment would put on the chain beside their address. */
-interface RunLegPay { name: string; address: string | null; amount: TokenAmount | null }
+interface RunLegPay {
+  name: string;
+  address: string | null;
+  amount: TokenAmount | null;
+}
 
 /** A payroll run, as the runs list and its own page show it. */
 export interface RunRow {
@@ -173,7 +207,12 @@ export interface RunRow {
 }
 
 /** Where a person on the payroll stands. */
-export const STANDING = { invited: 'invited', waitingForCheck: 'waiting-for-check', active: 'active', leaver: 'leaver' } as const;
+export const STANDING = {
+  invited: 'invited',
+  waitingForCheck: 'waiting-for-check',
+  active: 'active',
+  leaver: 'leaver'
+} as const;
 export type PersonStanding = (typeof STANDING)[keyof typeof STANDING];
 
 /** How a person is admitted: on the fingerprint they read out (added by link or at a private address), or on their wallet's signed claim of the public address they were added at, with nothing read out. */
@@ -181,10 +220,18 @@ export const ADMIT_BY = { fingerprint: 'fingerprint', claim: 'claim' } as const;
 export type AdmitBy = (typeof ADMIT_BY)[keyof typeof ADMIT_BY];
 
 /** One line of a person's salary history: what they are paid each run from a calendar day, and when a seat's device made the line (null on a line from before the history was kept). */
-interface PersonPayLine { amount: TokenAmount | null; from: string; madeAt: string | null }
+interface PersonPayLine {
+  amount: TokenAmount | null;
+  from: string;
+  madeAt: string | null;
+}
 
 /** One line of a person's classification history, kept the way a pay line is. */
-interface PersonClassificationLine { classification: EmployeeClassification; from: string; madeAt: string | null }
+interface PersonClassificationLine {
+  classification: EmployeeClassification;
+  from: string;
+  madeAt: string | null;
+}
 
 /** A person the company pays, as the people list and their panel show them. */
 export interface PersonRow {
@@ -224,4 +271,11 @@ export { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
  * of approvals the vault's runs need as the chain holds it (the vault's own number where it has one, else the company's), and is
  * absent where the chain gave none.
  */
-export interface VaultRow { vault: string; createdAt: string; standing: VaultStanding; adopted?: true; approvals?: number; retired?: true }
+export interface VaultRow {
+  vault: string;
+  createdAt: string;
+  standing: VaultStanding;
+  adopted?: true;
+  approvals?: number;
+  retired?: true;
+}

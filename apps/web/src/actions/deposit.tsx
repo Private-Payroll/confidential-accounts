@@ -1,15 +1,54 @@
 import { useCompanyView } from '../records/company-records.js';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
-  Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, Button, formatDate, InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput,
-  InputGroupText, Item, ItemContent, ItemDescription, ItemTitle, Label, Progress, Spinner, useLanguage, useText,
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Amount,
+  AMOUNT_KIND,
+  Button,
+  formatDate,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  InputGroupText,
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+  Label,
+  Progress,
+  Spinner,
+  useLanguage,
+  useText
 } from 'vaults-ui';
 import { ActRefused } from '../act-refused.js';
 import { useVaultActions } from '../records/vault-pending.js';
 import {
-  AMOUNT_REFUSAL, CHAIN_SAID, CHECKED, checkMyLastDeposit, companyKeyHeldHere, DEPOSIT_KIND, DEPOSIT_METHODS, DEPOSIT_STEP, DEPOSITED, depositNow, MAX, putAwayEndedDeposit,
-  putMoneyIn, PUT_IN, STOPPED, usualSecondsOf, watchDeposit,
-  type AmountRefusal, type DepositMethod, type DepositNow, type DepositStep, type LastDepositChecked, type Stopped,
+  AMOUNT_REFUSAL,
+  CHAIN_SAID,
+  CHECKED,
+  checkMyLastDeposit,
+  companyKeyHeldHere,
+  DEPOSIT_KIND,
+  DEPOSIT_METHODS,
+  DEPOSIT_STEP,
+  DEPOSITED,
+  depositNow,
+  MAX,
+  putAwayEndedDeposit,
+  putMoneyIn,
+  PUT_IN,
+  STOPPED,
+  usualSecondsOf,
+  watchDeposit,
+  type AmountRefusal,
+  type DepositMethod,
+  type DepositNow,
+  type DepositStep,
+  type LastDepositChecked,
+  type Stopped
 } from '../adapters/deposit.js';
 import type { VaultStanding } from '../adapters/company-rows.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
@@ -20,7 +59,6 @@ import { STEP, type StepProps } from '../setup/step-ids.js';
 import { secondsSince, StageProgress, useTicker } from '../stage-progress.js';
 import { AccountTokens, WalletWindowNamed, type TokenChosen } from './account-tokens.js';
 import { PanelFooter } from '../shell/right-panel.js';
-
 
 /**
  * THE DEPOSIT THE ADAPTER KEEPS FOR A VAULT IN THIS TAB, followed as it changes. A deposit lives in the adapter, not in
@@ -35,10 +73,8 @@ function useDepositNow(vault: string): DepositNow | null {
   return now;
 }
 
-
 /** The finished deposits the page has been told of, so a page that is drawn again, or a second view of the same deposit, never tells it twice. */
 const TOLD = new WeakSet<object>();
-
 
 /** Tells `told` once for each deposit that finishes, however many views of it are drawn or drawn again, so the vault's balances are read again once. */
 function useToldWhenDone(now: DepositNow | null, told: () => void): void {
@@ -49,7 +85,6 @@ function useToldWhenDone(now: DepositNow | null, told: () => void): void {
   }, [now]);
 }
 
-
 function useStepWords(): Record<DepositStep, string> {
   const t = useText();
   return {
@@ -57,10 +92,9 @@ function useStepWords(): Record<DepositStep, string> {
     [DEPOSIT_STEP.provingTheDeposit]: t('deposit.step.provingTheDeposit'),
     [DEPOSIT_STEP.payingInYourWallet]: t('deposit.step.payingInYourWallet'),
     [DEPOSIT_STEP.sending]: t('deposit.step.sending'),
-    [DEPOSIT_STEP.waitingForTheChain]: t('deposit.step.waitingForTheChain'),
+    [DEPOSIT_STEP.waitingForTheChain]: t('deposit.step.waitingForTheChain')
   };
 }
-
 
 /** The press the wallet's payment window offers, by how the money goes in. */
 function usePayPress(kind: DepositNow['kind']): string {
@@ -68,22 +102,23 @@ function usePayPress(kind: DepositNow['kind']): string {
   return kind === DEPOSIT_KIND.private ? t('deposit.payWindow.press.private') : t('deposit.payWindow.press.public');
 }
 
-
 /**
  * What opens the right-hand panel on this vault's deposit, on what checking its last deposit found, or on the naming of
  * the wallet window that check opens in a tab that holds no company key.
  */
-function useOpenDeposit(company: string, vault: string, standing?: VaultStanding): (from?: { checked?: LastDepositChecked | null; naming?: boolean }) => void {
+function useOpenDeposit(
+  company: string,
+  vault: string,
+  standing?: VaultStanding
+): (from?: { checked?: LastDepositChecked | null; naming?: boolean }) => void {
   const t = useText();
   const { inPanel } = useVaultActions();
   return ({ checked = null, naming = false } = {}) => {
-    inPanel(
-      checked === null && !naming ? t('vault.deposit') : t('vault.checkLastDeposit'),
-      (props) => <Deposit company={company} vault={vault} standing={standing} checked={checked} naming={naming} {...props} />,
-    );
+    inPanel(checked === null && !naming ? t('vault.deposit') : t('vault.checkLastDeposit'), (props) => (
+      <Deposit company={company} vault={vault} standing={standing} checked={checked} naming={naming} {...props} />
+    ));
   };
 }
-
 
 /**
  * THE PRESS ON CHECK MY LAST DEPOSIT, written once for the vault page and the panel. It is taken once however often it
@@ -97,7 +132,12 @@ function useCheckMyLastDeposit(company: string, vault: string) {
   const [checking, setChecking] = useState(false);
   const going = useRef(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    []
+  );
   const run = (found: (answer: LastDepositChecked) => void): void => {
     if (view === null || going.current) return;
     going.current = true;
@@ -112,28 +152,46 @@ function useCheckMyLastDeposit(company: string, vault: string) {
   return { checking, run, keyHeld: () => companyKeyHeldHere(company) };
 }
 
-
 /**
  * THE VAULT PAGE'S LINE ABOUT A DEPOSIT THAT RUNS, OR HAS ENDED AND NOT BEEN PUT AWAY: the step it is on, and a way back
  * to the panel that shows it. `onDone` is told once for each deposit seen to finish.
  */
-export function DepositStrip({ company, vault, standing, onDone }: { company: string; vault: string; standing?: VaultStanding; onDone: () => void }) {
+export function DepositStrip({
+  company,
+  vault,
+  standing,
+  onDone
+}: {
+  company: string;
+  vault: string;
+  standing?: VaultStanding;
+  onDone: () => void;
+}) {
   const t = useText();
   const now = useDepositNow(vault);
   const open = useOpenDeposit(company, vault, standing);
   useToldWhenDone(now, onDone);
   if (now === null) return null;
-  const says = now.of === DEPOSITED.running ? t('vault.deposit.running', { n: now.n, count: now.steps.length })
-    : now.of === DEPOSITED.done ? t('vault.deposit.done') : t('vault.deposit.failed');
+  const says =
+    now.of === DEPOSITED.running
+      ? t('vault.deposit.running', { n: now.n, count: now.steps.length })
+      : now.of === DEPOSITED.done
+        ? t('vault.deposit.done')
+        : t('vault.deposit.failed');
   return (
     <div className="flex flex-wrap items-center gap-3" role="status" data-deposit-strip={now.of}>
       <p className="text-sm">{says}</p>
-      <Button variant="outline" size="sm" onClick={() => open()} data-action="open-deposit">{t('vault.deposit.open')}</Button>
-      {now.of === DEPOSITED.running ? <p className="w-full text-xs text-muted-foreground" data-check-waits>{t('vault.deposit.checkWaits')}</p> : null}
+      <Button variant="outline" size="sm" onClick={() => open()} data-action="open-deposit">
+        {t('vault.deposit.open')}
+      </Button>
+      {now.of === DEPOSITED.running ? (
+        <p className="w-full text-xs text-muted-foreground" data-check-waits>
+          {t('vault.deposit.checkWaits')}
+        </p>
+      ) : null}
     </div>
   );
 }
-
 
 /**
  * DEPOSIT AND CHECK MY LAST DEPOSIT, THE VAULT PAGE'S TWO ACTIONS. Deposit is always there and opens the panel on the ways
@@ -142,18 +200,31 @@ export function DepositStrip({ company, vault, standing, onDone }: { company: st
  * vault runs, since the two would read and settle the same deposit. `standing` is the service's answer about the vault; the
  * panel Deposit opens stops a vault it says the service refuses at the press.
  */
-export function DepositActions({ company, vault, standing }: { company: string; vault: string; standing?: VaultStanding }) {
+export function DepositActions({
+  company,
+  vault,
+  standing
+}: {
+  company: string;
+  vault: string;
+  standing?: VaultStanding;
+}) {
   const t = useText();
   const now = useDepositNow(vault);
   const open = useOpenDeposit(company, vault, standing);
   const { checking, run, keyHeld } = useCheckMyLastDeposit(company, vault);
   const check = (): void => {
-    if (!keyHeld()) { open({ naming: true }); return; }
+    if (!keyHeld()) {
+      open({ naming: true });
+      return;
+    }
     run((checked) => open({ checked }));
   };
   return (
     <>
-      <Button onClick={() => open()} data-action="deposit">{t('vault.deposit')}</Button>
+      <Button onClick={() => open()} data-action="deposit">
+        {t('vault.deposit')}
+      </Button>
       <Button disabled={checking || now?.of === DEPOSITED.running} onClick={check} data-action="check-last-deposit">
         {checking ? <Spinner aria-label={t('deposit.check.waiting')} /> : null}
         {t('vault.checkLastDeposit')}
@@ -162,26 +233,28 @@ export function DepositActions({ company, vault, standing }: { company: string; 
   );
 }
 
-
 function CheckNamed({ check, back }: { check: () => void; back: () => void }) {
   const t = useText();
   return (
     <div className="flex flex-col gap-4" data-deposit="check-named">
       <WalletWindowNamed what={t('deposit.keyWindow.opens')} press={t('deposit.keyWindow.press')} />
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={check} data-action="check-last-deposit">{t('vault.checkLastDeposit')}</Button>
-        <Button variant="outline" onClick={back} data-action="back-to-deposit">{t('deposit.check.back')}</Button>
+        <Button onClick={check} data-action="check-last-deposit">
+          {t('vault.checkLastDeposit')}
+        </Button>
+        <Button variant="outline" onClick={back} data-action="back-to-deposit">
+          {t('deposit.check.back')}
+        </Button>
       </div>
     </div>
   );
 }
 
-
 function Methods({ choose }: { choose: (method: DepositMethod) => void }) {
   const t = useText();
   const named = useId();
   const words: Record<DepositMethod, { name: string; line: string }> = {
-    [DEPOSIT_METHODS[0].id]: { name: t('deposit.method.fromYourWallet'), line: t('deposit.method.fromYourWallet.line') },
+    [DEPOSIT_METHODS[0].id]: { name: t('deposit.method.fromYourWallet'), line: t('deposit.method.fromYourWallet.line') }
   };
   return (
     <div className="flex flex-col gap-2" data-deposit-methods>
@@ -192,13 +265,20 @@ function Methods({ choose }: { choose: (method: DepositMethod) => void }) {
             <ItemTitle id={named + m.id}>{words[m.id].name}</ItemTitle>
             <ItemDescription className="line-clamp-none">{words[m.id].line}</ItemDescription>
           </ItemContent>
-          <Button variant="outline" size="sm" onClick={() => choose(m.id)} aria-describedby={named + m.id} data-action="choose-method">{t('deposit.method.choose')}</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => choose(m.id)}
+            aria-describedby={named + m.id}
+            data-action="choose-method"
+          >
+            {t('deposit.method.choose')}
+          </Button>
         </Item>
       ))}
     </div>
   );
 }
-
 
 function AmountRefused({ why }: { why: AmountRefusal }) {
   const t = useText();
@@ -213,20 +293,17 @@ function AmountRefused({ why }: { why: AmountRefusal }) {
     [AMOUNT_REFUSAL.heldNotKnown]: t('deposit.refused.heldNotKnown'),
     [AMOUNT_REFUSAL.tokenNotKnown]: t('deposit.refused.tokenNotKnown'),
     [AMOUNT_REFUSAL.noPrivateForm]: t('deposit.refused.noPrivateForm'),
-    [AMOUNT_REFUSAL.noPublicForm]: t('deposit.refused.noPublicForm'),
+    [AMOUNT_REFUSAL.noPublicForm]: t('deposit.refused.noPublicForm')
   };
   return (
     <Alert data-amount-refused={why}>
       <AlertTitle>{t('deposit.refused.title')}</AlertTitle>
       <AlertDescription>
-        <span>{says[why]}</span>
-        {' '}
-        <span>{t('deposit.refused.notAsked')}</span>
+        <span>{says[why]}</span> <span>{t('deposit.refused.notAsked')}</span>
       </AlertDescription>
     </Alert>
   );
 }
-
 
 /**
  * THE AMOUNT, AND THE PRESS. What is typed (or Max, which is exactly what the wallet said is held) is checked by the
@@ -251,9 +328,26 @@ function AmountEntry({ vault, standing, chosen }: { vault: string; standing?: Va
 
   const put = (): void => {
     if (took.current || view === null) return;
-    const started = putMoneyIn(person.id, view, vault, { code: token.code, kind: side }, entry, token.held, undefined, standing);
-    if (started.of === PUT_IN.vaultRefused) { setRefused(null); setVaultRefused(started.standing); return; }
-    if (started.of === PUT_IN.refused) { setVaultRefused(null); setRefused(started.why); return; }
+    const started = putMoneyIn(
+      person.id,
+      view,
+      vault,
+      { code: token.code, kind: side },
+      entry,
+      token.held,
+      undefined,
+      standing
+    );
+    if (started.of === PUT_IN.vaultRefused) {
+      setRefused(null);
+      setVaultRefused(started.standing);
+      return;
+    }
+    if (started.of === PUT_IN.refused) {
+      setVaultRefused(null);
+      setRefused(started.why);
+      return;
+    }
     took.current = true;
     setRefused(null);
     setVaultRefused(null);
@@ -262,28 +356,59 @@ function AmountEntry({ vault, standing, chosen }: { vault: string; standing?: Va
 
   return (
     <div className="flex flex-col gap-4" data-deposit-amount data-side={side}>
-      <p className="text-sm" data-chosen>{isPrivate ? t('deposit.chosen.private', { name: token.name }) : t('deposit.chosen.public', { name: token.name })}</p>
+      <p className="text-sm" data-chosen>
+        {isPrivate
+          ? t('deposit.chosen.private', { name: token.name })
+          : t('deposit.chosen.public', { name: token.name })}
+      </p>
       <div className="flex flex-col gap-2">
         <Label htmlFor={field}>{t('deposit.amount.label')}</Label>
         <InputGroup>
           <InputGroupInput
-            id={field} disabled={taken} aria-invalid={refused !== null}
-            value={entry === MAX ? '' : entry} onChange={(e) => { setEntry(e.target.value); setRefused(null); }} data-field="deposit-amount"
+            id={field}
+            disabled={taken}
+            aria-invalid={refused !== null}
+            value={entry === MAX ? '' : entry}
+            onChange={(e) => {
+              setEntry(e.target.value);
+              setRefused(null);
+            }}
+            data-field="deposit-amount"
           />
           <InputGroupAddon align="inline-end">
             <InputGroupText>{token.amount.symbol}</InputGroupText>
-            <InputGroupButton variant="outline" disabled={taken} aria-label={t('deposit.amount.maxLabel')} onClick={() => { setEntry(MAX); setRefused(null); }} data-action="deposit-max">
+            <InputGroupButton
+              variant="outline"
+              disabled={taken}
+              aria-label={t('deposit.amount.maxLabel')}
+              onClick={() => {
+                setEntry(MAX);
+                setRefused(null);
+              }}
+              data-action="deposit-max"
+            >
               {t('deposit.amount.max')}
             </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
         {entry === MAX ? (
-          <p className="flex flex-wrap items-center gap-1.5 text-sm" data-max-all>{t('deposit.amount.all')} <Amount value={token.amount} kind={AMOUNT_KIND.paid} /></p>
+          <p className="flex flex-wrap items-center gap-1.5 text-sm" data-max-all>
+            {t('deposit.amount.all')} <Amount value={token.amount} kind={AMOUNT_KIND.paid} />
+          </p>
         ) : null}
       </div>
-      <p className="text-sm" data-privacy={side}>{isPrivate ? t('deposit.privacy.private') : t('deposit.privacy.public')}</p>
-      <WalletWindowNamed what={isPrivate ? t('deposit.payWindow.opensPrivate') : t('deposit.payWindow.opens')} press={press} />
-      {isPrivate ? null : <p className="text-sm text-muted-foreground" data-paid-from-public>{t('deposit.payWindow.publicFrom')}</p>}
+      <p className="text-sm" data-privacy={side}>
+        {isPrivate ? t('deposit.privacy.private') : t('deposit.privacy.public')}
+      </p>
+      <WalletWindowNamed
+        what={isPrivate ? t('deposit.payWindow.opensPrivate') : t('deposit.payWindow.opens')}
+        press={press}
+      />
+      {isPrivate ? null : (
+        <p className="text-sm text-muted-foreground" data-paid-from-public>
+          {t('deposit.payWindow.publicFrom')}
+        </p>
+      )}
       {/* The refusal and the press are in the foot of the panel, which stays in view while the form above them scrolls: a refusal is seen where the press is made, and the press is never below the fold. */}
       <PanelFooter>
         <div className="flex flex-col gap-3" data-deposit-footer>
@@ -291,9 +416,7 @@ function AmountEntry({ vault, standing, chosen }: { vault: string; standing?: Va
             <Alert data-vault-refused={vaultRefused}>
               <AlertTitle>{t('deposit.refused.vaultTitle')}</AlertTitle>
               <AlertDescription>
-                <span>{standingSays(vaultRefused)}</span>
-                {' '}
-                <span>{t('deposit.refused.notAsked')}</span>
+                <span>{standingSays(vaultRefused)}</span> <span>{t('deposit.refused.notAsked')}</span>
               </AlertDescription>
             </Alert>
           )}
@@ -310,7 +433,6 @@ function AmountEntry({ vault, standing, chosen }: { vault: string; standing?: Va
   );
 }
 
-
 function Running({ now }: { now: Extract<DepositNow, { of: 'running' }> }) {
   const t = useText();
   const stepWords = useStepWords();
@@ -318,30 +440,47 @@ function Running({ now }: { now: Extract<DepositNow, { of: 'running' }> }) {
   const { now: tick, proofStartedAt } = useTicker(proofsRunning);
   return (
     <div className="flex flex-col gap-4" data-deposit="running" data-step={now.step}>
-      <p className="flex flex-wrap items-center gap-1.5 text-sm">{t('deposit.putting.amount')} <Amount value={now.amount} kind={AMOUNT_KIND.paid} /></p>
+      <p className="flex flex-wrap items-center gap-1.5 text-sm">
+        {t('deposit.putting.amount')} <Amount value={now.amount} kind={AMOUNT_KIND.paid} />
+      </p>
       <Progress aria-label={t('deposit.progress')} steps={now.steps.map((id, i) => ({ id, done: i < now.n - 1 }))} />
-      <p className="text-sm font-medium" data-step-of>{t('deposit.stepOf', { n: now.n, count: now.steps.length })}</p>
-      <p className="text-sm" role="status" data-step-name>{stepWords[now.step]}</p>
+      <p className="text-sm font-medium" data-step-of>
+        {t('deposit.stepOf', { n: now.n, count: now.steps.length })}
+      </p>
+      <p className="text-sm" role="status" data-step-name>
+        {stepWords[now.step]}
+      </p>
       <StageProgress
-        stage={now.step} elapsedSeconds={secondsSince(tick, proofStartedAt ?? now.since)}
-        usualSeconds={usualSecondsOf(now.kind, now.step)} usualLine={false}
+        stage={now.step}
+        elapsedSeconds={secondsSince(tick, proofStartedAt ?? now.since)}
+        usualSeconds={usualSecondsOf(now.kind, now.step)}
+        usualLine={false}
       />
       {now.step === DEPOSIT_STEP.provingTheDeposit && now.kind === DEPOSIT_KIND.private ? (
-        <p className="text-sm" data-wallet-makes>{t('deposit.walletMakes')}</p>
+        <p className="text-sm" data-wallet-makes>
+          {t('deposit.walletMakes')}
+        </p>
       ) : null}
       {now.step === DEPOSIT_STEP.provingTheDeposit && now.kind !== DEPOSIT_KIND.private ? (
         <p className="text-sm" data-next-window>
-          {t('deposit.next.lead')} <Amount value={now.amount} kind={AMOUNT_KIND.paid} />{t('deposit.next.tail', { press })}
+          {t('deposit.next.lead')} <Amount value={now.amount} kind={AMOUNT_KIND.paid} />
+          {t('deposit.next.tail', { press })}
         </p>
       ) : null}
-      {now.step === DEPOSIT_STEP.payingInYourWallet ? <p className="text-sm" data-wallet-open>{t('deposit.payWindow.open', { press })}</p> : null}
+      {now.step === DEPOSIT_STEP.payingInYourWallet ? (
+        <p className="text-sm" data-wallet-open>
+          {t('deposit.payWindow.open', { press })}
+        </p>
+      ) : null}
       <div>
-        <Button disabled data-action="put-money-in"><Spinner aria-label={t('deposit.putting')} />{t('deposit.putting')}</Button>
+        <Button disabled data-action="put-money-in">
+          <Spinner aria-label={t('deposit.putting')} />
+          {t('deposit.putting')}
+        </Button>
       </div>
     </div>
   );
 }
-
 
 function Done({ vault, now }: { vault: string; now: Extract<DepositNow, { of: 'done' }> }) {
   const t = useText();
@@ -360,21 +499,28 @@ function Done({ vault, now }: { vault: string; now: Extract<DepositNow, { of: 'd
             ) : (
               <>
                 <span>{t('deposit.done.transaction')}</span>
-                <span className="break-all font-mono text-xs" data-chain-transaction>{now.chainTransaction}</span>
+                <span className="break-all font-mono text-xs" data-chain-transaction>
+                  {now.chainTransaction}
+                </span>
               </>
             )}
-            {now.earlier === 'recorded' ? <span data-earlier="recorded">{t('deposit.done.earlierRecorded')}</span> : null}
-            {now.earlier === 'never-landed' ? <span data-earlier="never-landed">{t('deposit.done.earlierNeverLanded')}</span> : null}
+            {now.earlier === 'recorded' ? (
+              <span data-earlier="recorded">{t('deposit.done.earlierRecorded')}</span>
+            ) : null}
+            {now.earlier === 'never-landed' ? (
+              <span data-earlier="never-landed">{t('deposit.done.earlierNeverLanded')}</span>
+            ) : null}
           </span>
         </AlertDescription>
       </Alert>
       <div>
-        <Button variant="outline" onClick={() => putAwayEndedDeposit(vault)} data-action="put-more-in">{t('deposit.done.again')}</Button>
+        <Button variant="outline" onClick={() => putAwayEndedDeposit(vault)} data-action="put-more-in">
+          {t('deposit.done.again')}
+        </Button>
       </div>
     </div>
   );
 }
-
 
 const SETUP_MAY_HELP: readonly ActRefusal[] = [ACT_REFUSAL.vaultNotTheCompanys, ACT_REFUSAL.didNotFinish];
 
@@ -387,8 +533,16 @@ const SETUP_MAY_HELP: readonly ActRefusal[] = [ACT_REFUSAL.vaultNotTheCompanys, 
  * again is held back until then too. A public one the chain refused, or that never landed, was sent and put nothing
  * in: it says so, and never that nothing was sent.
  */
-function Failed({ vault, now, check, leadTo }: {
-  vault: string; now: Extract<DepositNow, { of: 'failed' }>; check: () => void; leadTo: StepProps['leadTo'];
+function Failed({
+  vault,
+  now,
+  check,
+  leadTo
+}: {
+  vault: string;
+  now: Extract<DepositNow, { of: 'failed' }>;
+  check: () => void;
+  leadTo: StepProps['leadTo'];
 }) {
   const t = useText();
   const language = useLanguage();
@@ -397,12 +551,18 @@ function Failed({ vault, now, check, leadTo }: {
   const isPublic = now.mayHaveBeenSent && now.kind === DEPOSIT_KIND.public;
   const holding = useBefore(isPublic && now.until !== undefined ? now.until : null);
   const notSentHere = isPublic && now.signedNotSent === true && now.until !== undefined;
-  const heldWords = !isPublic && now.stopped !== undefined && now.stopped !== STOPPED.notMade ? stoppedWords(t)[now.stopped] : null;
-  const lead = heldWords !== null ? heldWords
-    : !isPublic ? t('deposit.failed.maybeSent', { reasons })
-    : now.until === undefined ? t('deposit.failed.publicMaybeSentNoTime')
-    : notSentHere ? t('deposit.failed.publicNotSent', { when: formatDate(new Date(now.until), language, UNTIL) })
-    : t('deposit.failed.publicMaybeSent', { when: formatDate(new Date(now.until), language, UNTIL) });
+  const heldWords =
+    !isPublic && now.stopped !== undefined && now.stopped !== STOPPED.notMade ? stoppedWords(t)[now.stopped] : null;
+  const lead =
+    heldWords !== null
+      ? heldWords
+      : !isPublic
+        ? t('deposit.failed.maybeSent', { reasons })
+        : now.until === undefined
+          ? t('deposit.failed.publicMaybeSentNoTime')
+          : notSentHere
+            ? t('deposit.failed.publicNotSent', { when: formatDate(new Date(now.until), language, UNTIL) })
+            : t('deposit.failed.publicMaybeSent', { when: formatDate(new Date(now.until), language, UNTIL) });
   /* The first reason of a deposit that may have been sent repeats what the lead says; the reason a signed deposit was not sent is its own. */
   const causes = notSentHere ? now.reasons : isPublic ? now.reasons.slice(1) : [];
   return (
@@ -412,11 +572,18 @@ function Failed({ vault, now, check, leadTo }: {
           <Alert data-refusal="chain" data-chain-refused={now.chainSaid === CHAIN_SAID.refused}>
             <AlertTitle>{t('act.refused.title')}</AlertTitle>
             <AlertDescription data-failed-words>
-              {now.chainSaid === CHAIN_SAID.refused ? t('deposit.failed.publicRefused')
-                : t('deposit.failed.publicNeverLanded', { when: formatDate(new Date(now.until ?? 0), language, UNTIL) })}
+              {now.chainSaid === CHAIN_SAID.refused
+                ? t('deposit.failed.publicRefused')
+                : t('deposit.failed.publicNeverLanded', {
+                    when: formatDate(new Date(now.until ?? 0), language, UNTIL)
+                  })}
             </AlertDescription>
           </Alert>
-          {now.reasons.length === 0 ? null : <p className="text-xs text-muted-foreground" data-details>{t('deposit.failed.details', { reasons })}</p>}
+          {now.reasons.length === 0 ? null : (
+            <p className="text-xs text-muted-foreground" data-details>
+              {t('deposit.failed.details', { reasons })}
+            </p>
+          )}
         </>
       ) : now.mayHaveBeenSent ? (
         <>
@@ -424,14 +591,20 @@ function Failed({ vault, now, check, leadTo }: {
             <AlertTitle>{t('act.refused.title')}</AlertTitle>
             <AlertDescription data-failed-words>{lead}</AlertDescription>
           </Alert>
-          {causes.length === 0 ? null : <p className="text-xs text-muted-foreground" data-details>{t('deposit.failed.details', { reasons: reasonsSaid(causes) })}</p>}
+          {causes.length === 0 ? null : (
+            <p className="text-xs text-muted-foreground" data-details>
+              {t('deposit.failed.details', { reasons: reasonsSaid(causes) })}
+            </p>
+          )}
         </>
       ) : (
         <>
           {now.stopped === undefined ? (
             <>
               <ActRefused why={now.refusal} />
-              <p className="text-sm" data-nothing-sent>{t('deposit.failed.nothingSent')}</p>
+              <p className="text-sm" data-nothing-sent>
+                {t('deposit.failed.nothingSent')}
+              </p>
             </>
           ) : (
             <Alert data-refusal="stopped" data-stopped={now.stopped}>
@@ -439,20 +612,33 @@ function Failed({ vault, now, check, leadTo }: {
               <AlertDescription data-failed-words>{stoppedWords(t)[now.stopped]}</AlertDescription>
             </Alert>
           )}
-          {now.reasons.length === 0 ? null : <p className="text-xs text-muted-foreground" data-details>{t('deposit.failed.details', { reasons })}</p>}
+          {now.reasons.length === 0 ? null : (
+            <p className="text-xs text-muted-foreground" data-details>
+              {t('deposit.failed.details', { reasons })}
+            </p>
+          )}
         </>
       )}
       <div className="flex flex-wrap items-center gap-3">
-        {now.mayHaveBeenSent && !isPublic ? <Button onClick={check} data-action="check-last-deposit">{t('vault.checkLastDeposit')}</Button> : null}
-        {holding ? null : <Button variant="outline" onClick={() => putAwayEndedDeposit(vault)} data-action="try-again">{t('deposit.failed.again')}</Button>}
+        {now.mayHaveBeenSent && !isPublic ? (
+          <Button onClick={check} data-action="check-last-deposit">
+            {t('vault.checkLastDeposit')}
+          </Button>
+        ) : null}
+        {holding ? null : (
+          <Button variant="outline" onClick={() => putAwayEndedDeposit(vault)} data-action="try-again">
+            {t('deposit.failed.again')}
+          </Button>
+        )}
         {!now.mayHaveBeenSent && now.chainSaid === undefined && SETUP_MAY_HELP.includes(now.refusal) ? (
-          <Button variant="outline" onClick={() => leadTo(STEP.vault)} data-lead-to={STEP.vault}>{t('deposit.failed.setup')}</Button>
+          <Button variant="outline" onClick={() => leadTo(STEP.vault)} data-lead-to={STEP.vault}>
+            {t('deposit.failed.setup')}
+          </Button>
         ) : null}
       </div>
     </div>
   );
 }
-
 
 /** What each way the wallet stopped a private deposit says. */
 const stoppedWords = (t: ReturnType<typeof useText>): Record<Stopped, string> => ({
@@ -460,12 +646,11 @@ const stoppedWords = (t: ReturnType<typeof useText>): Record<Stopped, string> =>
   [STOPPED.declined]: t('deposit.failed.stopped.declined'),
   [STOPPED.tooLittleDust]: t('deposit.failed.stopped.too-little-dust'),
   [STOPPED.notPaid]: t('deposit.failed.stopped.not-paid'),
-  [STOPPED.networkRefused]: t('deposit.failed.stopped.network-refused'),
+  [STOPPED.networkRefused]: t('deposit.failed.stopped.network-refused')
 });
 
 /** How the time a deposit on its way is waited for until is written: the browser's date format turns it into the person's language. */
 const UNTIL = { dateStyle: 'medium', timeStyle: 'short' } as const;
-
 
 /** Whether `until` (a time in milliseconds, or null for none) is still ahead, drawn again at that time. */
 function useBefore(until: number | null): boolean {
@@ -479,17 +664,17 @@ function useBefore(until: number | null): boolean {
   return ahead;
 }
 
-
 /** The longest wait a timer takes in one go; a longer one is waited for again when it ends. */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
-
 
 /** The reasons something failed, one after another, as the failure words give them, with the language file's own separator. */
 function useReasonsSaid(): (reasons: readonly string[]) => string {
   const t = useText();
-  return (reasons) => (reasons.length === 0 ? t('deposit.failed.noReason') : reasons.reduce((said, reason) => t('deposit.failed.reasonThen', { said, reason })));
+  return (reasons) =>
+    reasons.length === 0
+      ? t('deposit.failed.noReason')
+      : reasons.reduce((said, reason) => t('deposit.failed.reasonThen', { said, reason }));
 }
-
 
 /** WHAT CHECKING THE LAST DEPOSIT FOUND, in words: where the deposit it judged stands and how much it was, and that only private deposits are checked here. */
 function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?: () => void }) {
@@ -498,47 +683,113 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
   const reasonsSaid = useReasonsSaid();
   const found = answer.of === CHECKED.checked ? answer : null;
   const d = found?.deposit;
-  const says = found === null ? null
-    : d === 'none' ? t('deposit.check.nothingWaiting')
-    : d === 'already-recorded' ? t('deposit.check.alreadyRecorded')
-    : d === 'never-landed' ? t('deposit.check.neverLanded')
-    : d === 'recorded' ? t('deposit.check.recorded')
-    : d === 'still-on-its-way' ? t('deposit.check.stillOnItsWay', { when: formatDate(new Date(found.until ?? 0), language, UNTIL) })
-    : d === 'landed-owed-its-record' ? t('deposit.check.owedItsRecord')
-    : d === 'journalled-not-seen' ? t('deposit.check.journalledNotSeen', { when: formatDate(new Date(found.until ?? 0), language, UNTIL) })
-    : d === 'journalled-never-landed' ? t('deposit.check.journalledNeverLanded')
-    : d === 'journalled-not-recorded' ? t('deposit.check.journalledNotRecorded')
-    : d === 'landed-and-since-spent' ? t('deposit.check.landedAndSinceSpent')
-    : t('deposit.check.landedNotRecorded');
-  const details = answer.of === CHECKED.checked ? t('deposit.check.details', { text: answer.forSupport }) : answer.reasons.length === 0 ? '' : t('deposit.failed.details', { reasons: reasonsSaid(answer.reasons) });
+  const says =
+    found === null
+      ? null
+      : d === 'none'
+        ? t('deposit.check.nothingWaiting')
+        : d === 'already-recorded'
+          ? t('deposit.check.alreadyRecorded')
+          : d === 'never-landed'
+            ? t('deposit.check.neverLanded')
+            : d === 'recorded'
+              ? t('deposit.check.recorded')
+              : d === 'still-on-its-way'
+                ? t('deposit.check.stillOnItsWay', { when: formatDate(new Date(found.until ?? 0), language, UNTIL) })
+                : d === 'landed-owed-its-record'
+                  ? t('deposit.check.owedItsRecord')
+                  : d === 'journalled-not-seen'
+                    ? t('deposit.check.journalledNotSeen', {
+                        when: formatDate(new Date(found.until ?? 0), language, UNTIL)
+                      })
+                    : d === 'journalled-never-landed'
+                      ? t('deposit.check.journalledNeverLanded')
+                      : d === 'journalled-not-recorded'
+                        ? t('deposit.check.journalledNotRecorded')
+                        : d === 'landed-and-since-spent'
+                          ? t('deposit.check.landedAndSinceSpent')
+                          : t('deposit.check.landedNotRecorded');
+  const details =
+    answer.of === CHECKED.checked
+      ? t('deposit.check.details', { text: answer.forSupport })
+      : answer.reasons.length === 0
+        ? ''
+        : t('deposit.failed.details', { reasons: reasonsSaid(answer.reasons) });
   return (
-    <div className="flex flex-col gap-4" data-deposit="checked" data-checked={answer.of === CHECKED.checked ? answer.deposit : CHECKED.refused}>
-      <p className="text-sm text-muted-foreground" data-private-only>{t('deposit.check.privateOnly')}</p>
-      {answer.of === CHECKED.refused ? <ActRefused why={answer.why} /> : (
+    <div
+      className="flex flex-col gap-4"
+      data-deposit="checked"
+      data-checked={answer.of === CHECKED.checked ? answer.deposit : CHECKED.refused}
+    >
+      <p className="text-sm text-muted-foreground" data-private-only>
+        {t('deposit.check.privateOnly')}
+      </p>
+      {answer.of === CHECKED.refused ? (
+        <ActRefused why={answer.why} />
+      ) : (
         <div className="flex flex-col gap-2" role="status">
-          <p className="text-sm" data-check-says>{says}</p>
-          {answer.deposited !== null ? <p className="text-sm" data-checked-amount><Amount value={answer.deposited} kind={AMOUNT_KIND.held} /></p>
-            : answer.unshown !== null ? <p className="text-sm" data-checked-unshown={answer.unshown}>{t('records.unrecognised', { count: 1 })}</p> : null}
-          {answer.notYetSpendable ? <p className="text-sm" data-not-spendable>{t('deposit.check.notSpendable')}</p> : null}
+          <p className="text-sm" data-check-says>
+            {says}
+          </p>
+          {answer.deposited !== null ? (
+            <p className="text-sm" data-checked-amount>
+              <Amount value={answer.deposited} kind={AMOUNT_KIND.held} />
+            </p>
+          ) : answer.unshown !== null ? (
+            <p className="text-sm" data-checked-unshown={answer.unshown}>
+              {t('records.unrecognised', { count: 1 })}
+            </p>
+          ) : null}
+          {answer.notYetSpendable ? (
+            <p className="text-sm" data-not-spendable>
+              {t('deposit.check.notSpendable')}
+            </p>
+          ) : null}
           {answer.earlier.map((e, i) => (
             <div className="flex flex-col gap-1" key={i} data-earlier-deposit={e.deposit}>
-              <p className="text-sm">{e.deposit === 'journalled-not-seen'
-                ? t('deposit.check.earlierNotSeen', { when: formatDate(new Date(e.until), language, UNTIL) })
-                : t('deposit.check.earlierNotRecorded')}</p>
-              {e.deposited !== null ? <p className="text-sm"><Amount value={e.deposited} kind={AMOUNT_KIND.held} /></p>
-                : e.unshown !== null ? <p className="text-sm" data-checked-unshown={e.unshown}>{t('records.unrecognised', { count: 1 })}</p> : null}
+              <p className="text-sm">
+                {e.deposit === 'journalled-not-seen'
+                  ? t('deposit.check.earlierNotSeen', { when: formatDate(new Date(e.until), language, UNTIL) })
+                  : t('deposit.check.earlierNotRecorded')}
+              </p>
+              {e.deposited !== null ? (
+                <p className="text-sm">
+                  <Amount value={e.deposited} kind={AMOUNT_KIND.held} />
+                </p>
+              ) : e.unshown !== null ? (
+                <p className="text-sm" data-checked-unshown={e.unshown}>
+                  {t('records.unrecognised', { count: 1 })}
+                </p>
+              ) : null}
             </div>
           ))}
-          {answer.unnamed === 0 ? null : <p className="text-sm" data-unnamed={answer.unnamed}>{t('deposit.check.unnamed', { count: answer.unnamed })}</p>}
-          {answer.toName === 0 ? null : <p className="text-sm" data-to-name={answer.toName}>{t('deposit.check.toName', { count: answer.toName })}</p>}
+          {answer.unnamed === 0 ? null : (
+            <p className="text-sm" data-unnamed={answer.unnamed}>
+              {t('deposit.check.unnamed', { count: answer.unnamed })}
+            </p>
+          )}
+          {answer.toName === 0 ? null : (
+            <p className="text-sm" data-to-name={answer.toName}>
+              {t('deposit.check.toName', { count: answer.toName })}
+            </p>
+          )}
         </div>
       )}
-      {details === '' || (found !== null && found.forSupport === '') ? null : <p className="break-words text-xs text-muted-foreground" data-details>{details}</p>}
-      {back === undefined ? null : <div><Button variant="outline" onClick={back} data-action="back-to-deposit">{t('deposit.check.back')}</Button></div>}
+      {details === '' || (found !== null && found.forSupport === '') ? null : (
+        <p className="break-words text-xs text-muted-foreground" data-details>
+          {details}
+        </p>
+      )}
+      {back === undefined ? null : (
+        <div>
+          <Button variant="outline" onClick={back} data-action="back-to-deposit">
+            {t('deposit.check.back')}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
-
 
 /**
  * THE DEPOSIT PANEL. It opens on the list of ways to put money in; the way from the person's wallet shows the account's
@@ -548,8 +799,19 @@ function LastDepositAnswer({ answer, back }: { answer: LastDepositChecked; back?
  * checking the last deposit found, and `naming` on the naming of the wallet window that check opens. `standing` is the
  * service's answer about the vault as the screen loaded it; it can only stop a deposit, and none changes nothing.
  */
-export function Deposit({ company, vault, standing, leadTo, checked = null, naming: namingFirst = false }: {
-  company: string; vault: string; standing?: VaultStanding; checked?: LastDepositChecked | null; naming?: boolean;
+export function Deposit({
+  company,
+  vault,
+  standing,
+  leadTo,
+  checked = null,
+  naming: namingFirst = false
+}: {
+  company: string;
+  vault: string;
+  standing?: VaultStanding;
+  checked?: LastDepositChecked | null;
+  naming?: boolean;
 } & Pick<StepProps, 'leadTo' | 'onChanged'>) {
   const t = useText();
   const now = useDepositNow(vault);
@@ -565,11 +827,24 @@ export function Deposit({ company, vault, standing, leadTo, checked = null, nami
     setChosen(null);
   }, [ended]);
 
-  const checkNow = (): void => run((found) => { setNaming(false); setAnswer(found); });
-  const check = (): void => { if (keyHeld()) checkNow(); else setNaming(true); };
+  const checkNow = (): void =>
+    run((found) => {
+      setNaming(false);
+      setAnswer(found);
+    });
+  const check = (): void => {
+    if (keyHeld()) checkNow();
+    else setNaming(true);
+  };
 
   if (answer !== null) return <LastDepositAnswer answer={answer} back={() => setAnswer(null)} />;
-  if (checking) return <div className="flex items-center gap-2 text-sm" role="status" data-checking><Spinner aria-label={t('deposit.check.waiting')} />{t('deposit.check.waiting')}</div>;
+  if (checking)
+    return (
+      <div className="flex items-center gap-2 text-sm" role="status" data-checking>
+        <Spinner aria-label={t('deposit.check.waiting')} />
+        {t('deposit.check.waiting')}
+      </div>
+    );
   if (naming) return <CheckNamed check={checkNow} back={() => setNaming(false)} />;
   if (now?.of === DEPOSITED.running) return <Running now={now} />;
   if (now?.of === DEPOSITED.done) return <Done vault={vault} now={now} />;
@@ -578,10 +853,22 @@ export function Deposit({ company, vault, standing, leadTo, checked = null, nami
   return (
     <div className="flex flex-col gap-4" data-deposit="form" data-method={method}>
       <div>
-        <Button variant="ghost" size="sm" onClick={() => { setMethod(null); setChosen(null); }} data-action="deposit-methods">{t('deposit.methods.back')}</Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setMethod(null);
+            setChosen(null);
+          }}
+          data-action="deposit-methods"
+        >
+          {t('deposit.methods.back')}
+        </Button>
       </div>
       <AccountTokens choose={setChosen} onAnswered={() => setChosen(null)} />
-      {chosen === null ? null : <AmountEntry key={chosen.side + chosen.token.code} vault={vault} standing={standing} chosen={chosen} />}
+      {chosen === null ? null : (
+        <AmountEntry key={chosen.side + chosen.token.code} vault={vault} standing={standing} chosen={chosen} />
+      )}
     </div>
   );
 }

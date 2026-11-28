@@ -21,7 +21,7 @@ export function createTranslator(languages: readonly Language[], language: strin
     nsSeparator: false,
     returnNull: false,
     returnEmptyString: false,
-    interpolation: { escapeValue: false, prefix: '{', suffix: '}' },
+    interpolation: { escapeValue: false, prefix: '{', suffix: '}' }
   });
   return i18n;
 }
@@ -45,7 +45,9 @@ export function LanguageProvider({ languages, pick, children }: LanguageProvider
   const browser = typeof navigator === 'undefined' ? [] : navigator.languages;
   const language = chooseLanguage(languages, pick, browser);
   const i18n = useMemo(() => createTranslator(languages, language), [languages]);
-  useEffect(() => { if (i18n.language !== language) void i18n.changeLanguage(language); }, [i18n, language]);
+  useEffect(() => {
+    if (i18n.language !== language) void i18n.changeLanguage(language);
+  }, [i18n, language]);
   useEffect(() => {
     document.documentElement.lang = language;
     document.documentElement.dir = directionOf(language);
@@ -82,7 +84,14 @@ export function WithMessages({ more, children }: { more: MoreMessages; children?
   const added = ADDED.get(i18n.store) ?? new Set<MoreMessages>();
   ADDED.set(i18n.store, added);
   if (!added.has(more)) {
-    for (const [tag, messages] of Object.entries(more)) i18n.addResourceBundle(tag, [i18n.options.defaultNS].flat().find((n) => typeof n === 'string') as string, messages, true, true);
+    for (const [tag, messages] of Object.entries(more))
+      i18n.addResourceBundle(
+        tag,
+        [i18n.options.defaultNS].flat().find((n) => typeof n === 'string') as string,
+        messages,
+        true,
+        true
+      );
     added.add(more);
   }
   return <>{children}</>;

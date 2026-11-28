@@ -74,9 +74,11 @@ export interface GetOptions {
 
 /** Whether this browser can do passkeys at all. */
 export function passkeysAvailable(): boolean {
-  return typeof globalThis.PublicKeyCredential === 'function'
-    && typeof navigator !== 'undefined'
-    && typeof navigator.credentials?.create === 'function';
+  return (
+    typeof globalThis.PublicKeyCredential === 'function' &&
+    typeof navigator !== 'undefined' &&
+    typeof navigator.credentials?.create === 'function'
+  );
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -91,17 +93,15 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 function translate(e: unknown, what: 'create' | 'get'): PasskeyError {
   const name = (e as { name?: string })?.name ?? '';
   if (name === 'InvalidStateError') {
-    return new PasskeyError(
-      'already-registered',
-      'there is already a passkey for this account on this device.');
+    return new PasskeyError('already-registered', 'there is already a passkey for this account on this device.');
   }
   if (name === 'NotAllowedError') {
     return new PasskeyError(
       'cancelled',
       what === 'create'
         ? 'the passkey was not created — it was cancelled, or it timed out.'
-        : 'the sign-in was not completed — it was cancelled, timed out, or no '
-          + 'matching passkey was offered.');
+        : 'the sign-in was not completed — it was cancelled, timed out, or no ' + 'matching passkey was offered.'
+    );
   }
   if (name === 'NotSupportedError' || name === 'SecurityError' || name === 'AbortError') {
     return new PasskeyError('malformed', `${name}: ${(e as Error).message}`);
@@ -109,11 +109,8 @@ function translate(e: unknown, what: 'create' | 'get'): PasskeyError {
   return new PasskeyError('malformed', `${name || 'the browser'}: ${(e as Error)?.message ?? e}`);
 }
 
-const descriptors = (
-  ids: readonly string[] | undefined,
-): PublicKeyCredentialDescriptor[] | undefined => (ids?.length
-  ? ids.map((id) => ({ type: 'public-key' as const, id: fromBase64Url(id) as BufferSource }))
-  : undefined);
+const descriptors = (ids: readonly string[] | undefined): PublicKeyCredentialDescriptor[] | undefined =>
+  ids?.length ? ids.map((id) => ({ type: 'public-key' as const, id: fromBase64Url(id) as BufferSource })) : undefined;
 
 /**
  * Make a passkey.
@@ -127,33 +124,33 @@ export async function createPasskey(options: CreateOptions): Promise<Registratio
   const personHandle = new TextEncoder().encode(options.person.id);
   let credential: PublicKeyCredential | null;
   try {
-    credential = await navigator.credentials.create({
-    publicKey: {
-      challenge: fromBase64Url(options.challenge) as BufferSource,
-      rp: { id: options.rpId, name: options.rpName },
-      user: {
-        id: personHandle as BufferSource,
-        name: options.person.name,
-        displayName: options.person.displayName,
+    credential = (await navigator.credentials.create({
+      publicKey: {
+        challenge: fromBase64Url(options.challenge) as BufferSource,
+        rp: { id: options.rpId, name: options.rpName },
+        user: {
+          id: personHandle as BufferSource,
+          name: options.person.name,
+          displayName: options.person.displayName
+        },
+        /* ES256 first because every platform authenticator does it; the other two
+         * are here so a hardware key that cannot do P-256 still works. */
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },
+          { type: 'public-key', alg: -8 },
+          { type: 'public-key', alg: -257 }
+        ],
+        authenticatorSelection: {
+          userVerification: 'required',
+          residentKey: 'required',
+          requireResidentKey: true
+        },
+        excludeCredentials: descriptors(options.existing),
+        attestation: 'none',
+        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS
       },
-      /* ES256 first because every platform authenticator does it; the other two
-       * are here so a hardware key that cannot do P-256 still works. */
-      pubKeyCredParams: [
-        { type: 'public-key', alg: -7 },
-        { type: 'public-key', alg: -8 },
-        { type: 'public-key', alg: -257 },
-      ],
-      authenticatorSelection: {
-        userVerification: 'required',
-        residentKey: 'required',
-        requireResidentKey: true,
-      },
-      excludeCredentials: descriptors(options.existing),
-      attestation: 'none',
-      timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    },
-    ...(options.signal ? { signal: options.signal } : {}),
-    }) as PublicKeyCredential | null;
+      ...(options.signal ? { signal: options.signal } : {})
+    })) as PublicKeyCredential | null;
   } catch (e) {
     throw translate(e, 'create');
   }
@@ -171,7 +168,7 @@ export async function createPasskey(options: CreateOptions): Promise<Registratio
     authenticatorData: new Uint8Array(response.getAuthenticatorData()),
     publicKeySpki: spki ? new Uint8Array(spki) : null,
     publicKeyAlgorithm: response.getPublicKeyAlgorithm(),
-    transports: response.getTransports?.() ?? [],
+    transports: response.getTransports?.() ?? []
   };
 }
 
@@ -179,16 +176,16 @@ export async function createPasskey(options: CreateOptions): Promise<Registratio
 export async function usePasskey(options: GetOptions): Promise<AssertionInput> {
   let credential: PublicKeyCredential | null;
   try {
-    credential = await navigator.credentials.get({
+    credential = (await navigator.credentials.get({
       publicKey: {
         challenge: fromBase64Url(options.challenge) as BufferSource,
         rpId: options.rpId,
         allowCredentials: descriptors(options.allow),
         userVerification: 'required',
-        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS
       },
-      ...(options.signal ? { signal: options.signal } : {}),
-    }) as PublicKeyCredential | null;
+      ...(options.signal ? { signal: options.signal } : {})
+    })) as PublicKeyCredential | null;
   } catch (e) {
     throw translate(e, 'get');
   }
@@ -204,7 +201,7 @@ export async function usePasskey(options: GetOptions): Promise<AssertionInput> {
     authenticatorData: new Uint8Array(response.authenticatorData),
     signature: new Uint8Array(response.signature),
     /* WHOSE IT IS. Dropped by the first version of this file. */
-    userHandle: response.userHandle ? toBase64Url(new Uint8Array(response.userHandle)) : null,
+    userHandle: response.userHandle ? toBase64Url(new Uint8Array(response.userHandle)) : null
   };
 }
 

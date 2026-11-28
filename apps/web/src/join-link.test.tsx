@@ -12,16 +12,27 @@ import { untilPageShown } from './page-shown.test-support.js';
  * kept in this tab's memory, never sent to the service and never left in the
  * address, and the page it opens is open to a visitor and to a signed-in person.
  */
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 vi.mock('./adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('./adapters/creation-standing.js')>()),
-  creationOf: async (id: string | null) => ({ company: id, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null }),
+  creationOf: async (id: string | null) => ({
+    company: id,
+    standing: null,
+    awaitingSecondPress: false,
+    kept: false,
+    confirmedFinished: false,
+    mark: null
+  })
 }));
 await import('./adapters/creation-standing.js');
 vi.mock('./adapters/session.js', async (real) => ({
   ...(await real<typeof import('./adapters/session.js')>()),
   approvalsNeededFor: async () => new Map<string, number>(),
-  companyNamesFor: async () => Object.assign(new Map<string, string>(), { whyNot: new Map() }),
+  companyNamesFor: async () => Object.assign(new Map<string, string>(), { whyNot: new Map() })
 }));
 vi.mock('./adapters/proving-warmed.js', () => ({ warmTheProving: () => {} }));
 
@@ -39,10 +50,17 @@ const heldFor = (id: string): string => {
   return container.querySelector('[data-held]')!.getAttribute('data-held')!;
 };
 
-beforeEach(() => { forgetLink(); window.history.replaceState(null, '', '/'); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  forgetLink();
+  window.history.replaceState(null, '', '/');
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
-describe('the link\'s token is held in memory and taken out of the address', () => {
+describe("the link's token is held in memory and taken out of the address", () => {
   /* RED WHEN: the token stays in the address bar after the page is opened, is not held for the invitation it came with, or is handed to the page of another invitation. */
   it('holds the token for its own invitation only, and leaves only the path in the address', () => {
     window.history.replaceState(null, '', `${join(ID)}#${TOKEN}`);
@@ -78,7 +96,9 @@ describe('the link\'s token is held in memory and taken out of the address', () 
     holdLink(window.location.pathname, window.location.hash);
     const { container } = render(<Probe id={ID} />);
     expect(container.querySelector('[data-held]')!.getAttribute('data-held')).toBe(TOKEN);
-    await act(async () => { forgetLink(); });
+    await act(async () => {
+      forgetLink();
+    });
     expect(container.querySelector('[data-held]')!.getAttribute('data-held')).toBe('nothing');
   });
 });
@@ -106,13 +126,22 @@ describe('the application opens an invitation link', () => {
   const calls: unknown[][] = [];
   const asked = (who: 'visitor' | 'signer') => {
     calls.length = 0;
-    vi.stubGlobal('fetch', vi.fn(async (...args: unknown[]) => {
-      calls.push(args);
-      if (args[0] !== '/api/me') throw new TypeError('network');
-      return who === 'visitor'
-        ? new Response('{}', { status: 401 })
-        : new Response(JSON.stringify({ user: { id: 'u1', email: null, name: 'Priya' }, accounts: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signerCount: 2, threshold: 2 }] }), { status: 200 });
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (...args: unknown[]) => {
+        calls.push(args);
+        if (args[0] !== '/api/me') throw new TypeError('network');
+        return who === 'visitor'
+          ? new Response('{}', { status: 401 })
+          : new Response(
+              JSON.stringify({
+                user: { id: 'u1', email: null, name: 'Priya' },
+                accounts: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signerCount: 2, threshold: 2 }]
+              }),
+              { status: 200 }
+            );
+      })
+    );
   };
   const open = async (): Promise<HTMLElement> => {
     window.history.replaceState(null, '', `${join(ID)}#${TOKEN}`);

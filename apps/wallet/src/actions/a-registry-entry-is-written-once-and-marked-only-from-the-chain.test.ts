@@ -6,7 +6,13 @@ import { openEntry, sealEntry, tagAt } from 'midnight-identity/profile/private-r
 import type { ChainCall, HandOver } from '../../../../packages/web-shared/src/hand-over.js';
 import type { Keyring, RegistryMark } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { AccountBuilding } from '../chain/account-builder-client.js';
-import { registryEntryOwed, registryEntryWritten, SENT_HOLDS_MS, type RegistryWriteDoors, type SeatToEnter } from './registry-entry.js';
+import {
+  registryEntryOwed,
+  registryEntryWritten,
+  SENT_HOLDS_MS,
+  type RegistryWriteDoors,
+  type SeatToEnter
+} from './registry-entry.js';
 
 /*
  * **ONE SIGNER SEAT'S ENTRY IN THE PRIVATE REGISTRY**: owed only for the pinned account and a seat seated now; written
@@ -20,7 +26,13 @@ const REGISTRY = '5e'.repeat(32);
 const LABEL = companyLabelOf(new Uint8Array(32).fill(0xc1));
 const NOW = Date.parse('2026-11-25T12:00:00Z');
 const seat = (mark?: RegistryMark): SeatToEnter => ({
-  accountId: 'acc_1', label: LABEL, account: 'a1'.repeat(32), n: 0, scope: 'b2'.repeat(32), leaf: 'c3'.repeat(32), ...(mark === undefined ? {} : { mark }),
+  accountId: 'acc_1',
+  label: LABEL,
+  account: 'a1'.repeat(32),
+  n: 0,
+  scope: 'b2'.repeat(32),
+  leaf: 'c3'.repeat(32),
+  ...(mark === undefined ? {} : { mark })
 });
 const valueAt = (i: number, over: Partial<SeatToEnter> = {}) => {
   const s = { ...seat(), ...over };
@@ -28,13 +40,19 @@ const valueAt = (i: number, over: Partial<SeatToEnter> = {}) => {
 };
 
 /** A registry holding `held` at the person's tags of those indexes, a builder over it, a hand-over and saved keys, all recorded. */
-const world = (held: Record<number, Uint8Array>, way: { readonly sendFails?: boolean; readonly mayHaveSent?: boolean; readonly hangs?: boolean } = {}) => {
+const world = (
+  held: Record<number, Uint8Array>,
+  way: { readonly sendFails?: boolean; readonly mayHaveSent?: boolean; readonly hangs?: boolean } = {}
+) => {
   const byTag = new Map(Object.entries(held).map(([i, v]) => [tagAt(identity, NET, Number(i)), v]));
   const sent: Array<{ tx: string; call: ChainCall }> = [];
   const built: Array<{ tag: string; value: string }> = [];
-  let k = { accounts: { acc_1: { signerId: 's', signingSecret: '', wrappingSecret: '', blinding: '', scope: 'b2'.repeat(32) } } } as unknown as Keyring;
+  let k = {
+    accounts: { acc_1: { signerId: 's', signingSecret: '', wrappingSecret: '', blinding: '', scope: 'b2'.repeat(32) } }
+  } as unknown as Keyring;
   const build = (async (ask: { ask: string; tags?: string[]; tag?: string; value?: string }) => {
-    if (ask.ask === 'registry-values') return { values: ask.tags!.map((t) => (byTag.has(t) ? base64.encode(byTag.get(t)!) : null)) };
+    if (ask.ask === 'registry-values')
+      return { values: ask.tags!.map((t) => (byTag.has(t) ? base64.encode(byTag.get(t)!) : null)) };
     built.push({ tag: ask.tag!, value: ask.value! });
     return { tx: 'VFg=' };
   }) as unknown as AccountBuilding;
@@ -45,12 +63,24 @@ const world = (held: Record<number, Uint8Array>, way: { readonly sendFails?: boo
       sent.push({ tx, call });
       if (way.mayHaveSent === true) throw new Error('the network did not answer');
       if (way.hangs === true) await new Promise<void>(() => undefined);
-    },
+    }
   };
   const doors: RegistryWriteDoors = {
-    identity, network: NET, registries: [REGISTRY], read: async () => ({ registryState: 'cw==', parameters: 'cA==' }), build, handOver,
-    keyring: { open: () => { throw new Error('not opened here'); }, keep: async (change) => { k = change(k); } },
-    now: () => NOW,
+    identity,
+    network: NET,
+    registries: [REGISTRY],
+    read: async () => ({ registryState: 'cw==', parameters: 'cA==' }),
+    build,
+    handOver,
+    keyring: {
+      open: () => {
+        throw new Error('not opened here');
+      },
+      keep: async (change) => {
+        k = change(k);
+      }
+    },
+    now: () => NOW
   };
   return { doors, sent, built, mark: () => k.accounts['acc_1']?.registry };
 };
@@ -74,14 +104,19 @@ describe('WHEN AN ENTRY IS OWED', () => {
 });
 
 describe('THE WRITE', () => {
-  it('is sent once, at the lowest free tag, as one put to the network\'s registry, holding this seat\'s entry', async () => {
+  it("is sent once, at the lowest free tag, as one put to the network's registry, holding this seat's entry", async () => {
     const w = world({});
     /* RED WHEN: the write goes anywhere but the lowest free tag, or is not one put to the registry. */
     expect(await registryEntryWritten(w.doors, seat())).toEqual({ of: 'sent', index: 0 });
     expect(w.sent).toEqual([{ tx: 'VFg=', call: { kind: 'registry-put', contract: REGISTRY, circuit: 'put' } }]);
     expect(w.built.map((b) => b.tag)).toEqual([tagAt(identity, NET, 0)]);
     /* RED WHEN: what is written is not this seat's entry, sealed for that tag. */
-    expect(openEntry(identity, NET, 0, base64.decode(w.built[0]!.value))).toMatchObject({ label: LABEL, account: 'a1'.repeat(32), n: 0, scope: 'b2'.repeat(32) });
+    expect(openEntry(identity, NET, 0, base64.decode(w.built[0]!.value))).toMatchObject({
+      label: LABEL,
+      account: 'a1'.repeat(32),
+      n: 0,
+      scope: 'b2'.repeat(32)
+    });
   });
 
   it('a tag taken first by anyone sends the write to the next', async () => {
@@ -100,7 +135,7 @@ describe('THE MARK COMES ONLY FROM THE CHAIN', () => {
     expect(w.mark()).toEqual({ leaf: 'c3'.repeat(32), sent: { index: 0, at: new Date(NOW).toISOString() } });
   });
 
-  it('a read finding the entry under this person\'s words for this account and seat sets the mark, and sends nothing', async () => {
+  it("a read finding the entry under this person's words for this account and seat sets the mark, and sends nothing", async () => {
     const w = world({ 0: new Uint8Array(288).fill(1), 1: valueAt(1) });
     /* RED WHEN: an entry found on the chain is written again, or not marked. */
     expect(await registryEntryWritten(w.doors, seat())).toEqual({ of: 'found' });
@@ -123,13 +158,21 @@ describe('A WRITE HANDED OVER AND NOT YET FOUND', () => {
     const leaf = 'c3'.repeat(32);
     const fresh = world({});
     /* RED WHEN: a write sent an hour ago is sent again before a read finds it. */
-    expect(await registryEntryWritten(fresh.doors, seat({ leaf, sent: { index: 0, at: new Date(NOW - 60 * 60_000).toISOString() } })))
-      .toEqual({ of: 'held', index: 0 });
+    expect(
+      await registryEntryWritten(
+        fresh.doors,
+        seat({ leaf, sent: { index: 0, at: new Date(NOW - 60 * 60_000).toISOString() } })
+      )
+    ).toEqual({ of: 'held', index: 0 });
     expect(fresh.sent).toEqual([]);
     const old = world({});
     /* RED WHEN: a note a day old still holds the write back for ever. */
-    expect(await registryEntryWritten(old.doors, seat({ leaf, sent: { index: 0, at: new Date(NOW - SENT_HOLDS_MS).toISOString() } })))
-      .toEqual({ of: 'sent', index: 0 });
+    expect(
+      await registryEntryWritten(
+        old.doors,
+        seat({ leaf, sent: { index: 0, at: new Date(NOW - SENT_HOLDS_MS).toISOString() } })
+      )
+    ).toEqual({ of: 'sent', index: 0 });
   });
 
   it('the note is kept before the write leaves: a write let go after its hand-over still holds the next one back', async () => {

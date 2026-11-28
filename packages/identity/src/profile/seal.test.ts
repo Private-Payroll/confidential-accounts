@@ -6,8 +6,16 @@ import { GIVEN_NAME, REGISTRY } from './attributes.js';
 import { open, profileKey, seal } from './seal.js';
 import type { SealedProfile } from './seal.js';
 import {
-  StoreError, browserPort, forgetProfile, load, loadOrEmpty, putSealed, recordNameFor, save,
-  sealedFor, sealedIn,
+  StoreError,
+  browserPort,
+  forgetProfile,
+  load,
+  loadOrEmpty,
+  putSealed,
+  recordNameFor,
+  save,
+  sealedFor,
+  sealedIn
 } from './store.js';
 import type { Port } from './store.js';
 
@@ -21,13 +29,19 @@ const memory = (): Port => {
   const map = new Map<string, string>();
   return {
     getItem: (k) => map.get(k) ?? null,
-    setItem: (k, v) => { map.set(k, v); },
-    removeItem: (k) => { map.delete(k); },
+    setItem: (k, v) => {
+      map.set(k, v);
+    },
+    removeItem: (k) => {
+      map.delete(k);
+    }
   };
 };
 
 let port: Port;
-beforeEach(() => { port = memory(); });
+beforeEach(() => {
+  port = memory();
+});
 
 /** Replaces the record `who` reads with `change(it)`, at the name it reads it from. */
 const tamperWithOwn = async (who: typeof identity, change: (blob: SealedProfile) => SealedProfile) => {
@@ -37,7 +51,7 @@ const tamperWithOwn = async (who: typeof identity, change: (blob: SealedProfile)
 };
 
 describe('nothing is stored as readable JSON — §4, §6', () => {
-  it('the person\'s name is not in the stored bytes', async () => {
+  it("the person's name is not in the stored bytes", async () => {
     await save(port, identity, someone);
     const blob = await sealedFor(port, identity);
     expect(blob, 'something was stored, so the absence below is about its bytes').not.toBeNull();
@@ -68,7 +82,7 @@ describe('the key is the discriminator, and there are THREE read states', () => 
     expect(await load(port, identity)).toEqual({ of: 'none' });
   });
 
-  it('ANOTHER WALLET\'S RECORD IS NOT THIS WALLET\'S STATE: it reads `none` here, and is untouched', async () => {
+  it("ANOTHER WALLET'S RECORD IS NOT THIS WALLET'S STATE: it reads `none` here, and is untouched", async () => {
     await save(port, identity, someone);
     const theirs = JSON.stringify(await sealedFor(port, identity));
     expect(await load(port, other)).toEqual({ of: 'none' });
@@ -78,7 +92,7 @@ describe('the key is the discriminator, and there are THREE read states', () => 
     expect((await load(port, other)).of).toBe('profile');
   });
 
-  it('an altered record of this wallet\'s own reads as `unopenable` — AES-GCM authenticates it', async () => {
+  it("an altered record of this wallet's own reads as `unopenable` — AES-GCM authenticates it", async () => {
     await save(port, identity, someone);
     await tamperWithOwn(identity, (blob) => ({ ...blob, sealed: `${blob.sealed.slice(0, -4)}AAAA` }));
     expect((await load(port, identity)).of).toBe('unopenable');
@@ -90,26 +104,28 @@ describe('the key is the discriminator, and there are THREE read states', () => 
     expect((await load(port, identity)).of).toBe('unopenable');
   });
 
-  it('the additional data is bound in — a blob resealed under another envelope will not open',
-    async () => {
-      const key = await profileKey(identity);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const body = new TextEncoder().encode(JSON.stringify(someone));
-      const wrong = new Uint8Array(await crypto.subtle.encrypt(
+  it('the additional data is bound in — a blob resealed under another envelope will not open', async () => {
+    const key = await profileKey(identity);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const body = new TextEncoder().encode(JSON.stringify(someone));
+    const wrong = new Uint8Array(
+      await crypto.subtle.encrypt(
         {
           name: 'AES-GCM',
           iv,
-          additionalData: new TextEncoder().encode('something-else') as BufferSource,
+          additionalData: new TextEncoder().encode('something-else') as BufferSource
         },
-        key, body as BufferSource));
-      const toB64 = (b: Uint8Array): string => Buffer.from(b).toString('base64url');
-      expect((await open(key, { v: 1, iv: toB64(iv), sealed: toB64(wrong) })).of)
-        .toBe('unopenable');
-    });
+        key,
+        body as BufferSource
+      )
+    );
+    const toB64 = (b: Uint8Array): string => Buffer.from(b).toString('base64url');
+    expect((await open(key, { v: 1, iv: toB64(iv), sealed: toB64(wrong) })).of).toBe('unopenable');
+  });
 });
 
 describe('a read that could not open must not let the next write destroy', () => {
-  it('saving over this wallet\'s own unopenable record is REFUSED, and nothing is written', async () => {
+  it("saving over this wallet's own unopenable record is REFUSED, and nothing is written", async () => {
     await save(port, identity, someone);
     await tamperWithOwn(identity, (blob) => ({ ...blob, v: 2 }));
     const before = JSON.stringify(await sealedFor(port, identity));
@@ -132,13 +148,13 @@ describe('a read that could not open must not let the next write destroy', () =>
     expect(outcome.profile.held).toHaveLength(0);
   });
 
-  it('forgetting clears this wallet\'s record', async () => {
+  it("forgetting clears this wallet's record", async () => {
     await save(port, identity, someone);
     await forgetProfile(port, identity);
     expect(await load(port, identity)).toEqual({ of: 'none' });
   });
 
-  it('and does not clear another wallet\'s', async () => {
+  it("and does not clear another wallet's", async () => {
     await save(port, identity, someone);
     await save(port, other, emptyProfile(NOW));
     await forgetProfile(port, other);
@@ -173,7 +189,7 @@ describe('an unopenable read NAMES WHICH WAY IT FAILED', () => {
    * damaged envelope into *probably another wallet's* would be softening the
    * one case with no innocent explanation.
    */
-  it('another account\'s blob is `another-key`', async () => {
+  it("another account's blob is `another-key`", async () => {
     await save(port, identity, someone);
     const state = await open(await profileKey(other), (await sealedFor(port, identity))!);
     expect(state.of === 'unopenable' && state.cause).toBe('another-key');
@@ -197,9 +213,17 @@ describe('an unopenable read NAMES WHICH WAY IT FAILED', () => {
     const key = await profileKey(identity);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const sealWith = async (text: string) => {
-      const body = new Uint8Array(await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode('midnight-identity/profile-seal/v1') as BufferSource },
-        key, new TextEncoder().encode(text) as BufferSource));
+      const body = new Uint8Array(
+        await crypto.subtle.encrypt(
+          {
+            name: 'AES-GCM',
+            iv,
+            additionalData: new TextEncoder().encode('midnight-identity/profile-seal/v1') as BufferSource
+          },
+          key,
+          new TextEncoder().encode(text) as BufferSource
+        )
+      );
       return { v: 1, iv: Buffer.from(iv).toString('base64url'), sealed: Buffer.from(body).toString('base64url') };
     };
     const unreadable = await open(key, await sealWith('{not json'));
@@ -219,7 +243,7 @@ describe('ONE BROWSER, SEVERAL WALLETS - each keeps its own record, and the reco
   const third = identityFromSecret(newSecret());
   const sealedBy = async (who: typeof identity, profile = someone) => seal(await profileKey(who), profile);
 
-  it('A SECOND WALLET CAN SAVE, AND THE FIRST ONE\'S RECORD IS LEFT BYTE FOR BYTE', async () => {
+  it("A SECOND WALLET CAN SAVE, AND THE FIRST ONE'S RECORD IS LEFT BYTE FOR BYTE", async () => {
     putSealed(port, await sealedBy(identity));
     const before = JSON.stringify(sealedIn(port));
 
@@ -248,7 +272,11 @@ describe('ONE BROWSER, SEVERAL WALLETS - each keeps its own record, and the reco
   it('WITH THE WALLET THAT SEALED IT GONE, every wallet here can still save and read its own', async () => {
     const gone = identityFromSecret(newSecret());
     putSealed(port, await sealedBy(gone));
-    const wallets = [[identity, 'First'], [other, 'Second'], [third, 'Third']] as const;
+    const wallets = [
+      [identity, 'First'],
+      [other, 'Second'],
+      [third, 'Third']
+    ] as const;
     for (const [who, name] of wallets) {
       await save(port, who, selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, name, 'legal', NOW));
     }
@@ -258,13 +286,25 @@ describe('ONE BROWSER, SEVERAL WALLETS - each keeps its own record, and the reco
     }
   });
 
-  it('a record at the old name that is PROVABLY a wallet\'s own and damaged is that wallet\'s to see, and nobody else\'s', async () => {
+  it("a record at the old name that is PROVABLY a wallet's own and damaged is that wallet's to see, and nobody else's", async () => {
     const key = await profileKey(identity);
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const body = new Uint8Array(await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode('midnight-identity/profile-seal/v1') as BufferSource },
-      key, new TextEncoder().encode('{not json') as BufferSource));
-    putSealed(port, { v: 1, iv: Buffer.from(iv).toString('base64url'), sealed: Buffer.from(body).toString('base64url') });
+    const body = new Uint8Array(
+      await crypto.subtle.encrypt(
+        {
+          name: 'AES-GCM',
+          iv,
+          additionalData: new TextEncoder().encode('midnight-identity/profile-seal/v1') as BufferSource
+        },
+        key,
+        new TextEncoder().encode('{not json') as BufferSource
+      )
+    );
+    putSealed(port, {
+      v: 1,
+      iv: Buffer.from(iv).toString('base64url'),
+      sealed: Buffer.from(body).toString('base64url')
+    });
     const before = JSON.stringify(sealedIn(port));
 
     expect((await load(port, identity)).of).toBe('unopenable');
@@ -276,7 +316,7 @@ describe('ONE BROWSER, SEVERAL WALLETS - each keeps its own record, and the reco
     expect(JSON.stringify(sealedIn(port))).toBe(before);
   });
 
-  it('replacing by name reaches only this wallet\'s own record, never the one at the old name', async () => {
+  it("replacing by name reaches only this wallet's own record, never the one at the old name", async () => {
     putSealed(port, await sealedBy(identity));
     const before = JSON.stringify(sealedIn(port));
     await save(port, other, emptyProfile(NOW), { replacingUnopenable: true });
@@ -285,7 +325,7 @@ describe('ONE BROWSER, SEVERAL WALLETS - each keeps its own record, and the reco
     expect(JSON.stringify(sealedIn(port))).toBe(before);
   });
 
-  it('a wallet\'s own name is the same from the same secret, differs between wallets, and names nobody', async () => {
+  it("a wallet's own name is the same from the same secret, differs between wallets, and names nobody", async () => {
     const again = identityFromWords(TEST_MNEMONIC);
     expect(await recordNameFor(again)).toBe(await recordNameFor(identity));
     expect(await recordNameFor(other)).not.toBe(await recordNameFor(identity));

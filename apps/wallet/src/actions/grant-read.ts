@@ -25,12 +25,25 @@ import { rotateTheCompanyKeyHere } from '../../../../packages/web-shared/src/com
 import { HttpCompanyRecordStore, readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { grantsHere, grantsReadWith } from '../../../../packages/web-shared/src/purpose-wraps.js';
 import {
-  grantsChangeFiledHere, grantsWrappedAgainHere, GrantsNotFiled, type GrantsAsked, type GrantsChangeFiled, type GrantsFilingDoors,
+  grantsChangeFiledHere,
+  grantsWrappedAgainHere,
+  GrantsNotFiled,
+  type GrantsAsked,
+  type GrantsChangeFiled,
+  type GrantsFilingDoors
 } from '../../../../packages/web-shared/src/grants-filed-here.js';
 import { deviceSignerFrom, readersIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, enteredFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { rotationDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
@@ -47,12 +60,20 @@ export interface GrantReadReach {
 /** Where the change stands once filed: in force, or waiting for the other signers' wallets. */
 export const GRANT_READ_STATE = { inForce: 'in-force', waiting: 'waiting-for-signers' } as const;
 
-const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({ key: `act.grant-read.why.${key}`, ...(values === undefined ? {} : { values }) });
+const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
+  key: `act.grant-read.why.${key}`,
+  ...(values === undefined ? {} : { values })
+});
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const HEX64 = /^[0-9a-f]{64}$/u;
-const CODE_REFUSED = { 'not-a-code': 'not-a-code', 'not-signed': 'code-not-signed', 'another-company': 'code-another-company' } as const;
+const CODE_REFUSED = {
+  'not-a-code': 'not-a-code',
+  'not-signed': 'code-not-signed',
+  'another-company': 'code-another-company'
+} as const;
 
-const isReaderCode = (code: JoinCode): code is JoinCode & { readonly parts: ReaderParts } => code.parts.kind === 'reader';
+const isReaderCode = (code: JoinCode): code is JoinCode & { readonly parts: ReaderParts } =>
+  code.parts.kind === 'reader';
 
 /**
  * The reader's code the page hands over, read for the company the ask names: signed over exactly what it carries by
@@ -93,13 +114,22 @@ export const grantsFilingDoorsIn = (r: CompanyReach): GrantsFilingDoors => {
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   const secret = r.seat.signingSecret as Hex;
   return {
-    accountId: r.accountId, versions: grantsReadWith((asked) => r.stepView.current().records(asked), r.accountId), directory,
-    me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex }, signingSecret: secret, keys: r.companyKeys,
+    accountId: r.accountId,
+    versions: grantsReadWith((asked) => r.stepView.current().records(asked), r.accountId),
+    directory,
+    me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex },
+    signingSecret: secret,
+    keys: r.companyKeys,
     seats: () => readersIn(directory).signers(),
     file: async (rec) => {
-      await new HttpCompanyRecordStore(r.accountId, readsJoinedIn(r.stepView), secret, r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)).put(rec);
+      await new HttpCompanyRecordStore(
+        r.accountId,
+        readsJoinedIn(r.stepView),
+        secret,
+        r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)
+      ).put(rec);
       await enteredFor(r).enter([companyRecordEntry(rec)]);
-    },
+    }
   };
 };
 
@@ -149,18 +179,27 @@ async function readersHandedIn(r: CompanyReach, filed: GrantsChangeFiled): Promi
  * replaces them, and once it is in force the company's key is changed.
  */
 export const readersReplacedBy = (inForce: readonly GrantEntry[], give: GrantEntry): readonly GrantEntry[] =>
-  inForce.filter((e) => (e.recipient === give.recipient || e.person === give.person) && canonical(e) !== canonical(give));
+  inForce.filter(
+    (e) => (e.recipient === give.recipient || e.person === give.person) && canonical(e) !== canonical(give)
+  );
 
 /**
  * Before anything is signed: when the give replaces a reader in force, the person is shown whom it replaces and that
  * the company's key will change, and the act goes on only once they confirm it in this window.
  */
-export async function confirmWhatAGiveReplaces(ctx: Pick<StepContext, 'confirm'>, inForce: readonly GrantEntry[], give: GrantEntry): Promise<void> {
+export async function confirmWhatAGiveReplaces(
+  ctx: Pick<StepContext, 'confirm'>,
+  inForce: readonly GrantEntry[],
+  give: GrantEntry
+): Promise<void> {
   const replaced = readersReplacedBy(inForce, give);
   if (replaced.length === 0) return;
   await ctx.confirm([
-    ...replaced.map((e) => ({ key: 'act.grant-read.confirm.replaces', values: { person: e.person, recipient: e.recipient, role: e.role } })),
-    { key: 'act.grant-read.confirm.key-changes' },
+    ...replaced.map((e) => ({
+      key: 'act.grant-read.confirm.replaces',
+      values: { person: e.person, recipient: e.recipient, role: e.role }
+    })),
+    { key: 'act.grant-read.confirm.key-changes' }
   ]);
 }
 
@@ -177,11 +216,14 @@ async function inForceHere(r: CompanyReach): Promise<readonly GrantEntry[]> {
 const shownAsk = (intent: ActIntent): ShownLine => {
   const asked = grantAskedOf(intent);
   if ('key' in asked) return { key: 'act.grant-read.shown.not-a-grant', from: 'page' };
-  if (!('give' in asked)) return { key: 'act.grant-read.shown.take-away', values: { recipient: asked.takeAway }, from: 'page' };
+  if (!('give' in asked))
+    return { key: 'act.grant-read.shown.take-away', values: { recipient: asked.takeAway }, from: 'page' };
   const code = readerCodeOf(intent);
   const fingerprint = 'key' in code ? '' : readerCodeFingerprint(code);
   return {
-    key: `act.grant-read.shown.give.${asked.give.role}`, values: { person: asked.give.person, recipient: asked.give.recipient, fingerprint }, from: 'page',
+    key: `act.grant-read.shown.give.${asked.give.role}`,
+    values: { person: asked.give.person, recipient: asked.give.recipient, fingerprint },
+    from: 'page'
   };
 };
 
@@ -195,7 +237,7 @@ export function grantReadAction(reach: GrantReadReach): ActionDefinition {
       { key: 'act.grant-read.shown.reads', from: 'action' },
       ...upkeepShown(),
       { key: 'act.grant-read.shown.service-told', from: 'action' },
-      { key: 'act.grant-read.shown.nothing-else', from: 'action' },
+      { key: 'act.grant-read.shown.nothing-else', from: 'action' }
     ],
     checks: [{ key: 'act.grant-read.check.ask' }, { key: 'act.grant-read.check.seat' }, UPKEEP_CHECK],
     check: async (intent) => {
@@ -204,14 +246,17 @@ export function grantReadAction(reach: GrantReadReach): ActionDefinition {
       return 'key' in asked ? asked : null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.grant-read.step.seat' },
         run: async (ctx) => {
           const r = await read.at(ctx);
           const asked = grantAskedOf(intent);
-          if ('give' in asked) await confirmWhatAGiveReplaces(ctx, await (reach.inForceFor ?? inForceHere)(r), asked.give);
-        },
+          if ('give' in asked)
+            await confirmWhatAGiveReplaces(ctx, await (reach.inForceFor ?? inForceHere)(r), asked.give);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const file: ActionStep = {
@@ -226,11 +271,12 @@ export function grantReadAction(reach: GrantReadReach): ActionDefinition {
             return;
           }
           if (!(await readersHandedIn(r, filed))) ctx.show({ key: 'act.grant-read.left.readers-not-kept' });
-          if (filed.takesAway && !(await keyChangedAfter(ctx, read))) ctx.show({ key: 'act.grant-read.left.key-not-changed' });
+          if (filed.takesAway && !(await keyChangedAfter(ctx, read)))
+            ctx.show({ key: 'act.grant-read.left.key-not-changed' });
           ctx.tell({ state: GRANT_READ_STATE.inForce, filed: filed.by, needed: filed.needed });
-        },
+        }
       };
       return [seat, upkeep.first, file, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

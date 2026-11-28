@@ -40,13 +40,22 @@ export interface SpendingPoliciesReach {
  * sent alone is answered; those filed are entered with one entry write through `entered`. A write refused, or one whose
  * outcome is not known, stops the batch there: each after it is answered as not sent, and the next seat action files it.
  */
-export const filedTogetherThrough = (
-  accountId: string, step: Parameters<typeof readsJoinedIn>[0], signWith: Hex, judge: FreshJudge, entered: RecordsEntered,
-): NonNullable<SpendingPoliciesHere['fileEach']> => async (recs) => {
-  if (recs.length === 0) return [];
-  const store = new HttpCompanyRecordStore(accountId, readsJoinedIn(step), signWith, judge);
-  return filedTogether((writes) => step.current().write(writes), recs.map((rec) => store.filingOf(rec, entered)));
-};
+export const filedTogetherThrough =
+  (
+    accountId: string,
+    step: Parameters<typeof readsJoinedIn>[0],
+    signWith: Hex,
+    judge: FreshJudge,
+    entered: RecordsEntered
+  ): NonNullable<SpendingPoliciesHere['fileEach']> =>
+  async (recs) => {
+    if (recs.length === 0) return [];
+    const store = new HttpCompanyRecordStore(accountId, readsJoinedIn(step), signWith, judge);
+    return filedTogether(
+      (writes) => step.current().write(writes),
+      recs.map((rec) => store.filingOf(rec, entered))
+    );
+  };
 
 /**
  * **A VAULT'S SPENDING POLICIES AS THIS SEAT READS THEM**: every version of a policy's sealed record as the service
@@ -58,21 +67,34 @@ export const spendingPoliciesFor = (r: SpendingPoliciesReach): NonNullable<Compa
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   return {
     versions: async (id) => {
-      const [b] = await r.records([{ kind: SPENDING_POLICY_KIND, id, every: true }]) as readonly ({ versions?: unknown } | null | undefined)[];
+      const [b] = (await r.records([{ kind: SPENDING_POLICY_KIND, id, every: true }])) as readonly (
+        { versions?: unknown } | null | undefined
+      )[];
       return Array.isArray(b?.versions)
-        ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind: SPENDING_POLICY_KIND, id }).sealed) as SealedCompanyRecord[] : [];
+        ? (b!.versions.map(
+            (m) => fromCompanyWire(m, { company: r.accountId, kind: SPENDING_POLICY_KIND, id }).sealed
+          ) as SealedCompanyRecord[])
+        : [];
     },
-    file: r.file ?? (async () => { throw new Error('a payment, or an approval of another seat\'s policy, files no spending policy.'); }),
+    file:
+      r.file ??
+      (async () => {
+        throw new Error("a payment, or an approval of another seat's policy, files no spending policy.");
+      }),
     ...(r.file === undefined || r.fileEach === undefined ? {} : { fileEach: r.fileEach }),
     me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex },
     keys: (input) => r.keys(input),
     ...(r.keysOfEach === undefined ? {} : { keysOfEach: r.keysOfEach }),
     onChain: chainReadThroughTheWallet(r.roles),
     /* The read grants as this seat's device believes them, from the directory every reader reads: the readers given `policy`. */
-    grantReaders: async () => policyReadersIn(await grantsHere({
-      accountId: r.accountId, versions: grantsReadWith(r.records, r.accountId),
-      directory: r.directory,
-      me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex },
-    })),
+    grantReaders: async () =>
+      policyReadersIn(
+        await grantsHere({
+          accountId: r.accountId,
+          versions: grantsReadWith(r.records, r.accountId),
+          directory: r.directory,
+          me: { signerId: me.signerId, wrappingSecret: me.wrappingSecret as Hex }
+        })
+      )
   };
 };

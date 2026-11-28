@@ -29,17 +29,7 @@
  */
 
 /** The kinds of change a subject line may announce, and nothing else. */
-export const SUBJECT_KINDS = [
-  'build',
-  'chore',
-  'ci',
-  'docs',
-  'feat',
-  'fix',
-  'perf',
-  'refactor',
-  'test',
-];
+export const SUBJECT_KINDS = ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'test'];
 
 /**
  * The kinds a BRANCH may announce. Three fewer than a subject, and the
@@ -124,23 +114,23 @@ const FORBIDDEN = [
     // one of those through.
     name: 'an attribution trailer',
     pattern: /^[\s>|]*[a-z]+(-[a-z]+)*-by:/im,
-    says: 'a change is described by what it does, not by who or what had a hand in it',
+    says: 'a change is described by what it does, not by who or what had a hand in it'
   },
   {
     name: 'a line saying what produced the change',
     pattern: /^[\s>|]*(co-)?(generated|authored|created|written)\s+(with|by)\b/im,
-    says: 'a change is described by what it does, not by what produced it',
+    says: 'a change is described by what it does, not by what produced it'
   },
   {
     // The mark a tool leaves on text it wrote part of.
     name: 'a mark left by a tool',
     pattern: /[\u{1F916}\u{1F9BE}]/u,
-    says: 'a change is described by what it does, not by what produced it',
+    says: 'a change is described by what it does, not by what produced it'
   },
   {
     name: 'an address',
     pattern: /[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}/i,
-    says: 'a history says what changed; who published it is on the commit already',
+    says: 'a history says what changed; who published it is on the commit already'
   },
   {
     // A path under somebody's home directory names a person and the machine the
@@ -155,7 +145,7 @@ const FORBIDDEN = [
     // anything is permanent, and a false acceptance is permanent.
     name: 'a path inside a home directory',
     pattern: /(\/Users\/|\/home\/|~\/|[A-Za-z]:\\Users\\)[A-Za-z0-9._-]+/,
-    says: 'a history describes the change, not the machine it was made on',
+    says: 'a history describes the change, not the machine it was made on'
   },
   {
     // Ordinary hyphens throughout. A dash chosen by a text editor reads as one
@@ -165,8 +155,8 @@ const FORBIDDEN = [
     // and is what a spreadsheet and several keyboards produce.
     name: 'a dash that is not a hyphen',
     pattern: /[\u2010-\u2015\u2212]/u,
-    says: 'a plain hyphen is the only dash a history here carries',
-  },
+    says: 'a plain hyphen is the only dash a history here carries'
+  }
 ];
 
 /**
@@ -192,7 +182,6 @@ function unpublishable(text, where, also = []) {
   }
   return null;
 }
-
 
 /** Whether a title's words carry punctuation, a version number's full stops and a package name aside. */
 const hasPunctuation = (description) =>

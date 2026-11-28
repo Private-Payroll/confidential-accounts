@@ -3,16 +3,20 @@
  *
  * The decision is a pure function over what the fetch found, so it is pinned here without a network.
  */
-import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parametersFetched } from './fetch-proving-parameters-rules.js';
+
+import { describe, expect, it } from 'vitest';
+
 import { parametersNeeded, servedCircuits } from '../src/server/proving-parameters.js';
+import { parametersFetched } from './fetch-proving-parameters-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const none = { present: [], fetched: [], setAside: [], missing: [], unread: [] };
 const places = { compiled: '/nowhere/c', account: '/nowhere/a', params: '/nowhere/p' };
-const network = servedCircuits(places).filter((c) => c.label.endsWith('(network)')).map((c) => c.label);
+const network = servedCircuits(places)
+  .filter((c) => c.label.endsWith('(network)'))
+  .map((c) => c.label);
 
 describe('the public parameters the keys check proves with', () => {
   /* RED WHEN: a check where every parameter is here and genuine is refused, or says nothing of what it found. */
@@ -20,19 +24,33 @@ describe('the public parameters the keys check proves with', () => {
     const r = parametersFetched({
       ...none,
       present: ['bls_midnight_2p10'],
-      fetched: [{ name: 'bls_midnight_2p9', from: 'https://srs.midnight.network', bytes: 98692 }],
+      fetched: [{ name: 'bls_midnight_2p9', from: 'https://srs.midnight.network', bytes: 98692 }]
     });
     expect(r.ok).toBe(true);
-    expect(r.lines.join('\n')).toContain('fetched bls_midnight_2p9 (98692 bytes) from https://srs.midnight.network, checked against Midnight\'s published digest');
+    expect(r.lines.join('\n')).toContain(
+      "fetched bls_midnight_2p9 (98692 bytes) from https://srs.midnight.network, checked against Midnight's published digest"
+    );
     expect(r.lines.join('\n')).toContain('already here and checked: bls_midnight_2p10');
   });
 
   /* RED WHEN: a parameter file that could not be fetched passes, so the real prover stands down green. */
   it('refuses when a parameter file is missing, naming it, why, and the circuits that need it', () => {
-    const r = parametersFetched({ ...none, present: ['bls_midnight_2p10'], missing: [{ name: 'bls_midnight_2p9', circuits: ['depositUnshielded (vault)'], why: 'https://srs.midnight.network answered 404' }] });
+    const r = parametersFetched({
+      ...none,
+      present: ['bls_midnight_2p10'],
+      missing: [
+        {
+          name: 'bls_midnight_2p9',
+          circuits: ['depositUnshielded (vault)'],
+          why: 'https://srs.midnight.network answered 404'
+        }
+      ]
+    });
     expect(r.ok).toBe(false);
     const said = r.lines.join('\n');
-    expect(said).toContain('bls_midnight_2p9 is missing and could not be fetched: https://srs.midnight.network answered 404');
+    expect(said).toContain(
+      'bls_midnight_2p9 is missing and could not be fetched: https://srs.midnight.network answered 404'
+    );
     expect(said).toContain('needed by: depositUnshielded (vault)');
   });
 
@@ -44,7 +62,7 @@ describe('the public parameters the keys check proves with', () => {
   });
 
   /* RED WHEN: the network's own shielded circuits, which this check cannot have, fail it - or are not said to be left out. */
-  it('does not fail on the network\'s own shielded circuits when their files are absent, and says so', async () => {
+  it("does not fail on the network's own shielded circuits when their files are absent, and says so", async () => {
     expect(network.length).toBeGreaterThan(0);
     /* The reader's own words for absent files, so a reworded reason is caught here. */
     const absent = (await parametersNeeded(servedCircuits(places).filter((c) => network.includes(c.label)))).unread;
@@ -55,14 +73,25 @@ describe('the public parameters the keys check proves with', () => {
   });
 
   /* RED WHEN: unread network circuits hide an unread vault circuit that sits beside them. */
-  it('still refuses a vault circuit that is unread beside the network\'s', () => {
-    const r = parametersFetched({ ...none, present: ['bls_midnight_2p9'], unread: [...network.map((l) => `${l}: its compiled circuit is not here`), 'deposit (vault): its compiled circuit is not here'] });
+  it("still refuses a vault circuit that is unread beside the network's", () => {
+    const r = parametersFetched({
+      ...none,
+      present: ['bls_midnight_2p9'],
+      unread: [
+        ...network.map((l) => `${l}: its compiled circuit is not here`),
+        'deposit (vault): its compiled circuit is not here'
+      ]
+    });
     expect(r.ok).toBe(false);
   });
 
   /* RED WHEN: a network circuit whose file is here but could not be read passes, so a damaged local file is waved through. */
   it('refuses a network shielded circuit whose file is present but could not be read', () => {
-    const r = parametersFetched({ ...none, present: ['bls_midnight_2p9'], unread: [`${network[0]}: the file is damaged`] });
+    const r = parametersFetched({
+      ...none,
+      present: ['bls_midnight_2p9'],
+      unread: [`${network[0]}: the file is damaged`]
+    });
     expect(r.ok).toBe(false);
     expect(r.lines.join('\n')).toContain(`${network[0]}: the file is damaged`);
   });
@@ -74,7 +103,10 @@ describe('the public parameters the keys check proves with', () => {
 });
 
 describe('the fetch is part of the keys check, ahead of the tests that need it', () => {
-  const code = (file: string) => readFileSync(join(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = (file: string) =>
+    readFileSync(join(ROOT, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
 
   /* RED WHEN: the script stops checking what it fetched, or exits clean on a refusal, so CI stands the real prover down green. */
   it('the script fetches into the places the origin serves from and exits non-zero on a refusal', () => {
@@ -88,7 +120,7 @@ describe('the fetch is part of the keys check, ahead of the tests that need it',
 
   /* RED WHEN: CI's keys job does not fetch the parameters before its tests, or the step can be skipped or can fail unseen. */
   it('the keys job runs the fetch as a plain step between the vault build and the tests', () => {
-    const lines = readFileSync(join(ROOT, '.github/workflows/keys.yml'), 'utf8').split('\n');
+    const lines = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').split('\n');
     const keys = lines.findIndex((l) => /^ {2}keys:/.test(l));
     const after = lines.findIndex((l, i) => i > keys && /^ {2}\S/.test(l));
     const end = after === -1 ? lines.length : after;
@@ -99,7 +131,11 @@ describe('the fetch is part of the keys check, ahead of the tests that need it',
     expect(build).toBeGreaterThan(-1);
     expect(fetchAt).toBeGreaterThan(build);
     expect(tests).toBeGreaterThan(fetchAt);
-    const first = job.slice(0, fetchAt).map((l, i) => (/^ {6}- /.test(l) ? i : -1)).filter((i) => i >= 0).pop()!;
+    const first = job
+      .slice(0, fetchAt)
+      .map((l, i) => (/^ {6}- /.test(l) ? i : -1))
+      .filter((i) => i >= 0)
+      .pop()!;
     const step = job.slice(first, fetchAt + 1).join('\n');
     expect(step).not.toMatch(/\bif:|continue-on-error/);
     expect(job[first]).toMatch(/^ {6}- name: \S/);

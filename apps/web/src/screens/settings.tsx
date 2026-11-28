@@ -35,7 +35,11 @@ export function Settings({ children }: { children?: ReactNode }) {
         </TabsList>
       </Tabs>
       <div className="min-w-0">
-        {children ?? <p className="text-sm text-muted-foreground" data-settings-overview>{t('settings.choose')}</p>}
+        {children ?? (
+          <p className="text-sm text-muted-foreground" data-settings-overview>
+            {t('settings.choose')}
+          </p>
+        )}
       </div>
     </div>
   );

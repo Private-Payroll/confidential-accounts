@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Button, DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger
 } from 'vaults-ui';
 import { Glyph, glyphFor } from '../glyphs.js';
 import { readPref, writePref } from './prefs.js';
@@ -73,7 +78,9 @@ const listeners = new Set<() => void>();
 
 function subscribeToChoice(onChange: () => void): () => void {
   listeners.add(onChange);
-  return () => { listeners.delete(onChange); };
+  return () => {
+    listeners.delete(onChange);
+  };
 }
 
 export interface ThemeControl {
@@ -119,11 +126,10 @@ export function useTheme(): ThemeControl {
 
 /** `dark` -> `themeDark`. One rule, so a third theme brings its glyph by
  * naming convention rather than by being added to a switch here. */
-const glyphNameOf = (id: string): string =>
-  `theme${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+const glyphNameOf = (id: string): string => `theme${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 
 const glyphNameFor = (theme: Theme, choice: ThemeChoice, chosen: string): string =>
-  (choice === 'system' ? glyphNameOf(theme) : chosen);
+  choice === 'system' ? glyphNameOf(theme) : chosen;
 
 /** The menu's entries: every theme in the list, then the machine. The machine
  * is LAST because it is the default, and a default at the top reads as the
@@ -144,9 +150,9 @@ export const THEME_ENTRIES: readonly Entry[] = [
      * its glyph without this file learning its name. A theme whose glyph is
      * missing falls back to the machine's, which is a dull icon rather than a
      * crash. */
-    glyph: glyphNameOf(theme.id),
+    glyph: glyphNameOf(theme.id)
   })),
-  SYSTEM_ENTRY,
+  SYSTEM_ENTRY
 ];
 
 /**
@@ -157,7 +163,12 @@ export const THEME_ENTRIES: readonly Entry[] = [
  * has several, so the trigger's job goes back to being a status — and the
  * destinations are the menu, where they are named in words.
  */
-export function ThemePicker({ choice, theme, onChoose, wide }: {
+export function ThemePicker({
+  choice,
+  theme,
+  onChoose,
+  wide
+}: {
   readonly choice: ThemeChoice;
   readonly theme: Theme;
   readonly onChoose: (next: ThemeChoice) => void;
@@ -168,9 +179,8 @@ export function ThemePicker({ choice, theme, onChoose, wide }: {
   const resolvedLabel = THEMES.find((entry) => entry.id === theme)?.label ?? theme;
   /* Named for what it IS and what it DOES, because the trigger's glyph shows
    * the resolved theme and a screen reader gets neither for free. */
-  const label = choice === 'system'
-    ? `Theme: following this machine (${theme}) — change`
-    : `Theme: ${current.label} — change`;
+  const label =
+    choice === 'system' ? `Theme: following this machine (${theme}) — change` : `Theme: ${current.label} — change`;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -184,16 +194,16 @@ export function ThemePicker({ choice, theme, onChoose, wide }: {
           className={wide === true ? 'flex-1 justify-start font-normal text-muted-foreground' : 'text-muted-foreground'}
         >
           {/* The trigger shows the theme that is ACTUALLY ON. Following the
-            * machine at night and following it at noon are the same choice and
-            * two different screens, and the icon says which one you are
-            * looking at. */}
+           * machine at night and following it at noon are the same choice and
+           * two different screens, and the icon says which one you are
+           * looking at. */}
           <Glyph icon={glyphFor(glyphNameFor(theme, choice, current.glyph))} />
           {/* THE WORD IS THE THEME THAT IS ON, NEVER THE CHOICE. "Follow this
-            * machine" is three words wide in a rail that is fourteen
-            * characters, and it names a rule rather than a state — a person
-            * glancing at the rail wants to know it is dark, not how it came to
-            * be. The accessible name carries both, and the menu's tick carries
-            * which choice is set. */}
+           * machine" is three words wide in a rail that is fourteen
+           * characters, and it names a rule rather than a state — a person
+           * glancing at the rail wants to know it is dark, not how it came to
+           * be. The accessible name carries both, and the menu's tick carries
+           * which choice is set. */}
           {wide === true && <span className="truncate">{resolvedLabel}</span>}
         </Button>
       </DropdownMenuTrigger>

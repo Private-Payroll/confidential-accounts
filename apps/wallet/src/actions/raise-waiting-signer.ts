@@ -3,15 +3,32 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { openedWithAnyKey } from '../../../../src/core/company-key.js';
 import { openFromInbox } from '../../../../src/core/sealed-records.js';
 import type { PendingSignerPayload } from '../../../../src/core/types.js';
-import { SeatMayNotInvite, refuseASeatThatMayNotInvite } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import {
+  SeatMayNotInvite,
+  refuseASeatThatMayNotInvite
+} from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { InvitationNotBound } from '../../../../packages/web-shared/src/company-change-on-device.js';
 import { seatSignerOnDevice } from '../../../../packages/web-shared/src/signer-by-link.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { companyReachFor, governanceDoorsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import {
+  companyReachFor,
+  governanceDoorsFor,
+  keptReach,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { invitingSeatOf } from './invite.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -37,7 +54,8 @@ export interface RaiseWaitingSignerReach {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.raise-waiting-signer.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.raise-waiting-signer.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
@@ -47,7 +65,9 @@ const scopeOfTheRequest = (r: CompanyReach, signerId: string): Hex => {
   if (box === undefined) throw new StepRefused(why('not-waiting'));
   let payload: PendingSignerPayload;
   try {
-    payload = openedWithAnyKey(r.companyKeys, (key) => openFromInbox<PendingSignerPayload>(box.sealed, r.accountId, key));
+    payload = openedWithAnyKey(r.companyKeys, (key) =>
+      openFromInbox<PendingSignerPayload>(box.sealed, r.accountId, key)
+    );
   } catch (e) {
     throw new StepRefused(why('not-opened', { says: said(e) }), codeOfError(e));
   }
@@ -62,23 +82,34 @@ export function raiseWaitingSignerAction(reach: RaiseWaitingSignerReach): Action
     headline: 'act.raise-waiting-signer.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
       { key: 'act.raise-waiting-signer.shown.name', values: { name: intent.fields['personName'] ?? '' }, from: 'page' },
-      { key: 'act.raise-waiting-signer.shown.read-out', values: { fingerprint: intent.fields['readOut'] ?? '' }, from: 'page' },
+      {
+        key: 'act.raise-waiting-signer.shown.read-out',
+        values: { fingerprint: intent.fields['readOut'] ?? '' },
+        from: 'page'
+      },
       { key: 'act.raise-waiting-signer.shown.checks', from: 'action' },
       { key: 'act.raise-waiting-signer.shown.raise', from: 'action' },
       ...upkeepShown(),
-      { key: 'act.raise-waiting-signer.shown.nothing-else', from: 'action' },
+      { key: 'act.raise-waiting-signer.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.raise-waiting-signer.check.seat' },
       { key: 'act.raise-waiting-signer.check.request' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
-    check: async (intent) => (['record', 'signer', 'personName', 'readOut'].some((k) => (intent.fields[k] ?? '').trim() === '') ? why('not-a-signer') : null),
+    check: async (intent) =>
+      ['record', 'signer', 'personName', 'readOut'].some((k) => (intent.fields[k] ?? '').trim() === '')
+        ? why('not-a-signer')
+        : null,
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.raise-waiting-signer.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const raise: ActionStep = {
@@ -99,23 +130,34 @@ export function raiseWaitingSignerAction(reach: RaiseWaitingSignerReach): Action
           let state: string;
           try {
             ({ state } = await seatSignerOnDevice(doors, {
-              companyKeys: r.companyKeys, signerId, readOut: intent.fields['readOut']!.trim(), invite: { scope },
-              inviter: { committeeKey: inviting.committeeKey, statement: inviting.statement, opening: inviting.opening },
-              inviteAddressOf: (c, salt) => commitments.inviteAddressOf(c, salt),
+              companyKeys: r.companyKeys,
+              signerId,
+              readOut: intent.fields['readOut']!.trim(),
+              invite: { scope },
+              inviter: {
+                committeeKey: inviting.committeeKey,
+                statement: inviting.statement,
+                opening: inviting.opening
+              },
+              inviteAddressOf: (c, salt) => commitments.inviteAddressOf(c, salt)
             }));
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
-            if (e instanceof FiledNotEntered) throw new StepRefused(why('filed-not-entered', { says: said(e) }), codeOfError(e));
+            if (e instanceof FiledNotEntered)
+              throw new StepRefused(why('filed-not-entered', { says: said(e) }), codeOfError(e));
             if (!handed.over && (e instanceof InvitationNotBound || e instanceof SeatMayNotInvite)) {
               throw new StepRefused(why('not-raised', { says: said(e) }), codeOfError(e));
             }
-            throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? 'not-raised' : 'may-be-sent', { says: said(e) }), codeOfError(e));
+            throw new StepRefused(
+              why(!handed.over || nothingWasSentBy(e) ? 'not-raised' : 'may-be-sent', { says: said(e) }),
+              codeOfError(e)
+            );
           }
           read.renew();
           ctx.tell({ state });
-        },
+        }
       };
       return [upkeep.first, seat, raise, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

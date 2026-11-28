@@ -14,7 +14,13 @@
 import { describe, it, expect } from 'vitest';
 import { x25519 } from '@noble/curves/ed25519.js';
 import {
-  newSigningKeypair, newWrappingKeypair, newSymmetricKey, wrapKey, toHex, fromHex, type Hex,
+  newSigningKeypair,
+  newWrappingKeypair,
+  newSymmetricKey,
+  wrapKey,
+  toHex,
+  fromHex,
+  type Hex
 } from '../../../src/core/crypto.js';
 import { sealAccount, defaultPolicy } from '../../../src/core/account.js';
 import type { Account, Signer } from '../../../src/core/types.js';
@@ -23,22 +29,32 @@ import { clobberRefusal, seatToPromote, type SealedSeat } from './seat-repair.js
 const wrappingPublicOf = (secret: Hex) => toHex(x25519.getPublicKey(fromHex(secret)));
 
 const signerOf = (id: string, signingPublicKey: Hex): Signer => ({
-  id, name: id, role: 'approver', status: 'active', userId: null,
-  signingPublicKey, wrappingPublicKey: 'cc'.repeat(32), leafCommitment: 'dd'.repeat(32),
+  id,
+  name: id,
+  role: 'approver',
+  status: 'active',
+  userId: null,
+  signingPublicKey,
+  wrappingPublicKey: 'cc'.repeat(32),
+  leafCommitment: 'dd'.repeat(32)
 });
 
 /** A real account, really sealed, with one wrapped viewing key per signer. */
 const accountWith = (signers: Signer[], wrapTo: Array<{ signerId: string; pub: Hex }>) => {
   const viewingKey = newSymmetricKey();
   const account: Account = {
-    id: 'acc_northwind', name: 'Northwind', signers,
-    policy: defaultPolicy(), wrappedKeys: [],
-    recovery: { signerIds: signers.map(s => s.id), threshold: 1 },
-    createdAt: new Date().toISOString(),
+    id: 'acc_northwind',
+    name: 'Northwind',
+    signers,
+    policy: defaultPolicy(),
+    wrappedKeys: [],
+    recovery: { signerIds: signers.map((s) => s.id), threshold: 1 },
+    createdAt: new Date().toISOString()
   };
   const sealed = sealAccount(account, viewingKey, []);
-  sealed.wrappedKeys = wrapTo.map(w => ({
-    signerId: w.signerId, ...wrapKey(viewingKey, w.pub),
+  sealed.wrappedKeys = wrapTo.map((w) => ({
+    signerId: w.signerId,
+    ...wrapKey(viewingKey, w.pub)
   })) as never;
   return { sealed, viewingKey };
 };
@@ -74,10 +90,8 @@ describe('nothing silently replaces key material that is already here', () => {
     /* Two facts in one: a bundle written elsewhere may spell hex in upper case
      * (one file along), and a server that renamed the seat
      * must not be able to make a clobber look like a retry. */
-    expect(clobberRefusal(held, { signerId: 'x', signingSecret: '11'.repeat(32).toUpperCase() }))
-      .toBeNull();
-    expect(clobberRefusal(held, { signerId: 'sgn_mine', signingSecret: '99'.repeat(32) }))
-      .toBeTruthy();
+    expect(clobberRefusal(held, { signerId: 'x', signingSecret: '11'.repeat(32).toUpperCase() })).toBeNull();
+    expect(clobberRefusal(held, { signerId: 'sgn_mine', signingSecret: '99'.repeat(32) })).toBeTruthy();
   });
 });
 
@@ -85,16 +99,18 @@ describe('a published seat is bound to this device only on proof, never on a lab
   const sk = newSigningKeypair();
   const wk = newWrappingKeypair();
   const seat: SealedSeat = {
-    signingPublicKey: sk.publicKey, signingSecret: sk.secret, wrappingSecret: wk.secret,
+    signingPublicKey: sk.publicKey,
+    signingSecret: sk.secret,
+    wrappingSecret: wk.secret
   };
 
   it('PROMOTES the seat whose roster entry carries this device’s own public key', () => {
     const { sealed } = accountWith(
       [signerOf('sgn_mine', sk.publicKey)],
-      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]);
+      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]
+    );
 
-    expect(seatToPromote([seat], sealed))
-      .toEqual({ signingPublicKey: sk.publicKey, signerId: 'sgn_mine' });
+    expect(seatToPromote([seat], sealed)).toEqual({ signingPublicKey: sk.publicKey, signerId: 'sgn_mine' });
   });
 
   it('REFUSES a forged wrapped key that names somebody else’s seat', () => {
@@ -112,7 +128,8 @@ describe('a published seat is bound to this device only on proof, never on a lab
     const stranger = newSigningKeypair();
     const { sealed } = accountWith(
       [signerOf('sgn_stranger', stranger.publicKey)],
-      [{ signerId: 'sgn_stranger', pub: wrappingPublicOf(wk.secret) }]);
+      [{ signerId: 'sgn_stranger', pub: wrappingPublicOf(wk.secret) }]
+    );
 
     expect(seatToPromote([seat], sealed)).toBeNull();
   });
@@ -123,10 +140,14 @@ describe('a published seat is bound to this device only on proof, never on a lab
      * the first version did — accepted this. */
     const { sealed } = accountWith(
       [signerOf('sgn_mine', sk.publicKey)],
-      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]);
-    sealed.wrappedKeys = [{
-      signerId: 'sgn_mine', ...wrapKey(newSymmetricKey(), wrappingPublicOf(wk.secret)),
-    }] as never;
+      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]
+    );
+    sealed.wrappedKeys = [
+      {
+        signerId: 'sgn_mine',
+        ...wrapKey(newSymmetricKey(), wrappingPublicOf(wk.secret))
+      }
+    ] as never;
 
     expect(seatToPromote([seat], sealed)).toBeNull();
   });
@@ -144,16 +165,15 @@ describe('a published seat is bound to this device only on proof, never on a lab
     const other = newSigningKeypair();
     const otherWk = newWrappingKeypair();
     const seats: SealedSeat[] = [
-      { signingPublicKey: other.publicKey, signingSecret: other.secret,
-        wrappingSecret: otherWk.secret },
-      seat,
+      { signingPublicKey: other.publicKey, signingSecret: other.secret, wrappingSecret: otherWk.secret },
+      seat
     ];
     const { sealed } = accountWith(
       [signerOf('sgn_mine', sk.publicKey)],
-      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]);
+      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]
+    );
 
-    expect(seatToPromote(seats, sealed))
-      .toEqual({ signingPublicKey: sk.publicKey, signerId: 'sgn_mine' });
+    expect(seatToPromote(seats, sealed)).toEqual({ signingPublicKey: sk.publicKey, signerId: 'sgn_mine' });
   });
 
   it('DERIVES this device’s public key rather than reading it off the pending entry', () => {
@@ -164,7 +184,8 @@ describe('a published seat is bound to this device only on proof, never on a lab
     const tampered: SealedSeat = { ...seat, signingPublicKey: stranger.publicKey };
     const { sealed } = accountWith(
       [signerOf('sgn_stranger', stranger.publicKey)],
-      [{ signerId: 'sgn_stranger', pub: wrappingPublicOf(wk.secret) }]);
+      [{ signerId: 'sgn_stranger', pub: wrappingPublicOf(wk.secret) }]
+    );
 
     expect(seatToPromote([tampered], sealed)).toBeNull();
   });
@@ -172,7 +193,8 @@ describe('a published seat is bound to this device only on proof, never on a lab
   it('answers null for a device holding nothing pending', () => {
     const { sealed } = accountWith(
       [signerOf('sgn_mine', sk.publicKey)],
-      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]);
+      [{ signerId: 'sgn_mine', pub: wrappingPublicOf(wk.secret) }]
+    );
     expect(seatToPromote([], sealed)).toBeNull();
   });
 });

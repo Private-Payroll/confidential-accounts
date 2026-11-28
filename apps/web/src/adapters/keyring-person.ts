@@ -1,5 +1,9 @@
 import {
-  currentUser, forgetLocally, resumeSession, seatHeldHere, type SeatPublicHalves,
+  currentUser,
+  forgetLocally,
+  resumeSession,
+  seatHeldHere,
+  type SeatPublicHalves
 } from 'vaults-web-shared/keyring.js';
 import { readSignIn } from './kept-sign-in.js';
 import { tabStorage } from './kept-skips.js';

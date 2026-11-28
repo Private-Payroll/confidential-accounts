@@ -22,7 +22,8 @@ import type { Hex } from '../../../src/core/crypto.js';
 
 type Key = { tag: string; value: string };
 
-const same = (a: Key, b: Key) => a.tag.toLowerCase() === b.tag.toLowerCase() && a.value.toLowerCase() === b.value.toLowerCase();
+const same = (a: Key, b: Key) =>
+  a.tag.toLowerCase() === b.tag.toLowerCase() && a.value.toLowerCase() === b.value.toLowerCase();
 
 /**
  * The roster this device opened, as the vault keys it names, with the seats
@@ -40,13 +41,14 @@ export type Roster = Pick<Account, 'id' | 'signers'> & { readonly notBelieved: r
  */
 export const whyNotWhole = (roster: Roster): string | null => {
   const n = roster.notBelieved.length;
-  return n === 0 ? null
-    : `the company's roster, as this device believes it, shows no signer for ${n} seat${n === 1 ? '' : 's'} the `
-      + `company's account holds on the chain (${roster.notBelieved.join(', ')}), so nothing is built for a committee from it. `
-      + 'A signer seated there and still waiting to be admitted is admitted from the wallet of a seat that may file the list '
-      + 'of signers (Admit a signer). A signer already admitted whose keys are not in the list gives their keys from their '
-      + 'own wallet (Give your keys, on the Signers page), and the next seat action of a seat that may file the list folds '
-      + 'them in. Once either has happened, reload the page.';
+  return n === 0
+    ? null
+    : `the company's roster, as this device believes it, shows no signer for ${n} seat${n === 1 ? '' : 's'} the ` +
+        `company's account holds on the chain (${roster.notBelieved.join(', ')}), so nothing is built for a committee from it. ` +
+        'A signer seated there and still waiting to be admitted is admitted from the wallet of a seat that may file the list ' +
+        'of signers (Admit a signer). A signer already admitted whose keys are not in the list gives their keys from their ' +
+        'own wallet (Give your keys, on the Signers page), and the next seat action of a seat that may file the list folds ' +
+        'them in. Once either has happened, reload the page.';
 };
 
 /**

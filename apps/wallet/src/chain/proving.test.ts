@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
 import * as L from '@midnightntwrk/ledger-v9';
-import { browserProvingProvider, builderProving, buffersOf, KEPT_IDLE_MS, keptProvers, makeBrowserProvingService } from './proving.js';
+import {
+  browserProvingProvider,
+  builderProving,
+  buffersOf,
+  KEPT_IDLE_MS,
+  keptProvers,
+  makeBrowserProvingService
+} from './proving.js';
 import type { ProofEvent, ProvingWorkerLike } from './proving.js';
 
 /*
@@ -20,30 +27,57 @@ class AWorker {
   terminated = false;
   private onMessage: ((e: { data: never }) => void)[] = [];
   private onError: ((e: { message?: string }) => void)[] = [];
-  constructor() { AWorker.made.push(this); }
-  postMessage(m: unknown, transfer?: Transferable[]): void { this.sent.push(m); this.moved.push(transfer); }
+  constructor() {
+    AWorker.made.push(this);
+  }
+  postMessage(m: unknown, transfer?: Transferable[]): void {
+    this.sent.push(m);
+    this.moved.push(transfer);
+  }
   addEventListener(type: 'message' | 'error', l: (e: { data: never } & { message?: string }) => void): void {
     if (type === 'message') this.onMessage.push(l as (e: { data: never }) => void);
     else this.onError.push(l as (e: { message?: string }) => void);
   }
-  terminate(): void { this.terminated = true; }
-  says(data: unknown): void { for (const l of this.onMessage) l({ data } as never); }
-  breaks(message: string): void { for (const l of this.onError) l({ message }); }
+  terminate(): void {
+    this.terminated = true;
+  }
+  says(data: unknown): void {
+    for (const l of this.onMessage) l({ data } as never);
+  }
+  breaks(message: string): void {
+    for (const l of this.onError) l({ message });
+  }
   /** The work orders this worker was sent, without the key-material answers. */
-  get orders(): unknown[] { return this.sent.filter((m) => (m as { op: string }).op !== 'answer'); }
+  get orders(): unknown[] {
+    return this.sent.filter((m) => (m as { op: string }).op !== 'answer');
+  }
 }
 
 const km = (name: string) => ({
-  lookupKey: vi.fn(async (loc: string) => ({ proverKey: new Uint8Array([1]), verifierKey: new Uint8Array([2]), ir: new Uint8Array([3]), from: name, loc }) as never),
-  getParams: vi.fn(async (k: number) => new Uint8Array([k])),
+  lookupKey: vi.fn(
+    async (loc: string) =>
+      ({
+        proverKey: new Uint8Array([1]),
+        verifierKey: new Uint8Array([2]),
+        ir: new Uint8Array([3]),
+        from: name,
+        loc
+      }) as never
+  ),
+  getParams: vi.fn(async (k: number) => new Uint8Array([k]))
 });
-const settle = async (): Promise<void> => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); };
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 6; i += 1) await Promise.resolve();
+};
 const SPEND = 'midnight/zswap/spend';
 const OUTPUT = 'midnight/zswap/output';
 
-afterEach(() => { AWorker.made = []; vi.useRealTimers(); });
+afterEach(() => {
+  AWorker.made = [];
+  vi.useRealTimers();
+});
 
-describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
+describe("THE WALLET'S PROVERS, KEPT BETWEEN PROOFS", () => {
   it('proofs asked together each get a worker, and each answer goes back to the proof that asked', async () => {
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const spend = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
@@ -51,9 +85,12 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     /* RED WHEN: proofs asked together are made to wait for one another on one worker. */
     expect(AWorker.made).toHaveLength(2);
     const [w1, w2] = AWorker.made as [AWorker, AWorker];
-    w1.says({ op: 'ready' }); w2.says({ op: 'ready' });
+    w1.says({ op: 'ready' });
+    w2.says({ op: 'ready' });
     /* RED WHEN: a worker is not told which key the proof is for, so it cannot choose the prover that key needs. */
-    expect(w1.orders).toEqual([{ op: 'prove', keyLocation: SPEND, preimage: new Uint8Array([1]), overwriteBindingInput: undefined }]);
+    expect(w1.orders).toEqual([
+      { op: 'prove', keyLocation: SPEND, preimage: new Uint8Array([1]), overwriteBindingInput: undefined }
+    ]);
     /* The second finishes first. */
     w2.says({ op: 'result', value: 'output proof' });
     w1.says({ op: 'result', value: 'spend proof' });
@@ -86,7 +123,8 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
 
   it('asks the key material of the proof it is working on, and of no other', async () => {
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
-    const a = km('a'); const b = km('b');
+    const a = km('a');
+    const b = km('b');
     const first = provers.run('prove', SPEND, new Uint8Array([1]), a);
     const w = AWorker.made[0]!;
     w.says({ op: 'ready' });
@@ -132,8 +170,12 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const a = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
     const b = provers.run('prove', SPEND, new Uint8Array([2]), km('a'));
-    for (const w of AWorker.made) { w.says({ op: 'ready' }); w.says({ op: 'result', value: 'x' }); }
-    await a; await b;
+    for (const w of AWorker.made) {
+      w.says({ op: 'ready' });
+      w.says({ op: 'result', value: 'x' });
+    }
+    await a;
+    await b;
     /* RED WHEN: every finished worker is kept, holding the memory it proved in. */
     expect(provers.idle).toBe(1);
     expect(AWorker.made.filter((w) => w.terminated)).toHaveLength(1);
@@ -142,7 +184,8 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     expect(provers.idle).toBe(0);
     expect(AWorker.made.every((w) => w.terminated)).toBe(true);
     const c = provers.run('prove', OUTPUT, new Uint8Array([3]), km('a'));
-    AWorker.made[2]!.says({ op: 'ready' }); AWorker.made[2]!.says({ op: 'result', value: 'y' });
+    AWorker.made[2]!.says({ op: 'ready' });
+    AWorker.made[2]!.says({ op: 'result', value: 'y' });
     await c;
     provers.stop();
     expect(AWorker.made[2]!.terminated).toBe(true);
@@ -154,7 +197,14 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const proof = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
     let over = false;
-    const outcome = proof.then(() => 'answered', (e: unknown) => e as Error).finally(() => { over = true; });
+    const outcome = proof
+      .then(
+        () => 'answered',
+        (e: unknown) => e as Error
+      )
+      .finally(() => {
+        over = true;
+      });
     const stuck = AWorker.made[0]!;
     stuck.says({ op: 'ready' });
 
@@ -207,7 +257,7 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     expect(run.mock.calls).toEqual([
       ['prove', OUTPUT, new Uint8Array([5]), keys, 3n],
       ['check', SPEND, new Uint8Array([6]), keys, undefined],
-      ['prove', SPEND, new Uint8Array([7]), keys, undefined],
+      ['prove', SPEND, new Uint8Array([7]), keys, undefined]
     ]);
     await provider!.lookupKey(OUTPUT);
     await provider!.lookupKey(SPEND);
@@ -219,7 +269,9 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const run = vi.fn(async (..._args: unknown[]) => 'done' as unknown);
     const recording = { run, stop: () => undefined, idle: 0 } as unknown as ReturnType<typeof keptProvers>;
     const service = makeBrowserProvingService(km('a') as never, { provers: recording });
-    await expect(service.prove({ prove: async () => 'proved' } as never, 0n as never)).rejects.toThrow(/earlier ledger/u);
+    await expect(service.prove({ prove: async () => 'proved' } as never, 0n as never)).rejects.toThrow(
+      /earlier ledger/u
+    );
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -232,15 +284,23 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
 
     expect(events).toEqual([{ op: 'prove', at: 'start' }]);
     AWorker.made[0]!.says({ op: 'ready' });
-    expect(AWorker.made[0]!.orders).toEqual([{ op: 'prove', keyLocation: OUTPUT, preimage: new Uint8Array([5]), overwriteBindingInput: 3n }]);
+    expect(AWorker.made[0]!.orders).toEqual([
+      { op: 'prove', keyLocation: OUTPUT, preimage: new Uint8Array([5]), overwriteBindingInput: 3n }
+    ]);
     AWorker.made[0]!.says({ op: 'result', value: new Uint8Array([6]) });
     await proof;
-    expect(events).toEqual([{ op: 'prove', at: 'start' }, { op: 'prove', at: 'end' }]);
+    expect(events).toEqual([
+      { op: 'prove', at: 'start' },
+      { op: 'prove', at: 'end' }
+    ]);
     const failing = provider!.check(new Uint8Array([7]), OUTPUT);
     AWorker.made[0]!.says({ op: 'failure', error: 'no' });
     await expect(failing).rejects.toThrow('no');
 
-    expect(events.slice(2)).toEqual([{ op: 'check', at: 'start' }, { op: 'check', at: 'end' }]);
+    expect(events.slice(2)).toEqual([
+      { op: 'check', at: 'start' },
+      { op: 'check', at: 'end' }
+    ]);
   });
 
   it('stopping ends every kept worker and clears the idle timers, and a proof still running when it stops keeps nothing', async () => {
@@ -250,7 +310,8 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const done = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
     const running = provers.run('prove', OUTPUT, new Uint8Array([2]), km('a'));
     const [kept, busy] = AWorker.made as [AWorker, AWorker];
-    kept.says({ op: 'ready' }); kept.says({ op: 'result', value: 'x' });
+    kept.says({ op: 'ready' });
+    kept.says({ op: 'result', value: 'x' });
     busy.says({ op: 'ready' });
     await done;
     expect(provers.idle).toBe(1);
@@ -273,14 +334,16 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const ok = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
     expect(vi.getTimerCount()).toBe(1);
-    AWorker.made[0]!.says({ op: 'ready' }); AWorker.made[0]!.says({ op: 'result', value: 'x' });
+    AWorker.made[0]!.says({ op: 'ready' });
+    AWorker.made[0]!.says({ op: 'result', value: 'x' });
     await ok;
     expect(vi.getTimerCount()).toBe(1);
     provers.stop();
     expect(vi.getTimerCount()).toBe(0);
 
     const bad = provers.run('prove', OUTPUT, new Uint8Array([2]), km('a'));
-    AWorker.made[1]!.says({ op: 'ready' }); AWorker.made[1]!.says({ op: 'failure', error: 'no' });
+    AWorker.made[1]!.says({ op: 'ready' });
+    AWorker.made[1]!.says({ op: 'failure', error: 'no' });
     await expect(bad).rejects.toThrow('no');
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -290,7 +353,8 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
     const first = provers.run('prove', SPEND, new Uint8Array([1]), km('a'));
     const old = AWorker.made[0]!;
-    old.says({ op: 'ready' }); old.says({ op: 'result', value: 'one' });
+    old.says({ op: 'ready' });
+    old.says({ op: 'result', value: 'one' });
     await first;
     expect(provers.idle).toBe(1);
     old.breaks('out of memory');
@@ -298,7 +362,8 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     const second = provers.run('prove', SPEND, new Uint8Array([2]), km('a'));
     expect(AWorker.made).toHaveLength(2);
     expect(old.terminated).toBe(true);
-    AWorker.made[1]!.says({ op: 'ready' }); AWorker.made[1]!.says({ op: 'result', value: 'two' });
+    AWorker.made[1]!.says({ op: 'ready' });
+    AWorker.made[1]!.says({ op: 'result', value: 'two' });
     expect(await second).toBe('two');
     provers.stop();
   });
@@ -309,18 +374,31 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
       const slow = (name: string) => {
         const asked: unknown[] = [];
         const gates: { ok: (v: unknown) => void; no: (e: Error) => void }[] = [];
-        const ask = (what: unknown) => new Promise<unknown>((ok, no) => { asked.push(what); gates.push({ ok, no }); });
-        return { name, asked, gates, lookupKey: vi.fn((loc: string) => ask(loc)), getParams: vi.fn((k: number) => ask(k)) };
+        const ask = (what: unknown) =>
+          new Promise<unknown>((ok, no) => {
+            asked.push(what);
+            gates.push({ ok, no });
+          });
+        return {
+          name,
+          asked,
+          gates,
+          lookupKey: vi.fn((loc: string) => ask(loc)),
+          getParams: vi.fn((k: number) => ask(k))
+        };
       };
-      const older = slow('older'); const newer = slow('newer');
+      const older = slow('older');
+      const newer = slow('newer');
       const provers = keptProvers(() => new AWorker() as unknown as ProvingWorkerLike);
       const first = provers.run('prove', SPEND, new Uint8Array([1]), older as never);
       const second = provers.run('prove', OUTPUT, new Uint8Array([2]), newer as never);
       const [w1, w2] = AWorker.made as [AWorker, AWorker];
-      w1.says({ op: 'ready' }); w2.says({ op: 'ready' });
-      const askFor = (askId: number, n: number) => kind === 'lookupKey'
-        ? { op: 'lookupKey', askId, keyLocation: `place-${n}` }
-        : { op: 'getParams', askId, k: 10 + n };
+      w1.says({ op: 'ready' });
+      w2.says({ op: 'ready' });
+      const askFor = (askId: number, n: number) =>
+        kind === 'lookupKey'
+          ? { op: 'lookupKey', askId, keyLocation: `place-${n}` }
+          : { op: 'getParams', askId, k: 10 + n };
       const what = (n: number) => (kind === 'lookupKey' ? `place-${n}` : 10 + n);
 
       w2.says(askFor(0, 2));
@@ -332,8 +410,12 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
       newer.gates[0]!.ok('answer for the newer');
       await settle();
 
-      expect(w1.sent.filter((m) => (m as { op: string }).op === 'answer')).toEqual([{ op: 'answer', askId: 0, ok: true, value: 'answer for the older' }]);
-      expect(w2.sent.filter((m) => (m as { op: string }).op === 'answer')).toEqual([{ op: 'answer', askId: 0, ok: true, value: 'answer for the newer' }]);
+      expect(w1.sent.filter((m) => (m as { op: string }).op === 'answer')).toEqual([
+        { op: 'answer', askId: 0, ok: true, value: 'answer for the older' }
+      ]);
+      expect(w2.sent.filter((m) => (m as { op: string }).op === 'answer')).toEqual([
+        { op: 'answer', askId: 0, ok: true, value: 'answer for the newer' }
+      ]);
 
       w1.says(askFor(1, 1));
       w2.says(askFor(1, 2));
@@ -342,9 +424,15 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
       newer.gates[1]!.ok('second for the newer');
       await settle();
 
-      expect(w1.sent.at(-1)).toEqual({ op: 'answer', askId: 1, ok: false, error: expect.stringContaining('the older was refused') });
+      expect(w1.sent.at(-1)).toEqual({
+        op: 'answer',
+        askId: 1,
+        ok: false,
+        error: expect.stringContaining('the older was refused')
+      });
       expect(w2.sent.at(-1)).toEqual({ op: 'answer', askId: 1, ok: true, value: 'second for the newer' });
-      w1.says({ op: 'result', value: 'one' }); w2.says({ op: 'result', value: 'two' });
+      w1.says({ op: 'result', value: 'one' });
+      w2.says({ op: 'result', value: 'two' });
       expect(await first).toBe('one');
       expect(await second).toBe('two');
     });
@@ -362,17 +450,19 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
     w.says({ op: 'lookupKey', askId: 0, keyLocation: SPEND });
     w.says({ op: 'getParams', askId: 1, k: 14 });
     await settle();
-    const answers = w.sent.map((m, i) => [m, w.moved[i]] as const).filter(([m]) => (m as { op: string }).op === 'answer');
+    const answers = w.sent
+      .map((m, i) => [m, w.moved[i]] as const)
+      .filter(([m]) => (m as { op: string }).op === 'answer');
     expect(answers.map(([, t]) => t)).toEqual([
       [material.proverKey.buffer, material.verifierKey.buffer, material.ir.buffer],
-      [params.buffer],
+      [params.buffer]
     ]);
     w.says({ op: 'result', value: 'proof' });
     expect(await proof).toBe('proof');
     provers.stop();
   });
 
-  it('the buffers moved are each file\'s own, once each, and nothing for an answer that carries none', () => {
+  it("the buffers moved are each file's own, once each, and nothing for an answer that carries none", () => {
     // RED WHEN: one buffer is listed twice and the move throws, or an answer with no key moves something
     const shared = new Uint8Array([1, 2, 3]);
     expect(buffersOf({ proverKey: shared, verifierKey: shared, ir: new Uint8Array([4]) })).toHaveLength(2);
@@ -381,7 +471,7 @@ describe('THE WALLET\'S PROVERS, KEPT BETWEEN PROOFS', () => {
   });
 });
 
-describe('A CALL MIDNIGHT.JS 5 BUILT IS PROVED BY THE WALLET\'S BUILDERS', () => {
+describe("A CALL MIDNIGHT.JS 5 BUILT IS PROVED BY THE WALLET'S BUILDERS", () => {
   /** An unproven transaction as Midnight.js 5 hands a built call over: a sealed v9 handle, not a ledger object. */
   const builtByMidnightJs = (tx: L.UnprovenTransaction) => LedgerTransaction.seal('v9', 'Unproven', tx);
   const asked: { op: string; keyLocation: string }[] = [];
@@ -389,7 +479,7 @@ describe('A CALL MIDNIGHT.JS 5 BUILT IS PROVED BY THE WALLET\'S BUILDERS', () =>
     run: vi.fn(async (op: string, keyLocation: string) => {
       asked.push({ op, keyLocation });
       throw new Error('the test worker holds no key');
-    }),
+    })
   };
 
   it('a handle with nothing to prove comes back proved, as a handle, and is not refused', async () => {
@@ -400,7 +490,7 @@ describe('A CALL MIDNIGHT.JS 5 BUILT IS PROVED BY THE WALLET\'S BUILDERS', () =>
     expect(proven.serialize().length).toBeGreaterThan(0);
   });
 
-  it('a handle carrying a proof obligation reaches the wallet\'s own provers, keyed by its location', async () => {
+  it("a handle carrying a proof obligation reaches the wallet's own provers, keyed by its location", async () => {
     // RED WHEN: the handle is refused as built for an earlier ledger before any proof is asked for
     asked.length = 0;
     const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).fill(7));

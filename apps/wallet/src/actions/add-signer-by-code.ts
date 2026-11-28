@@ -3,13 +3,26 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import type { SeatOpening } from '../../../../src/core/seat-opening.js';
 import { isSignerRole } from '../../../../src/core/roles.js';
 import type { Role } from '../../../../src/core/types.js';
-import { InvitationNotMade, InvitationRefused, SeatMayNotInvite, type InvitingCompany } from '../../../../packages/web-shared/src/invitation-on-device.js';
+import {
+  InvitationNotMade,
+  InvitationRefused,
+  SeatMayNotInvite,
+  type InvitingCompany
+} from '../../../../packages/web-shared/src/invitation-on-device.js';
 import { addSignerFromCodeHere, CodeNotTaken } from '../../../../packages/web-shared/src/invitation-by-code.js';
 import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { liveLeafReader, type LeafReader } from '../chain/seat-leaf.js';
 import { companyReachFor, keptReach, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { invitingSeatOf } from './invite.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -41,7 +54,8 @@ export interface AddSignerByCodeReach {
 export const ADD_BY_CODE_STATE = { filed: 'filed' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.add-signer-by-code.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.add-signer-by-code.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
@@ -61,19 +75,19 @@ export function addSignerByCodeAction(reach: AddSignerByCodeReach): ActionDefini
       { key: 'act.add-signer-by-code.shown.checks', from: 'action' },
       { key: 'act.add-signer-by-code.shown.next', from: 'action' },
       ...upkeepShown(),
-      { key: 'act.add-signer-by-code.shown.nothing-else', from: 'action' },
+      { key: 'act.add-signer-by-code.shown.nothing-else', from: 'action' }
     ],
-    checks: [
-      { key: 'act.add-signer-by-code.check.seat' },
-      { key: 'act.add-signer-by-code.check.code' },
-      UPKEEP_CHECK,
-    ],
+    checks: [{ key: 'act.add-signer-by-code.check.seat' }, { key: 'act.add-signer-by-code.check.code' }, UPKEEP_CHECK],
     check: async (intent) => fieldsRefusal(intent.fields),
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.add-signer-by-code.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const add: ActionStep = {
@@ -83,33 +97,62 @@ export function addSignerByCodeAction(reach: AddSignerByCodeReach): ActionDefini
           if (refused !== null) throw new StepRefused(refused);
           const r = await read.at(ctx);
           const inviting = await invitingSeatOf(ctx, r, (k) => why(k));
-          const company: InvitingCompany = withCompanyKeys({
-            id: r.accountId, name: (await r.roster()).name, label: r.label, account: r.account, keyEpoch: r.companyKeys.epoch,
-          }, r.companyKeys);
+          const company: InvitingCompany = withCompanyKeys(
+            {
+              id: r.accountId,
+              name: (await r.roster()).name,
+              label: r.label,
+              account: r.account,
+              keyEpoch: r.companyKeys.epoch
+            },
+            r.companyKeys
+          );
           const commitments = await reach.commitments();
           const leafOf = reach.leafOf ?? liveLeafReader;
-          const leaves = (openings: readonly SeatOpening[]) => Promise.all(openings.map((o) => leafOf(o).then((l) => l.toLowerCase(), () => {
-            /* A leaf not read is no leaf: the code is then refused as not shown to be made for its wallet. */
-            return null;
-          })));
+          const leaves = (openings: readonly SeatOpening[]) =>
+            Promise.all(
+              openings.map((o) =>
+                leafOf(o).then(
+                  (l) => l.toLowerCase(),
+                  () => {
+                    /* A leaf not read is no leaf: the code is then refused as not shown to be made for its wallet. */
+                    return null;
+                  }
+                )
+              )
+            );
           let added: { readonly id: string; readonly fingerprint: string };
           try {
-            added = await addSignerFromCodeHere(company, inviting, intent.fields['code']!.trim(), {
-              name: intent.fields['personName']!, role: intent.fields['role'] as Role,
-            }, { writes: writesOfTheStep(r), invitations: ctx.invitations }, leaves, (c, salt) => commitments.inviteAddressOf(c, salt));
+            added = await addSignerFromCodeHere(
+              company,
+              inviting,
+              intent.fields['code']!.trim(),
+              {
+                name: intent.fields['personName']!,
+                role: intent.fields['role'] as Role
+              },
+              { writes: writesOfTheStep(r), invitations: ctx.invitations },
+              leaves,
+              (c, salt) => commitments.inviteAddressOf(c, salt)
+            );
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof CodeNotTaken) throw new StepRefused(why('not-taken', { says: said(e) }), codeOfError(e));
-            if (e instanceof SeatMayNotInvite || e instanceof InvitationNotMade) throw new StepRefused(why('not-made', { says: said(e) }), codeOfError(e));
-            if (e instanceof InvitationRefused) throw new StepRefused(why('refused', { says: said(e) }), codeOfError(e));
+            if (e instanceof SeatMayNotInvite || e instanceof InvitationNotMade)
+              throw new StepRefused(why('not-made', { says: said(e) }), codeOfError(e));
+            if (e instanceof InvitationRefused)
+              throw new StepRefused(why('refused', { says: said(e) }), codeOfError(e));
             throw new StepRefused(why('not-made', { says: said(e) }), codeOfError(e));
           }
           read.renew();
           ctx.tell({ state: ADD_BY_CODE_STATE.filed, signer: added.id });
-          ctx.show({ key: 'act.add-signer-by-code.over.fingerprint', values: { name: intent.fields['personName']!, fingerprint: added.fingerprint } });
-        },
+          ctx.show({
+            key: 'act.add-signer-by-code.over.fingerprint',
+            values: { name: intent.fields['personName']!, fingerprint: added.fingerprint }
+          });
+        }
       };
       return [upkeep.first, seat, add, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

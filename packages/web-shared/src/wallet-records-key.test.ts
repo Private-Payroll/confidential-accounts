@@ -6,8 +6,15 @@ import { parseAsk, type HoldersRequest, type RecordsKeyRequest } from 'midnight-
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { holdersAnswerFor, recordsKeyAnswerFor, recordsKeySignedBy } from 'midnight-identity/profile/records-key';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { askWalletForAddressesAndBalances, askWalletToSignRecordsKey, askWalletWhoHolds } from './wallet-records-key.js';
-import { addressesAndBalancesAnswerFor, type AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
+import {
+  askWalletForAddressesAndBalances,
+  askWalletToSignRecordsKey,
+  askWalletWhoHolds
+} from './wallet-records-key.js';
+import {
+  addressesAndBalancesAnswerFor,
+  type AddressesAndBalancesShown
+} from 'midnight-identity/profile/addresses-and-balances';
 import type { AddressesAndBalancesRequest } from 'midnight-identity/profile/request';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
@@ -31,27 +38,50 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
     closed: false,
     postMessage: (message: unknown) => {
       asked.push(message);
-      queueMicrotask(() => listeners.forEach((l) => l({ origin: WALLET, source: wallet, data: answer(message) } as unknown as MessageEvent)));
+      queueMicrotask(() =>
+        listeners.forEach((l) =>
+          l({ origin: WALLET, source: wallet, data: answer(message) } as unknown as MessageEvent)
+        )
+      );
     },
     close: () => {},
-    focus: () => {},
+    focus: () => {}
   } as unknown as WalletWindow;
   const view = {
-    open: () => { queueMicrotask(() => listeners.forEach((l) => l({ origin: WALLET, source: wallet, data: { schema: READY_PING } } as unknown as MessageEvent))); return wallet; },
-    addEventListener: (_t: string, l: (e: MessageEvent) => void) => { listeners.push(l); },
+    open: () => {
+      queueMicrotask(() =>
+        listeners.forEach((l) =>
+          l({ origin: WALLET, source: wallet, data: { schema: READY_PING } } as unknown as MessageEvent)
+        )
+      );
+      return wallet;
+    },
+    addEventListener: (_t: string, l: (e: MessageEvent) => void) => {
+      listeners.push(l);
+    },
     removeEventListener: () => {},
     setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
-    clearTimeout: (t: unknown) => clearTimeout(t as never),
+    clearTimeout: (t: unknown) => clearTimeout(t as never)
   } as unknown as Openable;
   return { view, asked };
 };
 /** The wallet's own parser and answer, as it would answer the ask that arrives. */
 /* As a wallet that kept this account for the company answers. */
-const honestly = (ask: unknown) => recordsKeyAnswerFor(identity, parseAsk(ask, US, 1_000) as RecordsKeyRequest, SEATS, 1_000, HELD, ACCOUNT);
-const input = { company: CO, account: ACCOUNT, seat: SEAT.toUpperCase(), atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+const honestly = (ask: unknown) =>
+  recordsKeyAnswerFor(identity, parseAsk(ask, US, 1_000) as RecordsKeyRequest, SEATS, 1_000, HELD, ACCOUNT);
+const input = {
+  company: CO,
+  account: ACCOUNT,
+  seat: SEAT.toUpperCase(),
+  atOrigin: US,
+  name: 'Us',
+  rdns: 'example.us',
+  nonce: 'n1',
+  now: () => 1_000
+};
 
-describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO HOLDS THE COMPANY AND ITS VAULT', () => {
-  it('sends an ask the wallet\'s own parser accepts, naming the vault only when one is asked about', async () => {
+describe("ASKING THE PERSON'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO HOLDS THE COMPANY AND ITS VAULT", () => {
+  it("sends an ask the wallet's own parser accepts, naming the vault only when one is asked about", async () => {
     const plain = walletAnswering(honestly);
     const read = await askWalletToSignRecordsKey(plain.view, WALLET, input);
     const sent = plain.asked[0] as Record<string, unknown>;
@@ -62,7 +92,10 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
     expect(read.vault).toBeNull();
 
     const withVault = walletAnswering(honestly);
-    const both = await askWalletToSignRecordsKey(withVault.view, WALLET, { ...input, vault: VAULT.toUpperCase() as VaultAddress });
+    const both = await askWalletToSignRecordsKey(withVault.view, WALLET, {
+      ...input,
+      vault: VAULT.toUpperCase() as VaultAddress
+    });
     /* RED WHEN: the vault asked about is not on the wire, or what the wallet read of it does not come back. */
     expect((withVault.asked[0] as Record<string, unknown>)['vault']).toBe(VAULT);
     expect((parseAsk(withVault.asked[0], US, 1_000) as RecordsKeyRequest).vault).toBe(VAULT);
@@ -72,7 +105,7 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
     expect('firstSecret' in (withVault.asked[0] as Record<string, unknown>)).toBe(false);
   });
 
-  it('sends the vault\'s readers, each key with the name this page holds, only when it is given them for a first secret', async () => {
+  it("sends the vault's readers, each key with the name this page holds, only when it is given them for a first secret", async () => {
     const READERS = [{ key: 'A1'.repeat(32), name: 'Ada' }, { key: 'b2'.repeat(32) }];
     const asking = walletAnswering(honestly);
     await askWalletToSignRecordsKey(asking.view, WALLET, { ...input, vault: VAULT, firstSecret: { readers: READERS } });
@@ -85,9 +118,21 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
   it('HANDS THE WALLET THE INVITATION IT IS GIVEN, WHOLE, SO A WALLET THAT KEPT NO ACCOUNT CAN KEEP THE ONE IT NAMES', async () => {
     const invitedBy = {
       committeeKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) },
-      statement: { account: ACCOUNT as string, signingKey: '2b'.repeat(32), wrappingKey: '3c'.repeat(32), seat: '7c'.repeat(32), signature: '4d'.repeat(64) },
+      statement: {
+        account: ACCOUNT as string,
+        signingKey: '2b'.repeat(32),
+        wrappingKey: '3c'.repeat(32),
+        seat: '7c'.repeat(32),
+        signature: '4d'.repeat(64)
+      },
       /* The inviter's own seat's opening travels whole too: the wallet checks it against the inviter's seat. */
-      opening: { publicKey: '5e'.repeat(32), scope: '6f'.repeat(32), blinding: '7a'.repeat(32), walletKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) }, salt: '8b'.repeat(32) },
+      opening: {
+        publicKey: '5e'.repeat(32),
+        scope: '6f'.repeat(32),
+        blinding: '7a'.repeat(32),
+        walletKey: { tag: 'schnorr' as const, value: '1d'.repeat(32) },
+        salt: '8b'.repeat(32)
+      }
     };
     const w = walletAnswering(honestly);
     await askWalletToSignRecordsKey(w.view, WALLET, { ...input, invitedBy });
@@ -105,7 +150,7 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
       ['no vault', (a: any) => ({ ...a, vault: undefined }), 'not-an-answer'],
       ['another seat', (a: any) => ({ ...a, statement: { ...a.statement, seat: '6b'.repeat(32) } }), 'not-signed'],
       ['another nonce', (a: any) => ({ ...a, nonce: 'n2' }), 'nonce-mismatch'],
-      ['another page', (a: any) => ({ ...a, origin: 'https://elsewhere.example' }), 'origin-mismatch'],
+      ['another page', (a: any) => ({ ...a, origin: 'https://elsewhere.example' }), 'origin-mismatch']
     ] as const) {
       const bent = walletAnswering((ask) => bend(JSON.parse(JSON.stringify(honestly(ask)))));
       const e = await askWalletToSignRecordsKey(bent.view, WALLET, { ...input, vault: VAULT }).catch((x: Error) => x);
@@ -116,21 +161,32 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN THEIR RECORDS KEY, AND TO SAY WHO 
   });
 });
 
-describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES PRIVATELY AND WHAT IT HOLDS', () => {
+describe("ASKING THE PERSON'S WALLET WHERE IT RECEIVES PRIVATELY AND WHAT IT HOLDS", () => {
   const PUBLIC = `mn_addr_test1${'p'.repeat(60)}`;
   const SHOWN: AddressesAndBalancesShown = {
     addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
-    balances: [{ token: '00'.repeat(32), amount: '5', visibility: 'private' }, { token: '00'.repeat(32), amount: '9', visibility: 'public' }],
-    read: { private: 900, public: 950 },
+    balances: [
+      { token: '00'.repeat(32), amount: '5', visibility: 'private' },
+      { token: '00'.repeat(32), amount: '9', visibility: 'public' }
+    ],
+    read: { private: 900, public: 950 }
   };
-  const showing = (ask: unknown) => addressesAndBalancesAnswerFor(parseAsk(ask, US, 1_000) as AddressesAndBalancesRequest, SHOWN, 1_000);
+  const showing = (ask: unknown) =>
+    addressesAndBalancesAnswerFor(parseAsk(ask, US, 1_000) as AddressesAndBalancesRequest, SHOWN, 1_000);
   const asked = { atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n9', now: () => 1_000 };
 
-  it('sends an ask the wallet\'s own parser takes, carrying nothing that chooses the wallet, and hands back what the wallet showed', async () => {
+  it("sends an ask the wallet's own parser takes, carrying nothing that chooses the wallet, and hands back what the wallet showed", async () => {
     const w = walletAnswering(showing);
     const got = await askWalletForAddressesAndBalances(w.view, WALLET, asked);
     /* RED WHEN: the ask names anything beyond what every ask carries, or the page reads back other than what was shown. */
-    expect(Object.keys(w.asked[0] as object).sort()).toEqual(['expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema']);
+    expect(Object.keys(w.asked[0] as object).sort()).toEqual([
+      'expiresAt',
+      'kind',
+      'nonce',
+      'purpose',
+      'requester',
+      'schema'
+    ]);
     expect((parseAsk(w.asked[0], US, 1_000) as AddressesAndBalancesRequest).kind).toBe('addresses-and-balances');
     expect(got).toEqual({ shown: SHOWN, at: 1_000 });
   });
@@ -140,7 +196,11 @@ describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES PRIVATELY AND WHAT IT HO
       ['another nonce', (a: any) => ({ ...a, nonce: 'n2' }), 'nonce-mismatch'],
       ['another page', (a: any) => ({ ...a, origin: 'https://elsewhere.example' }), 'origin-mismatch'],
       ['a figure for a side not read', (a: any) => ({ ...a, read: { private: null, public: 950 } }), 'not-an-answer'],
-      ['the public address beside the private one', (a: any) => ({ ...a, addresses: { ...a.addresses, public: PUBLIC } }), 'not-an-answer'],
+      [
+        'the public address beside the private one',
+        (a: any) => ({ ...a, addresses: { ...a.addresses, public: PUBLIC } }),
+        'not-an-answer'
+      ]
     ] as const) {
       const bent = walletAnswering((ask) => bend(JSON.parse(JSON.stringify(showing(ask)))));
       const e = await askWalletForAddressesAndBalances(bent.view, WALLET, asked).catch((x: Error) => x);
@@ -151,25 +211,51 @@ describe('ASKING THE PERSON\'S WALLET WHERE IT RECEIVES PRIVATELY AND WHAT IT HO
   });
 });
 
-describe('ASKING THE PERSON\'S WALLET WHAT THE COMPANY\'S ACCOUNT HOLDS UNDER SOME OF ITS ROLES', () => {
-  const HOLDERS = { ...SEATS, approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [], founding: SEAT, foundingCommittee: [mine] };
+describe("ASKING THE PERSON'S WALLET WHAT THE COMPANY'S ACCOUNT HOLDS UNDER SOME OF ITS ROLES", () => {
+  const HOLDERS = {
+    ...SEATS,
+    approvals: 1,
+    vaultThresholds: [],
+    policyBar: null,
+    seatBar: 1,
+    adoptedVaults: [],
+    founding: SEAT,
+    foundingCommittee: [mine]
+  };
   const asked = ['d4'.repeat(32), 'a1'.repeat(32)];
   const held = (key: string) => (key === asked[0] ? 'ee'.repeat(32) : null);
   const answering = (withRoles: boolean) => (ask: unknown) => {
     const request = parseAsk(ask, US, 1_000) as HoldersRequest;
-    return holdersAnswerFor(request, HOLDERS, 1_000, undefined, undefined,
-      withRoles ? (request.roles ?? []).map((key) => ({ key, value: held(key) })) : undefined);
+    return holdersAnswerFor(
+      request,
+      HOLDERS,
+      1_000,
+      undefined,
+      undefined,
+      withRoles ? (request.roles ?? []).map((key) => ({ key, value: held(key) })) : undefined
+    );
   };
-  const whoHolds = { company: CO, account: ACCOUNT, atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n2', now: () => 1_000 };
+  const whoHolds = {
+    company: CO,
+    account: ACCOUNT,
+    atOrigin: US,
+    name: 'Us',
+    rdns: 'example.us',
+    nonce: 'n2',
+    now: () => 1_000
+  };
 
-  it('sends the entries asked in an ask the wallet\'s own parser takes, and hands back what the wallet read under each, in the order asked', async () => {
+  it("sends the entries asked in an ask the wallet's own parser takes, and hands back what the wallet read under each, in the order asked", async () => {
     const w = walletAnswering(answering(true));
     const read = await askWalletWhoHolds(w.view, WALLET, { ...whoHolds, roles: asked });
     /* RED WHEN: the entries are not on the wire, or the wallet's parser does not take them as asked. */
     expect((w.asked[0] as Record<string, unknown>)['roles']).toEqual(asked);
     expect((parseAsk(w.asked[0], US, 1_000) as HoldersRequest).roles).toEqual(asked);
     /* RED WHEN: what the wallet read under each entry does not come back, or comes back in another order. */
-    expect(read.roles).toEqual([{ key: asked[0], value: 'ee'.repeat(32) }, { key: asked[1], value: null }]);
+    expect(read.roles).toEqual([
+      { key: asked[0], value: 'ee'.repeat(32) },
+      { key: asked[1], value: null }
+    ]);
     const plain = walletAnswering(answering(false));
     const none = await askWalletWhoHolds(plain.view, WALLET, whoHolds);
     /* RED WHEN: an ask that names no entries carries the field, or its answer is read as holding some. */
@@ -179,8 +265,16 @@ describe('ASKING THE PERSON\'S WALLET WHAT THE COMPANY\'S ACCOUNT HOLDS UNDER SO
 
   it('BELIEVES NO ANSWER THAT LEAVES OUT THE ENTRIES IT ASKED ABOUT', async () => {
     /* A wallet that reads the account and says nothing of the entries asked: what a page must never take as "nothing held". */
-    const w = walletAnswering((ask) => holdersAnswerFor({ ...(parseAsk(ask, US, 1_000) as HoldersRequest), roles: undefined } as HoldersRequest, HOLDERS, 1_000));
+    const w = walletAnswering((ask) =>
+      holdersAnswerFor(
+        { ...(parseAsk(ask, US, 1_000) as HoldersRequest), roles: undefined } as HoldersRequest,
+        HOLDERS,
+        1_000
+      )
+    );
     /* RED WHEN: an answer silent about the entries asked is taken, so a vault's policy marker reads as absent. */
-    await expect(askWalletWhoHolds(w.view, WALLET, { ...whoHolds, roles: asked })).rejects.toThrow(/does not say what the account holds under each of the entries asked about/u);
+    await expect(askWalletWhoHolds(w.view, WALLET, { ...whoHolds, roles: asked })).rejects.toThrow(
+      /does not say what the account holds under each of the entries asked about/u
+    );
   });
 });

@@ -6,9 +6,7 @@ import type { StopBalance } from '../chain/balance.js';
 import { GIVE_UP_AFTER_MS } from '../chain/balance.js';
 import { BalanceEnginesContext } from '../chain/balance-context.js';
 import { nightFromStars } from '../chain/amount.js';
-import {
-  holdsAnyOther, otherTokenLines, shortColour, smallestUnits,
-} from '../chain/shielded-tokens.js';
+import { holdsAnyOther, otherTokenLines, shortColour, smallestUnits } from '../chain/shielded-tokens.js';
 import type { OtherTokens } from '../chain/shielded-tokens.js';
 import { loadWalletCheckpoint } from '../accounts/storage.js';
 import { openWalletId } from '../accounts/wallets-held.js';
@@ -48,7 +46,10 @@ import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
  * it formats the AGE on an every-wallet row, and it moves with the rows. */
 export const asMoment = (ms: number): string =>
   new Date(ms).toLocaleString(undefined, {
-    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
   });
 
 /**
@@ -64,9 +65,11 @@ export type WalletBalanceRow =
   /* `others` is every other private token the slot held at `asOf`, or absent
    * when the figure did not record them. Absent is not none. */
   | {
-    readonly kind: 'known'; readonly night: bigint; readonly asOf: number;
-    readonly others?: OtherTokens;
-  }
+      readonly kind: 'known';
+      readonly night: bigint;
+      readonly asOf: number;
+      readonly others?: OtherTokens;
+    }
   | { readonly kind: 'failed' };
 
 export type WalletBalanceRows = Readonly<Record<number, WalletBalanceRow>>;
@@ -161,7 +164,8 @@ function announce(answers: Readonly<Record<number, WalletBalanceRow>>): void {
  *   over a slot somebody just checked, and that sentence would be false.
  */
 function mergeStored(
-  now: WalletBalanceRows, loaded: Record<number, WalletBalanceRow>,
+  now: WalletBalanceRows,
+  loaded: Record<number, WalletBalanceRow>
 ): Record<number, WalletBalanceRow> {
   const next = { ...loaded };
   for (const [key, mine] of Object.entries(now)) {
@@ -176,9 +180,7 @@ function mergeStored(
 /** A known row, carrying the other tokens only when they were recorded, so an
  * unrecorded figure never turns into "holds no other token" on the way. */
 const knownRow = (night: bigint, asOf: number, others: OtherTokens | undefined): WalletBalanceRow =>
-  (others === undefined
-    ? { kind: 'known', night, asOf }
-    : { kind: 'known', night, asOf, others });
+  others === undefined ? { kind: 'known', night, asOf } : { kind: 'known', night, asOf, others };
 
 export const rowFor = (rows: WalletBalanceRows, account: number): WalletBalanceRow =>
   rows[account] ?? { kind: 'unknown' };
@@ -193,7 +195,10 @@ export const anyNeverChecked = (rows: WalletBalanceRows): boolean =>
  * number), and the sweep walks the slots ONE AT A TIME on the same engine,
  * because eleven concurrent wallets is eleven concurrent asks of the indexer.
  */
-export function useWalletBalances(identity: Identity, changed = 0): {
+export function useWalletBalances(
+  identity: Identity,
+  changed = 0
+): {
   readonly rows: WalletBalanceRows;
   readonly sweeping: boolean;
   readonly sweep: () => void;
@@ -213,14 +218,19 @@ export function useWalletBalances(identity: Identity, changed = 0): {
       setAnnounced((n) => n + 1);
     };
     listeners.add(listener);
-    return () => { listeners.delete(listener); };
+    return () => {
+      listeners.delete(listener);
+    };
   }, []);
   const cancelled = useRef(false);
   const stopCurrent = useRef<StopBalance | null>(null);
-  useEffect(() => () => {
-    cancelled.current = true;
-    stopCurrent.current?.();
-  }, []);
+  useEffect(
+    () => () => {
+      cancelled.current = true;
+      stopCurrent.current?.();
+    },
+    []
+  );
 
   useEffect(() => {
     let stale = false;
@@ -240,15 +250,16 @@ export function useWalletBalances(identity: Identity, changed = 0): {
          * also keeps work in flight past the end of a test's environment,
          * which is where this was found. */
         if (stale) return;
-        const checkpoint = await loadWalletCheckpoint(
-          coinPublicKeyOf(identity, account), account, walletId);
+        const checkpoint = await loadWalletCheckpoint(coinPublicKeyOf(identity, account), account, walletId);
         loaded[account] = checkpoint
           ? knownRow(checkpoint.night, checkpoint.asOf, checkpoint.others)
           : { kind: 'unknown' };
       }
       if (!stale) setRows((now) => mergeStored(now, loaded));
     })();
-    return () => { stale = true; };
+    return () => {
+      stale = true;
+    };
   }, [identity, changed, announced]);
 
   /*
@@ -317,7 +328,13 @@ export function useWalletBalances(identity: Identity, changed = 0): {
     if (!cancelled.current) setSweeping(false);
   };
 
-  return { rows, sweeping, sweep: () => { void runSweep(); } };
+  return {
+    rows,
+    sweeping,
+    sweep: () => {
+      void runSweep();
+    }
+  };
 }
 
 /**
@@ -331,37 +348,31 @@ export function useWalletBalances(identity: Identity, changed = 0): {
 export function WalletBalanceCell({ row }: { readonly row: WalletBalanceRow }): ReactNode {
   return (
     <>
-      {row.kind === 'unknown' && (
-        <span className="text-xs text-warn-text">never checked</span>
-      )}
-      {row.kind === 'checking' && (
-        <span className="text-xs text-muted-foreground">checking…</span>
-      )}
-      {row.kind === 'failed' && (
-        <span className="text-xs text-warn-text">
-          couldn&rsquo;t check — not a zero
-        </span>
-      )}
+      {row.kind === 'unknown' && <span className="text-xs text-warn-text">never checked</span>}
+      {row.kind === 'checking' && <span className="text-xs text-muted-foreground">checking…</span>}
+      {row.kind === 'failed' && <span className="text-xs text-warn-text">couldn&rsquo;t check — not a zero</span>}
       {/* THE ROW'S FIGURE: the NIGHT amount, the kind of money and the moment,
-        * then one segment per other private token held (its smallest-unit
-        * amount and short colour, the whole colour on the segment), or
-        * "other private tokens not recorded" when the figure did not record
-        * them. The wallet has no name and no scale for those tokens. The line
-        * has no fixed length, so it is `break-words` and never
-        * `whitespace-nowrap`: an unbreakable line set a minimum width the
-        * switcher's dialog could not go below (`shell/switcher.tsx`, the
-        * right column), and the dialog scrolled sideways. */}
+       * then one segment per other private token held (its smallest-unit
+       * amount and short colour, the whole colour on the segment), or
+       * "other private tokens not recorded" when the figure did not record
+       * them. The wallet has no name and no scale for those tokens. The line
+       * has no fixed length, so it is `break-words` and never
+       * `whitespace-nowrap`: an unbreakable line set a minimum width the
+       * switcher's dialog could not go below (`shell/switcher.tsx`, the
+       * right column), and the dialog scrolled sideways. */}
       {row.kind === 'known' && (
         <span className="text-xs break-words text-muted-foreground">
           {nightFromStars(row.night)} tNIGHT shielded &middot; {asMoment(row.asOf)}
-          {row.others === undefined
-            ? <> &middot; other private tokens not recorded</>
-            : otherTokenLines(row.others).map(([colour, amount]) => (
+          {row.others === undefined ? (
+            <> &middot; other private tokens not recorded</>
+          ) : (
+            otherTokenLines(row.others).map(([colour, amount]) => (
               <span key={colour} data-token={colour}>
-                {' '}&middot; {smallestUnits(amount)} of token{' '}
-                <span title={colour}>{shortColour(colour)}</span>
+                {' '}
+                &middot; {smallestUnits(amount)} of token <span title={colour}>{shortColour(colour)}</span>
               </span>
-            ))}
+            ))
+          )}
         </span>
       )}
     </>

@@ -3,7 +3,14 @@ import type { Identity, Secret } from 'midnight-identity/keys/derivation';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
 import { canonical, signingPublicKeyOf, toHex, type Hex } from '../../../../src/core/crypto.js';
 import {
-  counterOf, KeyringDidNotOpen, metadataOf, openKeyring, sealedDigestOf, sealKeyring, type Keyring, type KeyringMetadata,
+  counterOf,
+  KeyringDidNotOpen,
+  metadataOf,
+  openKeyring,
+  sealedDigestOf,
+  sealKeyring,
+  type Keyring,
+  type KeyringMetadata
 } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { keyringMarkOf, raiseKeyringMark, type KeyringMarkKept } from '../accounts/storage.js';
 import { watchFor, watchTheSavedKeys } from './nothing-secret-crosses.js';
@@ -62,7 +69,7 @@ export interface KeyringMarks {
 /** The marks kept in this wallet's own storage for the wallet this secret opens. */
 export const keyringMarksFor = (secret: Secret): KeyringMarks => ({
   markOf: (person) => keyringMarkOf(secret, person),
-  raise: (person, mark) => raiseKeyringMark(secret, person, mark),
+  raise: (person, mark) => raiseKeyringMark(secret, person, mark)
 });
 
 /** A change to saved keys that would drop or alter a seat already held. Nothing was sealed. */
@@ -113,23 +120,25 @@ export interface OpenedFrom {
 
 /* What resolves an older copy, in both of the places it can be: the page, or the service itself. */
 const WAY_OUT =
-  ' Nothing was opened or changed. If the page read your saved keys before a newer copy was written, reloading the '
-  + 'page reads them again and that is enough. If the page still hands over this copy after a reload, the service '
-  + 'holds an older copy of your saved keys than this device has seen: this device will not open it, because an older '
-  + 'copy can be missing a seat you hold. Use the device where your saved keys were last changed, or ask whoever runs '
-  + 'the service to restore the newest copy of your saved keys.';
+  ' Nothing was opened or changed. If the page read your saved keys before a newer copy was written, reloading the ' +
+  'page reads them again and that is enough. If the page still hands over this copy after a reload, the service ' +
+  'holds an older copy of your saved keys than this device has seen: this device will not open it, because an older ' +
+  'copy can be missing a seat you hold. Use the device where your saved keys were last changed, or ask whoever runs ' +
+  'the service to restore the newest copy of your saved keys.';
 const OLDER =
   'the saved keys the page handed this wallet are an older copy than ones it has already opened for you.' + WAY_OUT;
 const OTHER_COPY =
-  'the saved keys the page handed this wallet are not the copy it opened for you at the same point: another copy was '
-  + 'written beside it, and it may be missing a seat you hold.' + WAY_OUT;
+  'the saved keys the page handed this wallet are not the copy it opened for you at the same point: another copy was ' +
+  'written beside it, and it may be missing a seat you hold.' +
+  WAY_OUT;
 const MISSING =
-  'the page handed this wallet no saved keys, and it has already opened saved keys of yours, so it does not start '
-  + 'new ones over them.' + WAY_OUT;
+  'the page handed this wallet no saved keys, and it has already opened saved keys of yours, so it does not start ' +
+  'new ones over them.' +
+  WAY_OUT;
 const SEAT_DROPPED =
-  'this action tried to drop or change a seat or a company\'s pinned account already in your saved keys, which an action '
-  + 'may never do: it would lose the only copy of that seat, or let a page move which account you act for. Nothing was sealed and your saved keys are as they were. The action has to be '
-  + 'corrected before it can run; nothing you do here resolves it.';
+  "this action tried to drop or change a seat or a company's pinned account already in your saved keys, which an action " +
+  'may never do: it would lose the only copy of that seat, or let a page move which account you act for. Nothing was sealed and your saved keys are as they were. The action has to be ' +
+  'corrected before it can run; nothing you do here resolves it.';
 
 /** A saved seat as it is compared: without its registry mark, the one part of a seat a change may write. */
 const seatOnly = (seat: unknown): string => {
@@ -139,37 +148,59 @@ const seatOnly = (seat: unknown): string => {
 
 /** Whether every seat in `before` is in `after`, unchanged but for its registry mark, and every pin with it. */
 const seatsKept = (before: Keyring, after: Keyring): boolean => {
-  const kept = (a: Readonly<Record<string, unknown>> | undefined, b: Readonly<Record<string, unknown>> | undefined): boolean =>
-    Object.entries(a ?? {}).every(([id, entry]) => b !== undefined && Object.prototype.hasOwnProperty.call(b, id)
-      && canonical(b[id]) === canonical(entry));
+  const kept = (
+    a: Readonly<Record<string, unknown>> | undefined,
+    b: Readonly<Record<string, unknown>> | undefined
+  ): boolean =>
+    Object.entries(a ?? {}).every(
+      ([id, entry]) =>
+        b !== undefined && Object.prototype.hasOwnProperty.call(b, id) && canonical(b[id]) === canonical(entry)
+    );
   /* A seat may leave `accounts` only to be set aside, whole, under its own signing key with the company it was for. */
   const setAside = (id: string, entry: Keyring['accounts'][string]): boolean => {
     const was = after.formerSeats?.[signingPublicKeyOf(entry.signingSecret).toLowerCase()];
-    return was !== undefined && !Object.prototype.hasOwnProperty.call(after.accounts, id) && canonical(was) === canonical({ ...entry, accountId: id });
+    return (
+      was !== undefined &&
+      !Object.prototype.hasOwnProperty.call(after.accounts, id) &&
+      canonical(was) === canonical({ ...entry, accountId: id })
+    );
   };
-  const accountsKept = Object.entries(before.accounts ?? {}).every(([id, entry]) =>
-    (Object.prototype.hasOwnProperty.call(after.accounts, id) && seatOnly(after.accounts[id]) === seatOnly(entry)) || setAside(id, entry));
-  return typeof after.accounts === 'object' && after.accounts !== null
-    && accountsKept && kept(before.pendingSeats, after.pendingSeats) && kept(before.formerSeats, after.formerSeats) && kept(before.pins, after.pins);
+  const accountsKept = Object.entries(before.accounts ?? {}).every(
+    ([id, entry]) =>
+      (Object.prototype.hasOwnProperty.call(after.accounts, id) && seatOnly(after.accounts[id]) === seatOnly(entry)) ||
+      setAside(id, entry)
+  );
+  return (
+    typeof after.accounts === 'object' &&
+    after.accounts !== null &&
+    accountsKept &&
+    kept(before.pendingSeats, after.pendingSeats) &&
+    kept(before.formerSeats, after.formerSeats) &&
+    kept(before.pins, after.pins)
+  );
 };
 const PINNED_UNDER_THE_OLD_KEY =
-  'the saved keys the page handed this wallet are sealed the way they were before this wallet moved them to the key '
-  + 'no page holds, yet they keep a company\'s account or a confirmed seat, which only copies sealed the new way ever '
-  + 'keep. Whoever kept the old key could have sealed them. Nothing was opened or changed.' + WAY_OUT;
+  'the saved keys the page handed this wallet are sealed the way they were before this wallet moved them to the key ' +
+  "no page holds, yet they keep a company's account or a confirmed seat, which only copies sealed the new way ever " +
+  'keep. Whoever kept the old key could have sealed them. Nothing was opened or changed.' +
+  WAY_OUT;
 
 /** Whether saved keys keep any company's pinned account, or any pending seat the person confirmed. */
-const pinsOrConfirmedIn = (k: Keyring): boolean => Object.keys(k.pins ?? {}).length > 0
-  || Object.values(k.pendingSeats ?? {}).some((p) => p.joining?.confirmed === true);
+const pinsOrConfirmedIn = (k: Keyring): boolean =>
+  Object.keys(k.pins ?? {}).length > 0 ||
+  Object.values(k.pendingSeats ?? {}).some((p) => p.joining?.confirmed === true);
 const DID_NOT_OPEN =
-  'the saved keys the page handed this wallet did not open with this wallet’s key for you. They may be another '
-  + 'wallet’s or another person’s. Nothing was changed.';
+  'the saved keys the page handed this wallet did not open with this wallet’s key for you. They may be another ' +
+  'wallet’s or another person’s. Nothing was changed.';
 const LATER_UNDER_THE_OLD_KEY =
-  'the saved keys the page handed this wallet are sealed the way they were before this wallet moved them to the key '
-  + 'no page holds, and they are not the copy this device last opened that way. Only that copy is opened that way '
-  + 'again: whoever kept the old key could have sealed this one.' + WAY_OUT;
+  'the saved keys the page handed this wallet are sealed the way they were before this wallet moved them to the key ' +
+  'no page holds, and they are not the copy this device last opened that way. Only that copy is opened that way ' +
+  'again: whoever kept the old key could have sealed this one.' +
+  WAY_OUT;
 const SEALED_BEFORE =
-  'the saved keys the page handed this wallet are sealed the way they were before this device moved them to the key '
-  + 'no page holds, so they are an older copy.' + WAY_OUT;
+  'the saved keys the page handed this wallet are sealed the way they were before this device moved them to the key ' +
+  'no page holds, so they are an older copy.' +
+  WAY_OUT;
 
 /**
  * OPENS THE SAVED KEYS A PAGE HANDED IN, or refuses them with `SavedKeysRefused`: ones that do not open with this
@@ -182,7 +213,12 @@ export function openHeldKeyring(from: OpenedFrom): HeldKeyring {
    * strings the seal reads and writes, cannot be wiped: a JavaScript string is never overwritten in place, so they last
    * until nothing refers to them. */
   const hexOf = (derived: Uint8Array): Hex => {
-    try { watchFor(derived); return toHex(derived); } finally { derived.fill(0); }
+    try {
+      watchFor(derived);
+      return toHex(derived);
+    } finally {
+      derived.fill(0);
+    }
   };
   let key: Hex | null = hexOf(keyringSealKeyFor(from.identity, from.ask));
   watchFor(keyringParentFor(from.identity));
@@ -196,7 +232,12 @@ export function openHeldKeyring(from: OpenedFrom): HeldKeyring {
   } else {
     const sealed = from.handedIn.sealed;
     const tried = (k: Hex): Keyring | null => {
-      try { return openKeyring(sealed, k); } catch (e) { if (e instanceof KeyringDidNotOpen) return null; throw e; }
+      try {
+        return openKeyring(sealed, k);
+      } catch (e) {
+        if (e instanceof KeyringDidNotOpen) return null;
+        throw e;
+      }
     };
     let opened = tried(key);
     if (opened === null) {
@@ -217,24 +258,36 @@ export function openHeldKeyring(from: OpenedFrom): HeldKeyring {
     const counter = counterOf(held);
     const digest = sealedDigestOf(sealed);
     if (mark !== null && counter < mark.counter) throw new SavedKeysRefused('older-keys', OLDER);
-    if (mark !== null && counter === mark.counter && digest !== mark.digest) throw new SavedKeysRefused('older-keys', OTHER_COPY);
-    if (underTheOldKey && mark !== null && counter !== mark.counter) throw new SavedKeysRefused('older-keys', LATER_UNDER_THE_OLD_KEY);
+    if (mark !== null && counter === mark.counter && digest !== mark.digest)
+      throw new SavedKeysRefused('older-keys', OTHER_COPY);
+    if (underTheOldKey && mark !== null && counter !== mark.counter)
+      throw new SavedKeysRefused('older-keys', LATER_UNDER_THE_OLD_KEY);
     from.marks.raise(person, { counter, digest, ...(underTheOldKey ? {} : { under: 2 as const }) });
   }
   let version = from.handedIn.version;
   let sealing = false;
 
   const open = (): Hex => {
-    if (key === null) throw new Error('these saved keys have been let go, so nothing more is read or sealed with them.');
+    if (key === null)
+      throw new Error('these saved keys have been let go, so nothing more is read or sealed with them.');
     return key;
   };
 
   return Object.freeze({
-    read: (): Keyring => { open(); return structuredClone(held); },
-    metadata: (): KeyringMetadata => { open(); return metadataOf(held); },
+    read: (): Keyring => {
+      open();
+      return structuredClone(held);
+    },
+    metadata: (): KeyringMetadata => {
+      open();
+      return metadataOf(held);
+    },
     seal: (change: (current: Keyring) => Keyring): SealedAgain => {
       const k = open();
-      if (sealing) throw new Error('saved keys already sealed again are waiting to be kept, so no second copy is sealed beside them.');
+      if (sealing)
+        throw new Error(
+          'saved keys already sealed again are waiting to be kept, so no second copy is sealed beside them.'
+        );
       const next = change(structuredClone(held));
       watchTheSavedKeys(next);
       if (!seatsKept(held, next)) throw new SeatChangeRefused(SEAT_DROPPED);
@@ -260,10 +313,15 @@ export function openHeldKeyring(from: OpenedFrom): HeldKeyring {
           if (settled) return;
           settled = true;
           sealing = false;
-        },
+        }
       });
     },
-    letGo: (): void => { key = null; held = { accounts: {} }; },
-    get underTheOldKey() { return underTheOldKey; },
+    letGo: (): void => {
+      key = null;
+      held = { accounts: {} };
+    },
+    get underTheOldKey() {
+      return underTheOldKey;
+    }
   });
 }

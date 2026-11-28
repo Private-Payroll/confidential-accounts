@@ -14,18 +14,44 @@ import * as runtime from '@midnight-ntwrk/compact-runtime';
 import * as vaultModule from '../../../contracts/managed-vault/contract/index.js';
 import { newWrappingKeypair, toHex, unseal, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { purposeKey } from '../../../src/core/sealed-records.js';
-import { MemorySealedPoolStore, SealedNotePool, sealPool, type PoolSigner, type SealedPoolStore } from '../../../src/midnight/vault-pool.js';
+import {
+  MemorySealedPoolStore,
+  SealedNotePool,
+  sealPool,
+  type PoolSigner,
+  type SealedPoolStore
+} from '../../../src/midnight/vault-pool.js';
 import { commitmentForNote, changeAfterSpending } from '../../../src/midnight/vault-recovery.js';
 import { compiledOutputCommitment } from '../../../src/midnight/rebuild-from-records.js';
 import { nonceCircuitsFrom } from '../../../src/midnight/vault-coin-nonces.js';
-import { currentDepositNonceKey, openNonceSecrets, recordsKeypairFrom, refileNonceSecret, startNonceSecret } from '../../../src/midnight/company-nonce-secret.js';
+import {
+  currentDepositNonceKey,
+  openNonceSecrets,
+  recordsKeypairFrom,
+  refileNonceSecret,
+  startNonceSecret
+} from '../../../src/midnight/company-nonce-secret.js';
 import { depositNonceAt } from '../../../src/midnight/deposit-nonce.js';
 import { sealSecretCopy } from '../../../src/midnight/sealed-secret-copy.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { recordsReaderOf } from './deposit-on-device.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
-import { vaultBuilderOver, type VaultAnswer, type VaultBuilderClient, type VaultOnChainOnTheWire } from './vault-worker-client.js';
-import { coinsHandedOverHere, coinsToHandOverHere, unnamedKeptIn, vaultNotesHere, NOT_SEALED, type NotSealed, type NotesHere, type RebuildDoors } from './vault-notes-here.js';
+import {
+  vaultBuilderOver,
+  type VaultAnswer,
+  type VaultBuilderClient,
+  type VaultOnChainOnTheWire
+} from './vault-worker-client.js';
+import {
+  coinsHandedOverHere,
+  coinsToHandOverHere,
+  unnamedKeptIn,
+  vaultNotesHere,
+  NOT_SEALED,
+  type NotSealed,
+  type NotesHere,
+  type RebuildDoors
+} from './vault-notes-here.js';
 import { treeKeptInMemory } from './tree-kept-here.js';
 import { coinsFileText, coinsKeptOnThisDevice } from './vault-coins-kept-here.js';
 import { inFlightInMemory, openInFlight } from './in-flight-on-this-device.js';
@@ -35,13 +61,21 @@ const ACCOUNT = 'c0'.repeat(32);
 const TOKEN = '9b'.repeat(32) as Hex;
 const TX = 'd7'.repeat(32);
 const COMPANY_KEY = new Uint8Array(32).fill(3);
-const INDEXER = { indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' };
+const INDEXER = {
+  indexerUri: 'https://indexer.example/api/v3/graphql',
+  indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws'
+};
 const R = runtime as unknown as {
-  ContractState: { deserialize(b: Uint8Array): any }; StateValue: any; ChargedState: new (v: unknown) => unknown;
-  CompactTypeBytes: new (n: number) => any; upgradeFromTransient(x: bigint): Uint8Array;
+  ContractState: { deserialize(b: Uint8Array): any };
+  StateValue: any;
+  ChargedState: new (v: unknown) => unknown;
+  CompactTypeBytes: new (n: number) => any;
+  upgradeFromTransient(x: bigint): Uint8Array;
 };
 const V = vaultModule as unknown as {
-  Contract: new (w: unknown) => { initialState(a: unknown, b: unknown): Promise<{ currentContractState: { serialize(): Uint8Array } }> };
+  Contract: new (w: unknown) => {
+    initialState(a: unknown, b: unknown): Promise<{ currentContractState: { serialize(): Uint8Array } }>;
+  };
   pureCircuits: any;
 };
 const bytes = (h: string) => Uint8Array.from(h.match(/../gu)!, (x) => Number.parseInt(x, 16));
@@ -51,20 +85,31 @@ const ada = newWrappingKeypair();
 const bo = newWrappingKeypair();
 const ADA = { signerId: 'ada', wrappingSecret: ada.secret, companyKey: COMPANY_KEY };
 const BO = { signerId: 'bo', wrappingSecret: bo.secret, companyKey: COMPANY_KEY };
-const BOTH: PoolSigner[] = [{ id: 'ada', wrappingPublicKey: ada.publicKey }, { id: 'bo', wrappingPublicKey: bo.publicKey }];
+const BOTH: PoolSigner[] = [
+  { id: 'ada', wrappingPublicKey: ada.publicKey },
+  { id: 'bo', wrappingPublicKey: bo.publicKey }
+];
 
 const listeners: Array<(e: { data: unknown }) => void> = [];
 /** The page's own client over the worker's own handler, over this build's compiled vault. */
-const worker = vaultBuilderOver({
-  postMessage: (m) => {
-    void answerVaultAsk(async () => d as never, m as never).then(
-      (a: VaultAnswer) => listeners.forEach((l) => l({ data: structuredClone(a) })),
-      (e: Error) => listeners.forEach((l) => l({ data: { id: (m as { id: number }).id, ok: false, error: e.message } })));
+const worker = vaultBuilderOver(
+  {
+    postMessage: (m) => {
+      void answerVaultAsk(async () => d as never, m as never).then(
+        (a: VaultAnswer) => listeners.forEach((l) => l({ data: structuredClone(a) })),
+        (e: Error) =>
+          listeners.forEach((l) => l({ data: { id: (m as { id: number }).id, ok: false, error: e.message } }))
+      );
+    },
+    addEventListener: (_t, l) => {
+      listeners.push(l);
+    }
   },
-  addEventListener: (_t, l) => { listeners.push(l); },
-}, 'undeployed');
+  'undeployed'
+);
 
-const heldOf = (c: { nonce: string; token: string; value: bigint }) => commitmentForNote(V.pureCircuits, VAULT, c as never).toLowerCase();
+const heldOf = (c: { nonce: string; token: string; value: bigint }) =>
+  commitmentForNote(V.pureCircuits, VAULT, c as never).toLowerCase();
 let outputOf: (c: { nonce: string; token: string; value: bigint }) => string;
 
 /** One company: the service's records, the chain as the wallet's indexer would read it, and each signer's doors. */
@@ -80,42 +125,73 @@ const aCompany = async (o: { signers?: PoolSigner[]; secretFiled?: boolean } = {
   const secret = openNonceSecrets(filed, VAULT, recordsKeypairFrom(COMPANY_KEY)).secrets[0]! as Hex;
   const key = currentDepositNonceKey(openNonceSecrets(filed, VAULT, recordsKeypairFrom(COMPANY_KEY)));
   const chain = {
-    notes: [] as string[], everCreated: [] as string[], state: undefined as string | undefined, reads: 0, nextRead: null as string[] | null | 'throws',
+    notes: [] as string[],
+    everCreated: [] as string[],
+    state: undefined as string | undefined,
+    reads: 0,
+    nextRead: null as string[] | null | 'throws',
     splitJournal: [] as Array<[string, string]>,
-    commitment: toHex(V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes(secret))),
+    commitment: toHex(V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes(secret)))
   };
   const read = async (): Promise<VaultOnChainOnTheWire> => {
     chain.reads += 1;
     if (chain.reads > 1 && chain.nextRead === 'throws') throw new Error('the indexer did not answer');
-    const notes = chain.reads > 1 && chain.nextRead !== null ? chain.nextRead as string[] : chain.notes;
+    const notes = chain.reads > 1 && chain.nextRead !== null ? (chain.nextRead as string[]) : chain.notes;
     return {
-      onChain: true, state: chain.state ?? 'AA==', notes, notesFromThisBuild: true, retired: false, everCreated: chain.everCreated,
-      account: ACCOUNT, started: true, nonceCommitment: chain.commitment, splitJournal: chain.splitJournal,
+      onChain: true,
+      state: chain.state ?? 'AA==',
+      notes,
+      notesFromThisBuild: true,
+      retired: false,
+      everCreated: chain.everCreated,
+      account: ACCOUNT,
+      started: true,
+      nonceCommitment: chain.commitment,
+      splitJournal: chain.splitJournal
     };
   };
   const builder: RebuildDoors['builder'] = {
-    ...worker, vaultOnChain: read,
+    ...worker,
+    vaultOnChain: read,
     createdBy: async () => ({ transactionHash: TX, events: [{ transactionHash: TX } as never] }),
     creatingTransaction: async () => ({ state: 'found', createdIn: TX }),
-    eventsOf: async () => [],
+    eventsOf: async () => []
   } as VaultBuilderClient;
   const signers = async () => o.signers ?? BOTH;
   /* What this device keeps of the company, the notes looked for and named by no record among it. */
   const keptHere = treeKeptInMemory();
   const doors = (me: typeof ADA, over: Partial<RebuildDoors> = {}): RebuildDoors => ({
-    account: ACCOUNT as never, onChain: async () => ({ holders: { adoptedVaults: [VAULT] } as never }),
-    indexer: async () => INDEXER, builder, me, records: stores, signers, seatHere: async () => ({ role: 'admin', retired: null }),
-    ...unnamedKeptIn({ company: 'acc_notes', stores: keptHere }), ...over,
+    account: ACCOUNT as never,
+    onChain: async () => ({ holders: { adoptedVaults: [VAULT] } as never }),
+    indexer: async () => INDEXER,
+    builder,
+    me,
+    records: stores,
+    signers,
+    seatHere: async () => ({ role: 'admin', retired: null }),
+    ...unnamedKeptIn({ company: 'acc_notes', stores: keptHere }),
+    ...over
   });
-  const poolOf = (me: typeof ADA) => new SealedNotePool(stores('pool'), { signerId: me.signerId, wrappingSecret: me.wrappingSecret }, signers);
+  const poolOf = (me: typeof ADA) =>
+    new SealedNotePool(stores('pool'), { signerId: me.signerId, wrappingSecret: me.wrappingSecret }, signers);
   /* A deposit Ada made: its coin derived from the vault's secret, journalled, and on the chain. */
   const deposited = async (value: bigint, slot = 1, journalled = true) => {
     const coin = { nonce: depositNonceAt(key, { token: TOKEN, value }, slot) as Hex, token: TOKEN, value };
     if (journalled) {
       const j = stores('deposit-journal');
       const now = await j.get(VAULT);
-      const lines = now === null ? [] : ((await import('../../../src/midnight/vault-pool.js')).openPool(now, 'ada', ada.secret, { record: 'deposit-journal' }) as { notes: unknown[] }).notes;
-      await j.put(VAULT, sealPool(VAULT, { notes: [...lines, coin] } as never, BOTH, (now?.version ?? 0) + 1, 'deposit-journal'));
+      const lines =
+        now === null
+          ? []
+          : (
+              (await import('../../../src/midnight/vault-pool.js')).openPool(now, 'ada', ada.secret, {
+                record: 'deposit-journal'
+              }) as { notes: unknown[] }
+            ).notes;
+      await j.put(
+        VAULT,
+        sealPool(VAULT, { notes: [...lines, coin] } as never, BOTH, (now?.version ?? 0) + 1, 'deposit-journal')
+      );
     }
     chain.notes.push(heldOf(coin));
     chain.everCreated.push(outputOf(coin));
@@ -126,8 +202,19 @@ const aCompany = async (o: { signers?: PoolSigner[]; secretFiled?: boolean } = {
 
 /** The vault's state, as the chain would hand it over, with `entries` written into its map of sealed copies and links. */
 const vaultStateWith = async (entries: ReadonlyArray<readonly [Uint8Array, Uint8Array]>): Promise<string> => {
-  const made = await new V.Contract(new Proxy({}, { get: () => () => { throw new Error('no circuit runs here'); } })).initialState(
-    { initialPrivateState: {}, initialZswapLocalState: { coinPublicKey: new Uint8Array(32) } }, { bytes: bytes(ACCOUNT) });
+  const made = await new V.Contract(
+    new Proxy(
+      {},
+      {
+        get: () => () => {
+          throw new Error('no circuit runs here');
+        }
+      }
+    )
+  ).initialState(
+    { initialPrivateState: {}, initialZswapLocalState: { coinPublicKey: new Uint8Array(32) } },
+    { bytes: bytes(ACCOUNT) }
+  );
   const state = R.ContractState.deserialize(made.currentContractState.serialize());
   const fields: any[] = state.data.state.asArray();
   const b32 = new R.CompactTypeBytes(32);
@@ -144,16 +231,19 @@ const vaultStateWith = async (entries: ReadonlyArray<readonly [Uint8Array, Uint8
 const copyWritten = (secret: string, commitment: Uint8Array): Array<[Uint8Array, Uint8Array]> => {
   const reader = bytes(recordsKeypairFrom(COMPANY_KEY).publicKey);
   return [
-    ...sealSecretCopy({ vault: VAULT, secret, reader: toHex(reader) as Hex }).map((part, i): [Uint8Array, Uint8Array] =>
-      [V.pureCircuits.copyKeyOf(commitment, reader, 0n, BigInt(i)), part]),
-    [V.pureCircuits.copiesCountKeyOf(commitment), R.upgradeFromTransient(1n)],
+    ...sealSecretCopy({ vault: VAULT, secret, reader: toHex(reader) as Hex }).map(
+      (part, i): [Uint8Array, Uint8Array] => [V.pureCircuits.copyKeyOf(commitment, reader, 0n, BigInt(i)), part]
+    ),
+    [V.pureCircuits.copiesCountKeyOf(commitment), R.upgradeFromTransient(1n)]
   ];
 };
 
-beforeEach(() => { /* each test makes its own company */ });
+beforeEach(() => {
+  /* each test makes its own company */
+});
 
-describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
-  it('A DEPOSIT ANOTHER SIGNER\'S DEVICE JOURNALLED AND NEVER ADDED TO THE POOL IS FOUND ON THIS DEVICE, FILED AS THE NEXT POOL VERSION WITH ITS CREATING TRANSACTION', async () => {
+describe("EVERY SIGNER'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS", () => {
+  it("A DEPOSIT ANOTHER SIGNER'S DEVICE JOURNALLED AND NEVER ADDED TO THE POOL IS FOUND ON THIS DEVICE, FILED AS THE NEXT POOL VERSION WITH ITS CREATING TRANSACTION", async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
     const coin = await c.deposited(1_000n);
@@ -175,7 +265,16 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     c.chain.notes.push('5a'.repeat(32));
     const walks: number[] = [];
     const spy = c.doors(ADA);
-    const counted = { ...spy, builder: { ...spy.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    const counted = {
+      ...spy,
+      builder: {
+        ...spy.builder,
+        vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => {
+          walks.push(a.walk === undefined ? 0 : 1);
+          return worker.vaultRebuilt!(a);
+        }
+      }
+    };
     const first: NotesHere = await vaultNotesHere(counted, VAULT);
     expect(first.of !== 'not-read' && first.unexplained).toBe(1);
     expect(first.said.join(' ')).toMatch(/no record this device can read names/);
@@ -191,7 +290,16 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     c.chain.notes.push('5d'.repeat(32));
     const walks: number[] = [];
     const spy = c.doors(ADA);
-    const counted = { ...spy, builder: { ...spy.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    const counted = {
+      ...spy,
+      builder: {
+        ...spy.builder,
+        vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => {
+          walks.push(a.walk === undefined ? 0 : 1);
+          return worker.vaultRebuilt!(a);
+        }
+      }
+    };
     await vaultNotesHere(counted, VAULT);
     await vaultNotesHere(counted, VAULT);
     expect(walks).toEqual([0, 1, 0]);
@@ -210,11 +318,26 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     const journal = c.stores('deposit-journal');
     let failing = 1;
     const once = Object.assign(Object.create(journal) as SealedPoolStore, {
-      versions: async (v: string) => { if (failing-- > 0) throw new Error('the service answered 503'); return journal.versions(v); },
+      versions: async (v: string) => {
+        if (failing-- > 0) throw new Error('the service answered 503');
+        return journal.versions(v);
+      }
     });
     const walks: number[] = [];
-    const viewer = c.doors(BO, { seatHere: async () => ({ role: 'limited', retired: null }), records: (r: WireRecord) => (r === 'deposit-journal' ? once : c.stores(r)) });
-    const counted = { ...viewer, builder: { ...viewer.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    const viewer = c.doors(BO, {
+      seatHere: async () => ({ role: 'limited', retired: null }),
+      records: (r: WireRecord) => (r === 'deposit-journal' ? once : c.stores(r))
+    });
+    const counted = {
+      ...viewer,
+      builder: {
+        ...viewer.builder,
+        vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => {
+          walks.push(a.walk === undefined ? 0 : 1);
+          return worker.vaultRebuilt!(a);
+        }
+      }
+    };
     const first = await vaultNotesHere(counted, VAULT);
     expect(first.of !== 'not-read' && first.unexplained).toBe(1);
     const second = await vaultNotesHere(counted, VAULT);
@@ -230,14 +353,25 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     const walks: number[] = [];
     const counted = (me: typeof ADA) => {
       const d = c.doors(me);
-      return { ...d, builder: { ...d.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+      return {
+        ...d,
+        builder: {
+          ...d.builder,
+          vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => {
+            walks.push(a.walk === undefined ? 0 : 1);
+            return worker.vaultRebuilt!(a);
+          }
+        }
+      };
     };
     await vaultNotesHere(counted(ADA), VAULT);
     await vaultNotesHere(counted(BO), VAULT);
     /* RED WHEN: one signer's look is kept for every signer, though versions the first could not open may open for the second. */
     expect(walks).toEqual([0, 1, 0, 1]);
     const filed = (await c.stores('nonce-secret').get(VAULT))!;
-    await c.stores('nonce-secret').put(VAULT, refileNonceSecret(filed, VAULT, recordsKeypairFrom(COMPANY_KEY), filed.version + 1));
+    await c
+      .stores('nonce-secret')
+      .put(VAULT, refileNonceSecret(filed, VAULT, recordsKeypairFrom(COMPANY_KEY), filed.version + 1));
     await vaultNotesHere(counted(ADA), VAULT);
     /* RED WHEN: a new version of the nonce secret, which may hold a secret that names the note, is not looked in. */
     expect(walks).toEqual([0, 1, 0, 1, 0, 1]);
@@ -247,14 +381,27 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
     await c.deposited(800n);
-    const read = await c.doors(ADA).builder.vaultOnChain({ vault: VAULT, indexer: INDEXER }) as VaultOnChainOnTheWire & { onChain: true };
+    const read = (await c
+      .doors(ADA)
+      .builder.vaultOnChain({ vault: VAULT, indexer: INDEXER })) as VaultOnChainOnTheWire & { onChain: true };
     const { splitJournal: _s, ...withoutJournal } = read;
-    const here = await vaultNotesHere(c.doors(ADA), VAULT, { ...withoutJournal, vault: VAULT, notes: read.notes as Hex[] });
+    const here = await vaultNotesHere(c.doors(ADA), VAULT, {
+      ...withoutJournal,
+      vault: VAULT,
+      notes: read.notes as Hex[]
+    });
     /* RED WHEN: a view without its split journal is rebuilt as though the vault never split. */
     expect(here.of).toBe('not-read');
     expect(here.said.join(' ')).toMatch(/did not give the vault's secret commitment and split journal/);
-    await expect(worker.vaultRebuilt!({ vault: VAULT, chain: { notes: [], everCreated: [], nonceCommitment: c.chain.commitment }, secrets: [c.secret], versions: [], attempted: { deposits: [], payments: [] } }))
-      .rejects.toThrow(/a journal not read is not an empty one/);
+    await expect(
+      worker.vaultRebuilt!({
+        vault: VAULT,
+        chain: { notes: [], everCreated: [], nonceCommitment: c.chain.commitment },
+        secrets: [c.secret],
+        versions: [],
+        attempted: { deposits: [], payments: [] }
+      })
+    ).rejects.toThrow(/a journal not read is not an empty one/);
   });
 
   it('A SLOW PASS THAT NAMES SOME NOTES AND FILES NOTHING KEEPS ONLY THE NOTE IT LEFT UNNAMED, AND THE NEXT OPEN STILL HOLDS THE ONES IT NAMED', async () => {
@@ -265,7 +412,16 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     c.chain.notes.push('5c'.repeat(32));
     const walks: number[] = [];
     const viewer = c.doors(BO, { seatHere: async () => ({ role: 'limited', retired: null }) });
-    const counted = { ...viewer, builder: { ...viewer.builder, vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => { walks.push(a.walk === undefined ? 0 : 1); return worker.vaultRebuilt!(a); } } };
+    const counted = {
+      ...viewer,
+      builder: {
+        ...viewer.builder,
+        vaultRebuilt: async (a: Parameters<NonNullable<VaultBuilderClient['vaultRebuilt']>>[0]) => {
+          walks.push(a.walk === undefined ? 0 : 1);
+          return worker.vaultRebuilt!(a);
+        }
+      }
+    };
     const first = await vaultNotesHere(counted, VAULT);
     /* A limited seat's open finds both deposits, holds them in memory and files nothing. */
     expect(first.of).toBe('not-filed');
@@ -285,11 +441,14 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
       const inner = c.stores(r);
       if (r !== 'deposit-journal') return inner;
       return {
-        get: async () => { throw new Error('this deposit-journal was not given, and it is not read as absent'); },
+        get: async () => {
+          throw new Error('this deposit-journal was not given, and it is not read as absent');
+        },
         put: (v, x) => inner.put(v, x),
         /* Every version is one a device passes over; the bytes stay with the service, which a rebuild never reads. */
-        versions: async (v) => (await inner.versions(v)).map((x) => ({ version: x.version, neverEntered: true as const })),
-        versionsAsFiled: (v: string) => inner.versions(v),
+        versions: async (v) =>
+          (await inner.versions(v)).map((x) => ({ version: x.version, neverEntered: true as const })),
+        versionsAsFiled: (v: string) => inner.versions(v)
       } as SealedPoolStore;
     };
     const here = await vaultNotesHere(c.doors(BO, { records: withheld }), VAULT);
@@ -298,9 +457,17 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     /* RED WHEN: a passed-over version's bytes are read (`versionsAsFiled`), so the coin is named from a record no device believes. */
     expect(here.of === 'not-read' ? -1 : here.unexplained).toBe(1);
     expect((await c.stores('pool').versions(VAULT)).length).toBe(1);
-    const noPool = (r: WireRecord): SealedPoolStore => (r === 'pool'
-      ? { ...c.stores(r), get: async () => { throw new Error('version 1 of this pool is not believed'); }, versions: (v: string) => c.stores(r).versions(v), put: (v: string, x: never) => c.stores(r).put(v, x) } as SealedPoolStore
-      : c.stores(r));
+    const noPool = (r: WireRecord): SealedPoolStore =>
+      r === 'pool'
+        ? ({
+            ...c.stores(r),
+            get: async () => {
+              throw new Error('version 1 of this pool is not believed');
+            },
+            versions: (v: string) => c.stores(r).versions(v),
+            put: (v: string, x: never) => c.stores(r).put(v, x)
+          } as SealedPoolStore)
+        : c.stores(r);
     const unread = await vaultNotesHere(c.doors(BO, { records: noPool }), VAULT);
     /* RED WHEN: a rebuild files over a pool it did not believe. */
     expect(unread.of).toBe('not-filed');
@@ -343,11 +510,17 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     expect((await c.stores('pool').versions(VAULT)).length).toBe(2);
   });
 
-  it('A SIGNER SEATED AFTER THE LAST WRITE OPENS THE POOL AND THE JOURNALS ONCE ANOTHER SIGNER\'S DEVICE HAS OPENED THE VAULT', async () => {
+  it("A SIGNER SEATED AFTER THE LAST WRITE OPENS THE POOL AND THE JOURNALS ONCE ANOTHER SIGNER'S DEVICE HAS OPENED THE VAULT", async () => {
     const c = await aCompany();
     const onlyAda = [BOTH[0]!];
-    await new SealedNotePool(c.stores('pool'), { signerId: 'ada', wrappingSecret: ada.secret }, async () => onlyAda).create(VAULT, { notes: [] });
-    await c.stores('payment-journal').put(VAULT, sealPool(VAULT, { attempts: [] } as never, onlyAda, 1, 'payment-journal'));
+    await new SealedNotePool(
+      c.stores('pool'),
+      { signerId: 'ada', wrappingSecret: ada.secret },
+      async () => onlyAda
+    ).create(VAULT, { notes: [] });
+    await c
+      .stores('payment-journal')
+      .put(VAULT, sealPool(VAULT, { attempts: [] } as never, onlyAda, 1, 'payment-journal'));
     await expect(c.poolOf(BO).load(VAULT)).rejects.toThrow(/no copy of the key is wrapped for signer bo/);
     const here = await vaultNotesHere(c.doors(ADA), VAULT);
     expect(here.of).toBe('as-filed');
@@ -387,34 +560,56 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     for (const part of Object.values(outer.sealed as Record<string, unknown>)) expect(part).toMatch(/^[0-9a-f]*$/u);
     expect((outer.sealed as Sealed).body.length).toBeGreaterThan(0);
     /* The seal opens with the company's `vaults` key and holds the coins; with another company's key it does not open. */
-    const opened = JSON.parse(unseal(outer.sealed as Sealed, purposeKey(ACME.keys as Hex, ACME.id, 'vaults'))) as { vault: string; coins: Array<{ nonce: string }> };
+    const opened = JSON.parse(unseal(outer.sealed as Sealed, purposeKey(ACME.keys as Hex, ACME.id, 'vaults'))) as {
+      vault: string;
+      coins: Array<{ nonce: string }>;
+    };
     expect([opened.vault, opened.coins.map((x) => x.nonce)]).toEqual([VAULT, [coin.nonce, '66'.repeat(32)]]);
     expect(() => unseal(outer.sealed as Sealed, purposeKey(ACME.keys as Hex, 'acc_other', 'vaults'))).toThrow();
     const adasKept = coinsKeptOnThisDevice(inFlightInMemory(), { signerId: 'ada', wrappingSecret: ada.secret });
     /* RED WHEN: a file sealed for another company, or under another company's key, opens. */
-    await expect(coinsHandedOverHere(c.doors(ADA, { kept: adasKept }), VAULT, file, { id: 'acc_other', keys: '5e'.repeat(32) })).rejects.toThrow(/does not open with this company/);
-    await expect(coinsHandedOverHere(c.doors(ADA, { kept: adasKept }), VAULT, file, { id: 'acc_acme', keys: '6f'.repeat(32) })).rejects.toThrow(/does not open with this company/);
+    await expect(
+      coinsHandedOverHere(c.doors(ADA, { kept: adasKept }), VAULT, file, { id: 'acc_other', keys: '5e'.repeat(32) })
+    ).rejects.toThrow(/does not open with this company/);
+    await expect(
+      coinsHandedOverHere(c.doors(ADA, { kept: adasKept }), VAULT, file, { id: 'acc_acme', keys: '6f'.repeat(32) })
+    ).rejects.toThrow(/does not open with this company/);
     const taken = await coinsHandedOverHere(c.doors(ADA, { kept: adasKept }), VAULT, file, ACME);
     /* RED WHEN: a coin the chain never made is kept from a file. */
     expect(taken).toEqual({ kept: 1, refused: 1 });
     expect((await adasKept.coins(VAULT)).map((x) => x.nonce)).toEqual([coin.nonce]);
     expect((await vaultNotesHere(c.doors(ADA, { kept: adasKept }), VAULT)).of).toBe('filed');
     /* A file for another vault is refused whole. */
-    await expect(coinsHandedOverHere(c.doors(ADA, { kept: adasKept }), VAULT, coinsFileText('cd'.repeat(32) as Hex, [], ACME), ACME)).rejects.toThrow(/for another vault/);
+    await expect(
+      coinsHandedOverHere(
+        c.doors(ADA, { kept: adasKept }),
+        VAULT,
+        coinsFileText('cd'.repeat(32) as Hex, [], ACME),
+        ACME
+      )
+    ).rejects.toThrow(/for another vault/);
   });
 
-  it('KEPT COINS ARE SEALED UNDER THIS DEVICE\'S OWN KEY AND NEVER SENT TO THE SERVICE', async () => {
+  it("KEPT COINS ARE SEALED UNDER THIS DEVICE'S OWN KEY AND NEVER SENT TO THE SERVICE", async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
     const coin = await c.deposited(300n, 3);
     /* A line the journal holds for a coin the chain never made. */
     const never = { nonce: '77'.repeat(32) as Hex, token: TOKEN, value: 5n };
     const j = c.stores('deposit-journal');
-    const lines = ((await import('../../../src/midnight/vault-pool.js')).openPool((await j.get(VAULT))!, 'ada', ada.secret, { record: 'deposit-journal' }) as { notes: unknown[] }).notes;
+    const lines = (
+      (await import('../../../src/midnight/vault-pool.js')).openPool((await j.get(VAULT))!, 'ada', ada.secret, {
+        record: 'deposit-journal'
+      }) as { notes: unknown[] }
+    ).notes;
     await j.put(VAULT, sealPool(VAULT, { notes: [...lines, never] } as never, BOTH, 2, 'deposit-journal'));
     const store = inFlightInMemory();
     const kept = coinsKeptOnThisDevice(store, { signerId: 'ada', wrappingSecret: ada.secret });
-    const filed = async () => (await Promise.all([...c.service.values()].map(async (x) => (await x.versions(VAULT)).length))).reduce((a, n) => a + n, 0);
+    const filed = async () =>
+      (await Promise.all([...c.service.values()].map(async (x) => (await x.versions(VAULT)).length))).reduce(
+        (a, n) => a + n,
+        0
+      );
     const before = await filed();
     await vaultNotesHere(c.doors(ADA, { kept }), VAULT);
     /* RED WHEN: a journal line is kept on this device though the chain never made its coin; the coin the chain made is kept. */
@@ -427,22 +622,45 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
     expect(await filed()).toBe(before + 1);
   });
 
-  it('WITH THE NONCE SECRET\'S RECORD WITHHELD, THE SECRET IS READ FROM THIS SIGNER\'S OWN SEALED COPY ON THE CHAIN, AND A PAYMENT\'S CHANGE IS NAMED', async () => {
+  it("WITH THE NONCE SECRET'S RECORD WITHHELD, THE SECRET IS READ FROM THIS SIGNER'S OWN SEALED COPY ON THE CHAIN, AND A PAYMENT'S CHANGE IS NAMED", async () => {
     const c = await aCompany();
     const paidFrom = { nonce: '21'.repeat(32) as Hex, token: TOKEN, value: 1_000n, createdIn: TX as Hex };
     await c.poolOf(ADA).create(VAULT, { notes: [paidFrom] });
-    await c.stores('payment-journal').put(VAULT, sealPool(VAULT, {
-      attempts: [{ spent: { nonce: paidFrom.nonce, token: TOKEN, value: 1_000n }, amount: 300n, step: 'payment', attemptedAt: 't' }],
-    } as never, BOTH, 1, 'payment-journal'));
+    await c.stores('payment-journal').put(
+      VAULT,
+      sealPool(
+        VAULT,
+        {
+          attempts: [
+            {
+              spent: { nonce: paidFrom.nonce, token: TOKEN, value: 1_000n },
+              amount: 300n,
+              step: 'payment',
+              attemptedAt: 't'
+            }
+          ]
+        } as never,
+        BOTH,
+        1,
+        'payment-journal'
+      )
+    );
     const under = { circuits: nonceCircuitsFrom(V.pureCircuits), vault: VAULT, secret: c.secret };
     const change = changeAfterSpending(paidFrom, 1_000n, 300n, under)!;
     c.chain.notes = [heldOf(change)];
     c.chain.everCreated = [outputOf(paidFrom), outputOf(change)];
     /* The vault's state, holding this signer's sealed copy of its secret under the secret's commitment. */
     c.chain.state = await vaultStateWith(copyWritten(c.secret, bytes(c.chain.commitment)));
-    const secretWithheld = (r: WireRecord): SealedPoolStore => (r === 'nonce-secret'
-      ? { get: async () => { throw new Error('this nonce-secret was not given'); }, put: async () => {}, versions: async () => [] }
-      : c.stores(r));
+    const secretWithheld = (r: WireRecord): SealedPoolStore =>
+      r === 'nonce-secret'
+        ? {
+            get: async () => {
+              throw new Error('this nonce-secret was not given');
+            },
+            put: async () => {},
+            versions: async () => []
+          }
+        : c.stores(r);
     const here = await vaultNotesHere(c.doors(ADA, { records: secretWithheld }), VAULT);
     /* RED WHEN: with the secret's record withheld, nothing reads this signer's sealed copy on the chain, so the change stays unnamed. */
     expect(here.of !== 'not-read' && here.notes.map((n) => [n.nonce, n.value])).toEqual([[change.nonce, 700n]]);
@@ -450,33 +668,62 @@ describe('EVERY SIGNER\'S DEVICE REACHES EVERY NOTE ITS VAULT HOLDS', () => {
   });
 });
 
-describe('A SIGNER WITH ONLY THEIR WORDS AND THE CHAIN, AFTER THE VAULT\'S SECRET CHANGED TWICE, NAMES COINS UNDER EVERY SECRET THAT OPENED', () => {
+describe("A SIGNER WITH ONLY THEIR WORDS AND THE CHAIN, AFTER THE VAULT'S SECRET CHANGED TWICE, NAMES COINS UNDER EVERY SECRET THAT OPENED", () => {
   /* Three secrets in turn, each a field element, with its last byte zero as the product makes them (vault-start.ts:156-157). */
   const SECRETS = [`${'11'.repeat(31)}00`, `${'22'.repeat(31)}00`, `${'33'.repeat(31)}00`] as Hex[];
   const commitmentOf = (secret: string) => V.pureCircuits.secretCommitmentOf(bytes(VAULT), bytes(secret)) as Uint8Array;
   /* Each later secret keeps the one before it, masked, under its own commitment's link key, as `setNonceSecret` writes it. */
-  const linked = (earlier: string, later: string): [Uint8Array, Uint8Array] =>
-    [V.pureCircuits.earlierSecretKeyOf(commitmentOf(later)), V.pureCircuits.sealedEarlierOf(bytes(earlier), bytes(later))];
+  const linked = (earlier: string, later: string): [Uint8Array, Uint8Array] => [
+    V.pureCircuits.earlierSecretKeyOf(commitmentOf(later)),
+    V.pureCircuits.sealedEarlierOf(bytes(earlier), bytes(later))
+  ];
 
   /** One payment under each secret, each leaving change the chain holds; the records hold no secret this signer can read. */
   const aVaultPaidUnderEverySecret = async () => {
     const c = await aCompany({ secretFiled: false });
-    const spent = SECRETS.map((_, i) => ({ nonce: `${(0x41 + i).toString(16)}`.repeat(32) as Hex, token: TOKEN, value: 1_000n, createdIn: TX as Hex }));
+    const spent = SECRETS.map((_, i) => ({
+      nonce: `${(0x41 + i).toString(16)}`.repeat(32) as Hex,
+      token: TOKEN,
+      value: 1_000n,
+      createdIn: TX as Hex
+    }));
     await c.poolOf(ADA).create(VAULT, { notes: spent });
-    await c.stores('payment-journal').put(VAULT, sealPool(VAULT, {
-      attempts: spent.map((s) => ({ spent: { nonce: s.nonce, token: TOKEN, value: 1_000n }, amount: 300n, step: 'payment', attemptedAt: 't' })),
-    } as never, BOTH, 1, 'payment-journal'));
-    const change = spent.map((s, i) => changeAfterSpending(s, 1_000n, 300n, { circuits: nonceCircuitsFrom(V.pureCircuits), vault: VAULT, secret: SECRETS[i]! })!);
+    await c.stores('payment-journal').put(
+      VAULT,
+      sealPool(
+        VAULT,
+        {
+          attempts: spent.map((s) => ({
+            spent: { nonce: s.nonce, token: TOKEN, value: 1_000n },
+            amount: 300n,
+            step: 'payment',
+            attemptedAt: 't'
+          }))
+        } as never,
+        BOTH,
+        1,
+        'payment-journal'
+      )
+    );
+    const change = spent.map((s, i) =>
+      changeAfterSpending(s, 1_000n, 300n, {
+        circuits: nonceCircuitsFrom(V.pureCircuits),
+        vault: VAULT,
+        secret: SECRETS[i]!
+      })!
+    );
     c.chain.notes = change.map(heldOf);
     c.chain.everCreated = [...spent, ...change].map(outputOf);
     c.chain.commitment = toHex(commitmentOf(SECRETS[2]!));
     return { c, change };
   };
 
-  it('THE NEWEST SECRET, OPENED FROM THIS SIGNER\'S OWN COPY ON THE CHAIN, WALKS BACK TO THE TWO BEFORE IT, AND THE CHANGE MADE UNDER EACH IS NAMED AND FILED', async () => {
+  it("THE NEWEST SECRET, OPENED FROM THIS SIGNER'S OWN COPY ON THE CHAIN, WALKS BACK TO THE TWO BEFORE IT, AND THE CHANGE MADE UNDER EACH IS NAMED AND FILED", async () => {
     const { c, change } = await aVaultPaidUnderEverySecret();
     c.chain.state = await vaultStateWith([
-      ...copyWritten(SECRETS[2]!, commitmentOf(SECRETS[2]!)), linked(SECRETS[1]!, SECRETS[2]!), linked(SECRETS[0]!, SECRETS[1]!),
+      ...copyWritten(SECRETS[2]!, commitmentOf(SECRETS[2]!)),
+      linked(SECRETS[1]!, SECRETS[2]!),
+      linked(SECRETS[0]!, SECRETS[1]!)
     ]);
     const here = await vaultNotesHere(c.doors(ADA), VAULT);
     /* RED WHEN: nothing reads the links the vault keeps, so only the change made under the newest secret is named. */
@@ -484,15 +731,35 @@ describe('A SIGNER WITH ONLY THEIR WORDS AND THE CHAIN, AFTER THE VAULT\'S SECRE
     expect(here.of).toBe('filed');
   });
 
-  it('WITH THE RECORDS STILL ON THE SECRET BEFORE THE CHAIN\'S, THE CHANGE MADE UNDER THE CHAIN\'S IS NAMED FROM THIS SIGNER\'S OWN COPY', async () => {
+  it("WITH THE RECORDS STILL ON THE SECRET BEFORE THE CHAIN'S, THE CHANGE MADE UNDER THE CHAIN'S IS NAMED FROM THIS SIGNER'S OWN COPY", async () => {
     /* The records hold the first secret; the vault was moved on to a new one, not yet filed. */
     const c = await aCompany();
     const paidFrom = { nonce: '51'.repeat(32) as Hex, token: TOKEN, value: 1_000n, createdIn: TX as Hex };
     await c.poolOf(ADA).create(VAULT, { notes: [paidFrom] });
-    await c.stores('payment-journal').put(VAULT, sealPool(VAULT, {
-      attempts: [{ spent: { nonce: paidFrom.nonce, token: TOKEN, value: 1_000n }, amount: 300n, step: 'payment', attemptedAt: 't' }],
-    } as never, BOTH, 1, 'payment-journal'));
-    const change = changeAfterSpending(paidFrom, 1_000n, 300n, { circuits: nonceCircuitsFrom(V.pureCircuits), vault: VAULT, secret: SECRETS[1]! })!;
+    await c.stores('payment-journal').put(
+      VAULT,
+      sealPool(
+        VAULT,
+        {
+          attempts: [
+            {
+              spent: { nonce: paidFrom.nonce, token: TOKEN, value: 1_000n },
+              amount: 300n,
+              step: 'payment',
+              attemptedAt: 't'
+            }
+          ]
+        } as never,
+        BOTH,
+        1,
+        'payment-journal'
+      )
+    );
+    const change = changeAfterSpending(paidFrom, 1_000n, 300n, {
+      circuits: nonceCircuitsFrom(V.pureCircuits),
+      vault: VAULT,
+      secret: SECRETS[1]!
+    })!;
     c.chain.notes = [heldOf(change)];
     c.chain.everCreated = [outputOf(paidFrom), outputOf(change)];
     c.chain.commitment = toHex(commitmentOf(SECRETS[1]!));
@@ -503,31 +770,47 @@ describe('A SIGNER WITH ONLY THEIR WORDS AND THE CHAIN, AFTER THE VAULT\'S SECRE
   });
 });
 
-describe('A VERSION OF A RECORD THE COMPANY\'S RECORDS DO NOT BELIEVE IS SAID AND LEFT OUT, AND EVERY OTHER VERSION IS STILL READ', () => {
+describe("A VERSION OF A RECORD THE COMPANY'S RECORDS DO NOT BELIEVE IS SAID AND LEFT OUT, AND EVERY OTHER VERSION IS STILL READ", () => {
   it('A DEPOSIT ONLY AN OLDER BELIEVED VERSION OF THE JOURNAL NAMES IS FOUND, WHILE A REFUSED VERSION BETWEEN THEM IS SAID AND NEVER OPENED', async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
-    const [older, refusedOnly, newest] = [await c.deposited(400n, 1, false), await c.deposited(500n, 2, false), await c.deposited(600n, 3, false)];
+    const [older, refusedOnly, newest] = [
+      await c.deposited(400n, 1, false),
+      await c.deposited(500n, 2, false),
+      await c.deposited(600n, 3, false)
+    ];
     /* The refused version's deposit is not on the chain: what it names is never taken. */
     c.chain.notes = c.chain.notes.filter((n) => n !== heldOf(refusedOnly));
     const journal = c.stores('deposit-journal');
-    for (const [i, coin] of [older, refusedOnly, newest].entries()) await journal.put(VAULT, sealPool(VAULT, { notes: [coin] } as never, BOTH, i + 1, 'deposit-journal'));
+    for (const [i, coin] of [older, refusedOnly, newest].entries())
+      await journal.put(VAULT, sealPool(VAULT, { notes: [coin] } as never, BOTH, i + 1, 'deposit-journal'));
     /* The page's own store answers this way when the company's records refuse version 2 (`HttpSealedPoolStore.versionsBelieved`). */
-    const believing = (r: WireRecord): SealedPoolStore => (r !== 'deposit-journal' ? c.stores(r) : {
-      get: (v: string) => journal.get(v), put: (v: string, x: never) => journal.put(v, x),
-      versions: async () => { throw new Error('version 2 of this deposit-journal is not believed, because its filer was not seated'); },
-      versionsBelieved: async (v: string) => ({ versions: (await journal.versions(v)).filter((x) => x.version !== 2), refused: [{ version: 2, why: 'its filer was not seated' }] }),
-    } as SealedPoolStore);
+    const believing = (r: WireRecord): SealedPoolStore =>
+      r !== 'deposit-journal'
+        ? c.stores(r)
+        : ({
+            get: (v: string) => journal.get(v),
+            put: (v: string, x: never) => journal.put(v, x),
+            versions: async () => {
+              throw new Error('version 2 of this deposit-journal is not believed, because its filer was not seated');
+            },
+            versionsBelieved: async (v: string) => ({
+              versions: (await journal.versions(v)).filter((x) => x.version !== 2),
+              refused: [{ version: 2, why: 'its filer was not seated' }]
+            })
+          } as SealedPoolStore);
     const here = await vaultNotesHere(c.doors(ADA, { records: believing }), VAULT);
     /* RED WHEN: one refused version loses every version, so the deposit only the oldest names stays unnamed. */
     expect(here.of !== 'not-read' && here.notes.map((n) => n.value).sort()).toEqual([400n, 600n]);
     /* RED WHEN: the refused version is dropped without a word. */
-    expect(here.said.join(' ')).toMatch(/version 2 of this vault's deposit-journal is not believed, because its filer was not seated, so it is left out/);
+    expect(here.said.join(' ')).toMatch(
+      /version 2 of this vault's deposit-journal is not believed, because its filer was not seated, so it is left out/
+    );
   });
 });
 
-describe('THIS SIGNER\'S OWN COPY THAT OPENS TO A SECRET THE VAULT DOES NOT HOLD IS SAID, NEVER NAMED WITH', () => {
-  it('WITH THE RECORDS ON THE VAULT\'S SECRET AND A COPY SEALING ANOTHER, THE RECORDS STILL NAME THE COINS AND THE COPY IS SAID', async () => {
+describe("THIS SIGNER'S OWN COPY THAT OPENS TO A SECRET THE VAULT DOES NOT HOLD IS SAID, NEVER NAMED WITH", () => {
+  it("WITH THE RECORDS ON THE VAULT'S SECRET AND A COPY SEALING ANOTHER, THE RECORDS STILL NAME THE COINS AND THE COPY IS SAID", async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
     const coin = await c.deposited(400n);
@@ -536,7 +819,9 @@ describe('THIS SIGNER\'S OWN COPY THAT OPENS TO A SECRET THE VAULT DOES NOT HOLD
     const here = await vaultNotesHere(c.doors(ADA), VAULT);
     expect(here.of !== 'not-read' && here.notes.map((n) => n.nonce)).toEqual([coin.nonce]);
     /* RED WHEN: a copy that is not the vault's secret is put first and nothing is said, so this signer never learns the copy they would recover from opens nothing. */
-    expect(here.said.join(' ')).toMatch(/own sealed copy of the vault's secret on the chain opens to a secret that is not the one the vault holds now/);
+    expect(here.said.join(' ')).toMatch(
+      /own sealed copy of the vault's secret on the chain opens to a secret that is not the one the vault holds now/
+    );
   });
 });
 
@@ -547,10 +832,16 @@ describe('THE SLOW PASS IS NEVER GIVEN LESS THAN THE FAST PASS', () => {
     const coin = await c.deposited(400n);
     /* A note no record names sends the read down the slow path. */
     c.chain.notes.push('5c'.repeat(32));
-    const unlisted = (r: WireRecord): SealedPoolStore => (r !== 'deposit-journal' ? c.stores(r) : {
-      get: (v: string) => c.stores(r).get(v), put: (v: string, x: never) => c.stores(r).put(v, x),
-      versions: async () => { throw new Error('the list of versions was not given'); },
-    } as SealedPoolStore);
+    const unlisted = (r: WireRecord): SealedPoolStore =>
+      r !== 'deposit-journal'
+        ? c.stores(r)
+        : ({
+            get: (v: string) => c.stores(r).get(v),
+            put: (v: string, x: never) => c.stores(r).put(v, x),
+            versions: async () => {
+              throw new Error('the list of versions was not given');
+            }
+          } as SealedPoolStore);
     const here = await vaultNotesHere(c.doors(ADA, { records: unlisted }), VAULT);
     expect(here.said.join(' ')).toMatch(/every version of this vault's deposit-journal was not read/);
     /* RED WHEN: the slow pass is given no journal when the versions cannot be listed, so the deposit the fast pass named is dropped. */
@@ -558,7 +849,7 @@ describe('THE SLOW PASS IS NEVER GIVEN LESS THAN THE FAST PASS', () => {
   });
 });
 
-describe('A READ OF A VAULT\'S NOTES FILES NOTHING', () => {
+describe("A READ OF A VAULT'S NOTES FILES NOTHING", () => {
   it('A READ GIVEN NO SEAT FINDS THE SAME NOTES A FILING DEVICE WOULD, FILES NO VERSION OF ANY RECORD, AND SAYS THE FILING IS OWED', async () => {
     const c = await aCompany({ signers: [{ id: 'ada', wrappingPublicKey: ada.publicKey }] });
     await c.poolOf(ADA).create(VAULT, { notes: [] });
@@ -581,7 +872,11 @@ describe('A READ OF A VAULT\'S NOTES FILES NOTHING', () => {
 describe('A READ SAYS IN A CODE, NOT ONLY IN WORDS, THAT A RECORD IS NOT SEALED TO EVERY SIGNER', () => {
   const onlyAda = [BOTH[0]!];
   const poolForAdaOnly = async (c: Awaited<ReturnType<typeof aCompany>>) => {
-    await new SealedNotePool(c.stores('pool'), { signerId: 'ada', wrappingSecret: ada.secret }, async () => onlyAda).create(VAULT, { notes: [] });
+    await new SealedNotePool(
+      c.stores('pool'),
+      { signerId: 'ada', wrappingSecret: ada.secret },
+      async () => onlyAda
+    ).create(VAULT, { notes: [] });
   };
 
   it('A READ WITH NO SEAT, FOR A SIGNER WHO CANNOT OPEN THE POOL YET, CARRIES THE CODE FOR "NOT FILED HERE"', async () => {
@@ -596,7 +891,9 @@ describe('A READ SAYS IN A CODE, NOT ONLY IN WORDS, THAT A RECORD IS NOT SEALED 
   it('A SIGNERS LIST THAT CANNOT BE READ CARRIES THE CODE FOR "SIGNERS NOT READ"', async () => {
     const c = await aCompany();
     await c.poolOf(ADA).create(VAULT, { notes: [] });
-    const signers = async (): Promise<PoolSigner[]> => { throw new Error('the directory could not be read'); };
+    const signers = async (): Promise<PoolSigner[]> => {
+      throw new Error('the directory could not be read');
+    };
     const read = await vaultNotesHere(c.doors(ADA, { signers }), VAULT);
     /* RED WHEN: a read that could not learn who the signers are says so in words only, so the upkeep reports it done. */
     expect(read.unsealed).toContain(NOT_SEALED.signersNotRead);
@@ -607,7 +904,13 @@ describe('A READ SAYS IN A CODE, NOT ONLY IN WORDS, THAT A RECORD IS NOT SEALED 
     await poolForAdaOnly(c);
     const failing = (r: Parameters<typeof c.stores>[0]) => {
       const store = c.stores(r);
-      return r === 'pool' ? Object.assign(Object.create(store), { put: async () => { throw new Error('the service refused'); } }) : store;
+      return r === 'pool'
+        ? Object.assign(Object.create(store), {
+            put: async () => {
+              throw new Error('the service refused');
+            }
+          })
+        : store;
     };
     const read = await vaultNotesHere(c.doors(ADA, { records: failing as never }), VAULT);
     /* RED WHEN: a refiling the service refused is told in words only, so the upkeep reports it done while a signer still cannot open the record. */

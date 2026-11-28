@@ -1,5 +1,14 @@
 import type { SealedAccount } from '../../../../src/core/types.js';
-import { companyKeysQuietlyFor, filingJudgeFor, openedQuietly, sealedIn, storeReachIn, vaultOnChainIn, walletIndexerIn, type PageView } from './filing-judge.js';
+import {
+  companyKeysQuietlyFor,
+  filingJudgeFor,
+  openedQuietly,
+  sealedIn,
+  storeReachIn,
+  vaultOnChainIn,
+  walletIndexerIn,
+  type PageView
+} from './filing-judge.js';
 import { VAULT, type VaultStanding } from 'vaults-web-shared/vault-standing.js';
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
@@ -24,8 +33,10 @@ const VAULT_STANDINGS: readonly string[] = Object.values(VAULT);
 
 /** A vault for a screen; a standing the service names that is not one of the set is unknown. `adopted` when the account adopted it. */
 const vaultRow = (v: { vault: string; deployedAt: string; state: string }, adopted = false): VaultRow => ({
-  vault: v.vault, createdAt: v.deployedAt, standing: (VAULT_STANDINGS.includes(v.state) ? v.state : VAULT.unknown) as VaultStanding,
-  ...(adopted ? { adopted: true as const } : {}),
+  vault: v.vault,
+  createdAt: v.deployedAt,
+  standing: (VAULT_STANDINGS.includes(v.state) ? v.state : VAULT.unknown) as VaultStanding,
+  ...(adopted ? { adopted: true as const } : {})
 });
 
 /** A vault sent and not yet adopted: its set-up is not finished, so it is not yet one of the company's vaults. */
@@ -35,7 +46,10 @@ const NOT_YET_ADOPTED: ReadonlySet<string> = new Set([VAULT.startOwed, VAULT.not
 type ServedVault = { vault: string; deployedAt: string; state: string };
 
 /** What the chain holds of the approvals: the company's, and the vaults that have a number of their own. */
-interface VaultNumbers { readonly company: number | null; readonly own: readonly { readonly vault: string; readonly threshold: number }[] }
+interface VaultNumbers {
+  readonly company: number | null;
+  readonly own: readonly { readonly vault: string; readonly threshold: number }[];
+}
 
 const wholeApprovals = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 1;
 
@@ -58,18 +72,27 @@ const approvalsOfVault = (numbers: VaultNumbers, vault: string): number | null =
  * chain gave them (a vault not yet adopted has none).
  */
 const vaultsAsTheChainHoldsThem = (
-  served: readonly ServedVault[], adopted: readonly string[], numbers?: VaultNumbers, retired: ReadonlySet<string> = new Set(),
+  served: readonly ServedVault[],
+  adopted: readonly string[],
+  numbers?: VaultNumbers,
+  retired: ReadonlySet<string> = new Set()
 ): Read<readonly VaultRow[]> => {
   const held = new Set(adopted.map((v) => v.toLowerCase()));
   const listed = new Set(served.map((r) => r.vault.toLowerCase()));
   if ([...held].some((v) => !listed.has(v))) return { of: READ.unreadable };
   return {
     of: READ.read,
-    value: served.filter((r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state) || retired.has(r.vault.toLowerCase())).map((r) => {
-      if (!held.has(r.vault.toLowerCase()) && retired.has(r.vault.toLowerCase())) return { ...vaultRow(r), retired: true as const };
-      const approvals = numbers === undefined || !held.has(r.vault.toLowerCase()) ? null : approvalsOfVault(numbers, r.vault);
-      return { ...vaultRow(r, held.has(r.vault.toLowerCase())), ...(approvals === null ? {} : { approvals }) };
-    }),
+    value: served
+      .filter(
+        (r) => held.has(r.vault.toLowerCase()) || NOT_YET_ADOPTED.has(r.state) || retired.has(r.vault.toLowerCase())
+      )
+      .map((r) => {
+        if (!held.has(r.vault.toLowerCase()) && retired.has(r.vault.toLowerCase()))
+          return { ...vaultRow(r), retired: true as const };
+        const approvals =
+          numbers === undefined || !held.has(r.vault.toLowerCase()) ? null : approvalsOfVault(numbers, r.vault);
+        return { ...vaultRow(r, held.has(r.vault.toLowerCase())), ...(approvals === null ? {} : { approvals }) };
+      })
   };
 };
 
@@ -81,21 +104,36 @@ const vaultsAsTheChainHoldsThem = (
  * service's list, and the vaults do not rest on a wallet answer that carries no approvals.
  */
 export async function chainOfTheCompany(
-  view: PageView, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>,
-): Promise<{ vaults: Read<readonly VaultRow[]>; approvals: Read<number>; holders: Read<ChainSeats>; retiredToo?: (retired: ReadonlySet<string>) => Read<readonly VaultRow[]> }> {
+  view: PageView,
+  sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>
+): Promise<{
+  vaults: Read<readonly VaultRow[]>;
+  approvals: Read<number>;
+  holders: Read<ChainSeats>;
+  retiredToo?: (retired: ReadonlySet<string>) => Read<readonly VaultRow[]>;
+}> {
   const label = sealed.companyLabel ?? null;
   const address = sealed.contractAddress ?? null;
-  if (label === null || address === null) return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable }, holders: { of: READ.unreadable } };
+  if (label === null || address === null)
+    return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable }, holders: { of: READ.unreadable } };
   const [answer, holders] = await Promise.all([
     (view.list(LIST.vaults) as Promise<{ rows?: unknown } | null>).catch(() => null),
-    view.holders().catch(() => null),
+    view.holders().catch(() => null)
   ]);
-  if (holders === null) return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable }, holders: { of: READ.unreadable } };
+  if (holders === null)
+    return { vaults: { of: READ.unreadable }, approvals: { of: READ.unreadable }, holders: { of: READ.unreadable } };
   const needed = holders.approvals;
-  const approvals: Read<number> = Number.isSafeInteger(needed) && needed >= 1 ? { of: READ.read, value: needed } : { of: READ.unreadable };
-  const listed = (retired?: ReadonlySet<string>): Read<readonly VaultRow[]> => (Array.isArray(answer?.rows)
-    ? vaultsAsTheChainHoldsThem(answer.rows as ServedVault[], holders.adoptedVaults, { company: approvals.of === READ.read ? approvals.value : null, own: holders.vaultThresholds ?? [] }, retired)
-    : { of: READ.unreadable });
+  const approvals: Read<number> =
+    Number.isSafeInteger(needed) && needed >= 1 ? { of: READ.read, value: needed } : { of: READ.unreadable };
+  const listed = (retired?: ReadonlySet<string>): Read<readonly VaultRow[]> =>
+    Array.isArray(answer?.rows)
+      ? vaultsAsTheChainHoldsThem(
+          answer.rows as ServedVault[],
+          holders.adoptedVaults,
+          { company: approvals.of === READ.read ? approvals.value : null, own: holders.vaultThresholds ?? [] },
+          retired
+        )
+      : { of: READ.unreadable };
   return { vaults: listed(), approvals, holders: { of: READ.read, value: holders }, retiredToo: listed };
 }
 
@@ -103,7 +141,10 @@ export async function chainOfTheCompany(
  * The vaults of the company `view` reads, whose record is `sealed`: the account's own, as the person's own wallet read
  * them, each with the service's row for it; unreadable when the company names no account yet, or either read fails.
  */
-export async function vaultListOf(view: PageView, sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>): Promise<Read<readonly VaultRow[]>> {
+export async function vaultListOf(
+  view: PageView,
+  sealed: Pick<SealedAccount, 'companyLabel' | 'contractAddress'>
+): Promise<Read<readonly VaultRow[]>> {
   return (await chainOfTheCompany(view, sealed)).vaults;
 }
 
@@ -116,7 +157,12 @@ export async function vaultListOf(view: PageView, sealed: Pick<SealedAccount, 'c
  * not be read, the company names no account or label, or the wallet names no
  * indexer, which is never shown as nothing held.
  */
-export async function readVaultPublicMoney(personId: string, view: PageView, vault: string, round = 0): Promise<VaultPublicMoney | null> {
+export async function readVaultPublicMoney(
+  personId: string,
+  view: PageView,
+  vault: string,
+  round = 0
+): Promise<VaultPublicMoney | null> {
   try {
     if (!(await keyringFor(personId))) return null;
     const sealed = await sealedIn(view);
@@ -144,9 +190,17 @@ export const NAME_NOT_READ: unique symbol = Symbol();
  * together in one held read, however many vaults a screen draws.
  */
 export async function readVaultName(personId: string, view: PageView, vault: string): Promise<string | null>;
-export async function readVaultName(personId: string, view: PageView, vault: string, unread: typeof NAME_NOT_READ): Promise<string | null | typeof NAME_NOT_READ>;
 export async function readVaultName(
-  personId: string, view: PageView, vault: string, unread?: typeof NAME_NOT_READ,
+  personId: string,
+  view: PageView,
+  vault: string,
+  unread: typeof NAME_NOT_READ
+): Promise<string | null | typeof NAME_NOT_READ>;
+export async function readVaultName(
+  personId: string,
+  view: PageView,
+  vault: string,
+  unread?: typeof NAME_NOT_READ
 ): Promise<string | null | typeof NAME_NOT_READ> {
   const notRead = unread ?? null;
   view.declare({ records: [{ store: PROVEN.company, kind: VAULT_INFO_KIND, id: vault.toLowerCase() }] });
@@ -160,8 +214,16 @@ export async function readVaultName(
     if (keys === null) return notRead;
     const account = await openedQuietly(view, sealed);
     if (account === null) return notRead;
-    const companyKeys: CompanyKeys = await companyKeysQuietlyFor(view, sealed, { signingPublicKey: keys.signingPublicKey });
-    const judge = filingJudgeFor(view, label as CompanyLabel, address as AccountAddress, companyKeys, async () => account);
+    const companyKeys: CompanyKeys = await companyKeysQuietlyFor(view, sealed, {
+      signingPublicKey: keys.signingPublicKey
+    });
+    const judge = filingJudgeFor(
+      view,
+      label as CompanyLabel,
+      address as AccountAddress,
+      companyKeys,
+      async () => account
+    );
     const { vaultInfoHere, vaultInfoRecordsFor } = await import('vaults-web-shared/vault-info-here.js');
     const records = vaultInfoRecordsFor(view.company, null, judge, storeReachIn(view));
     const filed = await vaultInfoHere({ companyKeys, records }, vault);

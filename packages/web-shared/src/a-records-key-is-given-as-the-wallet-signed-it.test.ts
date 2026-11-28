@@ -4,7 +4,13 @@ import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { signDirectoryEntry, signRecordsKey } from 'midnight-identity/profile/records-key';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import { newSigningKeypair, toHex } from '../../../src/core/crypto.js';
-import { openVaultKeysOffer, vaultKeysAreTheSigners, vaultKeysOfferRefusal, type OpenedVaultKeysOffer, type VaultKeysOffer } from '../../../src/core/vault-keys.js';
+import {
+  openVaultKeysOffer,
+  vaultKeysAreTheSigners,
+  vaultKeysOfferRefusal,
+  type OpenedVaultKeysOffer,
+  type VaultKeysOffer
+} from '../../../src/core/vault-keys.js';
 import { recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { offerVaultKeysHere } from './roster-filed-here.js';
 import { answerVaultAsk } from './vault-worker-entry.js';
@@ -30,20 +36,30 @@ const ENTRY = signDirectoryEntry(me, CO, ACCOUNT, companyKey, signing.publicKey,
 const giving = () => {
   const sent: Array<{ path: string; method?: string; body: { offer: VaultKeysOffer } }> = [];
   const api = async (path: string, init?: RequestInit) => {
-    sent.push({ path, method: init?.method, body: JSON.parse(String(init?.body)) }); return {};
+    sent.push({ path, method: init?.method, body: JSON.parse(String(init?.body)) });
+    return {};
   };
   return { sent, api };
 };
 
-describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
-  it('offers the wallet\'s statement beside the two keys, signed into this signer\'s own roster entry, with the entry the wallet signed', async () => {
+describe("A SIGNER'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT", () => {
+  it("offers the wallet's statement beside the two keys, signed into this signer's own roster entry, with the entry the wallet signed", async () => {
     const { sent, api } = giving();
     const statement = signRecordsKey(me, CO, 'c0'.repeat(32) as never, companyKey, SEAT);
     const viewingKey = '5e'.repeat(32) as never;
-    await offerVaultKeysHere('acc_1', {
-      committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
-      recordsKey: statement, entry: ENTRY, viewingKey,
-    }, viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc_1'));
+    await offerVaultKeysHere(
+      'acc_1',
+      {
+        committeeKey: committeeKey as never,
+        companyKey: toHex(companyKey),
+        signingSecret: signing.secret,
+        signerId: 's1',
+        recordsKey: statement,
+        entry: ENTRY,
+        viewingKey
+      },
+      viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc_1')
+    );
     expect(sent.map((x) => `${x.method} ${x.path}`)).toEqual(['PUT /api/accounts/acc_1/vault-keys']);
     const kept = sent[0]!.body.offer;
     /* RED WHEN: the offer carries the wallet key, or anything only the wallet key checks, where the service can read it. */
@@ -52,7 +68,11 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
     expect(plain).not.toContain(statement.signature);
     expect(plain).not.toContain(ENTRY.signature);
     expect(Object.keys(kept).sort()).toEqual(['recordsKey', 'sealed', 'seat', 'signingKey']);
-    const offer = openVaultKeysOffer('acc_1', { ...kept, person: 'p' } as VaultKeysOffer, viewingKey) as OpenedVaultKeysOffer;
+    const offer = openVaultKeysOffer(
+      'acc_1',
+      { ...kept, person: 'p' } as VaultKeysOffer,
+      viewingKey
+    ) as OpenedVaultKeysOffer;
     /* RED WHEN: the statement is left behind, so no other signer's device can check this signer's key. */
     expect(offer.keys.recordsKeyStatement).toBe(statement.signature);
     /* RED WHEN: the seat the statement is signed for is left behind, so no device can hold it to the seats held now. */
@@ -61,7 +81,9 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
     /* RED WHEN: the offer carries no entry signed by the wallet, so the service cannot hold its signature to a seat's own key. */
     expect(offer.entry).toEqual({ committeeKey, statement: ENTRY });
     /* And the roster signature covers the two keys, and the company keeps the offer as it came. */
-    expect(vaultKeysAreTheSigners('acc_1', { id: 's1', signingPublicKey: signing.publicKey, vaultKeys: offer.keys })).toBe(true);
+    expect(
+      vaultKeysAreTheSigners('acc_1', { id: 's1', signingPublicKey: signing.publicKey, vaultKeys: offer.keys })
+    ).toBe(true);
     expect(vaultKeysOfferRefusal(CO, ACCOUNT, 'acc_1', offer)).toBeNull();
   });
 
@@ -69,10 +91,21 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
     const { sent, api } = giving();
     const forAnother = signRecordsKey(me, CO, 'c0'.repeat(32) as never, new Uint8Array(32).fill(0x22), SEAT);
     /* RED WHEN: a statement for a key other than the one the company key opens is offered as this signer's. */
-    await expect(offerVaultKeysHere('acc_1', {
-      committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
-      recordsKey: forAnother, entry: ENTRY, viewingKey: '5e'.repeat(32) as never,
-    }, viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc_1'))).rejects.toThrow(/not the one your company key gives/);
+    await expect(
+      offerVaultKeysHere(
+        'acc_1',
+        {
+          committeeKey: committeeKey as never,
+          companyKey: toHex(companyKey),
+          signingSecret: signing.secret,
+          signerId: 's1',
+          recordsKey: forAnother,
+          entry: ENTRY,
+          viewingKey: '5e'.repeat(32) as never
+        },
+        viewOver(readRoutesOver(api, { directory: 'empty', newest: 'none-entered' }), 'acc_1')
+      )
+    ).rejects.toThrow(/not the one your company key gives/);
     expect(sent).toEqual([]);
   });
 });
@@ -82,9 +115,14 @@ describe('A SIGNER\'S RECORDS KEY IS OFFERED AS THEIR WALLET SIGNED IT', () => {
  * material makes, worked out where the account's circuits are loaded, with the
  * one definition every writer of a seat calls.
  */
-describe('THE SEAT A RECORDS KEY IS SIGNED FOR IS THE ONE THIS DEVICE\'S OWN KEY MAKES', () => {
+describe("THE SEAT A RECORDS KEY IS SIGNED FOR IS THE ONE THIS DEVICE'S OWN KEY MAKES", () => {
   const ownSeat = async (material: Record<string, string>) => {
-    const a = await answerVaultAsk(async () => ({}) as never, { id: 1, network: 'undeployed', ask: 'own-seat', material: material as never });
+    const a = await answerVaultAsk(async () => ({}) as never, {
+      id: 1,
+      network: 'undeployed',
+      ask: 'own-seat',
+      material: material as never
+    });
     if (!a.ok || a.ask !== 'own-seat') throw new Error(a.ok ? 'another answer' : a.error);
     return a.seat;
   };
@@ -101,7 +139,11 @@ describe('THE SEAT A RECORDS KEY IS SIGNED FOR IS THE ONE THIS DEVICE\'S OWN KEY
 
   /* RED WHEN: a seat is worked out from material that cannot make one. */
   it('is refused for material that cannot make a seat', async () => {
-    await expect(ownSeat({ signingSecret: 'aa', blinding: '2d'.repeat(32) })).rejects.toThrow(/no usable key for its seat/);
-    await expect(ownSeat({ signingSecret: '1c'.repeat(32), blinding: 'cc' })).rejects.toThrow(/no usable key for its seat/);
+    await expect(ownSeat({ signingSecret: 'aa', blinding: '2d'.repeat(32) })).rejects.toThrow(
+      /no usable key for its seat/
+    );
+    await expect(ownSeat({ signingSecret: '1c'.repeat(32), blinding: 'cc' })).rejects.toThrow(
+      /no usable key for its seat/
+    );
   });
 });

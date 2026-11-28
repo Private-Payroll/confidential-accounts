@@ -151,8 +151,11 @@ export class PendingOffer {
   private answered: string | null = null;
 
   constructor(parts: {
-    ephemeralSecret: Uint8Array; ephemeralPublic: Uint8Array;
-    theirPublicKey: Uint8Array; commitment: string; expiresAt: number;
+    ephemeralSecret: Uint8Array;
+    ephemeralPublic: Uint8Array;
+    theirPublicKey: Uint8Array;
+    commitment: string;
+    expiresAt: number;
   }) {
     this.ephemeralSecret = parts.ephemeralSecret;
     this.ephemeralPublic = parts.ephemeralPublic;
@@ -171,9 +174,10 @@ export class PendingOffer {
     if (this.answered !== null) {
       throw new PairingError(
         'already-used',
-        'this device has already shown a number for this pairing. Start again rather '
-        + 'than answering twice — being asked twice is what somebody in the middle '
-        + 'has to do.');
+        'this device has already shown a number for this pairing. Start again rather ' +
+          'than answering twice — being asked twice is what somebody in the middle ' +
+          'has to do.'
+      );
     }
     this.answered = nonce;
   }
@@ -225,21 +229,23 @@ export function askToPair(now: number, ttlMs: number = PAIRING_TTL_MS): PairingR
     expiresAt,
     commitment: null,
     nonce: null,
-    used: false,
+    used: false
   });
 }
 
 /* ---------- step 2, on the OLD device: scan and commit ---------- */
 
 export function beginOffer(
-  code: string, now: number,
+  code: string,
+  now: number
 ): { readonly pending: PendingOffer; readonly message: Commitment } {
   const scanned = decodeCode(code);
   if (now >= scanned.expiresAt) {
     throw new PairingError(
       'expired',
-      'that code has expired. Ask the new device for a fresh one — they last a few '
-      + 'minutes on purpose, so a photograph taken earlier is worth nothing.');
+      'that code has expired. Ask the new device for a fresh one — they last a few ' +
+        'minutes on purpose, so a photograph taken earlier is worth nothing.'
+    );
   }
   /*
    * THE LIFE OF A CODE IS BOUNDED BY THE DEVICE THAT SCANS IT, not by the
@@ -250,8 +256,9 @@ export function beginOffer(
   if (scanned.expiresAt - now > PAIRING_TTL_MS) {
     throw new PairingError(
       'lives-too-long',
-      'that code claims to be valid for far longer than a pairing code should be. '
-      + 'Ask the other device for a fresh one.');
+      'that code claims to be valid for far longer than a pairing code should be. ' +
+        'Ask the other device for a fresh one.'
+    );
   }
 
   /*
@@ -264,8 +271,7 @@ export function beginOffer(
    * device is only half the confidentiality; this is the other half.
    */
   const ephemeral = x25519.keygen();
-  const commitment = toBase64Url(sha256(
-    joined(`midnight-identity/pairing-commit/v${VERSION}/`, ephemeral.publicKey)));
+  const commitment = toBase64Url(sha256(joined(`midnight-identity/pairing-commit/v${VERSION}/`, ephemeral.publicKey)));
 
   return {
     pending: new PendingOffer({
@@ -273,23 +279,26 @@ export function beginOffer(
       ephemeralPublic: ephemeral.publicKey,
       theirPublicKey: scanned.publicKey,
       commitment,
-      expiresAt: scanned.expiresAt,
+      expiresAt: scanned.expiresAt
     }),
-    message: Object.freeze({ commitment }),
+    message: Object.freeze({ commitment })
   };
 }
 
 /* ---------- step 3, on the NEW device: answer with a nonce ---------- */
 
 export function answerCommitment(
-  request: PairingRequest, message: Commitment, now: number,
+  request: PairingRequest,
+  message: Commitment,
+  now: number
 ): { readonly request: PairingRequest; readonly nonce: string } {
   alive(request, now);
   if (request.commitment) {
     throw new PairingError(
       'out-of-order',
-      'this pairing has already had an answer. Start a new one rather than '
-      + 'letting a second device join a conversation already in progress.');
+      'this pairing has already had an answer. Start a new one rather than ' +
+        'letting a second device join a conversation already in progress.'
+    );
   }
   if (!message?.commitment) {
     throw new PairingError('not-an-offer', 'that is not a commitment.');
@@ -303,7 +312,7 @@ export function answerCommitment(
   const nonce = toBase64Url(crypto.getRandomValues(new Uint8Array(SAS_NONCE_BYTES)));
   return {
     request: Object.freeze({ ...request, commitment: message.commitment, nonce }),
-    nonce,
+    nonce
   };
 }
 
@@ -316,8 +325,8 @@ export function revealAndShow(pending: PendingOffer, nonce: string, now: number)
   if (!nonce || fromBase64Url(nonce).length < SAS_NONCE_BYTES) {
     throw new PairingError(
       'not-an-offer',
-      `the other device answered with ${nonce ? 'too little' : 'nothing'} to fix the `
-      + 'number by. Start again.');
+      `the other device answered with ${nonce ? 'too little' : 'nothing'} to fix the ` + 'number by. Start again.'
+    );
   }
   /*
    * ONE ANSWER, EVER, AND IT IS SPENT IN PLACE. A second reveal with a
@@ -327,7 +336,7 @@ export function revealAndShow(pending: PendingOffer, nonce: string, now: number)
   pending.answerOnce(nonce);
   return Object.freeze({
     ephemeralPublic: toBase64Url(pending.ephemeralPublic),
-    digits: digitsFor(pending.ephemeralPublic, pending.theirPublicKey, nonce),
+    digits: digitsFor(pending.ephemeralPublic, pending.theirPublicKey, nonce)
   });
 }
 
@@ -340,23 +349,20 @@ export function revealAndShow(pending: PendingOffer, nonce: string, now: number)
  * ephemeral key it named before the nonce existed, which is what makes the two
  * digits unguessable rather than merely unlikely.
  */
-export function checkAndShow(
-  request: PairingRequest, revealedKey: string, now: number,
-): string {
+export function checkAndShow(request: PairingRequest, revealedKey: string, now: number): string {
   alive(request, now);
   if (!request.commitment || !request.nonce) {
-    throw new PairingError(
-      'out-of-order', 'nothing has been committed to yet, so there is nothing to reveal.');
+    throw new PairingError('out-of-order', 'nothing has been committed to yet, so there is nothing to reveal.');
   }
 
   const ephemeralPublic = readKey(revealedKey, 'the revealed key');
-  const recomputed = toBase64Url(sha256(
-    joined(`midnight-identity/pairing-commit/v${VERSION}/`, ephemeralPublic)));
+  const recomputed = toBase64Url(sha256(joined(`midnight-identity/pairing-commit/v${VERSION}/`, ephemeralPublic)));
   if (recomputed !== request.commitment) {
     throw new PairingError(
       'commitment-broken',
-      'the other device revealed a different key from the one it committed to. '
-      + 'Stop: that is what somebody sitting in the middle has to do.');
+      'the other device revealed a different key from the one it committed to. ' +
+        'Stop: that is what somebody sitting in the middle has to do.'
+    );
   }
 
   const ours = x25519.getPublicKey(request.secretKey);
@@ -387,17 +393,17 @@ export function sealKeys(pending: PendingOffer, secret: Secret, now: number): Se
   if (pending.answeredNonce === null) {
     throw new PairingError(
       'out-of-order',
-      'no number has been shown for this pairing yet, so nobody can have confirmed '
-      + 'it. Reveal first.');
+      'no number has been shown for this pairing yet, so nobody can have confirmed ' + 'it. Reveal first.'
+    );
   }
   if (secret?.length !== SECRET_BYTES) {
     throw new PairingError(
       'secret-wrong-length',
-      `a secret is ${SECRET_BYTES} bytes; got ${secret?.length ?? 'nothing'}.`);
+      `a secret is ${SECRET_BYTES} bytes; got ${secret?.length ?? 'nothing'}.`
+    );
   }
   const shared = x25519.getSharedSecret(pending.ephemeralSecret, pending.theirPublicKey);
-  const key = hkdf(
-    sha256, shared, undefined, info(pending.ephemeralPublic, pending.theirPublicKey), 32);
+  const key = hkdf(sha256, shared, undefined, info(pending.ephemeralPublic, pending.theirPublicKey), 32);
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
   const body = xchacha20poly1305(key, nonce).encrypt(secret);
 
@@ -411,8 +417,11 @@ export function sealKeys(pending: PendingOffer, secret: Secret, now: number): Se
 /* ---------- step 7, on the NEW device: open it ---------- */
 
 export function acceptKeys(
-  request: PairingRequest, revealedKey: string, keys: SealedKeys,
-  confirmedDigits: string, now: number,
+  request: PairingRequest,
+  revealedKey: string,
+  keys: SealedKeys,
+  confirmedDigits: string,
+  now: number
 ): { readonly secret: Secret; readonly request: PairingRequest } {
   /*
    * `confirmedDigits` is what the person read off the OTHER screen and agreed
@@ -423,7 +432,8 @@ export function acceptKeys(
   if (digits !== (confirmedDigits ?? '').trim()) {
     throw new PairingError(
       'digits-do-not-match',
-      `this device is showing ${digits}. Stop unless the other one shows the same.`);
+      `this device is showing ${digits}. Stop unless the other one shows the same.`
+    );
   }
 
   const sealed = readBytes(keys?.sealed, 'the sealed keys');
@@ -438,18 +448,15 @@ export function acceptKeys(
 
   let secret: Uint8Array;
   try {
-    secret = xchacha20poly1305(key, sealed.slice(1, 1 + NONCE_BYTES))
-      .decrypt(sealed.slice(1 + NONCE_BYTES));
+    secret = xchacha20poly1305(key, sealed.slice(1, 1 + NONCE_BYTES)).decrypt(sealed.slice(1 + NONCE_BYTES));
   } catch {
     throw new PairingError(
       'will-not-open',
-      'this will not open on this device. It was sealed for a different code, or it '
-      + 'has been altered on the way.');
+      'this will not open on this device. It was sealed for a different code, or it ' + 'has been altered on the way.'
+    );
   }
   if (secret.length !== SECRET_BYTES) {
-    throw new PairingError(
-      'will-not-open',
-      `this carried ${secret.length} bytes rather than ${SECRET_BYTES}.`);
+    throw new PairingError('will-not-open', `this carried ${secret.length} bytes rather than ${SECRET_BYTES}.`);
   }
   return { secret, request: Object.freeze({ ...request, used: true }) };
 }
@@ -485,8 +492,9 @@ function alive(request: PairingRequest, now: number): void {
   if (request.used) {
     throw new PairingError(
       'already-used',
-      'this pairing has already handed over the keys once. Start another one — '
-      + 'a code that works twice is a code worth stealing.');
+      'this pairing has already handed over the keys once. Start another one — ' +
+        'a code that works twice is a code worth stealing.'
+    );
   }
   if (now >= request.expiresAt) {
     throw new PairingError('expired', 'this pairing has expired. Start it again.');
@@ -538,17 +546,16 @@ function decodeCode(code: string): Code {
   if (bytes.length !== 1 + KEY_BYTES + 8) {
     throw new PairingError(
       'not-an-offer',
-      `a pairing code is ${1 + KEY_BYTES + 8} bytes; that one is ${bytes.length}.`);
+      `a pairing code is ${1 + KEY_BYTES + 8} bytes; that one is ${bytes.length}.`
+    );
   }
   if (bytes[0] !== VERSION) {
-    throw new PairingError(
-      'not-an-offer',
-      `that code is format ${bytes[0]} and this device reads format ${VERSION}.`);
+    throw new PairingError('not-an-offer', `that code is format ${bytes[0]} and this device reads format ${VERSION}.`);
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return {
     publicKey: bytes.slice(1, 1 + KEY_BYTES),
-    expiresAt: Number(view.getBigUint64(1 + KEY_BYTES, false)),
+    expiresAt: Number(view.getBigUint64(1 + KEY_BYTES, false))
   };
 }
 

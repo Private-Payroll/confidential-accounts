@@ -14,7 +14,12 @@ import type { CreateVaultDoors, SecretKeptHere } from '../../../../packages/web-
 import type { VaultService } from '../../../../packages/web-shared/src/vault-service.js';
 import type { RecordWrite, VaultStartStep } from '../../../../packages/web-shared/src/records-source.js';
 import { vaultInfoRecordsFor } from '../../../../packages/web-shared/src/vault-info-here.js';
-import { deviceRecordsFor, deviceSignerFrom, readersIn, seatNotBelievedHere } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import {
+  deviceRecordsFor,
+  deviceSignerFrom,
+  readersIn,
+  seatNotBelievedHere
+} from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { unnamedKeptIn } from '../../../../packages/web-shared/src/vault-notes-here.js';
 import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { stopsFor } from './leaving-read-in-the-wallet.js';
@@ -38,7 +43,8 @@ export interface VaultDoorsReach {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.create-vault.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.create-vault.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 
 /**
@@ -53,55 +59,78 @@ export const readersFrom = async (r: CompanyReach): Promise<Hex[]> => {
   const holders = await r.holders();
   const keyed = rosterVaultKeys(roster);
   const refused = rosterRefusalOf({
-    company: r.label, account: r.account, roster: keyed, seats: { seats: holders.seats }, directory: { seats: here.dir.seats, leafOf: here.leafOf },
+    company: r.label,
+    account: r.account,
+    roster: keyed,
+    seats: { seats: holders.seats },
+    directory: { seats: here.dir.seats, leafOf: here.leafOf }
   });
   if (refused !== null) throw new StepRefused(why('readers-refused', { says: refused.says }));
   const readers = await readersIn(async () => here).signers();
   for (const held of holders.seats.map((x) => x.toLowerCase())) {
     if (readers.some((x) => x.id === held)) continue;
     const entry = here.dir.seats.find((x) => x.seat === held);
-    const reason = entry === undefined ? 'it has no entry in the company\'s directory that this wallet believes' : seatNotBelievedHere(here, entry);
-    throw new StepRefused(why('readers-refused', {
-      says: `the seat ${held} that the company's account holds is not one this wallet believes (${reason}), so the secret would not be `
-        + 'sealed to it. Nothing was sealed; its signer opens the company in their own wallet, then try again.',
-    }));
+    const reason =
+      entry === undefined
+        ? "it has no entry in the company's directory that this wallet believes"
+        : seatNotBelievedHere(here, entry);
+    throw new StepRefused(
+      why('readers-refused', {
+        says:
+          `the seat ${held} that the company's account holds is not one this wallet believes (${reason}), so the secret would not be ` +
+          'sealed to it. Nothing was sealed; its signer opens the company in their own wallet, then try again.'
+      })
+    );
   }
   return readers.map((x) => x.wrappingPublicKey.toLowerCase() as Hex);
 };
 
 /** The records this seat files for the vault, the secret kept here before its filing leaves. */
-export const recordsKeepingTheSecret = (records: DeviceRecords, kept: SecretKeptHere): DeviceRecords => (record) => {
-  const inner = records(record);
-  if (record !== 'nonce-secret') return inner;
-  return new Proxy(inner, {
-    get(target, p) {
-      if (p === 'put') return async (vault: string, rec: SealedPool) => { await kept.keep(vault as Hex, rec); return target.put(vault, rec); };
-      const v = Reflect.get(target, p);
-      return typeof v === 'function' ? v.bind(target) : v;
-    },
-  });
-};
+export const recordsKeepingTheSecret =
+  (records: DeviceRecords, kept: SecretKeptHere): DeviceRecords =>
+  (record) => {
+    const inner = records(record);
+    if (record !== 'nonce-secret') return inner;
+    return new Proxy(inner, {
+      get(target, p) {
+        if (p === 'put')
+          return async (vault: string, rec: SealedPool) => {
+            await kept.keep(vault as Hex, rec);
+            return target.put(vault, rec);
+          };
+        const v = Reflect.get(target, p);
+        return typeof v === 'function' ? v.bind(target) : v;
+      }
+    });
+  };
 
 /**
  * The sends a vault's adoption may go by, declared as one move: the account's call of the vault's start written through
  * the view, or, when the service took nothing of it, the account's own adopt sent straight to the chain.
  */
 export const adoptionSends = (account: string, vault: string): readonly MovingSend[] => [
-  { start: vault }, { circuit: CARRIED_BY['adopt-vault'].circuit, contract: account.toLowerCase() },
+  { start: vault },
+  { circuit: CARRIED_BY['adopt-vault'].circuit, contract: account.toLowerCase() }
 ];
 
 /* What the service answered for one write through the step's view, refused as the service refused it. */
-const writtenThrough = async <T>(r: CompanyReach, w: RecordWrite): Promise<T> => await writesOfTheStep(r)(r.accountId, w) as T;
+const writtenThrough = async <T>(r: CompanyReach, w: RecordWrite): Promise<T> =>
+  (await writesOfTheStep(r)(r.accountId, w)) as T;
 
 /** The doors `createCompanyVault` runs on in the wallet: every read the wallet's own or judged, every write signed here. */
 export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoorsReach): CreateVaultDoors {
-  const person = ctx.person ?? (() => { throw new StepRefused(why('no-person')); })();
+  const person =
+    ctx.person ??
+    (() => {
+      throw new StepRefused(why('no-person'));
+    })();
   const kept = reach.secrets(person);
   const directory = r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const judge = r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
   const entered = enteredFor(r);
   type Started = Awaited<ReturnType<NonNullable<VaultService['startSecret']>>>;
-  const started = (vault: string, step: VaultStartStep, body: unknown) => writtenThrough<Started>(r, { to: 'vault-start', vault, step, body });
+  const started = (vault: string, step: VaultStartStep, body: unknown) =>
+    writtenThrough<Started>(r, { to: 'vault-start', vault, step, body });
   const base = vaultServiceThrough(r.stepView);
   const service: VaultService = {
     ...base,
@@ -111,7 +140,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
       return started(vault, 'account', body);
     },
     startSecret: (vault, tx) => started(vault, 'secret', { tx }),
-    startCopy: (vault, tx, place) => started(vault, 'copy', { tx, place }),
+    startCopy: (vault, tx, place) => started(vault, 'copy', { tx, place })
   };
   const proposals = governedCallServiceThrough(r.stepView);
   const builder = {
@@ -120,7 +149,7 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
       const built = await r.builder.bornHeldVault!(input);
       ctx.tell({ vault: built.vault.toLowerCase() });
       return built;
-    },
+    }
   } as typeof r.builder;
   return {
     sleep: (ms) => reach.pause(ms, ctx.signal),
@@ -132,18 +161,27 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
     me: deviceSignerFrom(r.leaf, r.companyKey),
     myRecordsKey: recordsKeypairFrom(fromHex(r.companyKey)).publicKey as Hex,
     signers: readersIn(directory).signers,
-    records: recordsKeepingTheSecret(deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))), kept),
+    records: recordsKeepingTheSecret(
+      deviceRecordsFor(r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
+      kept
+    ),
     vaultInfo: vaultInfoRecordsFor(r.accountId, r.seat.signingSecret, judge, readsJoinedIn(r.stepView, stopsFor(r))),
     secretKeptHere: kept,
     ...unnamedKeptIn(r.stepView.current()),
     proposals: {
-      accountId: r.accountId, directory, companyKeys: r.companyKeys, signingSecret: r.seat.signingSecret, entered,
+      accountId: r.accountId,
+      directory,
+      companyKeys: r.companyKeys,
+      signingSecret: r.seat.signingSecret,
+      entered,
       carried: (id, body) => writtenThrough(r, { to: 'carried', id, body }),
       service: {
         callState: proposals.callState,
-        send: proposals.send, file: proposals.file!, sealedProposals: proposalsInTheView(r),
-        ...(proposals.cancel === undefined ? {} : { cancel: proposals.cancel }),
-      },
+        send: proposals.send,
+        file: proposals.file!,
+        sealedProposals: proposalsInTheView(r),
+        ...(proposals.cancel === undefined ? {} : { cancel: proposals.cancel })
+      }
     },
     /* The chain's time, read at the wallet's own indexer, as a withdrawal reads it. */
     chainTime: chainTimeOf(r),
@@ -162,9 +200,9 @@ export function vaultDoorsFor(ctx: StepContext, r: CompanyReach, reach: VaultDoo
         const here = await directory();
         const readers = (await readersIn(async () => here).signers()).map((x) => x.wrappingPublicKey.toLowerCase());
         return { seats: here.dir.seats, leafOf: here.leafOf, readers };
-      },
+      }
     },
     approvers: () => approversHere(r, () => runsOutrunHere(r)),
-    vaultName: (vault) => vault,
+    vaultName: (vault) => vault
   };
 }

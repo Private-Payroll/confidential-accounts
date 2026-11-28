@@ -11,7 +11,7 @@ import type { CompanyReach } from './company-reach.js';
 import { StepRefused } from './definition.js';
 
 /** The name a removal seals for a seat the company's roster names no one for: the network shows the seat, and no name. */
-export const UNREAD_SEAT_NAME = 'a seat the company\'s roster does not name';
+export const UNREAD_SEAT_NAME = "a seat the company's roster does not name";
 
 /** The list of signers a removal reads, and whether the seat it takes is one the network shows and the roster names no one for. */
 export type RemovalRoster = OpenedAccount & { readonly leavingUnread: boolean };
@@ -26,17 +26,23 @@ export type RemovalRoster = OpenedAccount & { readonly leavingUnread: boolean };
  */
 export const rosterForARemovalHere = async (r: Pick<CompanyReach, 'roster'>, leaf: string): Promise<RemovalRoster> => {
   try {
-    return { ...await r.roster(), leavingUnread: false };
+    return { ...(await r.roster()), leavingUnread: false };
   } catch (e) {
     const held = seatingRefusedRead(e);
     if (held === null) throw e;
     const leaving = leaf.toLowerCase();
     if (!held.unread.includes(leaving)) {
-      throw new StepRefused({ key: 'act.remove-signer.why.unread-seat-first', values: { seats: held.unread.join(', ') } });
+      throw new StepRefused({
+        key: 'act.remove-signer.why.unread-seat-first',
+        values: { seats: held.unread.join(', ') }
+      });
     }
     return { ...held.account, notBelieved: [], leavingUnread: true };
   }
 };
 
 /** `r`, with its list of signers read as the removal of `leaf` reads it; everything else is `r`'s own. */
-export const removalReachFor = (r: CompanyReach, leaf: string): CompanyReach => ({ ...r, roster: () => rosterForARemovalHere(r, leaf) });
+export const removalReachFor = (r: CompanyReach, leaf: string): CompanyReach => ({
+  ...r,
+  roster: () => rosterForARemovalHere(r, leaf)
+});

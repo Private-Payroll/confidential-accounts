@@ -21,8 +21,12 @@
  */
 import { signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import {
-  newNonceSecret, openNonceSecrets, recordsKeypairFrom, refileNonceSecret, rotateNonceSecret,
-  type OpenedNonceSecrets,
+  newNonceSecret,
+  openNonceSecrets,
+  recordsKeypairFrom,
+  refileNonceSecret,
+  rotateNonceSecret,
+  type OpenedNonceSecrets
 } from '../../../src/midnight/company-nonce-secret.js';
 import { mayFile } from '../../../src/midnight/seat-directory.js';
 import type { SealedPool } from '../../../src/midnight/vault-pool.js';
@@ -35,7 +39,13 @@ import { theVaultReadForItsStart } from './vault-read-here.js';
 import { ownChainSecret } from './vault-secret-to-spend.js';
 import { secretMustChange, whenTheSecretWasSetHere } from './who-holds-the-vaults-secret.js';
 import { NEW_SECRET_SUMMARY, heldSecretsOf, runLive } from './vault-secret-run-record.js';
-import { everyCopyWritten, raiseASecretRunHere, readersNow, secretRunApprovedHere, secretSetHere } from './vault-secret-run.js';
+import {
+  everyCopyWritten,
+  raiseASecretRunHere,
+  readersNow,
+  secretRunApprovedHere,
+  secretSetHere
+} from './vault-secret-run.js';
 import { approvedHere, standingNow, type StartStanding } from './vault-start-steps.js';
 import type { RunSecret } from './vault-pool-opened.js';
 
@@ -60,13 +70,18 @@ type VaultSecretRotated = { readonly vault: Hex; readonly did: readonly string[]
 
 /** A run's copies tree this wallet kept, with this signer's own copy opened from it. */
 interface TreeHere {
-  readonly secret: Hex; readonly readers: readonly Hex[]; readonly previous: Hex;
+  readonly secret: Hex;
+  readonly readers: readonly Hex[];
+  readonly previous: Hex;
   /** Everyone any run of this secret this wallet kept sealed it to: who can open it. */
   readonly everReaders: readonly Hex[];
 }
 
 /** The newest filed record this signer opens, and the record itself. */
-interface Newest { readonly rec: SealedPool; readonly opened: OpenedNonceSecrets }
+interface Newest {
+  readonly rec: SealedPool;
+  readonly opened: OpenedNonceSecrets;
+}
 
 /** What the owed function read, chain first. */
 interface RotationRead {
@@ -80,8 +95,10 @@ interface RotationRead {
 
 /** What a vault's secret still needs, from the chain and the company's records. */
 type SecretOwed =
-  | { readonly owed: 'nothing' } | { readonly owed: 'not-started' }
-  | { readonly owed: 'copies'; readonly read: RotationRead } | { readonly owed: 'file'; readonly read: RotationRead }
+  | { readonly owed: 'nothing' }
+  | { readonly owed: 'not-started' }
+  | { readonly owed: 'copies'; readonly read: RotationRead }
+  | { readonly owed: 'file'; readonly read: RotationRead }
   | { readonly owed: 'count'; readonly read: RotationRead }
   | { readonly owed: 'new-run'; readonly read: RotationRead; readonly why: string };
 
@@ -90,10 +107,18 @@ const allOn = (keys: readonly string[], list: readonly Hex[]): boolean => keys.e
 
 /** This signer's own copy in a kept tree, opened: null when the tree is not this vault's or holds no copy that opens. */
 function treeOpened(doors: CreateVaultDoors, vault: Hex, kept: RunKept | null): Omit<TreeHere, 'everReaders'> | null {
-  if (kept === null || typeof kept.previous !== 'string' || !HEX64.test(lower(kept.previous)) || lower(kept.vault) !== lower(vault)) return null;
+  if (
+    kept === null ||
+    typeof kept.previous !== 'string' ||
+    !HEX64.test(lower(kept.previous)) ||
+    lower(kept.vault) !== lower(vault)
+  )
+    return null;
   /* No copy of mine that opens is no tree to write from: the copies are then owed a new run. */
   const secret = ownCopyOpened(doors.me.companyKey, vault, kept.copies);
-  return secret === null ? null : { secret, readers: kept.copies.map((c) => lower(c.reader)), previous: lower(kept.previous) };
+  return secret === null
+    ? null
+    : { secret, readers: kept.copies.map((c) => lower(c.reader)), previous: lower(kept.previous) };
 }
 
 /** Every run of `commitment` this wallet kept, oldest first. */
@@ -108,7 +133,9 @@ async function runsOf(doors: CreateVaultDoors, vault: Hex, commitment: Hex): Pro
 async function treeHere(doors: CreateVaultDoors, vault: Hex, commitment: Hex): Promise<TreeHere | null> {
   const runs = await runsOf(doors, vault, commitment);
   const tree = treeOpened(doors, vault, runs.at(-1) ?? null);
-  return tree === null ? null : { ...tree, everReaders: [...new Set(runs.flatMap((r) => r.copies.map((c) => lower(c.reader))))] };
+  return tree === null
+    ? null
+    : { ...tree, everReaders: [...new Set(runs.flatMap((r) => r.copies.map((c) => lower(c.reader))))] };
 }
 
 async function newestHere(doors: CreateVaultDoors, vault: Hex): Promise<Newest | null> {
@@ -133,36 +160,74 @@ async function vaultSecretOwedHere(doors: CreateVaultDoors, vault: Hex): Promise
   if (refusal !== null) throw new Error(refusal);
   const commitment = lower(view.nonceCommitment ?? '');
   if (view.state === undefined || !HEX64.test(commitment) || /^0+$/u.test(commitment)) return { owed: 'not-started' };
-  if (doors.builder.ownChainCopy === undefined) throw new Error('this page cannot read the vault\'s sealed copies on the chain. Reload it to get the current version.');
+  if (doors.builder.ownChainCopy === undefined)
+    throw new Error(
+      "this page cannot read the vault's sealed copies on the chain. Reload it to get the current version."
+    );
   const removals = await removalsOnTheChainHere(doors, vault);
   const readers = (await readersNow(doors, vault)).map(lower);
-  if (await removalsOnTheChainHere(doors, vault) !== removals) {
-    throw new Error('a signer was removed while this device read who stays, so nothing was done; pressing again goes on.');
+  if ((await removalsOnTheChainHere(doors, vault)) !== removals) {
+    throw new Error(
+      'a signer was removed while this device read who stays, so nothing was done; pressing again goes on.'
+    );
   }
   const written = (await ownChainSecret(doors, vault, view.state, 'copies-written')).commitment;
   const tree = await treeHere(doors, vault, commitment);
-  const read: RotationRead = { state: view.state, commitment, removals, readers, newest: await newestHere(doors, vault), tree };
+  const read: RotationRead = {
+    state: view.state,
+    commitment,
+    removals,
+    readers,
+    newest: await newestHere(doors, vault),
+    tree
+  };
   if (written === null || lower(written) !== commitment) {
-    return tree !== null && allOn(tree.everReaders, readers) ? { owed: 'copies', read }
-      : { owed: 'new-run', read, why: 'the vault\'s secret is set and its sealed copies are not all written, and a signer who left may open them' };
+    return tree !== null && allOn(tree.everReaders, readers)
+      ? { owed: 'copies', read }
+      : {
+          owed: 'new-run',
+          read,
+          why: "the vault's secret is set and its sealed copies are not all written, and a signer who left may open them"
+        };
   }
   const newest = read.newest;
-  const chainsNewest = newest !== null
-    && await doors.builder.secretIsTheVaults({ vault, state: view.state, secret: newest.opened.secrets[newest.opened.secrets.length - 1]! });
+  const chainsNewest =
+    newest !== null &&
+    (await doors.builder.secretIsTheVaults({
+      vault,
+      state: view.state,
+      secret: newest.opened.secrets[newest.opened.secrets.length - 1]!
+    }));
   if (!chainsNewest) return { owed: 'file', read };
-  const must = await secretMustChange({ opened: newest.opened, chainRemovals: removals, set: () => whenTheSecretWasSetHere(doors, vault, commitment) });
+  const must = await secretMustChange({
+    opened: newest.opened,
+    chainRemovals: removals,
+    set: () => whenTheSecretWasSetHere(doors, vault, commitment)
+  });
   if (must === null) return { owed: 'nothing' };
-  return must.why === 'behind-the-chain' ? { owed: 'count', read }
-    : { owed: 'new-run', read, why: 'a signer was removed after the vault\'s secret was set, so they may open it' };
+  return must.why === 'behind-the-chain'
+    ? { owed: 'count', read }
+    : { owed: 'new-run', read, why: "a signer was removed after the vault's secret was set, so they may open it" };
 }
 
 /** Writes every copy of the chain's secret from the kept tree. */
 async function copiesWrittenHere(doors: CreateVaultDoors, vault: Hex, read: RotationRead): Promise<void> {
   const tree = read.tree!;
-  const run: RunSecret = { secret: tree.secret, readers: tree.readers, previous: tree.previous, earlier: await heldSecretsOf(doors, vault) };
+  const run: RunSecret = {
+    secret: tree.secret,
+    readers: tree.readers,
+    previous: tree.previous,
+    earlier: await heldSecretsOf(doors, vault)
+  };
   const at = await standingNow(doors, vault, run);
-  if (at.run === undefined || lower(at.run.commitment) !== read.commitment || at.standing.secret?.rootIsThisRuns !== true) {
-    throw new Error('the sealed copies this wallet kept are not the ones the vault\'s signers approved, so none was written.');
+  if (
+    at.run === undefined ||
+    lower(at.run.commitment) !== read.commitment ||
+    at.standing.secret?.rootIsThisRuns !== true
+  ) {
+    throw new Error(
+      "the sealed copies this wallet kept are not the ones the vault's signers approved, so none was written."
+    );
   }
   await everyCopyWritten(doors, vault, at, at.run, run);
 }
@@ -179,10 +244,13 @@ async function chainsSecretFiledHere(doors: CreateVaultDoors, vault: Hex, read: 
     return 'this device holds no copy of the secret the vault holds now; a signer whose copy is on the chain files it';
   }
   const base = read.newest;
-  if (base === null) return 'the company\'s records hold no secret of this vault to carry into the new one';
-  const removals = read.tree !== null && allOn(read.tree.everReaders, read.readers) ? read.removals : base.opened.removals;
-  await doors.records('nonce-secret').put(vault, nextRecordOf(doors, vault, base, read.tree?.everReaders ?? read.readers, own, removals));
-  const kept = await doors.secretKeptHere?.held(vault) ?? null;
+  if (base === null) return "the company's records hold no secret of this vault to carry into the new one";
+  const removals =
+    read.tree !== null && allOn(read.tree.everReaders, read.readers) ? read.removals : base.opened.removals;
+  await doors
+    .records('nonce-secret')
+    .put(vault, nextRecordOf(doors, vault, base, read.tree?.everReaders ?? read.readers, own, removals));
+  const kept = (await doors.secretKeptHere?.held(vault)) ?? null;
   if (kept !== null && newestOf(doors, vault, kept) === lower(own)) await doors.secretKeptHere?.drop(vault);
   return null;
 }
@@ -204,7 +272,7 @@ const newestOf = (doors: CreateVaultDoors, vault: Hex, rec: SealedPool): Hex | n
 async function keptNextSecret(doors: CreateVaultDoors, vault: Hex, read: RotationRead): Promise<Hex | null> {
   const base = read.newest;
   if (base === null) return null;
-  const kept = await doors.secretKeptHere?.held(vault) ?? null;
+  const kept = (await doors.secretKeptHere?.held(vault)) ?? null;
   if (kept === null) return null;
   let k: OpenedNonceSecrets;
   try {
@@ -212,17 +280,39 @@ async function keptNextSecret(doors: CreateVaultDoors, vault: Hex, read: Rotatio
   } catch {
     return null; // a kept record that does not open here is not the next epoch
   }
-  const extends1 = k.secrets.length === base.opened.secrets.length + 1 && base.opened.secrets.every((s, i) => lower(s) === lower(k.secrets[i]!));
+  const extends1 =
+    k.secrets.length === base.opened.secrets.length + 1 &&
+    base.opened.secrets.every((s, i) => lower(s) === lower(k.secrets[i]!));
   if (!extends1) return null;
   const secret = lower(k.secrets[k.secrets.length - 1]!);
-  const probe = await standingNow(doors, vault, { secret, readers: read.readers, previous: read.commitment, earlier: [] });
+  const probe = await standingNow(doors, vault, {
+    secret,
+    readers: read.readers,
+    previous: read.commitment,
+    earlier: []
+  });
   const runs = probe.run === undefined ? [] : await runsOf(doors, vault, lower(probe.run.commitment));
-  return runs.length > 0 && runs.every((r) => allOn(r.copies.map((c) => c.reader), read.readers)) ? secret : null;
+  return runs.length > 0 &&
+    runs.every((r) =>
+      allOn(
+        r.copies.map((c) => c.reader),
+        read.readers
+      )
+    )
+    ? secret
+    : null;
 }
 
 /** Keeps in this wallet the vault's next record: the newest filed with `secret` as its next epoch, wrapped to `readers`. */
-async function nextRecordKept(doors: CreateVaultDoors, vault: Hex, base: Newest, secret: Hex, readers: readonly Hex[]): Promise<void> {
-  if (doors.secretKeptHere === undefined) throw new Error('this wallet cannot keep a new secret, so none was made or raised.');
+async function nextRecordKept(
+  doors: CreateVaultDoors,
+  vault: Hex,
+  base: Newest,
+  secret: Hex,
+  readers: readonly Hex[]
+): Promise<void> {
+  if (doors.secretKeptHere === undefined)
+    throw new Error('this wallet cannot keep a new secret, so none was made or raised.');
   await doors.secretKeptHere.keep(vault, nextRecordOf(doors, vault, base, readers, secret, base.opened.removals));
 }
 
@@ -230,18 +320,34 @@ async function nextRecordKept(doors: CreateVaultDoors, vault: Hex, base: Newest,
  * **THE VAULT'S NEXT NONCE-SECRET RECORD**: the newest one's epochs and `secret` as the next, wrapped to `readers`, every
  * reader of the newest one not among them named as leaving, good for `removals`.
  */
-function nextRecordOf(doors: CreateVaultDoors, vault: Hex, base: Newest, readers: readonly Hex[], secret: Hex, removals: number): SealedPool {
+function nextRecordOf(
+  doors: CreateVaultDoors,
+  vault: Hex,
+  base: Newest,
+  readers: readonly Hex[],
+  secret: Hex,
+  removals: number
+): SealedPool {
   const to = readers.map(lower);
   const leaving = base.opened.readers.map(lower).filter((k) => !to.includes(k));
-  return rotateNonceSecret(base.rec, vault, recordsKeypairFrom(doors.me.companyKey), {
-    remaining: to.map((publicKey) => ({ publicKey })), leaving: leaving.map((publicKey) => ({ publicKey })),
-  }, secret, removals);
+  return rotateNonceSecret(
+    base.rec,
+    vault,
+    recordsKeypairFrom(doors.me.companyKey),
+    {
+      remaining: to.map((publicKey) => ({ publicKey })),
+      leaving: leaving.map((publicKey) => ({ publicKey }))
+    },
+    secret,
+    removals
+  );
 }
 
 /** The vault's next secret: the one this wallet keeps, or a new one, kept in this wallet before anything is raised. */
 async function nextSecretKept(doors: CreateVaultDoors, vault: Hex, read: RotationRead): Promise<Hex> {
   const base = read.newest;
-  if (base === null) throw new Error('the company\'s records hold no secret of this vault to carry into a new one, so none was made.');
+  if (base === null)
+    throw new Error("the company's records hold no secret of this vault to carry into a new one, so none was made.");
   const again = await keptNextSecret(doors, vault, read);
   if (again !== null) return again;
   const secret = newNonceSecret();
@@ -249,16 +355,29 @@ async function nextSecretKept(doors: CreateVaultDoors, vault: Hex, read: Rotatio
   return secret;
 }
 
-type Carried = { readonly state: 'carried' } | { readonly state: 'awaiting-approvals'; readonly approvals: number; readonly needed: number }
+type Carried =
+  | { readonly state: 'carried' }
+  | { readonly state: 'awaiting-approvals'; readonly approvals: number; readonly needed: number }
   | { readonly state: 'owed'; readonly why: string };
 
 /** Approves (on a press only) and sets the run's secret once its approvals are met, then writes every copy. */
-async function carriedWhenMet(doors: CreateVaultDoors, vault: Hex, from: StartStanding, run: RunSecret, may: RotationMay): Promise<Carried> {
+async function carriedWhenMet(
+  doors: CreateVaultDoors,
+  vault: Hex,
+  from: StartStanding,
+  run: RunSecret,
+  may: RotationMay
+): Promise<Carried> {
   let at = from;
   let r = at.standing.secret?.run ?? null;
   if (r === null || !runLive(r)) {
-    return { state: 'owed', why: r?.beforeARemoval === true ? 'a signer was removed after the vault\'s secret run was raised; pressing again raises it afresh'
-      : 'the vault\'s secret run is not open on the chain; pressing again raises it' };
+    return {
+      state: 'owed',
+      why:
+        r?.beforeARemoval === true
+          ? "a signer was removed after the vault's secret run was raised; pressing again raises it afresh"
+          : "the vault's secret run is not open on the chain; pressing again raises it"
+    };
   }
   if (r.approvals < r.needed && may === 'raise' && !approvedHere(vault, r, 'its new secret')) {
     at = await secretRunApprovedHere(doors, vault, at, run, r, NEW_SECRET_SUMMARY);
@@ -301,8 +420,13 @@ async function oneVaultRotatedHere(doors: CreateVaultDoors, vault: Hex, may: Rot
   try {
     for (let step = 0; step < 6; step += 1) {
       const owed = await vaultSecretOwedHere(doors, vault);
-      if (owed.owed === 'nothing' || owed.owed === 'not-started') return out({ state: did.length === 0 ? 'not-owed' : 'rotated' });
-      if (owed.owed === 'copies') { await copiesWrittenHere(doors, vault, owed.read); did.push('copies written'); continue; }
+      if (owed.owed === 'nothing' || owed.owed === 'not-started')
+        return out({ state: did.length === 0 ? 'not-owed' : 'rotated' });
+      if (owed.owed === 'copies') {
+        await copiesWrittenHere(doors, vault, owed.read);
+        did.push('copies written');
+        continue;
+      }
       if (owed.owed === 'file') {
         const no = await chainsSecretFiledHere(doors, vault, owed.read);
         if (no !== null) return out({ state: 'owed', why: no });
@@ -311,31 +435,64 @@ async function oneVaultRotatedHere(doors: CreateVaultDoors, vault: Hex, may: Rot
       }
       if (owed.owed === 'count') {
         const base = owed.read.newest!;
-        await doors.records('nonce-secret').put(vault,
-          refileNonceSecret(base.rec, vault, recordsKeypairFrom(doors.me.companyKey), base.opened.version + 1, owed.read.removals));
+        await doors
+          .records('nonce-secret')
+          .put(
+            vault,
+            refileNonceSecret(
+              base.rec,
+              vault,
+              recordsKeypairFrom(doors.me.companyKey),
+              base.opened.version + 1,
+              owed.read.removals
+            )
+          );
         did.push('filed again for the removals counted');
         continue;
       }
-      const carried = may === 'raise' ? await raisedAndCarried(doors, vault, owed.read) : await keptRunCarried(doors, vault, owed.read);
-      if (carried === null) return out({ state: 'owed', why: `${owed.why}; a signer who stays changes it by pressing to change the vault's secret` });
+      const carried =
+        may === 'raise'
+          ? await raisedAndCarried(doors, vault, owed.read)
+          : await keptRunCarried(doors, vault, owed.read);
+      if (carried === null)
+        return out({
+          state: 'owed',
+          why: `${owed.why}; a signer who stays changes it by pressing to change the vault's secret`
+        });
       if (carried.state !== 'carried') return out(carried);
       did.push('new secret set');
     }
-    return out({ state: 'not-rotated', why: 'the vault\'s secret change did not settle on this press; pressing again goes on from where it stopped' });
+    return out({
+      state: 'not-rotated',
+      why: "the vault's secret change did not settle on this press; pressing again goes on from where it stopped"
+    });
   } catch (e) {
     return out({ state: 'not-rotated', why: (e as Error)?.message ?? String(e) });
   }
 }
 
 /** The removal's waits for a vault's secret: the company key's change comes first. Null when the rotation may go on. */
-async function waitsHere(doors: VaultRotationDoors, leaf: string | undefined): Promise<{ readonly state: 'waits' | 'not-this-seat'; readonly why: string } | null> {
+async function waitsHere(
+  doors: VaultRotationDoors,
+  leaf: string | undefined
+): Promise<{ readonly state: 'waits' | 'not-this-seat'; readonly why: string } | null> {
   const here = await doors.directory();
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex).toLowerCase();
   const seat = here.dir.seats.find((x) => x.signingKey.toLowerCase() === mine);
-  const waited = await removalWaitsHere(here, seat, leaf === undefined ? { admittedFirst: true } : { leaf, admittedFirst: true },
-    (s) => (mayFile(s).includes('nonce-secret') ? null : 'this seat\'s role files no vault secret, so it does not change one'), doors);
+  const waited = await removalWaitsHere(
+    here,
+    seat,
+    leaf === undefined ? { admittedFirst: true } : { leaf, admittedFirst: true },
+    (s) =>
+      mayFile(s).includes('nonce-secret') ? null : "this seat's role files no vault secret, so it does not change one",
+    doors
+  );
   if (waited.state === 'waits' || waited.state === 'not-this-seat') return waited;
-  if (waited.state === 'ready') return { state: 'waits', why: 'the company\'s key is changed first, after a signer\'s removal; it is changed by the next action a signer who stays takes in their wallet' };
+  if (waited.state === 'ready')
+    return {
+      state: 'waits',
+      why: "the company's key is changed first, after a signer's removal; it is changed by the next action a signer who stays takes in their wallet"
+    };
   return null;
 }
 
@@ -346,7 +503,7 @@ async function waitsHere(doors: VaultRotationDoors, leaf: string | undefined): P
  * `retired` is what the caller read off the account's own list of the vaults it retired.
  */
 export const heldForItsSecret = <D extends VaultOnChainDoors>(doors: D, retired: readonly Hex[]): D =>
-  (retired.length === 0 ? doors : { ...doors, retiredAdmitted: retired.map(lower) });
+  retired.length === 0 ? doors : { ...doors, retiredAdmitted: retired.map(lower) };
 
 /**
  * **EVERY VAULT'S SECRET, CHANGED AFTER A REMOVAL**, from a staying signer's
@@ -358,7 +515,10 @@ export const heldForItsSecret = <D extends VaultOnChainDoors>(doors: D, retired:
  * one the account retired, is changed through `heldForItsSecret`.
  */
 export async function vaultSecretsRotatedHere(
-  given: VaultRotationDoors, vaults: readonly Hex[], may: RotationMay, o: { readonly leaf?: string; readonly retired?: readonly Hex[] } = {},
+  given: VaultRotationDoors,
+  vaults: readonly Hex[],
+  may: RotationMay,
+  o: { readonly leaf?: string; readonly retired?: readonly Hex[] } = {}
 ): Promise<readonly VaultSecretRotated[]> {
   const doors = heldForItsSecret(given, o.retired ?? []);
   let waited: Awaited<ReturnType<typeof waitsHere>>;

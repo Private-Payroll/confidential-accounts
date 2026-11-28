@@ -1,13 +1,26 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { WorkerDeps } from '../../../../packages/web-shared/src/vault-worker-entry.js';
 import { checkedAccountKeys } from '../../../../packages/web-shared/src/vault-worker-entry.js';
-import { zkConfigOver, byCircuitName, runtimeVersionOf, verifierOnlySource } from '../../../../packages/web-shared/src/zk-config.js';
+import {
+  zkConfigOver,
+  byCircuitName,
+  runtimeVersionOf,
+  verifierOnlySource
+} from '../../../../packages/web-shared/src/zk-config.js';
 import { accountTreeOf, contractPieces } from './contract-pieces.js';
 import ACCOUNT_MANIFEST from '../../../../contracts/managed/compiler/contract-manifest.json' with { type: 'json' };
 import VAULT_MANIFEST from '../../../../contracts/managed-vault/compiler/contract-manifest.json' with { type: 'json' };
 import { detailsOfKind } from '../../../../src/midnight/vault-details.js';
-import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES, VAULT_CIRCUITS_THE_WALLET_DEPLOYS, VAULT_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
-import { makePinnedKeyMaterialProvider, type PinnedKeyMaterial, type PinnedKeyMaterialOptions } from './key-material.js';
+import {
+  ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
+  VAULT_CIRCUITS_THE_WALLET_DEPLOYS,
+  VAULT_CIRCUITS_THE_WALLET_PROVES
+} from './account-circuits.js';
+import {
+  makePinnedKeyMaterialProvider,
+  type PinnedKeyMaterial,
+  type PinnedKeyMaterialOptions
+} from './key-material.js';
 import { builderProving, keptProvers, type ProofEvent } from './proving.js';
 
 /*
@@ -22,14 +35,20 @@ import { builderProving, keptProvers, type ProofEvent } from './proving.js';
 
 export interface VaultBuilderOptions {
   /** Where the keys come from; the wallet's own origin and store unless a test says otherwise. */
-  readonly keyMaterial?: Omit<PinnedKeyMaterialOptions, 'accountCircuits' | 'compiledVerifierKeys' | 'vaultCircuits' | 'vaultVerifiers' | 'compiledVaultVerifierKeys'>;
+  readonly keyMaterial?: Omit<
+    PinnedKeyMaterialOptions,
+    'accountCircuits' | 'compiledVerifierKeys' | 'vaultCircuits' | 'vaultVerifiers' | 'compiledVaultVerifierKeys'
+  >;
   readonly provers?: ReturnType<typeof keptProvers>;
   readonly onProof?: (event: ProofEvent) => void;
 }
 
 /** The verifier keys of one contract, served only from the pinned files and checked against what this build compiled. */
-const verifiersFrom = (fetch: (circuit: string) => Promise<Uint8Array>, expected: Readonly<Record<string, string>>, whose: string) =>
-  checkedAccountKeys(fetch, expected, sha256, whose);
+const verifiersFrom = (
+  fetch: (circuit: string) => Promise<Uint8Array>,
+  expected: Readonly<Record<string, string>>,
+  whose: string
+) => checkedAccountKeys(fetch, expected, sha256, whose);
 
 /** Loads the builder's dependencies once, on first use. */
 export const vaultBuilderDeps = (options: VaultBuilderOptions = {}): (() => Promise<WorkerDeps>) => {
@@ -38,7 +57,7 @@ export const vaultBuilderDeps = (options: VaultBuilderOptions = {}): (() => Prom
     loaded ??= (async () => {
       const [{ ledger, runtime, compactJs, account, accountWitnesses, contracts }, vault] = await Promise.all([
         contractPieces(),
-        import('../../../../contracts/managed-vault/contract/index.js'),
+        import('../../../../contracts/managed-vault/contract/index.js')
       ]);
       const vaultVk = (vault as unknown as { expectedVk: Readonly<Record<string, string>> }).expectedVk;
       const accountVk = (account as unknown as { expectedVk: Readonly<Record<string, string>> }).expectedVk;
@@ -48,14 +67,15 @@ export const vaultBuilderDeps = (options: VaultBuilderOptions = {}): (() => Prom
         compiledVerifierKeys: accountVk,
         vaultCircuits: VAULT_CIRCUITS_THE_WALLET_PROVES,
         vaultVerifiers: VAULT_CIRCUITS_THE_WALLET_DEPLOYS,
-        compiledVaultVerifierKeys: vaultVk,
+        compiledVaultVerifierKeys: vaultVk
       });
       const prove = builderProving(keyMaterial, {
         ...(options.provers === undefined ? {} : { provers: options.provers }),
-        ...(options.onProof === undefined ? {} : { onProof: options.onProof }),
+        ...(options.onProof === undefined ? {} : { onProof: options.onProof })
       });
       const CompiledContract = (compactJs as unknown as { CompiledContract: any }).CompiledContract;
-      const compiledWith = (witnesses: unknown) => CompiledContract.make('Vault', (vault as any).Contract).pipe(CompiledContract.withWitnesses(witnesses));
+      const compiledWith = (witnesses: unknown) =>
+        CompiledContract.make('Vault', (vault as any).Contract).pipe(CompiledContract.withWitnesses(witnesses));
       return {
         ledger,
         vault,
@@ -63,20 +83,31 @@ export const vaultBuilderDeps = (options: VaultBuilderOptions = {}): (() => Prom
         accountTree: accountTreeOf(runtime),
         contracts,
         compiled: compiledWith({
-          noteToSpend: () => { throw new Error('a vault transaction built in this wallet spends no note.'); },
-          nonceSecret: () => { throw new Error('a vault transaction built in this wallet reads no nonce secret.'); },
+          noteToSpend: () => {
+            throw new Error('a vault transaction built in this wallet spends no note.');
+          },
+          nonceSecret: () => {
+            throw new Error('a vault transaction built in this wallet reads no nonce secret.');
+          }
         }),
         compiledWith,
-        zkConfig: zkConfigOver(verifierOnlySource((c) => keyMaterial.vaultVerifierKey(c), 'the vault'), byCircuitName,
-          runtimeVersionOf(VAULT_MANIFEST, 'the vault')),
+        zkConfig: zkConfigOver(
+          verifierOnlySource((c) => keyMaterial.vaultVerifierKey(c), 'the vault'),
+          byCircuitName,
+          runtimeVersionOf(VAULT_MANIFEST, 'the vault')
+        ),
         accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
-          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
-        accountZkConfig: zkConfigOver(verifierOnlySource((c) => keyMaterial.accountVerifierKey(c), 'the company account'), byCircuitName,
-          runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')),
+          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)
+        ),
+        accountZkConfig: zkConfigOver(
+          verifierOnlySource((c) => keyMaterial.accountVerifierKey(c), 'the company account'),
+          byCircuitName,
+          runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')
+        ),
         accountPure: (account as any).pureCircuits,
         accountKeys: {
           ...verifiersFrom((c) => keyMaterial.accountVerifierKey(c), accountVk, 'the company account'),
-          getArtifactRuntimeVersion: async () => runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account'),
+          getArtifactRuntimeVersion: async () => runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')
         },
         accountExpectedVk: accountVk,
         provingWarmed: async () => {},
@@ -84,10 +115,12 @@ export const vaultBuilderDeps = (options: VaultBuilderOptions = {}): (() => Prom
         accountLedger: (account as any).ledger,
         vaultDetails: detailsOfKind((vault as any).pureCircuits),
         vaultPure: (vault as any).pureCircuits,
-        prove,
+        prove
       } as unknown as WorkerDeps;
     })();
-    loaded.catch(() => { loaded = null; });
+    loaded.catch(() => {
+      loaded = null;
+    });
     return loaded;
   };
 };

@@ -16,10 +16,18 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import {
-  shieldedProgressOf, shieldedProgressKnown, shieldedCaughtUp, describeShieldedProgress,
-  shieldedHeldOf, waitForShieldedScan, whyNoCoin, deadlineIsMeasured,
-  SHIELDED_DEADLINE_IS_NOT_MEASURED, SHIELDED_SCAN_TIMEOUT_MS, deadlineFromEnv,
-  type ShieldedWaitOutcome,
+  shieldedProgressOf,
+  shieldedProgressKnown,
+  shieldedCaughtUp,
+  describeShieldedProgress,
+  shieldedHeldOf,
+  waitForShieldedScan,
+  whyNoCoin,
+  deadlineIsMeasured,
+  SHIELDED_DEADLINE_IS_NOT_MEASURED,
+  SHIELDED_SCAN_TIMEOUT_MS,
+  deadlineFromEnv,
+  type ShieldedWaitOutcome
 } from './shielded-wallet.js';
 
 /** The SDK's own shape: `isCompleteWithin` over `highestRelevantWalletIndex - appliedIndex`. */
@@ -30,7 +38,7 @@ const progress = (applied: bigint, tip: bigint, isConnected = true) => ({
   isCompleteWithin(maxGap = 50n) {
     const lag = applied > tip ? applied - tip : tip - applied;
     return isConnected && lag <= maxGap;
-  },
+  }
 });
 
 const stateWith = (p: unknown, coins: unknown[] = []) => ({ shielded: { progress: p, availableCoins: coins } });
@@ -130,9 +138,13 @@ describe('the platform decides what caught up means, not this repository', () =>
     });
 
     it('still answers on a progress that names both, and answers correctly', () => {
-      expect(shieldedCaughtUp({ isConnected: true, appliedIndex: 995n, highestRelevantWalletIndex: 1_000n })).toBe(true);
+      expect(shieldedCaughtUp({ isConnected: true, appliedIndex: 995n, highestRelevantWalletIndex: 1_000n })).toBe(
+        true
+      );
       expect(shieldedCaughtUp({ isConnected: true, appliedIndex: 1n, highestRelevantWalletIndex: 1_000n })).toBe(false);
-      expect(shieldedCaughtUp({ isConnected: false, appliedIndex: 1_000n, highestRelevantWalletIndex: 1_000n })).toBe(false);
+      expect(shieldedCaughtUp({ isConnected: false, appliedIndex: 1_000n, highestRelevantWalletIndex: 1_000n })).toBe(
+        false
+      );
     });
 
     it('does not print `0 of 0` for a wallet that named no position', () => {
@@ -168,7 +180,7 @@ describe('what the wallet holds of one colour, and when it will not say', () => 
     const st = stateWith(progress(1n, 1n), [
       { type: COLOUR, value: 40n },
       { coin: { type: COLOUR, value: 2n } },
-      { type: 'ff'.repeat(32), value: 999n },
+      { type: 'ff'.repeat(32), value: 999n }
     ]);
     expect(shieldedHeldOf(st, COLOUR)).toBe(42n);
   });
@@ -187,8 +199,7 @@ describe('what the wallet holds of one colour, and when it will not say', () => 
      * what `'a1'.repeat(32)` did before an audit measured it.
      */
     expect(COLOUR.toUpperCase()).not.toBe(COLOUR);
-    const windows = new Set(
-      Array.from({ length: COLOUR.length - 15 }, (_, i) => COLOUR.slice(i, i + 16)));
+    const windows = new Set(Array.from({ length: COLOUR.length - 15 }, (_, i) => COLOUR.slice(i, i + 16)));
     expect(windows.size).toBe(COLOUR.length - 15);
   });
 
@@ -198,27 +209,44 @@ describe('what the wallet holds of one colour, and when it will not say', () => 
      * scan is the sentence *"it was already spent"*. Delete the `null` returns
      * and this is what fails.
      */
-    expect(shieldedHeldOf({}, COLOUR)).toBeNull();                       // no shielded state
+    expect(shieldedHeldOf({}, COLOUR)).toBeNull(); // no shielded state
     expect(shieldedHeldOf(null, COLOUR)).toBeNull();
-    expect(shieldedHeldOf({ shielded: {} }, COLOUR)).toBeNull();         // neither balances nor coins
+    expect(shieldedHeldOf({ shielded: {} }, COLOUR)).toBeNull(); // neither balances nor coins
     expect(shieldedHeldOf(stateWith(null, [{ type: COLOUR, value: '1.0' }]), COLOUR)).toBeNull();
-    const throwing = { shielded: { get availableCoins(): never { throw new Error('gone'); } } };
+    const throwing = {
+      shielded: {
+        get availableCoins(): never {
+          throw new Error('gone');
+        }
+      }
+    };
     expect(shieldedHeldOf(throwing, COLOUR)).toBeNull();
-    const throwingBalances = { shielded: { get balances(): never { throw new Error('gone'); } } };
+    const throwingBalances = {
+      shielded: {
+        get balances(): never {
+          throw new Error('gone');
+        }
+      }
+    };
     expect(shieldedHeldOf(throwingBalances, COLOUR)).toBeNull();
   });
 
   it('does not let one unreadable coin be reported as a smaller balance', () => {
     // The sum is the thing being funded. A partial sum is a wrong number, not
     // a conservative one — and it would fund a deposit at the wrong size.
-    const st = stateWith(null, [{ type: COLOUR, value: 40n }, { type: COLOUR, value: {} }]);
+    const st = stateWith(null, [
+      { type: COLOUR, value: 40n },
+      { type: COLOUR, value: {} }
+    ]);
     expect(shieldedHeldOf(st, COLOUR)).toBeNull();
   });
 });
 
 describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
   const notes: string[] = [];
-  const note = (s: string) => { notes.push(s); };
+  const note = (s: string) => {
+    notes.push(s);
+  };
 
   it('returns immediately when the scan is already at the tip', async () => {
     const live = { state: () => stateWith(progress(10n, 10n)) };
@@ -246,7 +274,9 @@ describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
     let seen = 0;
     const live = { state: () => stateWith(progress(1n, 9_999n)) };
     const out = await waitForShieldedScan(live, note, {
-      timeoutMs: 5_000, pollMs: 1, until: () => ++seen > 3,
+      timeoutMs: 5_000,
+      pollMs: 1,
+      until: () => ++seen > 3
     });
     expect(out.reached).toBe('found');
     expect(out.awaitedOwnCoin).toBe(true);
@@ -264,19 +294,23 @@ describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
      * money-safety pass.
      */
     let polls = 0;
-    const live = { state: () => stateWith(progress(1_000n, 1_000n)) };   // at the tip throughout
+    const live = { state: () => stateWith(progress(1_000n, 1_000n)) }; // at the tip throughout
     const out = await waitForShieldedScan(live, note, {
-      timeoutMs: 5_000, pollMs: 1, until: () => ++polls > 4,
+      timeoutMs: 5_000,
+      pollMs: 1,
+      until: () => ++polls > 4
     });
     expect(out.reached).toBe('found');
     expect(out.waitedMs).toBeGreaterThan(0);
-    expect(out.caughtUp).toBe(true);   // it WAS caught up, and that answered nothing
+    expect(out.caughtUp).toBe(true); // it WAS caught up, and that answered nothing
   });
 
   it('runs to its deadline rather than declaring a caught-up scan an answer', async () => {
     const live = { state: () => stateWith(progress(1_000n, 1_000n)) };
     const out = await waitForShieldedScan(live, note, {
-      timeoutMs: 20, pollMs: 5, until: () => false,
+      timeoutMs: 20,
+      pollMs: 5,
+      until: () => false
     });
     expect(out.reached).toBe('deadline');
   });
@@ -318,13 +352,20 @@ describe('the wait is bounded, which the SDK\x27s own wait is not', () => {
 
 describe('THE SENTENCES, AND NO TWO OF THEM INTERCHANGEABLE', () => {
   const outcome = (over: Partial<ShieldedWaitOutcome>): ShieldedWaitOutcome => ({
-    reached: 'deadline', caughtUp: false, known: true, awaitedOwnCoin: false,
-    waitedMs: 720_000, describe: 'shielded 400 of 1,000 — 600 events behind', ...over,
+    reached: 'deadline',
+    caughtUp: false,
+    known: true,
+    awaitedOwnCoin: false,
+    waitedMs: 720_000,
+    describe: 'shielded 400 of 1,000 — 600 events behind',
+    ...over
   });
   const notCaughtUp = outcome({});
   const caughtUp = outcome({
-    reached: 'caught-up', caughtUp: true, waitedMs: 31_000,
-    describe: 'shielded 1,000 of 1,000 — 0 events behind',
+    reached: 'caught-up',
+    caughtUp: true,
+    waitedMs: 31_000,
+    describe: 'shielded 1,000 of 1,000 — 0 events behind'
   });
   const ownCoin = outcome({ awaitedOwnCoin: true, caughtUp: true });
 
@@ -338,9 +379,11 @@ describe('THE SENTENCES, AND NO TWO OF THEM INTERCHANGEABLE', () => {
 
   it('gives all five a different kind, so a caller cannot collapse two of them', () => {
     const kinds = [
-      whyNoCoin(COLOUR, notCaughtUp).kind, whyNoCoin(COLOUR, caughtUp).kind,
-      whyNoCoin(COLOUR, ownCoin).kind, whyNoCoin(COLOUR, null).kind,
-      whyNoCoin(COLOUR, caughtUp, null).kind,
+      whyNoCoin(COLOUR, notCaughtUp).kind,
+      whyNoCoin(COLOUR, caughtUp).kind,
+      whyNoCoin(COLOUR, ownCoin).kind,
+      whyNoCoin(COLOUR, null).kind,
+      whyNoCoin(COLOUR, caughtUp, null).kind
     ];
     expect(new Set(kinds).size).toBe(5);
   });

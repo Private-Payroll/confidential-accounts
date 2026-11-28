@@ -74,11 +74,7 @@ import { NETWORKS, type NetworkName } from './network.js';
  */
 
 /** The same four outcomes `wallet/address.ts` names, so a refusal keeps its name. */
-export type AddressShapeFailure =
-  | 'empty'
-  | 'not-an-address'
-  | 'wrong-kind'
-  | 'wrong-network';
+export type AddressShapeFailure = 'empty' | 'not-an-address' | 'wrong-kind' | 'wrong-network';
 
 export class AddressShapeError extends Error {
   readonly code: AddressShapeFailure;
@@ -109,8 +105,7 @@ const KEY_BYTES = 32;
 /** `MidnightBech32m.validateSegment`. dist:46. */
 const SEGMENT = /^[A-Za-z1-9-]+$/u;
 
-const hex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
 /**
  * **A MAINNET ADDRESS HAS NO NETWORK SEGMENT AT ALL.** dist:53 — the third
@@ -118,8 +113,7 @@ const hex = (bytes: Uint8Array): string =>
  * `asString` puts nothing back. Measured and recorded in `address.ts` too;
  * repeated here because this file has to reproduce it rather than inherit it.
  */
-const segmentFor = (network: NetworkName): string | null =>
-  network === 'mainnet' ? null : network;
+const segmentFor = (network: NetworkName): string | null => (network === 'mainnet' ? null : network);
 
 /**
  * **THE CHECK, IN THE ORDER THE PLATFORM MAKES IT**, so the failure a person is
@@ -129,9 +123,7 @@ const segmentFor = (network: NetworkName): string | null =>
  * `address.ts` gives: an address is meaningful on one network, and a default is
  * how a preview address reaches a stagenet payroll.
  */
-export function checkShieldedAddress(
-  bech32: string, network: NetworkName,
-): CheckedShieldedAddress {
+export function checkShieldedAddress(bech32: string, network: NetworkName): CheckedShieldedAddress {
   const raw = (bech32 ?? '').trim();
   if (!raw) {
     throw new AddressShapeError('empty', 'an address is required, and this one is empty.');
@@ -149,28 +141,27 @@ export function checkShieldedAddress(
   } catch (e) {
     throw new AddressShapeError(
       'not-an-address',
-      `"${raw}" is not a Midnight address: ${(e as Error).message}. `
-      + 'One looks like mn_shield-addr_<network>1... and carries its own checksum, '
-      + 'so a single mistyped character fails here.');
+      `"${raw}" is not a Midnight address: ${(e as Error).message}. ` +
+        'One looks like mn_shield-addr_<network>1... and carries its own checksum, ' +
+        'so a single mistyped character fails here.'
+    );
   }
 
   const [prefix, type, segment] = decoded.prefix.split('_');
   if (prefix !== PREFIX) {
-    throw new AddressShapeError(
-      'not-an-address',
-      `"${raw}" is not a Midnight address: Expected prefix ${PREFIX}.`);
+    throw new AddressShapeError('not-an-address', `"${raw}" is not a Midnight address: Expected prefix ${PREFIX}.`);
   }
   if (type === undefined || !SEGMENT.test(type)) {
     throw new AddressShapeError(
       'not-an-address',
-      `"${raw}" is not a Midnight address: Segment type: ${String(type)} contains `
-      + 'disallowed characters.');
+      `"${raw}" is not a Midnight address: Segment type: ${String(type)} contains ` + 'disallowed characters.'
+    );
   }
   if (segment !== undefined && !SEGMENT.test(segment)) {
     throw new AddressShapeError(
       'not-an-address',
-      `"${raw}" is not a Midnight address: Segment network: ${segment} contains `
-      + 'disallowed characters.');
+      `"${raw}" is not a Midnight address: Segment network: ${segment} contains ` + 'disallowed characters.'
+    );
   }
 
   /*
@@ -184,9 +175,10 @@ export function checkShieldedAddress(
   if (type !== SHIELD_ADDR) {
     throw new AddressShapeError(
       'wrong-kind',
-      `"${raw}" is not a payee address: Expected type ${SHIELD_ADDR}, got ${type}. `
-      + 'It must be a shield-addr — a coin public key on its own is not enough to pay '
-      + 'somebody, because it does not say who may READ the payment.');
+      `"${raw}" is not a payee address: Expected type ${SHIELD_ADDR}, got ${type}. ` +
+        'It must be a shield-addr — a coin public key on its own is not enough to pay ' +
+        'somebody, because it does not say who may READ the payment.'
+    );
   }
 
   const wanted = segmentFor(network);
@@ -194,8 +186,8 @@ export function checkShieldedAddress(
   if (theirs !== wanted) {
     throw new AddressShapeError(
       'wrong-network',
-      `"${raw}" is not an address for ${network}: Expected ${network} address, got `
-      + `${theirs ?? 'mainnet'} one.`);
+      `"${raw}" is not an address for ${network}: Expected ${network} address, got ` + `${theirs ?? 'mainnet'} one.`
+    );
   }
 
   /*
@@ -211,9 +203,10 @@ export function checkShieldedAddress(
   if (decoded.bytes.length !== KEY_BYTES * 2) {
     throw new AddressShapeError(
       'wrong-kind',
-      `"${raw}" carries ${decoded.bytes.length} bytes and a payee address carries `
-      + `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for `
-      + 'the key that may read.');
+      `"${raw}" carries ${decoded.bytes.length} bytes and a payee address carries ` +
+        `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for ` +
+        'the key that may read.'
+    );
   }
 
   return Object.freeze({
@@ -223,7 +216,7 @@ export function checkShieldedAddress(
     bech32: bech32m.encode(decoded.prefix, bech32m.toWords(decoded.bytes), false),
     network,
     coinPublicKey: hex(decoded.bytes.subarray(0, KEY_BYTES)),
-    encryptionPublicKey: hex(decoded.bytes.subarray(KEY_BYTES)),
+    encryptionPublicKey: hex(decoded.bytes.subarray(KEY_BYTES))
   });
 }
 
@@ -251,9 +244,7 @@ const ADDR = 'addr';
  * the same code. `address-shape.test.ts` holds it against the platform's
  * decoder, as it holds the shielded check.
  */
-export function checkUnshieldedAddress(
-  bech32: string, network: NetworkName,
-): CheckedUnshieldedAddress {
+export function checkUnshieldedAddress(bech32: string, network: NetworkName): CheckedUnshieldedAddress {
   const raw = (bech32 ?? '').trim();
   if (!raw) {
     throw new AddressShapeError('empty', 'an address is required, and this one is empty.');
@@ -268,39 +259,46 @@ export function checkUnshieldedAddress(
   } catch (e) {
     throw new AddressShapeError(
       'not-an-address',
-      `"${raw}" is not a Midnight address: ${(e as Error).message}. `
-      + 'A public address looks like mn_addr_<network>1... and carries its own checksum, '
-      + 'so a single mistyped character fails here.');
+      `"${raw}" is not a Midnight address: ${(e as Error).message}. ` +
+        'A public address looks like mn_addr_<network>1... and carries its own checksum, ' +
+        'so a single mistyped character fails here.'
+    );
   }
 
   const [prefix, type, segment] = decoded.prefix.split('_');
-  if (prefix !== PREFIX || type === undefined || !SEGMENT.test(type)
-    || (segment !== undefined && !SEGMENT.test(segment))) {
+  if (
+    prefix !== PREFIX ||
+    type === undefined ||
+    !SEGMENT.test(type) ||
+    (segment !== undefined && !SEGMENT.test(segment))
+  ) {
     throw new AddressShapeError('not-an-address', `"${raw}" is not a Midnight address.`);
   }
   if (type !== ADDR) {
     throw new AddressShapeError(
       'wrong-kind',
-      `"${raw}" is not a public address: Expected type ${ADDR}, got ${type}. `
-      + 'This money has no private form, so it can only be paid to a public address, '
-      + 'one that starts mn_addr.');
+      `"${raw}" is not a public address: Expected type ${ADDR}, got ${type}. ` +
+        'This money has no private form, so it can only be paid to a public address, ' +
+        'one that starts mn_addr.'
+    );
   }
   const wanted = segmentFor(network);
   const theirs = segment ?? null;
   if (theirs !== wanted) {
     throw new AddressShapeError(
       'wrong-network',
-      `"${raw}" is not an address for ${network}: Expected ${network} address, got `
-      + `${theirs ?? 'mainnet'} one.`);
+      `"${raw}" is not an address for ${network}: Expected ${network} address, got ` + `${theirs ?? 'mainnet'} one.`
+    );
   }
   if (decoded.bytes.length !== KEY_BYTES) {
     throw new AddressShapeError(
       'wrong-kind',
-      `"${raw}" carries ${decoded.bytes.length} bytes and a public address carries ${KEY_BYTES}.`);
+      `"${raw}" carries ${decoded.bytes.length} bytes and a public address carries ${KEY_BYTES}.`
+    );
   }
   return Object.freeze({
     bech32: bech32m.encode(decoded.prefix, bech32m.toWords(decoded.bytes), false),
     network,
-    userAddress: hex(decoded.bytes),
+    userAddress: hex(decoded.bytes)
   });
 }

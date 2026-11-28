@@ -63,7 +63,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -100,13 +100,17 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 const registrationFixture = {
-  credentialId: 'cred-new', personHandle: 'cGVyc29uLTE', clientDataJSON: new Uint8Array(),
-  authenticatorData: new Uint8Array(), publicKeySpki: new Uint8Array([1, 2, 3]),
-  publicKeyAlgorithm: -7, transports: [],
+  credentialId: 'cred-new',
+  personHandle: 'cGVyc29uLTE',
+  clientDataJSON: new Uint8Array(),
+  authenticatorData: new Uint8Array(),
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  publicKeyAlgorithm: -7,
+  transports: []
 };
 
 /**
@@ -120,7 +124,11 @@ const registrationFixture = {
  * see `null` and the first piece is lost. A click per piece is what a person
  * does and it is the only thing that works.
  */
-function Probe({ name, pieces, incoming }: {
+function Probe({
+  name,
+  pieces,
+  incoming
+}: {
   readonly name?: string;
   readonly pieces?: PieceSet;
   readonly incoming?: Secret;
@@ -130,11 +138,23 @@ function Probe({ name, pieces, incoming }: {
     <div>
       <div data-testid="phase">{session.phase.name}</div>
       <div data-testid="error">{session.error ?? ''}</div>
-      <div data-testid="gathered">
-        {session.recovery === null ? '-' : String(session.recovery.gathered.length)}
-      </div>
-      <button type="button" onClick={() => { void session.createAccount(name); }}>create</button>
-      <button type="button" onClick={() => { void session.startFresh(name); }}>fresh</button>
+      <div data-testid="gathered">{session.recovery === null ? '-' : String(session.recovery.gathered.length)}</div>
+      <button
+        type="button"
+        onClick={() => {
+          void session.createAccount(name);
+        }}
+      >
+        create
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.startFresh(name);
+        }}
+      >
+        fresh
+      </button>
       {(pieces?.pieces ?? []).map((piece, i) => (
         <button
           key={piece.placement.holder}
@@ -146,10 +166,19 @@ function Probe({ name, pieces, incoming }: {
           {`offer-${i}`}
         </button>
       ))}
-      <button type="button" onClick={() => { void session.finishRecovery(name); }}>recover</button>
       <button
         type="button"
-        onClick={() => { void session.finishPairing(incoming as Secret, name); }}
+        onClick={() => {
+          void session.finishRecovery(name);
+        }}
+      >
+        recover
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.finishPairing(incoming as Secret, name);
+        }}
       >
         pair
       </button>
@@ -157,12 +186,18 @@ function Probe({ name, pieces, incoming }: {
   );
 }
 
-const mount = (props: {
-  readonly name?: string;
-  readonly pieces?: PieceSet;
-  readonly incoming?: Secret;
-} = {}): void => {
-  render(<SessionProvider><Probe {...props} /></SessionProvider>);
+const mount = (
+  props: {
+    readonly name?: string;
+    readonly pieces?: PieceSet;
+    readonly incoming?: Secret;
+  } = {}
+): void => {
+  render(
+    <SessionProvider>
+      <Probe {...props} />
+    </SessionProvider>
+  );
 };
 
 const phase = (): string => screen.getByTestId('phase').textContent ?? '';
@@ -208,8 +243,7 @@ const emptyBrowser = (): void => {
 beforeEach(emptyBrowser);
 
 /** The secret behind the keyring the landing just sealed, read back out. */
-const landedSecret = async (): Promise<Uint8Array> =>
-  (await loadSecret(openWalletId())) as Uint8Array;
+const landedSecret = async (): Promise<Uint8Array> => (await loadSecret(openWalletId())) as Uint8Array;
 
 /**
  * BOTH HALVES OF "SETTLED", ASSERTED THE SAME WAY FOR ALL FOUR LANDINGS.
@@ -249,8 +283,7 @@ const expectNameLanded = async (): Promise<void> => {
  */
 const expectStrangersNameGone = async (stranger: Secret): Promise<void> => {
   const secret = await landedSecret();
-  expect(toBase64Url(fingerprintOf(secret)))
-    .not.toBe(toBase64Url(fingerprintOf(stranger)));
+  expect(toBase64Url(fingerprintOf(secret))).not.toBe(toBase64Url(fingerprintOf(stranger)));
 
   /* Not "is not the stranger's" — ABSENT. An unnamed wallet is a supported
    * state everywhere in this build, so the empty settlement REMOVES the
@@ -263,55 +296,53 @@ const expectStrangersNameGone = async (stranger: Secret): Promise<void> => {
 /* ------------------------------------------------------------ landing 1 of 4 */
 
 describe('createAccount settles the name record it lands beside', () => {
-  it('lands the given name against its own secret, and never inherits a stranger’s',
-    async () => {
-      /* ACT 1 — a name was given. */
-      mount({ name: GIVEN });
-      fireEvent.click(screen.getByText('create'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      await expectNameLanded();
+  it('lands the given name against its own secret, and never inherits a stranger’s', async () => {
+    /* ACT 1 — a name was given. */
+    mount({ name: GIVEN });
+    fireEvent.click(screen.getByText('create'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    await expectNameLanded();
 
-      /* ACT 2 — no name, over a compartment holding a stranger's record. */
-      emptyBrowser();
-      const stranger = strandedStrangersName();
-      mount();
-      expect(phase()).toBe('passkey-no-account');
-      fireEvent.click(screen.getByText('create'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      /* The wallet landed in the shelf compartment — the stranger's record is
-       * the one that was there, so this is the inheritance case and not a
-       * different compartment quietly passing. */
-      expect(openWalletId()).toBe(ORIGINAL_SLOT);
-      await expectStrangersNameGone(stranger);
-    });
+    /* ACT 2 — no name, over a compartment holding a stranger's record. */
+    emptyBrowser();
+    const stranger = strandedStrangersName();
+    mount();
+    expect(phase()).toBe('passkey-no-account');
+    fireEvent.click(screen.getByText('create'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    /* The wallet landed in the shelf compartment — the stranger's record is
+     * the one that was there, so this is the inheritance case and not a
+     * different compartment quietly passing. */
+    expect(openWalletId()).toBe(ORIGINAL_SLOT);
+    await expectStrangersNameGone(stranger);
+  });
 });
 
 /* ------------------------------------------------------------ landing 2 of 4 */
 
 describe('startFresh settles the name record it lands beside', () => {
-  it('lands the given name against its own secret, and never inherits a stranger’s',
-    async () => {
-      /* ACT 1. `startFresh` is reached from `passkey-no-account`, so the
-       * fixture is a stale credential either way; here it has no name record
-       * beside it. */
-      savePasskey(passkeyFixture('cred-stale'), ORIGINAL_SLOT);
-      mount({ name: GIVEN });
-      expect(phase()).toBe('passkey-no-account');
-      fireEvent.click(screen.getByText('fresh'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      await expectNameLanded();
+  it('lands the given name against its own secret, and never inherits a stranger’s', async () => {
+    /* ACT 1. `startFresh` is reached from `passkey-no-account`, so the
+     * fixture is a stale credential either way; here it has no name record
+     * beside it. */
+    savePasskey(passkeyFixture('cred-stale'), ORIGINAL_SLOT);
+    mount({ name: GIVEN });
+    expect(phase()).toBe('passkey-no-account');
+    fireEvent.click(screen.getByText('fresh'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    await expectNameLanded();
 
-      /* ACT 2 — and this landing is the one that is DEFINED as replacing what
-       * is here, so an inherited name is at its most plausible. */
-      emptyBrowser();
-      const stranger = strandedStrangersName();
-      mount();
-      expect(phase()).toBe('passkey-no-account');
-      fireEvent.click(screen.getByText('fresh'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      expect(openWalletId()).toBe(ORIGINAL_SLOT);
-      await expectStrangersNameGone(stranger);
-    });
+    /* ACT 2 — and this landing is the one that is DEFINED as replacing what
+     * is here, so an inherited name is at its most plausible. */
+    emptyBrowser();
+    const stranger = strandedStrangersName();
+    mount();
+    expect(phase()).toBe('passkey-no-account');
+    fireEvent.click(screen.getByText('fresh'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    expect(openWalletId()).toBe(ORIGINAL_SLOT);
+    await expectStrangersNameGone(stranger);
+  });
 });
 
 /* ------------------------------------------------------------ landing 3 of 4 */
@@ -319,7 +350,7 @@ describe('startFresh settles the name record it lands beside', () => {
 const PLACEMENTS = [
   { label: 'Cloud', holder: 'my cloud' },
   { label: 'Paper', holder: 'the safe' },
-  { label: 'Person', holder: 'my sister' },
+  { label: 'Person', holder: 'my sister' }
 ];
 
 /** Two of three real pieces of a real split, offered one click at a time. */
@@ -331,64 +362,62 @@ const gatherEnough = async (): Promise<void> => {
 };
 
 describe('finishRecovery settles the name record it lands beside', () => {
-  it('lands the given name against the REBUILT secret, and never inherits a stranger’s',
-    async () => {
-      /* ACT 1 — real pieces, real rebuild, real seal. */
-      const secret = newSecret();
-      const set = await splitSecret(secret, PLACEMENTS, 2);
-      mount({ name: GIVEN, pieces: set });
-      await gatherEnough();
-      fireEvent.click(screen.getByText('recover'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      /* The record is bound to the secret the PIECES were cut from — the whole
-       * point of a recovery is that this is the old wallet, not a new one. */
-      expect(walletNameOf(secret)).toBe(GIVEN);
-      await expectNameLanded();
+  it('lands the given name against the REBUILT secret, and never inherits a stranger’s', async () => {
+    /* ACT 1 — real pieces, real rebuild, real seal. */
+    const secret = newSecret();
+    const set = await splitSecret(secret, PLACEMENTS, 2);
+    mount({ name: GIVEN, pieces: set });
+    await gatherEnough();
+    fireEvent.click(screen.getByText('recover'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    /* The record is bound to the secret the PIECES were cut from — the whole
+     * point of a recovery is that this is the old wallet, not a new one. */
+    expect(walletNameOf(secret)).toBe(GIVEN);
+    await expectNameLanded();
 
-      /* ACT 2 — the same recovery onto a browser holding a stranger's name. */
-      emptyBrowser();
-      const stranger = strandedStrangersName();
-      const second = newSecret();
-      const secondSet = await splitSecret(second, PLACEMENTS, 2);
-      mount({ pieces: secondSet });
-      expect(phase()).toBe('passkey-no-account');
-      await gatherEnough();
-      fireEvent.click(screen.getByText('recover'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      expect(openWalletId()).toBe(ORIGINAL_SLOT);
-      await expectStrangersNameGone(stranger);
-      expect(walletNameOf(second)).toBeNull();
-    });
+    /* ACT 2 — the same recovery onto a browser holding a stranger's name. */
+    emptyBrowser();
+    const stranger = strandedStrangersName();
+    const second = newSecret();
+    const secondSet = await splitSecret(second, PLACEMENTS, 2);
+    mount({ pieces: secondSet });
+    expect(phase()).toBe('passkey-no-account');
+    await gatherEnough();
+    fireEvent.click(screen.getByText('recover'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    expect(openWalletId()).toBe(ORIGINAL_SLOT);
+    await expectStrangersNameGone(stranger);
+    expect(walletNameOf(second)).toBeNull();
+  });
 });
 
 /* ------------------------------------------------------------ landing 4 of 4 */
 
 describe('finishPairing settles the name record it lands beside', () => {
-  it('lands the given name against the ARRIVED secret, and never inherits a stranger’s',
-    async () => {
-      /* ACT 1 — the secret another machine sent. The pairing protocol itself
-       * is pinned in `add-device.test.tsx`; what is under test here is the
-       * landing it ends in. */
-      const arrived = newSecret();
-      mount({ name: GIVEN, incoming: arrived });
-      fireEvent.click(screen.getByText('pair'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      expect(walletNameOf(arrived)).toBe(GIVEN);
-      await expectNameLanded();
+  it('lands the given name against the ARRIVED secret, and never inherits a stranger’s', async () => {
+    /* ACT 1 — the secret another machine sent. The pairing protocol itself
+     * is pinned in `add-device.test.tsx`; what is under test here is the
+     * landing it ends in. */
+    const arrived = newSecret();
+    mount({ name: GIVEN, incoming: arrived });
+    fireEvent.click(screen.getByText('pair'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    expect(walletNameOf(arrived)).toBe(GIVEN);
+    await expectNameLanded();
 
-      /* ACT 2 — a second machine's wallet arriving where a stranger's name is
-       * still on the shelf. */
-      emptyBrowser();
-      const stranger = strandedStrangersName();
-      const second = newSecret();
-      mount({ incoming: second });
-      expect(phase()).toBe('passkey-no-account');
-      fireEvent.click(screen.getByText('pair'));
-      await waitFor(() => expect(phase()).toBe('unlocked'));
-      expect(openWalletId()).toBe(ORIGINAL_SLOT);
-      await expectStrangersNameGone(stranger);
-      expect(walletNameOf(second)).toBeNull();
-    });
+    /* ACT 2 — a second machine's wallet arriving where a stranger's name is
+     * still on the shelf. */
+    emptyBrowser();
+    const stranger = strandedStrangersName();
+    const second = newSecret();
+    mount({ incoming: second });
+    expect(phase()).toBe('passkey-no-account');
+    fireEvent.click(screen.getByText('pair'));
+    await waitFor(() => expect(phase()).toBe('unlocked'));
+    expect(openWalletId()).toBe(ORIGINAL_SLOT);
+    await expectStrangersNameGone(stranger);
+    expect(walletNameOf(second)).toBeNull();
+  });
 });
 
 /*
@@ -401,22 +430,21 @@ describe('finishPairing settles the name record it lands beside', () => {
  * from inside the runner.
  */
 describe('the enumeration is the claim, so the enumeration is pinned', () => {
-  it('has exactly four callers of saveSecret, and every one of them settles the name',
-    async () => {
-      /* Read off the runner's own working directory — `vitest.config.ts`
-       * pins `root: '.'` at the repository root. `import.meta.url` is not a
-       * file URL under jsdom, which is where the first version of this line
-       * died. */
-      const fs = await import('node:fs/promises');
-      const source = await fs.readFile('apps/wallet/src/session.tsx', 'utf8');
-      /* The calls, not the import line: `await saveSecret(` is the landing. */
-      const calls = source.match(/await saveSecret\(/gu) ?? [];
-      expect(calls).toHaveLength(4);
-      /* And the settling helper is called once per landing. A fifth landing
-       * that settles has to move this number too, which is a line of the diff
-       * somebody reads; a fifth that does not is a red test. */
-      const settles = source.match(/settleWalletName\(/gu) ?? [];
-      /* One definition plus one call per landing. */
-      expect(settles).toHaveLength(5);
-    });
+  it('has exactly four callers of saveSecret, and every one of them settles the name', async () => {
+    /* Read off the runner's own working directory — `vitest.config.ts`
+     * pins `root: '.'` at the repository root. `import.meta.url` is not a
+     * file URL under jsdom, which is where the first version of this line
+     * died. */
+    const fs = await import('node:fs/promises');
+    const source = await fs.readFile('apps/wallet/src/session.tsx', 'utf8');
+    /* The calls, not the import line: `await saveSecret(` is the landing. */
+    const calls = source.match(/await saveSecret\(/gu) ?? [];
+    expect(calls).toHaveLength(4);
+    /* And the settling helper is called once per landing. A fifth landing
+     * that settles has to move this number too, which is a line of the diff
+     * somebody reads; a fifth that does not is a red test. */
+    const settles = source.match(/settleWalletName\(/gu) ?? [];
+    /* One definition plus one call per landing. */
+    expect(settles).toHaveLength(5);
+  });
 });

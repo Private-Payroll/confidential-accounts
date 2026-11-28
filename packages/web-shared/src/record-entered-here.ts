@@ -22,7 +22,14 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import type { RunToFile } from '../../../src/core/run-filing.js';
 import {
-  ENTRIES_AT_ONCE, entryIdOf, recordKeyOf, runEntry, signManifestEntry, SUPERSEDED, type ManifestEntry, type ManifestEntryBody,
+  ENTRIES_AT_ONCE,
+  entryIdOf,
+  recordKeyOf,
+  runEntry,
+  signManifestEntry,
+  SUPERSEDED,
+  type ManifestEntry,
+  type ManifestEntryBody
 } from '../../../src/midnight/record-manifest.js';
 import type { HeadersPage, ProofsAsk, ProofsGiven, RecordName, TreeHeader } from '../../../src/midnight/record-tree.js';
 import { inParts } from './company-view-batch.js';
@@ -42,10 +49,11 @@ export interface ManifestService {
  * The manifest of whichever view of the company `held` holds now, read at each ask: what is entered through it moves
  * that view's baseline, and a view opened again after a send is followed.
  */
-export const manifestFollowing = (held: { current(): { readonly manifest: ManifestService } }): ManifestService => Object.freeze<ManifestService>({
-  newest: (accountId, records) => held.current().manifest.newest(accountId, records),
-  enter: (accountId, entries) => held.current().manifest.enter(accountId, entries),
-});
+export const manifestFollowing = (held: { current(): { readonly manifest: ManifestService } }): ManifestService =>
+  Object.freeze<ManifestService>({
+    newest: (accountId, records) => held.current().manifest.newest(accountId, records),
+    enter: (accountId, entries) => held.current().manifest.enter(accountId, entries)
+  });
 
 /**
  * **THE COMPANY'S RECORD TREE, AS THE SERVICE SERVES IT**: a page of headers
@@ -76,10 +84,15 @@ export type Filed = ManifestEntryBody | { readonly store: 'run'; readonly run: R
  * what puts it in the company's records, when that is not filing it again.
  */
 export class FiledNotEntered extends Error {
-  constructor(readonly why: string, options?: { cause?: unknown; again?: string }) {
-    super(`this was filed, and its entry in the company's records was not kept (${why}), so no other device believes it as `
-      + `the newest version yet. ${options?.again ?? 'Reload the page and do it again: what is filed again is entered.'}`,
-    options?.cause === undefined ? undefined : { cause: options.cause });
+  constructor(
+    readonly why: string,
+    options?: { cause?: unknown; again?: string }
+  ) {
+    super(
+      `this was filed, and its entry in the company's records was not kept (${why}), so no other device believes it as ` +
+        `the newest version yet. ${options?.again ?? 'Reload the page and do it again: what is filed again is entered.'}`,
+      options?.cause === undefined ? undefined : { cause: options.cause }
+    );
     this.name = 'FiledNotEntered';
   }
 }
@@ -93,7 +106,9 @@ export interface RecordsEntered {
 const kept = new Map<string, Map<Hex, ManifestEntry>>();
 
 /** Every entry this page signed for `accountId` and has not let go of, in the order it signed them. */
-export const enteredOnThisPage = (accountId: string): readonly ManifestEntry[] => [...(kept.get(accountId)?.values() ?? [])];
+export const enteredOnThisPage = (accountId: string): readonly ManifestEntry[] => [
+  ...(kept.get(accountId)?.values() ?? [])
+];
 
 /** Lets go of every entry this page signed for `accountId` that `held` says the company's records now hold. */
 export const letGoOfEntered = (accountId: string, held: (e: ManifestEntry) => boolean): void => {
@@ -112,12 +127,14 @@ const why = (e: unknown): string => (e as Error)?.message ?? String(e);
  * runs, one request for each.
  */
 export const recordsEnteredFor = (
-  manifest: ManifestService, accountId: string, signingSecret: Hex,
+  manifest: ManifestService,
+  accountId: string,
+  signingSecret: Hex,
   /**
    * Why this seat files nothing more, or null: a removal of its own seat is approved (`ownRemovalApprovedHere`), so what
    * it would enter now falls past the boundary its retirement keeps. Absent, nothing stops it.
    */
-  stops?: () => Promise<string | null>,
+  stops?: () => Promise<string | null>
 ): RecordsEntered => ({
   enter: async (filed) => {
     if (filed.length === 0) return;
@@ -128,7 +145,9 @@ export const recordsEnteredFor = (
     let bodies: ManifestEntryBody[];
     try {
       const runs = filed.filter((f): f is { store: 'run'; run: RunToFile } => 'run' in f);
-      const names = [...new Map(runs.map((f) => [f.run.id, { store: 'run' as const, kind: 'run', id: f.run.id }])).values()];
+      const names = [
+        ...new Map(runs.map((f) => [f.run.id, { store: 'run' as const, kind: 'run', id: f.run.id }])).values()
+      ];
       const versions = await inParts(names, (part) => manifest.newest(accountId, part));
       const newest = new Map(names.map((r, i) => [recordKeyOf(r), versions[i]!] as const));
       bodies = filed.map((f) => {
@@ -142,12 +161,19 @@ export const recordsEnteredFor = (
       /* Kept before it is sent: the store already has the filing, so an entry the service then drops is entered again. */
       const mine = kept.get(accountId) ?? kept.set(accountId, new Map()).get(accountId)!;
       for (const e of signed) mine.set(entryIdOf(e), e);
-      for (let i = 0; i < signed.length; i += ENTRIES_AT_ONCE) await manifest.enter(accountId, signed.slice(i, i + ENTRIES_AT_ONCE));
+      for (let i = 0; i < signed.length; i += ENTRIES_AT_ONCE)
+        await manifest.enter(accountId, signed.slice(i, i + ENTRIES_AT_ONCE));
     } catch (e) {
       /* A later version of the record entered first: this one was superseded, and filing it again can never enter it. */
-      throw new FiledNotEntered(why(e), why(e).includes(SUPERSEDED)
-        ? { cause: e, again: 'It was superseded and will never be anchored: read the record again for the version that stands.' }
-        : { cause: e });
+      throw new FiledNotEntered(
+        why(e),
+        why(e).includes(SUPERSEDED)
+          ? {
+              cause: e,
+              again: 'It was superseded and will never be anchored: read the record again for the version that stands.'
+            }
+          : { cause: e }
+      );
     }
-  },
+  }
 });

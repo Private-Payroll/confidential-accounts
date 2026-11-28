@@ -8,15 +8,26 @@ import type { CreationRequest } from 'midnight-identity/profile/request';
 import type { RelayLabel } from 'midnight-identity/profile/channel';
 import { NO_ASSET } from '../../../../src/core/assets.js';
 import {
-  newProposalId, PAY_KEY, PAY_KEY_SUMMARY, PROPOSAL_ID, proposalFilingRefusal, raiseByOf, sealGovernanceProposal, signProposalFiling,
-  type SignedProposalFiling,
+  newProposalId,
+  PAY_KEY,
+  PAY_KEY_SUMMARY,
+  PROPOSAL_ID,
+  proposalFilingRefusal,
+  raiseByOf,
+  sealGovernanceProposal,
+  signProposalFiling,
+  type SignedProposalFiling
 } from '../../../../src/core/proposal-filing.js';
 import { signingPublicKeyOf, toHex, unwrapKey, type Hex } from '../../../../src/core/crypto.js';
 import { foundingStateRefusal, openStateRecord } from '../../../../src/core/founding-state.js';
 import { CREATION_STEPS } from '../../../../src/midnight/deferral.js';
 import { A_STEP_IS_BUILT_AGAIN_BELOW_MS } from '../../../../src/midnight/intent-lifetime.js';
 import { withCreation, withoutCreation, type SavedCreation } from '../../../../packages/web-shared/src/keyring-blob.js';
-import type { GovernedCallOrder, OpenedRound, SignerMaterial } from '../../../../packages/web-shared/src/governed-call-builder.js';
+import type {
+  GovernedCallOrder,
+  OpenedRound,
+  SignerMaterial
+} from '../../../../packages/web-shared/src/governed-call-builder.js';
 import type { PayKeyStandingAnswered } from '../chain/account-builder.js';
 import type { AccountBuilding } from '../chain/account-builder-client.js';
 import type { CreationChain } from '../chain/creation-chain.js';
@@ -28,7 +39,14 @@ import type { CompanyChain } from './company-reach.js';
 import { registryEntryOwed, registryWriteThrough, type SeatToEnter } from './registry-entry.js';
 import { pinCompany, pinHeldFor, pinnedFor } from './company-pin.js';
 import { withCompanyKey } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
 /**
@@ -112,9 +130,12 @@ interface Clock {
 const HEX64 = /^[0-9a-f]{64}$/u;
 const ZERO = '00'.repeat(32);
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.finish-company.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.finish-company.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
-const refuse = (key: string): never => { throw new StepRefused(why(key)); };
+const refuse = (key: string): never => {
+  throw new StepRefused(why(key));
+};
 const b64 = (bytes: Uint8Array): string => base64.encode(bytes);
 const randomHex32 = (): string => toHex(crypto.getRandomValues(new Uint8Array(32)));
 
@@ -134,18 +155,22 @@ export function finishCompanyAction(reach: FinishCompanyReach): ActionDefinition
   const definition: ActionDefinition = {
     headline: 'act.finish-company.headline',
     shown: async (intent): Promise<readonly ShownLine[]> => [
-      { key: 'act.finish-company.shown.company', values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
+      {
+        key: 'act.finish-company.shown.company',
+        values: { label: String(intent.fields['company'] ?? '') },
+        from: 'page'
+      },
       { key: 'act.finish-company.shown.company-check', from: 'action' },
       { key: 'act.finish-company.shown.what', from: 'action' },
       { key: 'act.finish-company.shown.transactions', from: 'action' },
-      { key: 'act.finish-company.shown.nothing-else', from: 'action' },
+      { key: 'act.finish-company.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.finish-company.check.drawn' },
       { key: 'act.finish-company.check.seat' },
       { key: 'act.finish-company.check.state' },
       { key: 'act.finish-company.check.deploy' },
-      { key: 'act.finish-company.check.chain' },
+      { key: 'act.finish-company.check.chain' }
     ],
     check: async (intent, held) => {
       const label = readCompanyLabel(intent.fields['company']);
@@ -155,7 +180,7 @@ export function finishCompanyAction(reach: FinishCompanyReach): ActionDefinition
       if (!held.wallet.drewTheLabel(label)) return why('not-drawn-here');
       return null;
     },
-    steps: (intent) => stepsOf(reach, intent.fields['company'] ?? ''),
+    steps: (intent) => stepsOf(reach, intent.fields['company'] ?? '')
   };
   return Object.freeze(definition);
 }
@@ -173,24 +198,40 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
     /* A creation set aside (Start again, when its deploy had not landed) is taken up again by finishing it: the page
      * offers Finish for one only once the service shows its deploy landed, and every step reads the chain itself. */
     const active = Object.values(kept.creations ?? {}).find((c) => c.label === label && c.setAside !== true);
-    const aside = active === undefined ? Object.values(kept.creations ?? {}).find((c) => c.label === label && c.setAside === true) : undefined;
-    let creation: SavedCreation = active ?? (aside === undefined ? refuse('no-creation') : (() => {
-      const { setAside: _taken, ...takenUp } = aside;
-      return takenUp as SavedCreation;
-    })());
+    const aside =
+      active === undefined
+        ? Object.values(kept.creations ?? {}).find((c) => c.label === label && c.setAside === true)
+        : undefined;
+    let creation: SavedCreation =
+      active ??
+      (aside === undefined
+        ? refuse('no-creation')
+        : (() => {
+            const { setAside: _taken, ...takenUp } = aside;
+            return takenUp as SavedCreation;
+          })());
     const pinned = pinnedFor(ctx, label);
     if (pinned.of === 'pinned' ? pinned.from !== 'created' : !wallet.drewTheLabel(label)) refuse('not-drawn-here');
     /* A pin with no deploy kept beside it, or a deploy for another account, is the saved keys disagreeing with
      * themselves: nothing is built over it. */
-    if (pinned.of === 'pinned' && (creation.deploy === null || creation.deploy.account.toLowerCase() !== pinned.account)) refuse('pinned-without-deploy');
+    if (
+      pinned.of === 'pinned' &&
+      (creation.deploy === null || creation.deploy.account.toLowerCase() !== pinned.account)
+    )
+      refuse('pinned-without-deploy');
     const seat = await foundingSeatOf(ctx.held.identity, label);
     const founding = creation.request.founding;
     if (String(creation.foundingKey.value).toLowerCase() !== seat.walletKey.value) refuse('not-your-key');
-    if (founding.seat.signingPublicKey.toLowerCase() !== seat.signingPublicKey
-      || founding.seat.wrappingPublicKey.toLowerCase() !== seat.wrappingPublicKey
-      || founding.seat.leaf.toLowerCase() !== seat.leaf) refuse('not-your-seat');
-    if (foundingStateRefusal(founding.state, creation.accountId, seat.signingPublicKey) !== null) refuse('state-not-signed');
-    const wrapped = founding.account.wrappedKeys.find((w) => w.signerId === founding.seat.signerId) ?? refuse('state-not-signed');
+    if (
+      founding.seat.signingPublicKey.toLowerCase() !== seat.signingPublicKey ||
+      founding.seat.wrappingPublicKey.toLowerCase() !== seat.wrappingPublicKey ||
+      founding.seat.leaf.toLowerCase() !== seat.leaf
+    )
+      refuse('not-your-seat');
+    if (foundingStateRefusal(founding.state, creation.accountId, seat.signingPublicKey) !== null)
+      refuse('state-not-signed');
+    const wrapped =
+      founding.account.wrappedKeys.find((w) => w.signerId === founding.seat.signerId) ?? refuse('state-not-signed');
     let payRecordKey: string;
     let companyKey: Hex;
     try {
@@ -236,12 +277,18 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
   const carriedAgain = async (ctx: StepContext, f: Found, clock: Clock): Promise<SavedCreation> => {
     const c = f.creation;
     const again = await reach.build({
-      ask: 'creation-again', network: reach.network, deploy: c.deploy!.tx, insert: c.signed!.tx, now: clock.now(),
+      ask: 'creation-again',
+      network: reach.network,
+      deploy: c.deploy!.tx,
+      insert: c.signed!.tx,
+      now: clock.now()
     });
     if (again.account.toLowerCase() !== c.deploy!.account) refuse('carried-elsewhere');
     const at = reach.now();
     const next: SavedCreation = {
-      ...c, deploy: { ...c.deploy!, tx: again.deploy, builtAt: at }, signed: { ...c.signed!, tx: again.insert, builtAt: at },
+      ...c,
+      deploy: { ...c.deploy!, tx: again.deploy, builtAt: at },
+      signed: { ...c.signed!, tx: again.insert, builtAt: at }
     };
     await keep(ctx, f, next);
     return next;
@@ -260,11 +307,17 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
    * account) and kept before either is handed over. So a relay refused or answered
    * late never leaves a deploy too old to send. `carried` says it was rebuilt.
    */
-  const sendable = async (ctx: StepContext, f: Found, clock: Clock, which: 'both' | 'second'): Promise<{ c: SavedCreation; carried: boolean }> => {
+  const sendable = async (
+    ctx: StepContext,
+    f: Found,
+    clock: Clock,
+    which: 'both' | 'second'
+  ): Promise<{ c: SavedCreation; carried: boolean }> => {
     const c = f.creation;
-    const left = which === 'both'
-      ? Math.min(await lifeLeft(c.deploy!.tx, clock), await lifeLeft(c.signed!.tx, clock))
-      : await lifeLeft(c.signed!.tx, clock);
+    const left =
+      which === 'both'
+        ? Math.min(await lifeLeft(c.deploy!.tx, clock), await lifeLeft(c.signed!.tx, clock))
+        : await lifeLeft(c.signed!.tx, clock);
     if (left >= A_STEP_IS_BUILT_AGAIN_BELOW_MS) return { c, carried: false };
     return { c: await carriedAgain(ctx, f, clock), carried: true };
   };
@@ -282,7 +335,9 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       await ctx.relay(tx, label);
     } catch (e) {
       if (clock !== undefined && Math.abs(clock.skew) > CLOCK_OFF_MS) {
-        throw new StepRefused(why(clock.skew > 0 ? 'clock-behind' : 'clock-ahead', { minutes: Math.round(Math.abs(clock.skew) / 60_000) }));
+        throw new StepRefused(
+          why(clock.skew > 0 ? 'clock-behind' : 'clock-ahead', { minutes: Math.round(Math.abs(clock.skew) / 60_000) })
+        );
       }
       throw e;
     }
@@ -302,44 +357,80 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         const keys = (built as Extract<BuiltAccountKeys, { of: 'built' }>).keys;
         const second = verifiersFor(CREATION_STEPS.second);
         const deploy = await reach.build({
-          ask: 'account-deploy', network: reach.network, foundingLeaf: f.seat.leaf, label: f.label,
-          foundingKey: f.seat.walletKey, verifiers: verifiersFor([...CREATION_STEPS.first, ...CREATION_STEPS.second]), now: clock.now(),
+          ask: 'account-deploy',
+          network: reach.network,
+          foundingLeaf: f.seat.leaf,
+          label: f.label,
+          foundingKey: f.seat.walletKey,
+          verifiers: verifiersFor([...CREATION_STEPS.first, ...CREATION_STEPS.second]),
+          now: clock.now()
         });
         const insert = second.map(([circuit, key]) => ({ circuit, key }));
         const notAsMade = await startingStateRefusal(await reach.construction(), {
-          deploy: deploy.tx, label: f.label, foundingKey: f.seat.walletKey, insert, build: keys, digest: sha256,
+          deploy: deploy.tx,
+          label: f.label,
+          foundingKey: f.seat.walletKey,
+          insert,
+          build: keys,
+          digest: sha256
         });
         if (notAsMade !== null) refuse('deploy-not-as-made');
         const L = await reach.ledger();
-        const shown = creationShown(L, ctx.held.identity, {
-          company: f.label, account: deploy.account, deploy: deploy.tx, insert,
-        } as unknown as CreationRequest, keys, sha256, reach.labelIn);
+        const shown = creationShown(
+          L,
+          ctx.held.identity,
+          {
+            company: f.label,
+            account: deploy.account,
+            deploy: deploy.tx,
+            insert
+          } as unknown as CreationRequest,
+          keys,
+          sha256,
+          reach.labelIn
+        );
         const update = buildCreationInsert(L, {
-          address: shown.account, counter: 0n, onChain: shown.deployed,
+          address: shown.account,
+          counter: 0n,
+          onChain: shown.deployed,
           keys: new Map(insert.map((k) => [k.circuit, base64.decode(k.key)] as [string, Uint8Array])),
-          steps: { first: shown.deployed, second: shown.inserted },
+          steps: { first: shown.deployed, second: shown.inserted }
         });
-        const signed = L.signData(committeeSigningKeyFor(ctx.held.identity, f.label) as never, update.update.dataToSign);
+        const signed = L.signData(
+          committeeSigningKeyFor(ctx.held.identity, f.label) as never,
+          update.update.dataToSign
+        );
         const signature = { tag: String(signed.tag), value: String(signed.value) };
         const finished = await reach.build({
-          ask: 'finished-creation', network: reach.network, account: shown.account, signature, verifiers: second, now: clock.now(),
+          ask: 'finished-creation',
+          network: reach.network,
+          account: shown.account,
+          signature,
+          verifiers: second,
+          now: clock.now()
         });
         const at = reach.now();
         c = {
           ...c,
           deploy: { account: shown.account, tx: deploy.tx, insert, builtAt: at },
           signed: { tx: finished.tx, signature, builtAt: at },
-          recorded: false,
+          recorded: false
         };
         await keep(ctx, f, c);
       }
-      if ((await pinCompany(ctx, f.label, c.deploy!.account, 'created')).of !== 'pinned') refuse('pinned-without-deploy');
+      if ((await pinCompany(ctx, f.label, c.deploy!.account, 'created')).of !== 'pinned')
+        refuse('pinned-without-deploy');
       if (!c.recorded) {
         const ready = await sendable(ctx, f, clock, 'both');
-        await relay(ctx, ready.c.deploy!.tx, { what: ready.carried ? 'creation-again' : 'creation', also: ready.c.signed!.tx }, clock);
+        await relay(
+          ctx,
+          ready.c.deploy!.tx,
+          { what: ready.carried ? 'creation-again' : 'creation', also: ready.c.signed!.tx },
+          clock
+        );
         await keep(ctx, f, { ...ready.c, recorded: true });
       }
-    },
+    }
   };
 
   /* ---------------------------------------------------------------- 2. the account finished */
@@ -352,7 +443,8 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         const clock = await chainClock(account);
         if (clock.held) break;
         const ready = await sendable(ctx, f, clock, 'both');
-        if (ready.carried) await relay(ctx, ready.c.deploy!.tx, { what: 'creation-again', also: ready.c.signed!.tx }, clock);
+        if (ready.carried)
+          await relay(ctx, ready.c.deploy!.tx, { what: 'creation-again', also: ready.c.signed!.tx }, clock);
         await waitAWhile(ctx);
       }
       let sent = false;
@@ -371,7 +463,7 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         }
         await waitAWhile(ctx);
       }
-    },
+    }
   };
 
   /*
@@ -382,31 +474,47 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
     const kept = ctx.keyring?.open().read().accounts[f.creation.accountId];
     if (kept === undefined) return;
     const seat: SeatToEnter = {
-      accountId: f.creation.accountId, label: f.label, account, n: kept.seat ?? FOUNDING_SEAT, scope: f.seat.scope, leaf: f.seat.leaf,
-      ...(kept.registry === undefined ? {} : { mark: kept.registry }),
+      accountId: f.creation.accountId,
+      label: f.label,
+      account,
+      n: kept.seat ?? FOUNDING_SEAT,
+      scope: f.seat.scope,
+      leaf: f.seat.leaf,
+      ...(kept.registry === undefined ? {} : { mark: kept.registry })
     };
     const held = pinHeldFor(ctx, f.label, account.toLowerCase() as AccountAddress);
     if (held === null || !registryEntryOwed(seat, { pinned: held.account, page: account }, [f.seat.leaf])) return;
     ctx.registryEntryOwed?.(async (c) => {
-      await registryWriteThrough(c, {
-        accountId: f.creation.accountId, network: reach.network, build: reach.build, now: reach.now,
-        ...(reach.ownWallet === undefined ? {} : { ownWallet: reach.ownWallet }),
-        read: async (registry) => {
-          const at = await reach.chain.account(registry);
-          return at === null ? null : { registryState: b64(at.state), parameters: b64(at.parameters) };
+      await registryWriteThrough(
+        c,
+        {
+          accountId: f.creation.accountId,
+          network: reach.network,
+          build: reach.build,
+          now: reach.now,
+          ...(reach.ownWallet === undefined ? {} : { ownWallet: reach.ownWallet }),
+          read: async (registry) => {
+            const at = await reach.chain.account(registry);
+            return at === null ? null : { registryState: b64(at.state), parameters: b64(at.parameters) };
+          }
         },
-      }, seat);
+        seat
+      );
     });
   };
 
   /* ---------------------------------------------------------------- 3-5. the pay-record key */
   const standing = async (f: Found) => {
     const account = f.creation.deploy?.account ?? refuse('not-sent');
-    const seen = await reach.chain.account(account) ?? refuse('not-on-the-chain');
+    const seen = (await reach.chain.account(account)) ?? refuse('not-on-the-chain');
     const chain = { accountState: b64(seen.state), parameters: b64(seen.parameters) };
     const read = await reach.build({
-      ask: 'pay-key-standing', account, accountState: chain.accountState, key: f.payRecordKey,
-      signingSecret: f.seat.signingSecret, wrappingPublicKey: f.seat.wrappingPublicKey,
+      ask: 'pay-key-standing',
+      account,
+      accountState: chain.accountState,
+      key: f.payRecordKey,
+      signingSecret: f.seat.signingSecret,
+      wrappingPublicKey: f.seat.wrappingPublicKey
     });
     if (read.standing.committed !== null && !read.standing.isThisKey) refuse('other-pay-record-key');
     return { account, chain, standing: read.standing };
@@ -417,22 +525,37 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       await waitAWhile(ctx);
     }
   };
-  const call = async (f: Found, at: Awaited<ReturnType<typeof standing>>, order: GovernedCallOrder, writtenAt?: string): Promise<string> => {
+  const call = async (
+    f: Found,
+    at: Awaited<ReturnType<typeof standing>>,
+    order: GovernedCallOrder,
+    writtenAt?: string
+  ): Promise<string> => {
     const r = at.standing.round;
     const payKey = { kind: 'pay-key', commitment: r.commitment } as const;
     const opened: OpenedRound = {
-      chainId: r.proposal, digest: r.payload, vault: at.standing.noVault, salt: r.salt,
-      summary: PAY_KEY_SUMMARY, governance: payKey,
+      chainId: r.proposal,
+      digest: r.payload,
+      vault: at.standing.noVault,
+      salt: r.salt,
+      summary: PAY_KEY_SUMMARY,
+      governance: payKey,
       half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: ZERO },
-      ...(writtenAt === undefined ? {} : { raiseBy: raiseByOf(writtenAt) }),
+      ...(writtenAt === undefined ? {} : { raiseBy: raiseByOf(writtenAt) })
     } as OpenedRound;
     const material: SignerMaterial = signerMaterialOf(f.seat);
     const built = await reach.build({
-      ask: 'governed-call', network: reach.network, account: at.account, order, material, chain: at.chain, opened,
+      ask: 'governed-call',
+      network: reach.network,
+      account: at.account,
+      order,
+      material,
+      chain: at.chain,
+      opened
     });
     return built.tx;
   };
-  const payKeyOf = (r: PayKeyStandingAnswered['round']) => ({ kind: 'pay-key', commitment: r.commitment } as const);
+  const payKeyOf = (r: PayKeyStandingAnswered['round']) => ({ kind: 'pay-key', commitment: r.commitment }) as const;
 
   /*
    * The proposal's record, sealed under the company's founding key and signed by the founding seat, its identity the one
@@ -441,19 +564,46 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
    * down, so every signer's page lists it and any signer's wallet can approve it.
    */
   const writtenDown = async (
-    ctx: StepContext, f: Found, at: Awaited<ReturnType<typeof standing>>, tx?: string, writtenAt = new Date(reach.now()).toISOString(),
-    earlier?: SignedProposalFiling,
+    ctx: StepContext,
+    f: Found,
+    at: Awaited<ReturnType<typeof standing>>,
+    tx?: string,
+    writtenAt = new Date(reach.now()).toISOString(),
+    earlier?: SignedProposalFiling
   ): Promise<SignedProposalFiling | undefined> => {
     const r = at.standing.round;
-    const filing = earlier ?? signProposalFiling(f.creation.accountId, {
-      id: newProposalId(), digest: r.payload as Hex, chainId: r.proposal as Hex, keyEpoch: 0,
-      createdAt: writtenAt, sealed: sealGovernanceProposal(withCompanyKey({
-        accountId: f.creation.accountId, kind: PAY_KEY, summary: PAY_KEY_SUMMARY, noVault: at.standing.noVault as Hex,
-        body: { commitment: r.commitment as Hex }, change: { asset: NO_ASSET, amount: 0n, batchDigest: ZERO as Hex, salt: r.salt as Hex },
-        proposedBy: f.signerId,
-      }, f.companyKey)),
-    }, f.seat.signingSecret);
-    const answer = await ctx.creation.payKeyProposal(f.creation.accountId, { proposal: filing, proposalSalt: r.salt, ...(tx === undefined ? {} : { tx }) });
+    const filing =
+      earlier ??
+      signProposalFiling(
+        f.creation.accountId,
+        {
+          id: newProposalId(),
+          digest: r.payload as Hex,
+          chainId: r.proposal as Hex,
+          keyEpoch: 0,
+          createdAt: writtenAt,
+          sealed: sealGovernanceProposal(
+            withCompanyKey(
+              {
+                accountId: f.creation.accountId,
+                kind: PAY_KEY,
+                summary: PAY_KEY_SUMMARY,
+                noVault: at.standing.noVault as Hex,
+                body: { commitment: r.commitment as Hex },
+                change: { asset: NO_ASSET, amount: 0n, batchDigest: ZERO as Hex, salt: r.salt as Hex },
+                proposedBy: f.signerId
+              },
+              f.companyKey
+            )
+          )
+        },
+        f.seat.signingSecret
+      );
+    const answer = await ctx.creation.payKeyProposal(f.creation.accountId, {
+      proposal: filing,
+      proposalSalt: r.salt,
+      ...(tx === undefined ? {} : { tx })
+    });
     const id = (answer.body as { proposal?: { id?: unknown } } | null)?.proposal?.id;
     if (answer.status >= 200 && answer.status < 300 && typeof id === 'string' && PROPOSAL_ID.test(id)) return undefined;
     const told = answer.body as { error?: unknown; nothingWasSent?: unknown; code?: unknown; record?: unknown } | null;
@@ -462,12 +612,21 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
      * deadline. It is believed only as this seat's own signed record of this very proposal; the raise is then built again
      * from it, once.
      */
-    if (tx !== undefined && earlier === undefined && answer.status === 409 && told?.nothingWasSent === true
-      && told.code === 'raise-under-its-record') {
+    if (
+      tx !== undefined &&
+      earlier === undefined &&
+      answer.status === 409 &&
+      told?.nothingWasSent === true &&
+      told.code === 'raise-under-its-record'
+    ) {
       const rec = told.record as SignedProposalFiling | undefined;
-      if (proposalFilingRefusal(f.creation.accountId, rec) === null && rec !== undefined
-        && rec.filedBy.publicKey.toLowerCase() === signingPublicKeyOf(f.seat.signingSecret).toLowerCase()
-        && rec.chainId.toLowerCase() === r.proposal.toLowerCase() && rec.digest.toLowerCase() === r.payload.toLowerCase()) {
+      if (
+        proposalFilingRefusal(f.creation.accountId, rec) === null &&
+        rec !== undefined &&
+        rec.filedBy.publicKey.toLowerCase() === signingPublicKeyOf(f.seat.signingSecret).toLowerCase() &&
+        rec.chainId.toLowerCase() === r.proposal.toLowerCase() &&
+        rec.digest.toLowerCase() === r.payload.toLowerCase()
+      ) {
         return rec;
       }
     }
@@ -493,7 +652,10 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
           await writtenDown(ctx, f, at);
         } catch (e) {
           if (!(e instanceof StepRefused)) throw e;
-          ctx.show({ key: 'act.finish-company.over.not-written-down', values: { says: String(e.words.values?.['says'] ?? '') } });
+          ctx.show({
+            key: 'act.finish-company.over.not-written-down',
+            values: { says: String(e.words.values?.['says'] ?? '') }
+          });
         }
         return;
       }
@@ -502,9 +664,16 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
        * service already holds, from an earlier press, is the one record: the raise is built again with its deadline.
        */
       const order = {
-        circuit: 'propose', payKey: payKeyOf(r),
-        half: { assetId: NO_ASSET, assetBlinding: randomHex32(), proposalSalt: r.salt, changeAmount: '0', changeBatchDigest: ZERO },
-        proposal: r.proposal,
+        circuit: 'propose',
+        payKey: payKeyOf(r),
+        half: {
+          assetId: NO_ASSET,
+          assetBlinding: randomHex32(),
+          proposalSalt: r.salt,
+          changeAmount: '0',
+          changeBatchDigest: ZERO
+        },
+        proposal: r.proposal
       } as GovernedCallOrder;
       const writtenAt = new Date(reach.now()).toISOString();
       const earlier = await writtenDown(ctx, f, at, await call(f, at, order, writtenAt), writtenAt);
@@ -512,7 +681,7 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
         await writtenDown(ctx, f, at, await call(f, at, order, earlier.createdAt), earlier.createdAt, earlier);
       }
       await until(ctx, f, (s) => s.round.open || s.committed !== null);
-    },
+    }
   };
 
   const approve: ActionStep = {
@@ -524,12 +693,18 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       if (at.standing.committed !== null || BigInt(r.approvals) >= BigInt(r.needed)) return;
       /* This seat's approval is already counted, read from the chain: nothing is approved again, and the others approve. */
       if (r.approvedHere) refuse('counted-waiting');
-      await relay(ctx, await call(f, at, {
-        circuit: 'approve', proposal: r.proposal, of: { governance: payKeyOf(r), proposalSalt: r.salt },
-      } as GovernedCallOrder), { what: 'pay-key-approve' });
+      await relay(
+        ctx,
+        await call(f, at, {
+          circuit: 'approve',
+          proposal: r.proposal,
+          of: { governance: payKeyOf(r), proposalSalt: r.salt }
+        } as GovernedCallOrder),
+        { what: 'pay-key-approve' }
+      );
       /* This seat's own approval on the chain, never a count another signer's approval can also raise. */
       await until(ctx, f, (s) => s.round.approvedHere || s.committed !== null);
-    },
+    }
   };
 
   const seal: ActionStep = {
@@ -540,14 +715,22 @@ function stepsOf(reach: FinishCompanyReach, asked: string): readonly ActionStep[
       /* Committed by another signer's wallet: this seat's copy is not sealed here, and the creation is finished. */
       if (!at.standing.sealedMine && at.standing.committed === null) {
         const r = at.standing.round;
-        await relay(ctx, await call(f, at, {
-          circuit: 'sealPayKey', wrap: at.standing.wrap, commitment: r.commitment, proposal: r.proposal, proposalSalt: r.salt,
-        } as GovernedCallOrder), { what: 'pay-key-seal' });
+        await relay(
+          ctx,
+          await call(f, at, {
+            circuit: 'sealPayKey',
+            wrap: at.standing.wrap,
+            commitment: r.commitment,
+            proposal: r.proposal,
+            proposalSalt: r.salt
+          } as GovernedCallOrder),
+          { what: 'pay-key-seal' }
+        );
         await until(ctx, f, (s) => s.sealedMine);
       }
       /* Finished: what was kept of the creation is no longer needed, and dropping it is the end of the action. */
       await ctx.keyring!.keep((k) => withoutCreation(k, f.creation.accountId));
-    },
+    }
   };
 
   return [send, finish, propose, approve, seal];

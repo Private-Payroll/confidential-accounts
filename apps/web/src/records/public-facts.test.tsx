@@ -15,21 +15,40 @@ const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const TOKEN = '00'.repeat(32);
 const VAULT = 'ab'.repeat(32);
 const leg = (over: Partial<RunLeg> = {}): RunLeg => ({
-  code: `${TOKEN}:shielded`, asset: TOKEN, symbol: 'NIGHT', paid: 'privately', vault: VAULT, payees: 2, proposal: 'p1', form: 'shielded', list: 'employees', people: 2, total: 7_000_000n,
+  code: `${TOKEN}:shielded`,
+  asset: TOKEN,
+  symbol: 'NIGHT',
+  paid: 'privately',
+  vault: VAULT,
+  payees: 2,
+  proposal: 'p1',
+  form: 'shielded',
+  list: 'employees',
+  people: 2,
+  total: 7_000_000n,
   pays: [
     { name: 'Ana', address: 'mn_shield-addr_ana', amount: privateAmount(5_000_000n, 6, 'NIGHT') },
-    { name: 'Bo', address: 'mn_shield-addr_bo', amount: privateAmount(2_000_000n, 6, 'NIGHT') },
+    { name: 'Bo', address: 'mn_shield-addr_bo', amount: privateAmount(2_000_000n, 6, 'NIGHT') }
   ],
-  ...over,
+  ...over
 });
-const PUBLIC = (): RunLeg => leg({
-  code: `${TOKEN}:unshielded`, paid: 'publicly', form: 'unshielded', people: 2,
-  pays: [
-    { name: 'Ana', address: 'mn_addr_ana', amount: publicAmount(5_000_000n, 6, 'NIGHT') },
-    { name: 'Bo', address: 'mn_addr_bo', amount: publicAmount(2_500_000n, 6, 'NIGHT') },
-  ],
-});
-const draw = (l: RunLeg, payment = false) => render(<KitProvider languages={LANGUAGES} pick="en"><PublicFacts leg={l} vaultName="Vault 3" payment={payment} /></KitProvider>).container;
+const PUBLIC = (): RunLeg =>
+  leg({
+    code: `${TOKEN}:unshielded`,
+    paid: 'publicly',
+    form: 'unshielded',
+    people: 2,
+    pays: [
+      { name: 'Ana', address: 'mn_addr_ana', amount: publicAmount(5_000_000n, 6, 'NIGHT') },
+      { name: 'Bo', address: 'mn_addr_bo', amount: publicAmount(2_500_000n, 6, 'NIGHT') }
+    ]
+  });
+const draw = (l: RunLeg, payment = false) =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <PublicFacts leg={l} vaultName="Vault 3" payment={payment} />
+    </KitProvider>
+  ).container;
 const q = (c: ParentNode, s: string) => c.querySelector(s) as HTMLElement | null;
 const all = (c: ParentNode, s: string) => [...c.querySelectorAll(s)] as HTMLElement[];
 afterEach(cleanup);
@@ -58,20 +77,31 @@ describe('a private payment', () => {
 
   /* RED WHEN: one person is told as "1 payments". */
   it('says one payment for one person', () => {
-    expect(q(draw(leg({ people: 1 })), '[data-fact=count]')!.textContent).toBe(EN['publicFacts.count_one']!.replace('{count}', '1'));
+    expect(q(draw(leg({ people: 1 })), '[data-fact=count]')!.textContent).toBe(
+      EN['publicFacts.count_one']!.replace('{count}', '1')
+    );
   });
 });
 
 describe('a public payment', () => {
   /* RED WHEN: a public payment's facts do not say the address, the amount and the currency go on a record anyone can read, or leave out a person, their address, their amount or its Public mark. */
-  it('lists every person\'s address and amount as put on a record anyone can read', () => {
+  it("lists every person's address and amount as put on a record anyone can read", () => {
     const c = draw(PUBLIC());
     expect(q(c, '[data-fact=public-says]')!.textContent).toBe(EN['publicFacts.public.says']);
     expect(EN['publicFacts.public.says']).toMatch(/address, the amount and the currency on a record anyone can read/);
     expect(EN['publicFacts.count_other']).not.toMatch(/against this run/);
-    expect(EN['publicFacts.counter']).toMatch(/each payment sent from the vault, and a payment can cover several people/);
-    expect(all(c, '[data-public-pay]').map((r) => [q(r, '[data-address]')!.textContent, q(r, '[data-slot=amount]')!.dataset.visibility, q(r, '[data-slot=amount]')!.textContent])).toEqual([
-      ['mn_addr_ana', 'public', expect.stringContaining('5')], ['mn_addr_bo', 'public', expect.stringContaining('2.5')],
+    expect(EN['publicFacts.counter']).toMatch(
+      /each payment sent from the vault, and a payment can cover several people/
+    );
+    expect(
+      all(c, '[data-public-pay]').map((r) => [
+        q(r, '[data-address]')!.textContent,
+        q(r, '[data-slot=amount]')!.dataset.visibility,
+        q(r, '[data-slot=amount]')!.textContent
+      ])
+    ).toEqual([
+      ['mn_addr_ana', 'public', expect.stringContaining('5')],
+      ['mn_addr_bo', 'public', expect.stringContaining('2.5')]
     ]);
     expect(all(c, '[data-public-pay] [data-slot=public-pill]')).toHaveLength(2);
     expect(q(c, '[data-fact=count]')).not.toBeNull();
@@ -93,7 +123,7 @@ describe('a single payment', () => {
   const one = (l: RunLeg): RunLeg => ({ ...l, payees: 1, people: 1, total: 5_000_000n, pays: [l.pays[0]!] });
 
   /* RED WHEN: a single private payment is told in a run's words (this run, each person paid), leaves out the vault, the payments count or the policy band, or names an address or amount the network does not show. */
-  it('is told in the payment\'s own words, and a private one shows no address or amount', () => {
+  it("is told in the payment's own words, and a private one shows no address or amount", () => {
     const c = draw(one(leg()), true);
     expect(q(c, '[data-fact=vault]')!.textContent).toBe(EN['publicFacts.payment.vault']!.replace('{vault}', 'Vault 3'));
     expect(q(c, '[data-fact=count]')!.textContent).toBe(EN['publicFacts.payment.count']);
@@ -122,8 +152,11 @@ describe('a single payment', () => {
   });
 
   /* RED WHEN: the run's sentences change for a run, because the payment's were added. */
-  it('leaves a run\'s words as they were', () => {
+  it("leaves a run's words as they were", () => {
     const c = draw(leg(), false);
-    expect([q(c, '[data-fact=vault]')!.textContent, q(c, '[data-fact=band]')!.textContent]).toEqual([EN['publicFacts.vault']!.replace('{vault}', 'Vault 3'), EN['publicFacts.private.band']]);
+    expect([q(c, '[data-fact=vault]')!.textContent, q(c, '[data-fact=band]')!.textContent]).toEqual([
+      EN['publicFacts.vault']!.replace('{vault}', 'Vault 3'),
+      EN['publicFacts.private.band']
+    ]);
   });
 });

@@ -10,7 +10,11 @@ import type { WorkerDeps } from './vault-worker-deps.js';
 
 /** Posts a word to the page; a word that cannot be posted is dropped, since a word is never an answer. */
 export const toldThePage = (scope: { postMessage(m: unknown): void }, word: unknown): void => {
-  try { scope.postMessage(word); } catch { /* the next word or the answer still reaches the page */ }
+  try {
+    scope.postMessage(word);
+  } catch {
+    /* the next word or the answer still reaches the page */
+  }
 };
 
 /**
@@ -54,12 +58,14 @@ export const toldOfEachCall = (source: ArtefactSource, word: () => void): Artefa
     } catch (e) {
       if (e instanceof ProvingMaterialRefused) refusedLately(e);
       throw e;
-    } finally { word(); }
+    } finally {
+      word();
+    }
   };
   return {
     lookupKey: (keyLocation) => told(() => source.lookupKey(keyLocation)),
     getParams: (k) => told(() => source.getParams(k)),
-    artefact: (kind, keyLocation) => told(() => source.artefact(kind, keyLocation)),
+    artefact: (kind, keyLocation) => told(() => source.artefact(kind, keyLocation))
   };
 };
 
@@ -70,23 +76,31 @@ export const toldOfEachCall = (source: ArtefactSource, word: () => void): Artefa
  * whole message of a refusal of proving material seen while it ran fails as
  * that refusal.
  */
-export const provingToldOf = (
-  deps: () => Promise<WorkerDeps>, ask: Pick<VaultAsk, 'id' | 'ask'>, say: (word: unknown) => void,
-): (() => Promise<WorkerDeps>) => () => deps().then((d) => ({
-  ...d,
-  prove: async (unproven: any, circuit?: string) => {
-    const word = (state: 'started' | 'ended') => say({ kind: 'vault-proof', id: ask.id, ask: ask.ask, circuit: circuit ?? null, state });
-    const since = refusalsSeen;
-    word('started');
-    try {
-      return await d.prove(unproven, circuit);
-    } catch (e) {
-      /* A refusal the prover passed on as text is answered as that refusal, with its kind, and what the prover said beneath it. */
-      const refused = refusalCarriedBy(e, since);
-      if (refused === null) throw e;
-      const again = new ProvingMaterialRefused(refused.kind, refused.keyLocation, refused.message);
-      Object.defineProperty(again, 'cause', { value: e, enumerable: false, writable: true, configurable: true });
-      throw again;
-    } finally { word('ended'); }
-  },
-}));
+export const provingToldOf =
+  (
+    deps: () => Promise<WorkerDeps>,
+    ask: Pick<VaultAsk, 'id' | 'ask'>,
+    say: (word: unknown) => void
+  ): (() => Promise<WorkerDeps>) =>
+  () =>
+    deps().then((d) => ({
+      ...d,
+      prove: async (unproven: any, circuit?: string) => {
+        const word = (state: 'started' | 'ended') =>
+          say({ kind: 'vault-proof', id: ask.id, ask: ask.ask, circuit: circuit ?? null, state });
+        const since = refusalsSeen;
+        word('started');
+        try {
+          return await d.prove(unproven, circuit);
+        } catch (e) {
+          /* A refusal the prover passed on as text is answered as that refusal, with its kind, and what the prover said beneath it. */
+          const refused = refusalCarriedBy(e, since);
+          if (refused === null) throw e;
+          const again = new ProvingMaterialRefused(refused.kind, refused.keyLocation, refused.message);
+          Object.defineProperty(again, 'cause', { value: e, enumerable: false, writable: true, configurable: true });
+          throw again;
+        } finally {
+          word('ended');
+        }
+      }
+    }));

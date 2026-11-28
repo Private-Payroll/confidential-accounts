@@ -15,7 +15,7 @@ const HOLDS: Record<Exclude<Handover['of'], typeof HANDOVER.changeOwed>, (t: Ret
   [HANDOVER.unreadable]: (t) => t('committeeChange.holds.unreadable'),
   [HANDOVER.unreachable]: (t) => t('committeeChange.holds.unreachable'),
   [HANDOVER.notSignedIn]: (t) => t('act.refused.notSignedIn'),
-  [HANDOVER.anotherPerson]: (t) => t('act.refused.anotherPerson'),
+  [HANDOVER.anotherPerson]: (t) => t('act.refused.anotherPerson')
 };
 
 /**
@@ -40,51 +40,80 @@ export function CommitteeChange({ onChanged }: { onChanged?: () => void }) {
   const read = useCallback(async () => {
     setState(company === null || view === null ? null : await readHandover(person.id, view));
   }, [person.id, company, view]);
-  useEffect(() => { void read(); }, [read]);
+  useEffect(() => {
+    void read();
+  }, [read]);
 
   const sign = async (): Promise<void> => {
     if (company === null || view === null) return;
-    setBusy(true); setAsking(false); setResult(null);
+    setBusy(true);
+    setAsking(false);
+    setResult(null);
     setResult(await signChange(person.id, view));
     await read();
     setBusy(false);
     onChanged?.();
   };
 
-  const of = company === null ? null : state?.of ?? null;
-  const holds = company === null ? t('committeeChange.noCompany')
-    : state === null ? t('committeeChange.reading')
-      : state.of === HANDOVER.changeOwed ? t('committeeChange.holds.changeOwed')
-        : HOLDS[state.of](t);
+  const of = company === null ? null : (state?.of ?? null);
+  const holds =
+    company === null
+      ? t('committeeChange.noCompany')
+      : state === null
+        ? t('committeeChange.reading')
+        : state.of === HANDOVER.changeOwed
+          ? t('committeeChange.holds.changeOwed')
+          : HOLDS[state.of](t);
 
   return (
     <div className="flex max-w-xl flex-col gap-4" data-action="committee-change" data-state={of ?? undefined}>
       <p className="text-sm text-muted-foreground">{t('committeeChange.what')}</p>
       {state?.of === HANDOVER.changeOwed ? (
         <Section title={t('committeeChange.signedTitle')} empty={null} data-change-owed>
-          {state.signed.map((c, i) => <SectionRow key={i}>{t('committeeChange.signed', { have: c.have, required: c.required })}</SectionRow>)}
+          {state.signed.map((c, i) => (
+            <SectionRow key={i}>{t('committeeChange.signed', { have: c.have, required: c.required })}</SectionRow>
+          ))}
         </Section>
       ) : null}
-      <p className="text-sm" data-holds={of ?? 'no-company'}>{holds}</p>
+      <p className="text-sm" data-holds={of ?? 'no-company'}>
+        {holds}
+      </p>
 
       {asking ? (
         <ConfirmInYourAccount
           summary={t('committeeChange.confirm')}
           busy={busy}
           onCancel={() => setAsking(false)}
-          onConfirm={() => { void sign(); }}
+          onConfirm={() => {
+            void sign();
+          }}
         />
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           {of === HANDOVER.changeOwed ? (
-            <Button variant="outline" disabled={busy} onClick={() => setAsking(true)} data-action="sign-change">{t('committeeChange.sign')}</Button>
+            <Button variant="outline" disabled={busy} onClick={() => setAsking(true)} data-action="sign-change">
+              {t('committeeChange.sign')}
+            </Button>
           ) : null}
           {of === HANDOVER.notOnChain || of === HANDOVER.unreadable || of === HANDOVER.unreachable ? (
-            <Button variant="outline" disabled={busy} onClick={() => { void read(); }} data-action="read-again">{t('committeeChange.readAgain')}</Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                void read();
+              }}
+              data-action="read-again"
+            >
+              {t('committeeChange.readAgain')}
+            </Button>
           ) : null}
         </div>
       )}
-      {result?.of === ACTED.done && state?.of !== HANDOVER.held ? <p className="text-sm" data-acted="sign-change">{t('committeeChange.done')}</p> : null}
+      {result?.of === ACTED.done && state?.of !== HANDOVER.held ? (
+        <p className="text-sm" data-acted="sign-change">
+          {t('committeeChange.done')}
+        </p>
+      ) : null}
       {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}
     </div>
   );

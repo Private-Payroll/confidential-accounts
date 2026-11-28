@@ -38,10 +38,10 @@
 
 export const THEMES = [
   { id: 'dark', label: 'Dark' },
-  { id: 'light', label: 'Light' },
+  { id: 'light', label: 'Light' }
 ] as const;
 
-export type Theme = typeof THEMES[number]['id'];
+export type Theme = (typeof THEMES)[number]['id'];
 
 /** A stored theme, or `system` for "follow the machine". */
 export type ThemeChoice = Theme | 'system';
@@ -50,8 +50,7 @@ export type ThemeChoice = Theme | 'system';
  * build has. A theme removed from the list above must not go on being applied
  * from somebody's `localStorage`, and a `data-theme` with no stylesheet block
  * is an unstyled wallet. */
-export const isTheme = (value: string | null): value is Theme =>
-  THEMES.some((theme) => theme.id === value);
+export const isTheme = (value: string | null): value is Theme => THEMES.some((theme) => theme.id === value);
 
 /** What the wallet defaults to when nothing else answers — including in
  * environments with no `matchMedia` at all, which is jsdom under the test

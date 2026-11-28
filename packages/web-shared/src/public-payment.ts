@@ -25,5 +25,6 @@ export function paidPublicly(address: string | null | undefined): boolean {
 }
 
 /** Whether a run pays anybody on it publicly, by the address each payslip names. */
-export const runPaysAnyonePublicly = (run: { readonly employees: ReadonlyArray<{ readonly paidTo?: string }> }): boolean =>
-  run.employees.some(e => paidPublicly(e.paidTo));
+export const runPaysAnyonePublicly = (run: {
+  readonly employees: ReadonlyArray<{ readonly paidTo?: string }>;
+}): boolean => run.employees.some((e) => paidPublicly(e.paidTo));

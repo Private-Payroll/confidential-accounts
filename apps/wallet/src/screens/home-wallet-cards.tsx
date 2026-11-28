@@ -5,10 +5,26 @@ import { nightFromStars } from '../chain/amount.js';
 import { hrefOf } from '../routes.js';
 import { WALLET_ACCOUNTS, displayNameOf, hueOf } from '../accounts/subwallets.js';
 import { WalletSwitcher } from '../shell/switcher.js';
-import { WalletBalanceCell, anyNeverChecked, earnsAPreviewPlace, rowFor, useWalletBalances } from '../shell/wallet-balances.js';
+import {
+  WalletBalanceCell,
+  anyNeverChecked,
+  earnsAPreviewPlace,
+  rowFor,
+  useWalletBalances
+} from '../shell/wallet-balances.js';
 import { dismissPendingSend, liveResolutionDoors, loadPendingSends, resolvePendingSends } from '../chain/pending.js';
 import type { PendingSend, ResolutionDoors } from '../chain/pending.js';
-import { Button, CardAction, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, EmptyState } from 'vaults-ui';
+import {
+  Button,
+  CardAction,
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+  EmptyState
+} from 'vaults-ui';
 import { RowItem, RowItems } from '../components/rows.js';
 import { GLYPH, Glyph } from '../glyphs.js';
 
@@ -42,21 +58,21 @@ export function RecentActivity(): ReactNode {
   return (
     <Card>
       <CardHeader>
-        <CardTitle role="heading" aria-level={3}>Recent activity</CardTitle>
+        <CardTitle role="heading" aria-level={3}>
+          Recent activity
+        </CardTitle>
         <CardAction>
-          <Button asChild variant="ghost" size="icon"><a
-            href={hrefOf('activity')}
-            aria-label="View all activity"
-            title="View all activity"
-          >
-            <Glyph icon={GLYPH.next} className="size-5" />
-          </a></Button>
+          <Button asChild variant="ghost" size="icon">
+            <a href={hrefOf('activity')} aria-label="View all activity" title="View all activity">
+              <Glyph icon={GLYPH.next} className="size-5" />
+            </a>
+          </Button>
         </CardAction>
       </CardHeader>
       <CardContent>
         <EmptyState icon={GLYPH.inbox} title="Payment history is not read on this screen yet">
-          The wallet SDK already answers for it — this is a screen to build, not a
-          capability to invent. Nothing above is a statement that no payments exist.
+          The wallet SDK already answers for it — this is a screen to build, not a capability to invent. Nothing above
+          is a statement that no payments exist.
         </EmptyState>
       </CardContent>
     </Card>
@@ -113,7 +129,12 @@ const PREVIEWED = 3;
  * THE DERIVATION IS UNAFFECTED: the list is built from `WALLET_ACCOUNTS`, which never
  * contains account 1.
  */
-export function AllWalletsCard({ identity, secret, names, changed }: {
+export function AllWalletsCard({
+  identity,
+  secret,
+  names,
+  changed
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
   readonly names: Readonly<Record<string, string>>;
@@ -128,17 +149,18 @@ export function AllWalletsCard({ identity, secret, names, changed }: {
    * record the other tokens ranks with them (`earnsAPreviewPlace`). */
   const funded = WALLET_ACCOUNTS.filter((account) => earnsAPreviewPlace(rowFor(rows, account)));
   const rest = WALLET_ACCOUNTS.filter((account) => !earnsAPreviewPlace(rowFor(rows, account)));
-  const shown = [...funded, ...rest.slice(0, Math.max(0, PREVIEWED - funded.length))]
-    .sort((a, b) => a - b);
+  const shown = [...funded, ...rest.slice(0, Math.max(0, PREVIEWED - funded.length))].sort((a, b) => a - b);
   const hidden = WALLET_ACCOUNTS.length - shown.length;
 
   return (
     <Card aria-label="Every wallet's last known balance">
       <CardHeader>
-        <CardTitle role="heading" aria-level={3}>Every wallet</CardTitle>
+        <CardTitle role="heading" aria-level={3}>
+          Every wallet
+        </CardTitle>
         <CardDescription>
-          Live checking follows the wallet that is open. The others show the last time
-          anyone looked — and how long ago that was.
+          Live checking follows the wallet that is open. The others show the last time anyone looked — and how long ago
+          that was.
         </CardDescription>
         <CardAction>
           <WalletSwitcher identity={identity} secret={secret}>
@@ -172,17 +194,14 @@ export function AllWalletsCard({ identity, secret, names, changed }: {
         </RowItems>
         {hidden > 0 && (
           <p className="m-0 mt-3 text-xs text-muted-foreground">
-            {hidden === 1
-              ? 'One more slot is not shown here.'
-              : `${hidden} more slots are not shown here.`}{' '}
-            Every slot this wallet has, and the control that checks them all, is behind
-            the arrow above.
+            {hidden === 1 ? 'One more slot is not shown here.' : `${hidden} more slots are not shown here.`} Every slot
+            this wallet has, and the control that checks them all, is behind the arrow above.
           </p>
         )}
         {anyNeverChecked(rows) && (
           <p className="m-0 mt-3 text-sm text-warn-text">
-            A wallet never checked can be holding money nobody was told about — its
-            address exists whether or not anyone looks.
+            A wallet never checked can be holding money nobody was told about — its address exists whether or not anyone
+            looks.
           </p>
         )}
       </CardContent>
@@ -208,7 +227,10 @@ export function AllWalletsCard({ identity, secret, names, changed }: {
  * this change's; the amber banner stays amber, and the two answer cards stay the
  * cards a person dismisses. Only the wrapper markup below is the kit's.
  */
-export function PendingSendsCard({ secret, resolution }: {
+export function PendingSendsCard({
+  secret,
+  resolution
+}: {
   readonly secret: Secret;
   /** Injectable for tests; the app asks the real indexer by identifier. */
   readonly resolution?: ResolutionDoors;
@@ -217,16 +239,25 @@ export function PendingSendsCard({ secret, resolution }: {
   const doors = resolution;
   useEffect(() => {
     let stale = false;
-    const refresh = (): void => { if (!stale) setRecords(loadPendingSends(secret)); };
+    const refresh = (): void => {
+      if (!stale) setRecords(loadPendingSends(secret));
+    };
     const resolve = (): void => {
       if (loadPendingSends(secret).every((r) => r.outcome !== null)) return;
       void resolvePendingSends(secret, doors ?? liveResolutionDoors())
-        .then((settled) => { if (settled.length > 0) refresh(); })
-        .catch(() => { /* silence is not an answer; the next round asks again */ });
+        .then((settled) => {
+          if (settled.length > 0) refresh();
+        })
+        .catch(() => {
+          /* silence is not an answer; the next round asks again */
+        });
     };
     resolve();
     const timer = setInterval(resolve, 15_000);
-    return () => { stale = true; clearInterval(timer); };
+    return () => {
+      stale = true;
+      clearInterval(timer);
+    };
   }, [secret, doors]);
   if (records.length === 0) return null;
   const dismiss = (key: string): void => {
@@ -240,21 +271,21 @@ export function PendingSendsCard({ secret, resolution }: {
         const to = `${r.recipientBech32.slice(0, 20)}…${r.recipientBech32.slice(-8)}`;
         if (r.outcome === null) {
           return (
-            <section className="warn-banner" role="status" key={r.key}
-              aria-label="A payment is still confirming"
-            >
+            <section className="warn-banner" role="status" key={r.key} aria-label="A payment is still confirming">
               <h2>A payment is still confirming.</h2>
               <p className="small">
-                {amount} to {to}, handed to the network{' '}
-                {new Date(r.submittedAt).toLocaleString()}. Whether it went through
-                is not known yet — this wallet is watching the chain and will say
-                sent or failed here, on its own. <strong>Do not send this payment
-                again</strong>; the send screen refuses it while this one is
+                {amount} to {to}, handed to the network {new Date(r.submittedAt).toLocaleString()}. Whether it went
+                through is not known yet — this wallet is watching the chain and will say sent or failed here, on its
+                own. <strong>Do not send this payment again</strong>; the send screen refuses it while this one is
                 unresolved.
               </p>
               <details className="reveal">
                 <summary>The identifier{r.identifiers.length === 1 ? '' : 's'}, for checking elsewhere</summary>
-                {r.identifiers.map((id) => <div className="address-full" key={id}>{id}</div>)}
+                {r.identifiers.map((id) => (
+                  <div className="address-full" key={id}>
+                    {id}
+                  </div>
+                ))}
               </details>
             </section>
           );
@@ -263,21 +294,28 @@ export function PendingSendsCard({ secret, resolution }: {
           <Card role="status" key={r.key} aria-label="A payment went through">
             <CardHeader>
               <CardTitle role="heading" aria-level={3} className="flex items-center gap-2">
-                <span className="ok" aria-hidden="true">✓</span> That payment went through.
+                <span className="ok" aria-hidden="true">
+                  ✓
+                </span>{' '}
+                That payment went through.
               </CardTitle>
               <CardDescription>
-                {amount} to {to} — submitted {new Date(r.submittedAt).toLocaleString()},
-                confirmed on the chain by its identifier.
+                {amount} to {to} — submitted {new Date(r.submittedAt).toLocaleString()}, confirmed on the chain by its
+                identifier.
               </CardDescription>
             </CardHeader>
             <CardFooter>
-              <Button type="button" variant="outline" onClick={() => dismiss(r.key)}>Understood</Button>
+              <Button type="button" variant="outline" onClick={() => dismiss(r.key)}>
+                Understood
+              </Button>
             </CardFooter>
           </Card>
         ) : (
           <Card role="alert" key={r.key} aria-label="A payment did not go through">
             <CardHeader>
-              <CardTitle role="heading" aria-level={3}>A payment did not go through.</CardTitle>
+              <CardTitle role="heading" aria-level={3}>
+                A payment did not go through.
+              </CardTitle>
               <CardDescription>
                 {amount} to {to} — submitted {new Date(r.submittedAt).toLocaleString()}.
               </CardDescription>
@@ -286,7 +324,9 @@ export function PendingSendsCard({ secret, resolution }: {
               <div className="error">{r.outcome.reason}</div>
             </CardContent>
             <CardFooter>
-              <Button type="button" variant="outline" onClick={() => dismiss(r.key)}>Understood</Button>
+              <Button type="button" variant="outline" onClick={() => dismiss(r.key)}>
+                Understood
+              </Button>
             </CardFooter>
           </Card>
         );

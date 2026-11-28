@@ -13,7 +13,16 @@ import { type VaultChainView } from './vault-doors.js';
 import { theWalletsIndexer } from './vault-read-here.js';
 import { keptOnTheChainUnder, secretsToTry } from './vault-secret-to-spend.js';
 import { coinOnTheWire, creatingTransactionOfOutput, lowerOf, notesAsThisDeviceReadsThem } from './vault-step-reads.js';
-import { A_PAYOUT, noteOf, type PaymentInFlight, paymentLandsBy, type PaymentSettled, PaymentStillInFlight, type PayoutDoors, wireOf } from './vault-payment-in-flight.js';
+import {
+  A_PAYOUT,
+  noteOf,
+  type PaymentInFlight,
+  paymentLandsBy,
+  type PaymentSettled,
+  PaymentStillInFlight,
+  type PayoutDoors,
+  wireOf
+} from './vault-payment-in-flight.js';
 
 /**
  * **THE VAULT'S RECORD ADVANCED FOR ONE PAYMENT: EVERY NOTE IT SPENT GONE, AND
@@ -24,11 +33,19 @@ import { A_PAYOUT, noteOf, type PaymentInFlight, paymentLandsBy, type PaymentSet
  * the pool's own rule rather than half-applied.
  */
 export async function recordPayment(
-  doors: PayoutDoors, vault: Hex, spent: Hex, further: readonly Hex[], amount: string, change: NoteOnTheWire | null,
-  createdIn: Hex | null,
+  doors: PayoutDoors,
+  vault: Hex,
+  spent: Hex,
+  further: readonly Hex[],
+  amount: string,
+  change: NoteOnTheWire | null,
+  createdIn: Hex | null
 ): Promise<void> {
-  const pool = new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const pool = new SealedNotePool(
+    doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  );
   const ATTEMPTS = 5;
   for (let attempt = 1; ; attempt += 1) {
     const now = await pool.load(vault);
@@ -36,7 +53,12 @@ export async function recordPayment(
     const spentHere = [spent, ...further].map(lowerOf);
     if (!now.notes.some((n) => spentHere.includes(n.nonce.toLowerCase()))) return;
     const next = await doors.builder.afterPayment({
-      notes: now.notes.map(wireOf), spent, ...(further.length === 0 ? {} : { further }), amount, change, createdIn,
+      notes: now.notes.map(wireOf),
+      spent,
+      ...(further.length === 0 ? {} : { further }),
+      amount,
+      change,
+      createdIn
     });
     try {
       await pool.save(vault, { notes: next.map(noteOf) }, now.readAt);
@@ -62,13 +84,17 @@ type OwnPaymentSeen = VaultCallOnChain | { readonly of: 'unnamed' } | { readonly
  * (`vaultCallOnChain`). A hash the service answered with is never asked for.
  */
 export async function ownPaymentOnChain(doors: PayoutDoors, vault: Hex, p: PaymentInFlight): Promise<OwnPaymentSeen> {
-  if (!Array.isArray(p.identifiers) || p.identifiers.length === 0 || typeof p.transaction !== 'string') return { of: 'unnamed' };
+  if (!Array.isArray(p.identifiers) || p.identifiers.length === 0 || typeof p.transaction !== 'string')
+    return { of: 'unnamed' };
   if (typeof doors.builder.vaultCallOnChain !== 'function') {
     return { of: 'cannot', why: 'this page cannot ask the chain about a payment by its own transaction' };
   }
   try {
     return await doors.builder.vaultCallOnChain({
-      vault, entryPoints: [...A_PAYOUT], transaction: p.transaction, indexer: await theWalletsIndexer(doors, vault),
+      vault,
+      entryPoints: [...A_PAYOUT],
+      transaction: p.transaction,
+      indexer: await theWalletsIndexer(doors, vault)
     });
   } catch (e) {
     return { of: 'cannot', why: whyAfterTheSend(e) };
@@ -98,26 +124,46 @@ export async function ownPaymentOnChain(doors: PayoutDoors, vault: Hex, p: Payme
  * not land, and a payment that paid never reads as payable again.
  */
 async function overtakenBy(
-  doors: PayoutDoors, vault: Hex, p: PaymentInFlight, onChain: ReadonlySet<string>, until: number, notLanded: boolean, state?: string,
+  doors: PayoutDoors,
+  vault: Hex,
+  p: PaymentInFlight,
+  onChain: ReadonlySet<string>,
+  until: number,
+  notLanded: boolean,
+  state?: string
 ): Promise<{
-  readonly spent: Hex; readonly further: readonly Hex[]; readonly amount: string; readonly kept: NoteOnTheWire; readonly createdIn: Hex;
+  readonly spent: Hex;
+  readonly further: readonly Hex[];
+  readonly amount: string;
+  readonly kept: NoteOnTheWire;
+  readonly createdIn: Hex;
 } | null> {
   const mine = [p.spent, ...(p.further ?? [])].map((n) => lowerOf(n.nonce));
-  const asCoin = (n: { readonly nonce: Hex; readonly token: Hex; readonly value: string }) =>
-    ({ nonce: n.nonce, token: n.token, value: BigInt(n.value) });
-  const thisPayment = attemptKey({
-    spent: asCoin(p.spent), ...(p.further === undefined || p.further.length === 0 ? {} : { further: p.further.map(asCoin) }),
-    amount: BigInt(p.amount), ...(p.merge === true ? { merge: true } : {}),
+  const asCoin = (n: { readonly nonce: Hex; readonly token: Hex; readonly value: string }) => ({
+    nonce: n.nonce,
+    token: n.token,
+    value: BigInt(n.value)
   });
-  const heldOf = async (coin: NoteOnTheWire): Promise<string> => lowerOf((await doors.builder.commitments({ vault, coin })).held);
+  const thisPayment = attemptKey({
+    spent: asCoin(p.spent),
+    ...(p.further === undefined || p.further.length === 0 ? {} : { further: p.further.map(asCoin) }),
+    amount: BigInt(p.amount),
+    ...(p.merge === true ? { merge: true } : {})
+  });
+  const heldOf = async (coin: NoteOnTheWire): Promise<string> =>
+    lowerOf((await doors.builder.commitments({ vault, coin })).held);
   /*
    * **THIS PAYMENT'S OWN CHANGE ON THE CHAIN SAYS IT LANDED**, whatever any other line says: a coin's commitment
    * names the first note it was made from and what it holds, not every note beside it, so another step's coin is
    * believed only while this payment's own change is absent.
    */
   if (p.change !== null && onChain.has(await heldOf(p.change))) return null;
-  const journal = new PaymentJournalInStore(doors.records('payment-journal'), vault,
-    { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const journal = new PaymentJournalInStore(
+    doors.records('payment-journal'),
+    vault,
+    { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  );
   const { attempts } = await journal.open();
   let secrets: Hex[] | null = null;
   for (const a of attempts) {
@@ -136,20 +182,42 @@ async function overtakenBy(
     if (!allGone) continue;
     /* Under every secret the vault may have held when the step was made, the records' and this signer's copy on the chain. */
     secrets ??= await secretsToTry(doors, vault, state);
-    const made = await keptOnTheChainUnder(doors, vault, secrets, {
-      spent: coinOnTheWire(a.spent), ...(a.further === undefined ? {} : { further: a.further.map(coinOnTheWire) }),
-      amount: a.amount.toString(), ...(a.step === 'merge' ? { merge: true } : {}),
-    }, onChain);
+    const made = await keptOnTheChainUnder(
+      doors,
+      vault,
+      secrets,
+      {
+        spent: coinOnTheWire(a.spent),
+        ...(a.further === undefined ? {} : { further: a.further.map(coinOnTheWire) }),
+        amount: a.amount.toString(),
+        ...(a.step === 'merge' ? { merge: true } : {})
+      },
+      onChain
+    );
     if (made === null) continue;
     const { kept, output } = made;
-    const found = await creatingTransactionOfOutput(doors, vault, output, null, 'the coin of the step that spent this payment\'s note');
+    const found = await creatingTransactionOfOutput(
+      doors,
+      vault,
+      output,
+      null,
+      "the coin of the step that spent this payment's note"
+    );
     if (found.state !== 'found') {
-      throw new PaymentStillInFlight(vault, p.txRef, until,
-        'a step that spent the note it would spend has landed, and the transfer that made that step\'s coin cannot be read yet',
-        { unread: true });
+      throw new PaymentStillInFlight(
+        vault,
+        p.txRef,
+        until,
+        "a step that spent the note it would spend has landed, and the transfer that made that step's coin cannot be read yet",
+        { unread: true }
+      );
     }
     return {
-      spent: a.spent.nonce, further: (a.further ?? []).map((n) => n.nonce), amount: a.amount.toString(), kept, createdIn: found.createdIn,
+      spent: a.spent.nonce,
+      further: (a.further ?? []).map((n) => n.nonce),
+      amount: a.amount.toString(),
+      kept,
+      createdIn: found.createdIn
     };
   }
   return null;
@@ -165,11 +233,25 @@ async function overtakenBy(
  * `overtakenBy` takes it. `true` when it was.
  */
 export async function recordedIfOvertaken(
-  doors: PayoutDoors, vault: Hex, p: PaymentInFlight, onChain: ReadonlySet<string>, until: number, notLanded: boolean, state?: string,
+  doors: PayoutDoors,
+  vault: Hex,
+  p: PaymentInFlight,
+  onChain: ReadonlySet<string>,
+  until: number,
+  notLanded: boolean,
+  state?: string
 ): Promise<boolean> {
   const overtaken = await overtakenBy(doors, vault, p, onChain, until, notLanded, state);
   if (overtaken === null) return false;
-  await recordPayment(doors, vault, overtaken.spent as Hex, overtaken.further as Hex[], overtaken.amount, overtaken.kept, overtaken.createdIn);
+  await recordPayment(
+    doors,
+    vault,
+    overtaken.spent as Hex,
+    overtaken.further as Hex[],
+    overtaken.amount,
+    overtaken.kept,
+    overtaken.createdIn
+  );
   return true;
 }
 
@@ -178,11 +260,24 @@ export async function recordedIfOvertaken(
  * chain and its own transaction is there.
  */
 async function settledWithNoChange(
-  doors: PayoutDoors, vault: Hex, p: NonNullable<Awaited<ReturnType<PayoutDoors['inFlight']['get']>>>,
-  { notes, state, onChain, until, past, forget }: {
-    readonly notes: readonly string[]; readonly state: VaultChainView['state']; readonly onChain: Set<string>;
-    readonly until: number; readonly past: boolean; readonly forget: () => Promise<unknown>;
-  },
+  doors: PayoutDoors,
+  vault: Hex,
+  p: NonNullable<Awaited<ReturnType<PayoutDoors['inFlight']['get']>>>,
+  {
+    notes,
+    state,
+    onChain,
+    until,
+    past,
+    forget
+  }: {
+    readonly notes: readonly string[];
+    readonly state: VaultChainView['state'];
+    readonly onChain: Set<string>;
+    readonly until: number;
+    readonly past: boolean;
+    readonly forget: () => Promise<unknown>;
+  }
 ): Promise<PaymentSettled> {
   /* A payment that kept no change landed only when every note it spent has left: they leave in one transaction. */
   for (const n of p.further ?? []) {
@@ -197,7 +292,15 @@ async function settledWithNoChange(
   /* **ONLY ITS OWN TRANSACTION SAYS IT LANDED.** */
   const own = await ownPaymentOnChain(doors, vault, p);
   if (own.of === 'landed') {
-    await recordPayment(doors, vault, p.spent.nonce, (p.further ?? []).map((n) => n.nonce), p.amount, null, null);
+    await recordPayment(
+      doors,
+      vault,
+      p.spent.nonce,
+      (p.further ?? []).map((n) => n.nonce),
+      p.amount,
+      null,
+      null
+    );
     await forget();
     return { state: 'recorded', createdIn: null };
   }
@@ -215,9 +318,17 @@ async function settledWithNoChange(
     await forget();
     return { state: 'not-matched' };
   }
-  throw new PaymentStillInFlight(vault, p.txRef, until, own.of === 'cannot' || own.of === 'not-known' ? own.why
-    : own.of === 'unnamed' ? 'this browser\'s record of it does not name its own transaction, and the chain no longer holds the note it spent'
-      : 'the chain has not shown its own transaction yet', { unread: own.of === 'cannot' });
+  throw new PaymentStillInFlight(
+    vault,
+    p.txRef,
+    until,
+    own.of === 'cannot' || own.of === 'not-known'
+      ? own.why
+      : own.of === 'unnamed'
+        ? "this browser's record of it does not name its own transaction, and the chain no longer holds the note it spent"
+        : 'the chain has not shown its own transaction yet',
+    { unread: own.of === 'cannot' }
+  );
 }
 
 /**
@@ -259,22 +370,34 @@ async function settledWithNoChange(
  *
  * Nothing is recorded that the chain does not show.
  */
-export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view?: VaultChainView): Promise<PaymentSettled> {
+export async function settlePaymentInFlight(
+  doors: PayoutDoors,
+  vault: Hex,
+  view?: VaultChainView
+): Promise<PaymentSettled> {
   const p = await doors.inFlight.get(vault);
   if (p === null) return { state: 'none' };
-  const forget = () => doors.inFlight.forget(vault, p.claim).catch(() => { /* the next look settles it again */ });
-  const pool = new SealedNotePool(doors.records('pool'),
-    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const forget = () =>
+    doors.inFlight.forget(vault, p.claim).catch(() => {
+      /* the next look settles it again */
+    });
+  const pool = new SealedNotePool(
+    doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  );
   if (!(await pool.load(vault)).notes.some((n) => n.nonce.toLowerCase() === p.spent.nonce.toLowerCase())) {
     await forget();
     return { state: 'already-recorded' };
   }
-  const seen = view ?? await notesAsThisDeviceReadsThem(doors, vault);
+  const seen = view ?? (await notesAsThisDeviceReadsThem(doors, vault));
   const until = paymentLandsBy(p);
   const past = (doors.now ?? (() => new Date()))().getTime() > until;
   /* Only a view that read the vault's notes can say the note it spent has left. */
   if (seen.onChain !== true || !Array.isArray(seen.notes)) {
-    throw new PaymentStillInFlight(vault, p.txRef, until, 'the vault\'s notes could not be read just now', { unread: true });
+    throw new PaymentStillInFlight(vault, p.txRef, until, "the vault's notes could not be read just now", {
+      unread: true
+    });
   }
   const { held } = await doors.builder.commitments({ vault, coin: p.spent });
   if (seen.notes.some((n) => n.toLowerCase() === held.toLowerCase())) {
@@ -289,11 +412,20 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
     await forget();
     return { state: 'overtaken' };
   }
-  if (p.change === null) return settledWithNoChange(doors, vault, p, { notes: seen.notes, state: seen.state, onChain, until, past, forget });
+  if (p.change === null)
+    return settledWithNoChange(doors, vault, p, { notes: seen.notes, state: seen.state, onChain, until, past, forget });
   const { output, held: heldChange } = await doors.builder.commitments({ vault, coin: p.change });
-  const found = await creatingTransactionOfOutput(doors, vault, output, p.transactionHash, 'this payment\'s change');
+  const found = await creatingTransactionOfOutput(doors, vault, output, p.transactionHash, "this payment's change");
   if (found.state === 'found') {
-    await recordPayment(doors, vault, p.spent.nonce, (p.further ?? []).map((n) => n.nonce), p.amount, p.change, found.createdIn);
+    await recordPayment(
+      doors,
+      vault,
+      p.spent.nonce,
+      (p.further ?? []).map((n) => n.nonce),
+      p.amount,
+      p.change,
+      found.createdIn
+    );
     await forget();
     return { state: 'recorded', createdIn: found.createdIn };
   }
@@ -302,8 +434,9 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
    * when this device's own read of the chain holds that change nowhere either.
    */
   const bareHex = (h: string) => h.toLowerCase().replace(/^0x/u, '');
-  const changeOnChain = (seen.notes ?? []).some((n) => bareHex(n) === bareHex(heldChange))
-    || (seen.everCreated ?? []).some((c) => bareHex(c) === bareHex(output));
+  const changeOnChain =
+    (seen.notes ?? []).some((n) => bareHex(n) === bareHex(heldChange)) ||
+    (seen.everCreated ?? []).some((c) => bareHex(c) === bareHex(output));
   if (found.listed === 'none' && past && !changeOnChain) {
     await forget();
     return { state: 'spent-elsewhere' };
@@ -320,9 +453,15 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
     return { state: 'not-matched' };
   }
   /* Only an answer the time can settle names the time: one still waiting on a read, or on a change the chain holds, does not. */
-  throw new PaymentStillInFlight(vault, p.txRef, until, found.state === 'unknown' ? found.why
-    : 'the chain no longer holds the note it spent, and the transfer that made its change cannot be read yet',
-  { unread: found.state !== 'unknown' && (found.listed !== 'none' || changeOnChain) });
+  throw new PaymentStillInFlight(
+    vault,
+    p.txRef,
+    until,
+    found.state === 'unknown'
+      ? found.why
+      : 'the chain no longer holds the note it spent, and the transfer that made its change cannot be read yet',
+    { unread: found.state !== 'unknown' && (found.listed !== 'none' || changeOnChain) }
+  );
 }
 
 /**
@@ -331,6 +470,7 @@ export async function settlePaymentInFlight(doors: PayoutDoors, vault: Hex, view
  * alone: its own sentence tells the person to try again, which a notice that
  * must stop a second payment may never say.
  */
-export const whyAfterTheSend = (e: unknown): string => (e instanceof VaultAskFailed
-  ? `this page's check of it did not finish (${e.reason}${e.reason === 'answered' && e.workerName !== undefined ? `, ${e.workerName}` : ''})`
-  : (e as Error)?.message ?? String(e));
+export const whyAfterTheSend = (e: unknown): string =>
+  e instanceof VaultAskFailed
+    ? `this page's check of it did not finish (${e.reason}${e.reason === 'answered' && e.workerName !== undefined ? `, ${e.workerName}` : ''})`
+    : ((e as Error)?.message ?? String(e));

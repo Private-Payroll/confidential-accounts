@@ -19,17 +19,27 @@ export function FieldsChapter(): ReactNode {
       >
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <Spec label="default">
-            <Label htmlFor="k-default" className="mb-2">Amount</Label>
+            <Label htmlFor="k-default" className="mb-2">
+              Amount
+            </Label>
             <Input id="k-default" placeholder="0.0000" />
           </Spec>
 
           <Spec label="mono — addresses, identifiers, piece bytes">
-            <Label htmlFor="k-mono" className="mb-2">Pay to</Label>
-            <Input className="font-mono text-sm tracking-tight" id="k-mono"  defaultValue="mn_shield-addr_test1vqqqq…8f3a91c7" />
+            <Label htmlFor="k-mono" className="mb-2">
+              Pay to
+            </Label>
+            <Input
+              className="font-mono text-sm tracking-tight"
+              id="k-mono"
+              defaultValue="mn_shield-addr_test1vqqqq…8f3a91c7"
+            />
           </Spec>
 
           <Spec label="aria-invalid — with the message beside it">
-            <Label htmlFor="k-bad" className="mb-2">Amount</Label>
+            <Label htmlFor="k-bad" className="mb-2">
+              Amount
+            </Label>
             <Input id="k-bad" aria-invalid="true" aria-describedby="k-bad-note" defaultValue="12.5" />
             <p id="k-bad-note" className="m-0 mt-1.5 text-sm text-destructive">
               That is more than this wallet holds.
@@ -37,14 +47,18 @@ export function FieldsChapter(): ReactNode {
           </Spec>
 
           <Spec label="disabled and read-only">
-            <Label htmlFor="k-dis" className="mb-2">Network</Label>
+            <Label htmlFor="k-dis" className="mb-2">
+              Network
+            </Label>
             <Input id="k-dis" disabled defaultValue="Not available yet" />
             <Input className="mt-2" readOnly defaultValue="Read-only — shown, not editable" />
           </Spec>
 
           <Spec label="textarea" className="md:col-span-2">
-            <Label htmlFor="k-ta" className="mb-2">Paste a recovery piece</Label>
-            <Textarea className="font-mono text-sm tracking-tight" id="k-ta"  placeholder="801f 4a2c 9b77 …" />
+            <Label htmlFor="k-ta" className="mb-2">
+              Paste a recovery piece
+            </Label>
+            <Textarea className="font-mono text-sm tracking-tight" id="k-ta" placeholder="801f 4a2c 9b77 …" />
           </Spec>
         </div>
       </Chapter>
@@ -63,26 +77,19 @@ export function AlertsChapter(): ReactNode {
               close button."
       >
         <div className="flex flex-col gap-3">
-          <StatusAlert
-            tone="warning"
-            title="If you lose this device your money is gone"
-            role={null}
-          >
-            Nobody can recover it, including us. Cutting your account into pieces takes about
-            five minutes and a printer.
+          <StatusAlert tone="warning" title="If you lose this device your money is gone" role={null}>
+            Nobody can recover it, including us. Cutting your account into pieces takes about five minutes and a
+            printer.
           </StatusAlert>
 
           {ALERT_TONES.map((tone) => (
             <StatusAlert key={tone} tone={tone} title={`tone="${tone}"`} role={null}>
-              One sentence of body text, in muted, so the title carries the fact and this
-              carries the detail.
+              One sentence of body text, in muted, so the title carries the fact and this carries the detail.
             </StatusAlert>
           ))}
 
           <StatusAlert tone="danger" title="A payment did not go through" role={null}>
-            <p className="m-0">
-              The reason is printed verbatim and is never blank — that is the rule.
-            </p>
+            <p className="m-0">The reason is printed verbatim and is never blank — that is the rule.</p>
           </StatusAlert>
 
           <StatusAlert tone="info" role={null}>
@@ -107,7 +114,11 @@ export function EmptyStatesChapter(): ReactNode {
           <EmptyState
             icon={GLYPH.inbox}
             title="No payments yet"
-            action={<Button type="button" variant="default" size="sm">Show your address</Button>}
+            action={
+              <Button type="button" variant="default" size="sm">
+                Show your address
+              </Button>
+            }
           >
             When money arrives or leaves, it appears here.
           </EmptyState>
@@ -130,10 +141,14 @@ export function ListRowsChapter(): ReactNode {
               displays is neither — so it is not a focus stop that does nothing."
       >
         <Card>
-          <CardContent >
+          <CardContent>
             <RowItems>
               <RowItem
-                leading={<span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground"><Glyph icon={GLYPH.send} className="size-4" /></span>}
+                leading={
+                  <span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                    <Glyph icon={GLYPH.send} className="size-4" />
+                  </span>
+                }
                 title="Sent to mn_shield-addr_test1…8f3a"
                 subtitle="21 August, 09:14"
                 trailing="−12.0000 tNIGHT"
@@ -141,7 +156,11 @@ export function ListRowsChapter(): ReactNode {
                 href="#/kit"
               />
               <RowItem
-                leading={<span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground"><Glyph icon={GLYPH.send} className="size-4" /></span>}
+                leading={
+                  <span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                    <Glyph icon={GLYPH.send} className="size-4" />
+                  </span>
+                }
                 title="Sent to mn_shield-addr_test1…c701"
                 subtitle="21 August, 09:02"
                 trailing="−3.5000 tNIGHT"
@@ -176,42 +195,45 @@ export function SectionChapter(): ReactNode {
         <div className="grid gap-6 md:grid-cols-2">
           <Spec label="tone: default" badge={<StatusBadge>no box</StatusBadge>}>
             <Section
-              list={false} box={false} aria-label="Network and hosts"
+              list={false}
+              box={false}
+              aria-label="Network and hosts"
               title="Network and hosts"
               description="What this wallet is connected to. All of it is fixed, and none of it is a preference."
             >
               <Card>
-                <CardContent >
+                <CardContent>
                   <RowItems>
                     <RowItem title="Network" trailing={<span className="font-mono">{NETWORK_LABEL}</span>} />
-                    <RowItem title="Balances are read from" trailing={<span className="font-mono">indexer.example</span>} />
+                    <RowItem
+                      title="Balances are read from"
+                      trailing={<span className="font-mono">indexer.example</span>}
+                    />
                   </RowItems>
                 </CardContent>
               </Card>
             </Section>
           </Spec>
-          <Spec
-            label="tone: danger"
-            badge={<StatusBadge tone="failed">the only one that is not cosmetic</StatusBadge>}
-          >
+          <Spec label="tone: danger" badge={<StatusBadge tone="failed">the only one that is not cosmetic</StatusBadge>}>
             <div data-danger-frame className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 md:p-5">
-            <Section
-              list={false}
-              box={false}
-              aria-label="Forget this wallet"
-              data-tone="danger"
-              title={<span className="text-destructive">Forget this wallet</span>}
-              description="Clears this browser and everything in it. Nothing on the chain changes."
-            >
-              <p className="m-0 text-sm text-foreground">
-                Apart, so a destructive region cannot be mistaken for the rows above it.
-                It is a REGION and not an alert: an alert is a sentence that has just
-                become true, and this is always here.
-              </p>
-              <div>
-                <Button type="button" variant="destructive" disabled>Forget this wallet</Button>
-              </div>
-            </Section>
+              <Section
+                list={false}
+                box={false}
+                aria-label="Forget this wallet"
+                data-tone="danger"
+                title={<span className="text-destructive">Forget this wallet</span>}
+                description="Clears this browser and everything in it. Nothing on the chain changes."
+              >
+                <p className="m-0 text-sm text-foreground">
+                  Apart, so a destructive region cannot be mistaken for the rows above it. It is a REGION and not an
+                  alert: an alert is a sentence that has just become true, and this is always here.
+                </p>
+                <div>
+                  <Button type="button" variant="destructive" disabled>
+                    Forget this wallet
+                  </Button>
+                </div>
+              </Section>
             </div>
           </Spec>
         </div>
@@ -246,16 +268,11 @@ export function ActionTilesChapter(): ReactNode {
             says="A button — Space and Enter both work"
           />
           {/* THE SPECIMEN CARRIES THE PHRASE THE WALLET USES, because the
-            * gallery is what the next screen is copied from. `Coming soon` is
-            * what a planned feature is called — `screens/explore.tsx` carries
-            * the decision — and a specimen still reading `Not built yet` is
-            * how the losing phrase gets copied back in. */}
-          <ShortcutTile
-            onClick={() => undefined}
-            glyph={GLYPH.earn}
-            label="A quiet tile"
-            says="Coming soon"
-          />
+           * gallery is what the next screen is copied from. `Coming soon` is
+           * what a planned feature is called — `screens/explore.tsx` carries
+           * the decision — and a specimen still reading `Not built yet` is
+           * how the losing phrase gets copied back in. */}
+          <ShortcutTile onClick={() => undefined} glyph={GLYPH.earn} label="A quiet tile" says="Coming soon" />
           <ShortcutTile
             href="#/kit"
             glyph={GLYPH.contacts}

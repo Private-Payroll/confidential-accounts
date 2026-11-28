@@ -36,7 +36,15 @@ export async function foundingSeatOf(identity: Identity, label: CompanyLabel): P
   const { MidnightCommitments } = await import('../../../../src/midnight/commitments.js');
   const s = seatAt(identity, label, FOUNDING_SEAT, MidnightCommitments.allVaults(), MidnightCommitments);
   return Object.freeze({
-    signingSecret: s.signingSecret, wrappingSecret: s.wrappingSecret, salt: s.salt, blinding: s.blinding, walletKey: s.walletKey, scope: s.scope,
-    signingPublicKey: s.signingPublicKey, wrappingPublicKey: s.wrappingPublicKey, leaf: s.leaf, publicKey: s.publicKey,
+    signingSecret: s.signingSecret,
+    wrappingSecret: s.wrappingSecret,
+    salt: s.salt,
+    blinding: s.blinding,
+    walletKey: s.walletKey,
+    scope: s.scope,
+    signingPublicKey: s.signingPublicKey,
+    wrappingPublicKey: s.wrappingPublicKey,
+    leaf: s.leaf,
+    publicKey: s.publicKey
   });
 }

@@ -21,6 +21,12 @@ export interface EndedHere {
 
 let last: EndedHere | null = null;
 
-export function keepTheEnd(end: EndedHere): void { last = end; }
-export function theEndHere(): EndedHere | null { return last; }
-export function forgetTheEnd(): void { last = null; }
+export function keepTheEnd(end: EndedHere): void {
+  last = end;
+}
+export function theEndHere(): EndedHere | null {
+  return last;
+}
+export function forgetTheEnd(): void {
+  last = null;
+}

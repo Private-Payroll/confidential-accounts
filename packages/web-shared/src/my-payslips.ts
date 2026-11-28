@@ -1,7 +1,9 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  openPayslip, NOT_YOUR_PAYSLIP,
-  type SealedPayslip, type OpenedPayslip,
+  openPayslip,
+  NOT_YOUR_PAYSLIP,
+  type SealedPayslip,
+  type OpenedPayslip
 } from '../../../src/core/payslip-open.js';
 import type { WrappingKeypair } from '../../../src/core/crypto.js';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
@@ -35,13 +37,16 @@ const asThisPage = (init: RequestInit = {}): RequestInit => ({
   headers: {
     'content-type': 'application/json',
     [PAYSLIP_PAGE_HEADER]: PAYSLIP_PAGE_VERSION,
-    ...((init.headers as Record<string, string> | undefined) ?? {}),
-  },
+    ...((init.headers as Record<string, string> | undefined) ?? {})
+  }
 });
 
 /** Thrown when the service says this page is older than it. Never caught as one address's failure. */
 class PageOutOfDate extends Error {
-  constructor() { super(PAGE_OUT_OF_DATE); this.name = 'PageOutOfDate'; }
+  constructor() {
+    super(PAGE_OUT_OF_DATE);
+    this.name = 'PageOutOfDate';
+  }
 }
 
 const readJson = async (r: Response, doing: string): Promise<any> => {
@@ -73,14 +78,22 @@ interface MyPayslips {
  * @param period the month asked about, written YYYY-MM.
  */
 export async function fetchMyPayslips(
-  keys: WrappingKeypair, from: string, period: string, fetcher: Fetch = fetch,
+  keys: WrappingKeypair,
+  from: string,
+  period: string,
+  fetcher: Fetch = fetch
 ): Promise<MyPayslips> {
   const address = readCompanyLabel(from);
-  if (address === null) throw new Error('that is not a company\'s label, so no payslips were asked for.');
-  if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(period)) throw new Error('that is not a month written YYYY-MM, so no payslips were asked for.');
+  if (address === null) throw new Error("that is not a company's label, so no payslips were asked for.");
+  if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(period))
+    throw new Error('that is not a month written YYYY-MM, so no payslips were asked for.');
   const sealed: SealedPayslip[] = await readJson(
-    await fetcher(`/api/payslips?company=${encodeURIComponent(address)}&period=${encodeURIComponent(period)}`, asThisPage()),
-    'fetching the company\'s payslips');
+    await fetcher(
+      `/api/payslips?company=${encodeURIComponent(address)}&period=${encodeURIComponent(period)}`,
+      asThisPage()
+    ),
+    "fetching the company's payslips"
+  );
   const opened: OpenedPayslip[] = [];
   let unopened = 0;
   let refused = 0;
@@ -93,7 +106,10 @@ export async function fetchMyPayslips(
       unopened += 1;
       continue;
     }
-    if (slip.issuedBy !== address) { refused += 1; continue; }
+    if (slip.issuedBy !== address) {
+      refused += 1;
+      continue;
+    }
     opened.push(slip);
   }
   return { opened, sealed, unopened, refused };
@@ -143,11 +159,13 @@ type OnTheChain = 'paid' | 'not-yet' | 'cannot-tell';
  *   "not yet".
  */
 export async function paymentsOnTheChain(
-  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  slips: OpenedPayslip[],
+  reader: ChainReader | null,
+  indexer: WalletIndexer | null,
   confirmed: (slip: OpenedPayslip) => boolean,
   nowSeconds: number = Math.floor(Date.now() / 1000),
   registry: AssetRegistry = assets,
-  openedFor?: Iterable<string>,
+  openedFor?: Iterable<string>
 ): Promise<Map<string, OnTheChain>> {
   return (await readTheChain(slips, reader, indexer, confirmed, nowSeconds, registry, openedFor)).chain;
 }
@@ -176,8 +194,11 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
   const form = paidPublicly(paidTo) ? 'unshielded' : 'shielded';
   try {
     return {
-      paidTo, token: ledgerTokenOf(s.payslip.asset, form, registry) as Hex, amount: s.payslip.amount.toString(),
-      nonce: r.nonce, blinding: r.blinding,
+      paidTo,
+      token: ledgerTokenOf(s.payslip.asset, form, registry) as Hex,
+      amount: s.payslip.amount.toString(),
+      nonce: r.nonce,
+      blinding: r.blinding
     };
   } catch {
     return null;
@@ -206,13 +227,15 @@ const paymentOf = (s: OpenedPayslip, registry: AssetRegistry): PayslipPayment | 
  *   no contract.
  */
 async function readTheChain(
-  slips: OpenedPayslip[], reader: ChainReader | null, indexer: WalletIndexer | null,
+  slips: OpenedPayslip[],
+  reader: ChainReader | null,
+  indexer: WalletIndexer | null,
   /** Whether the payee's own wallet confirmed it holds the address this slip was paid to. */
   confirmed: (slip: OpenedPayslip) => boolean,
   nowSeconds: number = Math.floor(Date.now() / 1000),
   /** The assets this page knows, the same registry the service pays from. */
   registry: AssetRegistry = assets,
-  openedFor?: Iterable<string>,
+  openedFor?: Iterable<string>
 ): Promise<{ chain: Map<string, OnTheChain>; couldNotRead: boolean }> {
   const out = new Map<string, OnTheChain>();
   let couldNotRead = false;
@@ -223,28 +246,51 @@ async function readTheChain(
     const company = s.receipt.company;
     /* A contract this page did not open for the company is never read, whatever else is known,
      * and nor is one the receipt says belongs to a company other than the one the slip names. */
-    if (company === null || !opened.has(company)
-      || s.receipt.label === null || s.receipt.label !== (s.issuedBy ?? null)) {
-      out.set(s.runId, 'cannot-tell'); continue;
+    if (
+      company === null ||
+      !opened.has(company) ||
+      s.receipt.label === null ||
+      s.receipt.label !== (s.issuedBy ?? null)
+    ) {
+      out.set(s.runId, 'cannot-tell');
+      continue;
     }
-    if (reader === null || indexer === null) { couldNotRead = true; out.set(s.runId, 'cannot-tell'); continue; }
+    if (reader === null || indexer === null) {
+      couldNotRead = true;
+      out.set(s.runId, 'cannot-tell');
+      continue;
+    }
     /* An address the wallet did not confirm is never asked about: nothing read for it could be "not yet". */
     const payment = confirmedSafely(confirmed, s) ? paymentOf(s, registry) : null;
-    if (payment === null) { out.set(s.runId, 'cannot-tell'); continue; }
+    if (payment === null) {
+      out.set(s.runId, 'cannot-tell');
+      continue;
+    }
     byCompany.set(company, [...(byCompany.get(company) ?? []), { slip: s, payment }]);
   }
   for (const [company, asked] of byCompany) {
-    const mine = asked.map(a => a.slip);
+    const mine = asked.map((a) => a.slip);
     let recorded: boolean[] | null;
     try {
-      recorded = await reader!.recorded(indexer!, company, asked.map(a => a.payment));
+      recorded = await reader!.recorded(
+        indexer!,
+        company,
+        asked.map((a) => a.payment)
+      );
     } catch {
       recorded = null;
     }
     mine.forEach((s, i) => {
       const r = recorded?.[i];
-      if (recorded === null || typeof r !== 'boolean') { couldNotRead = true; out.set(s.runId, 'cannot-tell'); return; }
-      if (r) { out.set(s.runId, 'paid'); return; }
+      if (recorded === null || typeof r !== 'boolean') {
+        couldNotRead = true;
+        out.set(s.runId, 'cannot-tell');
+        return;
+      }
+      if (r) {
+        out.set(s.runId, 'paid');
+        return;
+      }
       const until = s.receipt!.until;
       out.set(s.runId, until !== null && nowSeconds < until ? 'not-yet' : 'cannot-tell');
     });
@@ -263,7 +309,11 @@ const openedAddresses = (list: Iterable<string | null>): Set<string> => {
 };
 
 const confirmedSafely = (confirmed: (slip: OpenedPayslip) => boolean, s: OpenedPayslip): boolean => {
-  try { return confirmed(s) === true; } catch { return false; }
+  try {
+    return confirmed(s) === true;
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -272,12 +322,11 @@ const confirmedSafely = (confirmed: (slip: OpenedPayslip) => boolean, s: OpenedP
  * anything; one that does not carry the label is refused there.
  */
 export async function payslipAddressesFor(
-  company: string, fetcher: Fetch = fetch,
+  company: string,
+  fetcher: Fetch = fetch
 ): Promise<Array<{ label: CompanyLabel; account: AccountAddress | null }>> {
-  const r = await fetcher(
-    `/api/payslips/addresses?company=${encodeURIComponent(company)}`,
-    asThisPage());
-  const body = await readJson(r, 'asking which account carries a company\'s label');
+  const r = await fetcher(`/api/payslips/addresses?company=${encodeURIComponent(company)}`, asThisPage());
+  const body = await readJson(r, "asking which account carries a company's label");
   const out: Array<{ label: CompanyLabel; account: AccountAddress | null }> = [];
   for (const c of Array.isArray(body.companies) ? body.companies : []) {
     const label = readCompanyLabel(c?.label);
@@ -310,7 +359,8 @@ export const onlyCompanyLabels = (list: unknown): CompanyLabel[] =>
     : [];
 
 export function rememberedCompanies(
-  person: string, storage: Pick<Storage, 'getItem'> | null = safeStorage(),
+  person: string,
+  storage: Pick<Storage, 'getItem'> | null = safeStorage()
 ): string[] {
   try {
     const raw = storage?.getItem(REMEMBERED + person);
@@ -321,5 +371,9 @@ export function rememberedCompanies(
 }
 
 function safeStorage(): Storage | null {
-  try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
 }

@@ -13,8 +13,13 @@ import { builderIsUp } from './proofs-running.js';
 let started: Promise<VaultBuilderClient> | null = null;
 
 export const theVaultBuilder = (): Promise<VaultBuilderClient> => {
-  started ??= startVaultBuilder(NETWORK).then((client) => { builderIsUp(client); return client; });
-  started.catch(() => { started = null; });
+  started ??= startVaultBuilder(NETWORK).then((client) => {
+    builderIsUp(client);
+    return client;
+  });
+  started.catch(() => {
+    started = null;
+  });
   return started;
 };
 

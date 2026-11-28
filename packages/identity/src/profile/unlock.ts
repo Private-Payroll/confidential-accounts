@@ -220,10 +220,7 @@ export class UnlockError extends Error {
 const originOf = (ask: { readonly requester: { readonly origin: string } }): string => {
   const origin = ask.requester.origin;
   if (!usableOrigin(origin)) {
-    throw new UnlockError(
-      'origin-not-usable',
-      whyNotUsable(origin)
-      + ' No key has been given.');
+    throw new UnlockError('origin-not-usable', whyNotUsable(origin) + ' No key has been given.');
   }
   return origin;
 };
@@ -242,8 +239,9 @@ const companyOf = (ask: { readonly company: CompanyLabel }): CompanyLabel => {
   if (label === null) {
     throw new UnlockError(
       'company-not-usable',
-      'this asks for the key to a company this wallet cannot make sense of. A company is '
-      + 'named by its label, and that is not one. Nothing has been given.');
+      'this asks for the key to a company this wallet cannot make sense of. A company is ' +
+        'named by its label, and that is not one. Nothing has been given.'
+    );
   }
   return label;
 };
@@ -259,7 +257,8 @@ const accountOf = (ask: { readonly account?: AccountAddress | null }): AccountAd
   if (account === null) {
     throw new UnlockError(
       'company-not-usable',
-      'this names the company\'s account by something that is not an address. Nothing has been given.');
+      "this names the company's account by something that is not an address. Nothing has been given."
+    );
   }
   return account;
 };
@@ -345,8 +344,11 @@ export interface WalletIndexer {
  *   the message; the addresses themselves do not.
  */
 export function releaseFor(
-  identity: Identity, ask: UnlockRequest, at: number, indexer?: WalletIndexer,
-  receiving?: readonly string[],
+  identity: Identity,
+  ask: UnlockRequest,
+  at: number,
+  indexer?: WalletIndexer,
+  receiving?: readonly string[]
 ): UnlockRelease {
   return Object.freeze({
     schema: RELEASE_SCHEMA,
@@ -361,7 +363,11 @@ export function releaseFor(
       : { indexer: Object.freeze({ indexerUri: indexer.indexerUri, indexerWsUri: indexer.indexerWsUri }) }),
     ...(receiving === undefined
       ? {}
-      : { held: Object.freeze(heldAddressList({ nonce: ask.nonce, origin: originOf(ask), company: companyOf(ask) }, receiving)) }),
+      : {
+          held: Object.freeze(
+            heldAddressList({ nonce: ask.nonce, origin: originOf(ask), company: companyOf(ask) }, receiving)
+          )
+        })
   });
 }
 
@@ -376,32 +382,29 @@ const MAX_INDEXER_ADDRESS = 512;
 export const walletIndexerOf = (said: unknown): WalletIndexer | null => {
   if (typeof said !== 'object' || said === null) return null;
   const { indexerUri, indexerWsUri } = said as Record<string, unknown>;
-  const usable = (v: unknown): v is string =>
-    typeof v === 'string' && v.length > 0 && v.length <= MAX_INDEXER_ADDRESS;
+  const usable = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_INDEXER_ADDRESS;
   return usable(indexerUri) && usable(indexerWsUri) ? { indexerUri, indexerWsUri } : null;
 };
 
 /* ------------------------- reading one, over there ------------------------ */
 
 export type ReleaseFailure =
-  | 'not-a-release'
-  | 'origin-mismatch'
-  | 'company-mismatch'
-  | 'nonce-mismatch'
-  | 'unusable-key';
+  'not-a-release' | 'origin-mismatch' | 'company-mismatch' | 'nonce-mismatch' | 'unusable-key';
 
 export type ReleaseRead =
   | {
-    readonly ok: true; readonly key: Uint8Array; readonly at: number;
-    /** Where the wallet reads the chain, or `null` when it did not say. */
-    readonly indexer: WalletIndexer | null;
-    /**
-     * The wallet's digests of the addresses it holds, under the nonce this
-     * page chose, its origin and the company it asked about; `null` when it did not say or said something that is not a
-     * list of the fixed length. Checked with `listHolds`.
-     */
-    readonly held: readonly string[] | null;
-  }
+      readonly ok: true;
+      readonly key: Uint8Array;
+      readonly at: number;
+      /** Where the wallet reads the chain, or `null` when it did not say. */
+      readonly indexer: WalletIndexer | null;
+      /**
+       * The wallet's digests of the addresses it holds, under the nonce this
+       * page chose, its origin and the company it asked about; `null` when it did not say or said something that is not a
+       * list of the fixed length. Checked with `listHolds`.
+       */
+      readonly held: readonly string[] | null;
+    }
   | { readonly ok: false; readonly code: ReleaseFailure; readonly says: string };
 
 /**
@@ -424,7 +427,7 @@ export function readRelease(
     readonly forCompany: CompanyLabel;
     /** The account it named as carrying that label, or null when it named none. */
     readonly forAccount: AccountAddress | null;
-  },
+  }
 ): ReleaseRead {
   const body = message as UnlockRelease | null;
   if (typeof body !== 'object' || body === null || body.schema !== RELEASE_SCHEMA) {
@@ -434,8 +437,9 @@ export function readRelease(
     return {
       ok: false,
       code: 'origin-mismatch',
-      says: `this key was released for ${String(body.origin)} and was received at `
-        + `${expecting.atOrigin}. It is refused.`,
+      says:
+        `this key was released for ${String(body.origin)} and was received at ` +
+        `${expecting.atOrigin}. It is refused.`
     };
   }
   /* A label has one spelling, so it is compared exactly; the account is read
@@ -447,16 +451,17 @@ export function readRelease(
     return {
       ok: false,
       code: 'company-mismatch',
-      says: 'this key opens a different company from the one that was asked about. It is '
-        + 'refused rather than used, because a key used against the wrong company seals '
-        + 'records nobody can open again.',
+      says:
+        'this key opens a different company from the one that was asked about. It is ' +
+        'refused rather than used, because a key used against the wrong company seals ' +
+        'records nobody can open again.'
     };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return {
       ok: false,
       code: 'nonce-mismatch',
-      says: 'this answers a different request from the one that was sent.',
+      says: 'this answers a different request from the one that was sent.'
     };
   }
   let key: Uint8Array;
@@ -469,14 +474,18 @@ export function readRelease(
     return {
       ok: false,
       code: 'unusable-key',
-      says: `a released key is ${KEY_BYTES} bytes and that one is ${key.length}.`,
+      says: `a released key is ${KEY_BYTES} bytes and that one is ${key.length}.`
     };
   }
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-a-release', says: 'that is not a released key.' };
   }
   return {
-    ok: true, key, at: body.at, indexer: walletIndexerOf(body.indexer), held: readHeldAddressList(body.held),
+    ok: true,
+    key,
+    at: body.at,
+    indexer: walletIndexerOf(body.indexer),
+    held: readHeldAddressList(body.held)
   };
 }
 
@@ -560,8 +569,9 @@ const personOf = (ask: { readonly person: string }): string => {
   if (typeof person !== 'string' || !PERSON.test(person)) {
     throw new UnlockError(
       'person-not-usable',
-      'this asks to read your saved keys at a site, and does not name '
-      + 'you in a way this wallet can use. Nothing has been given.');
+      'this asks to read your saved keys at a site, and does not name ' +
+        'you in a way this wallet can use. Nothing has been given.'
+    );
   }
   return person;
 };
@@ -599,7 +609,8 @@ export function readSealedKeyring(value: unknown): SealedKeyring | null {
   const { iv, tag, body } = v;
   if (typeof iv !== 'string' || iv.length !== 24 || !HEX_TEXT.test(iv)) return null;
   if (typeof tag !== 'string' || tag.length > 32 || !HEX_TEXT.test(tag)) return null;
-  if (typeof body !== 'string' || body.length < 32 || body.length > MOST_SEALED_KEYRING || !HEX_TEXT.test(body)) return null;
+  if (typeof body !== 'string' || body.length < 32 || body.length > MOST_SEALED_KEYRING || !HEX_TEXT.test(body))
+    return null;
   return Object.freeze({ iv, tag, body });
 }
 
@@ -623,7 +634,10 @@ export function readKeyringHandedIn(value: unknown): KeyringHandedIn | null {
  * to check an ask and to open a copy sealed before
  * (apps/wallet/src/keyring/seal-key.ts); no answer carries it.
  */
-export function keyringKeyFor<A extends Pick<KeyringRequest, 'requester' | 'person'>>(identity: Identity, ask: A): KeyringKey {
+export function keyringKeyFor<A extends Pick<KeyringRequest, 'requester' | 'person'>>(
+  identity: Identity,
+  ask: A
+): KeyringKey {
   originOf(ask);
   const person = personOf(ask);
   const parent = identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
@@ -714,10 +728,12 @@ const MOST_SEATS_READ = 256;
 const seatShownFrom = (value: unknown): SeatShown | null => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (Object.keys(v).some((k) => !['signerId', 'signingPublicKey', 'wrappingPublicKey', 'scope'].includes(k))) return null;
+  if (Object.keys(v).some((k) => !['signerId', 'signingPublicKey', 'wrappingPublicKey', 'scope'].includes(k)))
+    return null;
   const { signerId, signingPublicKey, wrappingPublicKey, scope } = v;
   if (typeof signerId !== 'string' || !AN_ID.test(signerId)) return null;
-  for (const h of [signingPublicKey, wrappingPublicKey, scope]) if (typeof h !== 'string' || !HEX64_TEXT.test(h)) return null;
+  for (const h of [signingPublicKey, wrappingPublicKey, scope])
+    if (typeof h !== 'string' || !HEX64_TEXT.test(h)) return null;
   return Object.freeze({ signerId, signingPublicKey, wrappingPublicKey, scope } as SeatShown);
 };
 
@@ -741,7 +757,8 @@ export function readKeysRead(value: unknown): KeysRead | null {
   }
   const viewingRead: Record<string, string> = {};
   for (const [id, key] of Object.entries(viewing as Record<string, unknown>)) {
-    if (!Object.prototype.hasOwnProperty.call(seatsRead, id) || typeof key !== 'string' || !HEX64_TEXT.test(key)) return null;
+    if (!Object.prototype.hasOwnProperty.call(seatsRead, id) || typeof key !== 'string' || !HEX64_TEXT.test(key))
+      return null;
     viewingRead[id] = key;
   }
   let again: KeysRead['resealed'] = null;
@@ -750,13 +767,22 @@ export function readKeysRead(value: unknown): KeysRead | null {
     const r = resealed as Record<string, unknown>;
     const sealed = readSealedKeyring(r['sealed']);
     const ifVersion = r['ifVersion'];
-    if (sealed === null || typeof ifVersion !== 'number' || !Number.isSafeInteger(ifVersion) || ifVersion < 0
-      || Object.keys(r).some((k) => k !== 'sealed' && k !== 'ifVersion')) return null;
+    if (
+      sealed === null ||
+      typeof ifVersion !== 'number' ||
+      !Number.isSafeInteger(ifVersion) ||
+      ifVersion < 0 ||
+      Object.keys(r).some((k) => k !== 'sealed' && k !== 'ifVersion')
+    )
+      return null;
     again = Object.freeze({ sealed, ifVersion });
   }
   return Object.freeze({
-    seats: Object.freeze(seatsRead), viewing: Object.freeze(viewingRead),
-    metadata: metadata as Readonly<Record<string, unknown>>, holder, resealed: again,
+    seats: Object.freeze(seatsRead),
+    viewing: Object.freeze(viewingRead),
+    metadata: metadata as Readonly<Record<string, unknown>>,
+    holder,
+    resealed: again
   });
 }
 
@@ -766,7 +792,10 @@ const KEYRING_HOLDER_SALT = new TextEncoder().encode('midnight-identity/keyring-
  * A PUBLIC NAME FOR THIS WALLET AND PERSON, so a page can tell a second answer came from the wallet that gave the
  * first, without holding any key: derived from the keyring's parent under its own salt, so it opens nothing.
  */
-export function keyringHolderFor<A extends Pick<KeyringRequest, 'requester' | 'person'>>(identity: Identity, ask: A): string {
+export function keyringHolderFor<A extends Pick<KeyringRequest, 'requester' | 'person'>>(
+  identity: Identity,
+  ask: A
+): string {
   originOf(ask);
   const person = personOf(ask);
   const parent = identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
@@ -796,40 +825,51 @@ export function withTheKeysRead(release: KeyringRelease, read: KeysRead): Keyrin
  * the company with is added to the answer by `withTheFounding`.
  */
 export function keyringReleaseFor(
-  identity: Identity, ask: KeyringRequest, at: number,
+  identity: Identity,
+  ask: KeyringRequest,
+  at: number,
   holds: (address: string) => boolean,
-  draw: () => CompanyLabel = drawCompanyLabel,
+  draw: () => CompanyLabel = drawCompanyLabel
 ): KeyringRelease {
   const origin = originOf(ask);
   if (ask.signedInAs !== null && !holds(ask.signedInAs)) {
     throw new UnlockError(
       'address-not-held',
-      `the page at ${origin} signed in as an address that none of this wallet's accounts has, `
-      + 'so this is not the wallet it signed in with. A key from this wallet would not open '
-      + 'anything saved there by the wallet that did, and anything saved under it could only '
-      + 'ever be opened with this one. Nothing has been given.');
+      `the page at ${origin} signed in as an address that none of this wallet's accounts has, ` +
+        'so this is not the wallet it signed in with. A key from this wallet would not open ' +
+        'anything saved there by the wallet that did, and anything saved under it could only ' +
+        'ever be opened with this one. Nothing has been given.'
+    );
   }
   personOf(ask);
   if (ask.drawLabel && ask.company !== null) {
     throw new UnlockError(
       'company-not-usable',
-      'this asks this wallet both to start a new company and for the keys of one that exists. '
-      + 'Nothing has been given.');
+      'this asks this wallet both to start a new company and for the keys of one that exists. ' +
+        'Nothing has been given.'
+    );
   }
-  const company: CompanyLabel | null = ask.drawLabel ? draw() : (ask.company === null ? null : companyOf(ask as { company: CompanyLabel }));
+  const company: CompanyLabel | null = ask.drawLabel
+    ? draw()
+    : ask.company === null
+      ? null
+      : companyOf(ask as { company: CompanyLabel });
   const account = company === null || ask.drawLabel ? null : accountOf(ask);
-  const companyKey = company === null
-    ? null
-    : toBase64Url(unlockKeyFor(identity, {
-      schema: ask.schema,
-      kind: 'unlock',
-      requester: ask.requester,
-      purpose: ask.purpose,
-      nonce: ask.nonce,
-      expiresAt: ask.expiresAt,
-      company,
-      account,
-    }));
+  const companyKey =
+    company === null
+      ? null
+      : toBase64Url(
+          unlockKeyFor(identity, {
+            schema: ask.schema,
+            kind: 'unlock',
+            requester: ask.requester,
+            purpose: ask.purpose,
+            nonce: ask.nonce,
+            expiresAt: ask.expiresAt,
+            company,
+            account
+          })
+        );
   return Object.freeze({
     schema: KEYRING_RELEASE_SCHEMA,
     origin,
@@ -840,35 +880,45 @@ export function keyringReleaseFor(
     nonce: ask.nonce,
     at,
     companyKey,
-    committeeKey: company === null ? null : committeeKeyFor(identity, company),
+    committeeKey: company === null ? null : committeeKeyFor(identity, company)
   });
 }
 
 /** A release for a company this wallet founded, carrying what it founded the company with and the saved keys it sealed again. */
 export function withTheFounding(
-  release: KeyringRelease, founding: { readonly founded: unknown; readonly sealed: SealedKeyring; readonly ifVersion: number },
+  release: KeyringRelease,
+  founding: { readonly founded: unknown; readonly sealed: SealedKeyring; readonly ifVersion: number }
 ): KeyringRelease {
-  return Object.freeze({ ...release, founded: founding.founded, sealed: founding.sealed, ifVersion: founding.ifVersion });
+  return Object.freeze({
+    ...release,
+    founded: founding.founded,
+    sealed: founding.sealed,
+    ifVersion: founding.ifVersion
+  });
 }
 
 export type KeyringRead =
   | {
-    readonly ok: true;
-    readonly companyKey: Uint8Array | null;
-    /** Public, and present exactly when a company key is. */
-    readonly committeeKey: SignatureVerifyingKey | null;
-    /** The company the keys are for: the one asked about, or the one the wallet drew. */
-    readonly company: CompanyLabel | null;
-    readonly at: number;
-    /**
-     * Present exactly when the ask started a company: what the wallet founded it
-     * with (read for its shape by the page that sends it on), and the saved keys
-     * it sealed again with the new seat in them, over the service's version given.
-     */
-    readonly founding: { readonly founded: Readonly<Record<string, unknown>>; readonly sealed: SealedKeyring; readonly ifVersion: number } | null;
-    /** What the wallet read from the saved keys the ask handed in; null when it handed none. */
-    readonly read: KeysRead | null;
-  }
+      readonly ok: true;
+      readonly companyKey: Uint8Array | null;
+      /** Public, and present exactly when a company key is. */
+      readonly committeeKey: SignatureVerifyingKey | null;
+      /** The company the keys are for: the one asked about, or the one the wallet drew. */
+      readonly company: CompanyLabel | null;
+      readonly at: number;
+      /**
+       * Present exactly when the ask started a company: what the wallet founded it
+       * with (read for its shape by the page that sends it on), and the saved keys
+       * it sealed again with the new seat in them, over the service's version given.
+       */
+      readonly founding: {
+        readonly founded: Readonly<Record<string, unknown>>;
+        readonly sealed: SealedKeyring;
+        readonly ifVersion: number;
+      } | null;
+      /** What the wallet read from the saved keys the ask handed in; null when it handed none. */
+      readonly read: KeysRead | null;
+    }
   | { readonly ok: false; readonly code: ReleaseFailure | 'person-mismatch'; readonly says: string };
 
 const readKeyBytes = (value: unknown): Uint8Array | null => {
@@ -916,7 +966,7 @@ export function readKeyringRelease(
      * wallet saying its read of the chain did not confirm it, and is taken as the saved keys opened alone.
      */
     readonly companyIfOnChain?: boolean;
-  },
+  }
 ): KeyringRead {
   const body = message as KeyringRelease | null;
   if (typeof body !== 'object' || body === null || body.schema !== KEYRING_RELEASE_SCHEMA) {
@@ -926,39 +976,48 @@ export function readKeyringRelease(
     return {
       ok: false,
       code: 'origin-mismatch',
-      says: `this key was released for ${String(body.origin)} and was received at `
-        + `${expecting.atOrigin}. It is refused.`,
+      says:
+        `this key was released for ${String(body.origin)} and was received at ` +
+        `${expecting.atOrigin}. It is refused.`
     };
   }
   if (body.person !== expecting.person || (body.signedInAs ?? null) !== expecting.signedInAs) {
     return {
       ok: false,
       code: 'person-mismatch',
-      says: 'this key was released for a different person, or for a different signed-in address, '
-        + 'from the one that was asked about. It is refused rather than used.',
+      says:
+        'this key was released for a different person, or for a different signed-in address, ' +
+        'from the one that was asked about. It is refused rather than used.'
     };
   }
   const given = body.company === null || body.company === undefined ? null : readCompanyLabel(body.company);
   const givenAccount = body.account === null || body.account === undefined ? null : readAccountAddress(body.account);
-  const withheld = expecting.companyIfOnChain === true && expecting.forCompany !== 'drawn'
-    && (body.company === null || body.company === undefined) && (body.account === null || body.account === undefined);
+  const withheld =
+    expecting.companyIfOnChain === true &&
+    expecting.forCompany !== 'drawn' &&
+    (body.company === null || body.company === undefined) &&
+    (body.account === null || body.account === undefined);
   const wanted = expecting.forCompany === 'drawn' ? given : withheld ? null : expecting.forCompany;
-  if (given !== wanted || (expecting.forCompany === 'drawn' && given === null)
-    || (body.company !== null && body.company !== undefined && given === null)
-    || givenAccount !== (expecting.forCompany === 'drawn' || withheld ? null : expecting.forAccount)) {
+  if (
+    given !== wanted ||
+    (expecting.forCompany === 'drawn' && given === null) ||
+    (body.company !== null && body.company !== undefined && given === null) ||
+    givenAccount !== (expecting.forCompany === 'drawn' || withheld ? null : expecting.forAccount)
+  ) {
     return {
       ok: false,
       code: 'company-mismatch',
-      says: 'this answer carries a key for a different company from the one that was asked about, '
-        + 'or for none. It is refused rather than used, because a key used against the wrong '
-        + 'company seals records nobody can open again.',
+      says:
+        'this answer carries a key for a different company from the one that was asked about, ' +
+        'or for none. It is refused rather than used, because a key used against the wrong ' +
+        'company seals records nobody can open again.'
     };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return {
       ok: false,
       code: 'nonce-mismatch',
-      says: 'this answers a different request from the one that was sent.',
+      says: 'this answers a different request from the one that was sent.'
     };
   }
   /* **A KEY THE SAVED KEYS OPEN WITH IS NEVER TAKEN**: an answer carrying one is refused, whoever sent it. */
@@ -966,7 +1025,7 @@ export function readKeyringRelease(
     return {
       ok: false,
       code: 'unusable-key',
-      says: 'this answer carries a key for your saved keys, which a wallet never gives a page. It is refused rather than used.',
+      says: 'this answer carries a key for your saved keys, which a wallet never gives a page. It is refused rather than used.'
     };
   }
   let companyKey: Uint8Array | null = null;
@@ -977,8 +1036,9 @@ export function readKeyringRelease(
       return {
         ok: false,
         code: 'unusable-key',
-        says: 'this answer gives a company key without the committee key that belongs beside it, '
-          + 'or with one that is not a committee key. It is refused rather than used.',
+        says:
+          'this answer gives a company key without the committee key that belongs beside it, ' +
+          'or with one that is not a committee key. It is refused rather than used.'
       };
     }
     companyKey = readKeyBytes(body.companyKey);
@@ -986,15 +1046,17 @@ export function readKeyringRelease(
       return {
         ok: false,
         code: 'unusable-key',
-        says: `a released company key is ${KEY_BYTES} bytes and that one is not.`,
+        says: `a released company key is ${KEY_BYTES} bytes and that one is not.`
       };
     }
-  } else if ((body.companyKey !== null && body.companyKey !== undefined)
-    || (body.committeeKey !== null && body.committeeKey !== undefined)) {
+  } else if (
+    (body.companyKey !== null && body.companyKey !== undefined) ||
+    (body.committeeKey !== null && body.committeeKey !== undefined)
+  ) {
     return {
       ok: false,
       code: 'company-mismatch',
-      says: 'this answer carries a company key nobody asked for. It is refused rather than used.',
+      says: 'this answer carries a company key nobody asked for. It is refused rather than used.'
     };
   }
   let founding: { founded: Readonly<Record<string, unknown>>; sealed: SealedKeyring; ifVersion: number } | null = null;
@@ -1002,21 +1064,33 @@ export function readKeyringRelease(
     const founded = body.founded;
     const sealed = readSealedKeyring(body.sealed);
     const ifVersion = body.ifVersion;
-    if (typeof founded !== 'object' || founded === null || Array.isArray(founded) || sealed === null
-      || typeof ifVersion !== 'number' || !Number.isSafeInteger(ifVersion) || ifVersion < 0) {
+    if (
+      typeof founded !== 'object' ||
+      founded === null ||
+      Array.isArray(founded) ||
+      sealed === null ||
+      typeof ifVersion !== 'number' ||
+      !Number.isSafeInteger(ifVersion) ||
+      ifVersion < 0
+    ) {
       return {
         ok: false,
         code: 'unusable-key',
-        says: 'your wallet drew a label for the new company and did not hand back what it founded the company with, '
-          + 'so nothing was created. Close the wallet\'s window, reload this page and start the company again.',
+        says:
+          'your wallet drew a label for the new company and did not hand back what it founded the company with, ' +
+          "so nothing was created. Close the wallet's window, reload this page and start the company again."
       };
     }
     founding = { founded: founded as Readonly<Record<string, unknown>>, sealed, ifVersion };
-  } else if ((body as { seat?: unknown }).seat !== undefined || body.founded !== undefined || body.sealed !== undefined) {
+  } else if (
+    (body as { seat?: unknown }).seat !== undefined ||
+    body.founded !== undefined ||
+    body.sealed !== undefined
+  ) {
     return {
       ok: false,
       code: 'company-mismatch',
-      says: 'this answer carries a seat or a founding nobody asked for, so it is refused and nothing was kept. Start again from the page.',
+      says: 'this answer carries a seat or a founding nobody asked for, so it is refused and nothing was kept. Start again from the page.'
     };
   }
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
@@ -1029,13 +1103,17 @@ export function readKeyringRelease(
       return {
         ok: false,
         code: 'unusable-key',
-        says: 'your wallet did not say what your saved keys hold in a form this page reads, so nothing from it was used. '
-          + 'Close the wallet\'s window, reload this page and try again.',
+        says:
+          'your wallet did not say what your saved keys hold in a form this page reads, so nothing from it was used. ' +
+          "Close the wallet's window, reload this page and try again."
       };
     }
   } else if (body.read !== undefined) {
-    return { ok: false, code: 'company-mismatch', says: 'this answer reads saved keys nobody handed in. It is refused rather than used.' };
+    return {
+      ok: false,
+      code: 'company-mismatch',
+      says: 'this answer reads saved keys nobody handed in. It is refused rather than used.'
+    };
   }
   return { ok: true, companyKey, committeeKey, company: wanted, at: body.at, founding, read };
 }
-

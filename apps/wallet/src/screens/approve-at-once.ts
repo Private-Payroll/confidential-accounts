@@ -22,7 +22,22 @@ import type { KeyAnswers } from './approve-key-answers.js';
  * (`takeApprovalBeforeThePasskey`).
  */
 export function useAtOnce(a: ApproveInputs & ApproveState & WhatIsAsked & Answers & KeyAnswers) {
-  const { port, channel, profile, opened, subwallet, thisWallet, request, companyOnChain, openedCompanyRead, consent, approve, release, addressesHeld, releaseKeyring } = a;
+  const {
+    port,
+    channel,
+    profile,
+    opened,
+    subwallet,
+    thisWallet,
+    request,
+    companyOnChain,
+    openedCompanyRead,
+    consent,
+    approve,
+    release,
+    addressesHeld,
+    releaseKeyring
+  } = a;
   /*
    * **AN ASK APPROVED BEFORE THE PASSKEY IS ANSWERED HERE WITHOUT ANOTHER PRESS** - only the identical ask
    * (`takeApprovalBeforeThePasskey`), and only once every check its own button waits for agrees and nothing warns
@@ -48,35 +63,57 @@ export function useAtOnce(a: ApproveInputs & ApproveState & WhatIsAsked & Answer
     /* A page's last sign-in recorded before wallets' places were kept gains this wallet's place, when this is the
      * wallet it names, so the next ask from that page opens it without the list. */
     if (request.kind !== 'sign-in') {
-      try { noteWalletId(port, request.requester.origin, thisWallet, openWalletId()); } catch { /* the next ask shows the list again */ }
+      try {
+        noteWalletId(port, request.requester.origin, thisWallet, openWalletId());
+      } catch {
+        /* the next ask shows the list again */
+      }
     }
   }, [request, port, thisWallet]);
   /* An action this wallet has no definition for is refused at once, as the window before the passkey refuses it. */
   const actNotRun = request !== null && request.kind === 'act' && actionFor(request.intent.name) === null;
-  useEffect(() => { if (actNotRun) channelNow.current?.refuse('unreadable'); }, [actNotRun]);
+  useEffect(() => {
+    if (actNotRun) channelNow.current?.refuse('unreadable');
+  }, [actNotRun]);
   const readable = opened !== null && opened.of !== 'unopenable' && profile !== null && channel !== null;
-  const slotQuiet = readable && profile !== null && request !== null
-    && slotIsQuiet(profile, request.requester.origin, subwallet);
-  const keyGivenElsewhere = readable && profile !== null && request !== null
-    && (request.kind === 'unlock' || request.kind === 'keyring')
-    && request.company !== null
-    && originsFor(profile, request.company, request.account).some((o) => o !== request.requester.origin);
-  const otherWalletSignedIn = request !== null && (request.kind === 'unlock' || (request.kind === 'keyring' && request.signedInAs === null))
-    && whyNotThisWallet(port, request.requester.origin, thisWallet) !== null;
+  const slotQuiet =
+    readable && profile !== null && request !== null && slotIsQuiet(profile, request.requester.origin, subwallet);
+  const keyGivenElsewhere =
+    readable &&
+    profile !== null &&
+    request !== null &&
+    (request.kind === 'unlock' || request.kind === 'keyring') &&
+    request.company !== null &&
+    originsFor(profile, request.company, request.account).some((o) => o !== request.requester.origin);
+  const otherWalletSignedIn =
+    request !== null &&
+    (request.kind === 'unlock' || (request.kind === 'keyring' && request.signedInAs === null)) &&
+    whyNotThisWallet(port, request.requester.origin, thisWallet) !== null;
   useAnswerAtOnce(atOnce && request?.kind === 'sign-in', consent.ok && slotQuiet, approve);
-  useAnswerAtOnce(atOnce && request?.kind === 'unlock',
-    consent.ok && readable && companyOnChain && !otherWalletSignedIn && !keyGivenElsewhere, release);
-  useAnswerAtOnce(atOnce && request?.kind === 'keyring',
-    consent.ok && readable && !otherWalletSignedIn && !keyGivenElsewhere
-      && (request?.kind !== 'keyring' || request.signedInAs === null || addressesHeld.has(request.signedInAs))
-      && (request?.kind !== 'keyring' || request.company === null || companyOnChain || openedCompanyRead), releaseKeyring);
+  useAnswerAtOnce(
+    atOnce && request?.kind === 'unlock',
+    consent.ok && readable && companyOnChain && !otherWalletSignedIn && !keyGivenElsewhere,
+    release
+  );
+  useAnswerAtOnce(
+    atOnce && request?.kind === 'keyring',
+    consent.ok &&
+      readable &&
+      !otherWalletSignedIn &&
+      !keyGivenElsewhere &&
+      (request?.kind !== 'keyring' || request.signedInAs === null || addressesHeld.has(request.signedInAs)) &&
+      (request?.kind !== 'keyring' || request.company === null || companyOnChain || openedCompanyRead),
+    releaseKeyring
+  );
 
   /* WHAT HOLDS AN ASK APPROVED BEFORE THE PASSKEY IS BROUGHT INTO SIGHT, once: a refusal or a warning found after the
    * passkey sits far down this screen, and the person is waiting for an answer, not reading from the top. */
   const heldInSight = useRef(false);
   useEffect(() => {
     if (!atOnce || heldInSight.current) return;
-    const held = document.querySelector<HTMLElement>('[data-not-this-wallet], [data-not-signed-in-here], [data-seen-elsewhere], [data-wallet-shared], [data-you-leave]');
+    const held = document.querySelector<HTMLElement>(
+      '[data-not-this-wallet], [data-not-signed-in-here], [data-seen-elsewhere], [data-wallet-shared], [data-you-leave]'
+    );
     if (held === null) return;
     heldInSight.current = true;
     held.scrollIntoView?.({ block: 'center' });

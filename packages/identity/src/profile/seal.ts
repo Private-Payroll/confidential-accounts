@@ -70,9 +70,10 @@ export interface SealedProfile {
  */
 export async function profileKey(identity: Identity): Promise<CryptoKey> {
   const raw = identity.authority(Purposes.Profile, PROFILE_INDEX);
-  return crypto.subtle.importKey(
-    'raw', raw as BufferSource, 'AES-GCM', /* extractable: */ false,
-    ['encrypt', 'decrypt']);
+  return crypto.subtle.importKey('raw', raw as BufferSource, 'AES-GCM', /* extractable: */ false, [
+    'encrypt',
+    'decrypt'
+  ]);
 }
 
 const aad = (): BufferSource => new TextEncoder().encode(ENVELOPE) as BufferSource;
@@ -108,8 +109,7 @@ export async function profileRecordTag(identity: Identity): Promise<string> {
 export async function seal(key: CryptoKey, profile: Profile): Promise<SealedProfile> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const body = new TextEncoder().encode(JSON.stringify(profile));
-  const sealed = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: aad() }, key, body));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad() }, key, body));
   return Object.freeze({ v: VERSION, iv: toBase64Url(iv), sealed: toBase64Url(sealed) });
 }
 
@@ -144,32 +144,35 @@ export type Opened =
  */
 export type UnopenableCause = 'not-sealed-by-this-wallet' | 'another-key' | 'unreadable' | 'not-a-profile';
 
-const looksLikeAProfile = (parsed: unknown): parsed is Profile => (
-  typeof parsed === 'object' && parsed !== null
-  && (parsed as Profile).schema === 'midnight-identity/profile/v1'
-  && Array.isArray((parsed as Profile).held)
-  && Array.isArray((parsed as Profile).grants));
+const looksLikeAProfile = (parsed: unknown): parsed is Profile =>
+  typeof parsed === 'object' &&
+  parsed !== null &&
+  (parsed as Profile).schema === 'midnight-identity/profile/v1' &&
+  Array.isArray((parsed as Profile).held) &&
+  Array.isArray((parsed as Profile).grants);
 
 export async function open(key: CryptoKey, blob: SealedProfile): Promise<Opened> {
   if (typeof blob?.iv !== 'string' || typeof blob?.sealed !== 'string' || blob?.v !== VERSION) {
     return {
       of: 'unopenable',
       cause: 'not-sealed-by-this-wallet',
-      why: 'something is stored here that this wallet did not seal, or sealed under a '
-        + 'different version.',
+      why: 'something is stored here that this wallet did not seal, or sealed under a ' + 'different version.'
     };
   }
   let plain: ArrayBuffer;
   try {
     plain = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: fromBase64Url(blob.iv) as BufferSource, additionalData: aad() },
-      key, fromBase64Url(blob.sealed) as BufferSource);
+      key,
+      fromBase64Url(blob.sealed) as BufferSource
+    );
   } catch {
     return {
       of: 'unopenable',
       cause: 'another-key',
-      why: 'the details stored here will not open with this account\'s key. They belong to '
-        + 'another account, or they have been altered.',
+      why:
+        "the details stored here will not open with this account's key. They belong to " +
+        'another account, or they have been altered.'
     };
   }
   let parsed: unknown;
@@ -180,8 +183,9 @@ export async function open(key: CryptoKey, blob: SealedProfile): Promise<Opened>
   }
   if (!looksLikeAProfile(parsed)) {
     return {
-      of: 'unopenable', cause: 'not-a-profile',
-      why: 'the details stored here are not a profile this wallet knows.',
+      of: 'unopenable',
+      cause: 'not-a-profile',
+      why: 'the details stored here are not a profile this wallet knows.'
     };
   }
   return { of: 'profile', profile: parsed };

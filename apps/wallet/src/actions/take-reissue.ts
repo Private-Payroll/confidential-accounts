@@ -7,7 +7,15 @@ import { withReissuedInvitationKept } from '../../../../packages/web-shared/src/
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { proposalsAndSeatsOf } from './proposals-and-seats-read.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 
 /*
@@ -33,13 +41,21 @@ export const TAKE_REISSUE_STATE = { kept: 'kept' } as const;
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.take-reissue.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.take-reissue.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
-const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => { throw new StepRefused(why(key, values)); };
+const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => {
+  throw new StepRefused(why(key, values));
+};
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
 const fieldsRefusal = (fields: Readonly<Record<string, string>>): Words | null => {
-  if ((fields['record'] ?? '') === '' || readCompanyLabel(fields['company']) === null || readAccountAddress(fields['account']) === null) return why('not-a-company');
+  if (
+    (fields['record'] ?? '') === '' ||
+    readCompanyLabel(fields['company']) === null ||
+    readAccountAddress(fields['account']) === null
+  )
+    return why('not-a-company');
   if (!HEX64.test(fields['token'] ?? '')) return why('not-an-invitation');
   return null;
 };
@@ -52,10 +68,19 @@ async function reissueOpened(ctx: StepContext, r: CompanyReach): Promise<Paramet
   if (got.status === 410) return refuse('closed');
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');
   let signed: ReturnType<typeof openOffer>;
-  try { signed = openOffer(sealed, token); } catch { return refuse('no-offer'); }
+  try {
+    signed = openOffer(sealed, token);
+  } catch {
+    return refuse('no-offer');
+  }
   const o = signed.offer;
   if (offerExpiredRefusal(o, Date.now()) !== null) return refuse('expired');
-  if (o.company !== r.accountId || o.label !== r.label || String(o.account).toLowerCase() !== String(r.account).toLowerCase()) return refuse('another-company');
+  if (
+    o.company !== r.accountId ||
+    o.label !== r.label ||
+    String(o.account).toLowerCase() !== String(r.account).toLowerCase()
+  )
+    return refuse('another-company');
   if (o.for.kind !== 'reissue') return refuse('not-a-reissue');
   return { token, signed, expiresAt: new Date(o.expiresAt).toISOString(), kind: 'signer' };
 }
@@ -65,20 +90,25 @@ export function takeReissueAction(reach: TakeReissueReach): ActionDefinition {
   return Object.freeze({
     headline: 'act.take-reissue.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
-      { key: 'act.take-reissue.shown.company', values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
+      {
+        key: 'act.take-reissue.shown.company',
+        values: { label: String(intent.fields['company'] ?? '') },
+        from: 'page'
+      },
       { key: 'act.take-reissue.shown.same', from: 'action' },
-      { key: 'act.take-reissue.shown.nothing-else', from: 'action' },
+      { key: 'act.take-reissue.shown.nothing-else', from: 'action' }
     ],
-    checks: [
-      { key: 'act.take-reissue.check.person' },
-      { key: 'act.take-reissue.check.same' },
-    ],
+    checks: [{ key: 'act.take-reissue.check.person' }, { key: 'act.take-reissue.check.same' }],
     check: async (intent) => fieldsRefusal(intent.fields),
     steps: () => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.take-reissue.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const take: ActionStep = {
         title: { key: 'act.take-reissue.step.take' },
@@ -91,17 +121,24 @@ export function takeReissueAction(reach: TakeReissueReach): ActionDefinition {
           const opened = await reissueOpened(ctx, r);
           const { proposals, onTheChain } = await proposalsAndSeatsOf(r, why);
           try {
-            await takeTheReissueHere(opened, { accountId: r.accountId, person, seat: r.leaf, companyKeys: r.companyKeys }, proposals, onTheChain,
-              async (reissued) => { await keyring.keep((k) => withReissuedInvitationKept(k, r.accountId, reissued)); });
+            await takeTheReissueHere(
+              opened,
+              { accountId: r.accountId, person, seat: r.leaf, companyKeys: r.companyKeys },
+              proposals,
+              onTheChain,
+              async (reissued) => {
+                await keyring.keep((k) => withReissuedInvitationKept(k, r.accountId, reissued));
+              }
+            );
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             throw new StepRefused(why('not-kept', { says: said(e) }), codeOfError(e));
           }
           read.renew();
           ctx.tell({ state: TAKE_REISSUE_STATE.kept });
-        },
+        }
       };
       return [seat, take];
-    },
+    }
   } satisfies ActionDefinition);
 }

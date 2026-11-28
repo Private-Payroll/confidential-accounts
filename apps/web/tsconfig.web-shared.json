@@ -31,8 +31,16 @@
     "rootDir": "../..",
     "outDir": "../../dist/declarations"
   },
-  "include": ["../../packages/web-shared/src", "../../src", "../../src/**/*.json", "../../contracts/src", "../../scripts/dispatch-ceiling.ts",
-    "../../contracts/managed-vault/compiler/contract-manifest.json", "../../contracts/managed/compiler/contract-manifest.json",
-    "../../apps/wallet/public/keys/manifest.json", "../../apps/wallet/src/keyring/seal-key.ts"],
+  "include": [
+    "../../packages/web-shared/src",
+    "../../src",
+    "../../src/**/*.json",
+    "../../contracts/src",
+    "../../scripts/dispatch-ceiling.ts",
+    "../../contracts/managed-vault/compiler/contract-manifest.json",
+    "../../contracts/managed/compiler/contract-manifest.json",
+    "../../apps/wallet/public/keys/manifest.json",
+    "../../apps/wallet/src/keyring/seal-key.ts"
+  ],
   "exclude": ["../../**/*.test.ts", "../../**/*.test.tsx", "../../**/*.test-support.ts"]
 }

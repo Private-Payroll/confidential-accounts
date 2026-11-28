@@ -12,7 +12,7 @@ describe('a page loading', () => {
    * the shape of a page), or anything that could be read as an answer. Its
    * own file, so the page's module is not loaded yet when it is drawn.
    */
-  it('shows the kit\'s page loading while its screen loads', () => {
+  it("shows the kit's page loading while its screen loads", () => {
     const view = render(<PageView id="people" />);
     const loading = view.container.querySelector('[data-loading]') as HTMLElement | null;
     expect(loading?.getAttribute('data-slot')).toBe('page-loading');

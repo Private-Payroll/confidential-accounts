@@ -15,16 +15,23 @@ import { ACT_REFUSAL } from './refusals.js';
  * on the same invitation, and the sentence about the approvals adding a signer needs.
  */
 const kr = vi.hoisted(() => ({
-  user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
-  named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, calls: 0,
-  refusal: null as string | null, asked: [] as unknown[],
+  user: { id: 'u1' } as { id: string } | null,
+  acts: [] as Record<string, string>[],
+  ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
+  named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown,
+  calls: 0,
+  refusal: null as string | null,
+  asked: [] as unknown[]
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('./filing-judge.js', async (real) => ({
-  ...(await real<typeof import('./filing-judge.js')>()),
+  ...(await real<typeof import('./filing-judge.js')>())
 }));
 vi.mock('./approvers-on-page.js', () => ({
-  seatThresholdRefusedOnThePage: async (_company: string, asked: unknown) => { kr.asked.push(asked); return kr.refusal; },
+  seatThresholdRefusedOnThePage: async (_company: string, asked: unknown) => {
+    kr.asked.push(asked);
+    return kr.refusal;
+  }
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -35,12 +42,14 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     kr.calls += 1;
     kr.acts.push(intent);
     return kr.ended;
-  },
+  }
 }));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async () => kr.named,
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('./service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async () => kr.named
+  })
+);
 
 async function load() {
   vi.resetModules();
@@ -58,45 +67,98 @@ describe('the ask made from the form', () => {
     const m = await load();
     const base = { ...m.emptyDraft(m.INVITE_KIND.employee), name: ' Ada ', startDate: '2026-11-01', amount: '12.5' };
     const e = m.askOf(base, NAMED);
-    expect(e).toMatchObject({ of: 'ask', ask: { kind: 'employee', name: 'Ada', startDate: '2026-11-01', classification: 'full-time', title: '', asset: ASSET.code, units: 125n * 10n ** BigInt(ASSET.decimals - 1) } });
+    expect(e).toMatchObject({
+      of: 'ask',
+      ask: {
+        kind: 'employee',
+        name: 'Ada',
+        startDate: '2026-11-01',
+        classification: 'full-time',
+        title: '',
+        asset: ASSET.code,
+        units: 125n * 10n ** BigInt(ASSET.decimals - 1)
+      }
+    });
     expect((e as { ask: Record<string, unknown> }).ask).not.toHaveProperty('email');
     expect((e as { ask: Record<string, unknown> }).ask).not.toHaveProperty('address');
     const v1 = m.askOf({ ...m.emptyDraft(m.INVITE_KIND.vendor), name: 'Acme', startDate: '2026-11-01' }, NAMED);
     expect(v1).toMatchObject({ of: 'ask', ask: { kind: 'vendor', terms: { kind: 'one-off' } } });
-    const v2 = m.askOf({ ...m.emptyDraft(m.INVITE_KIND.vendor), name: 'Acme', startDate: '2026-11-01', terms: 'monthly', termsAmount: '3' }, NAMED);
-    expect(v2).toMatchObject({ of: 'ask', ask: { terms: { kind: 'monthly', asset: ASSET.code, units: 3n * 10n ** BigInt(ASSET.decimals) } } });
-    expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: ' ' + PRIVATE + ' ' }, NAMED)).toMatchObject({ of: 'ask', ask: { kind: 'signer', role: 'approver', address: PRIVATE } });
-    expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: 'hello' }, NAMED)).toMatchObject({ of: 'problem', problem: 'bad-address', field: 'address' });
+    const v2 = m.askOf(
+      {
+        ...m.emptyDraft(m.INVITE_KIND.vendor),
+        name: 'Acme',
+        startDate: '2026-11-01',
+        terms: 'monthly',
+        termsAmount: '3'
+      },
+      NAMED
+    );
+    expect(v2).toMatchObject({
+      of: 'ask',
+      ask: { terms: { kind: 'monthly', asset: ASSET.code, units: 3n * 10n ** BigInt(ASSET.decimals) } }
+    });
+    expect(
+      m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: ' ' + PRIVATE + ' ' }, NAMED)
+    ).toMatchObject({ of: 'ask', ask: { kind: 'signer', role: 'approver', address: PRIVATE } });
+    expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: 'hello' }, NAMED)).toMatchObject({
+      of: 'problem',
+      problem: 'bad-address',
+      field: 'address'
+    });
   });
 
   /* RED WHEN: a super admin yields an ask, or a limited or accountant signer does, or a reader role is told as no role at all. */
   it('refuses a super admin and a reader role, which is given as read access, and sends nothing for them', async () => {
     const m = await load();
-    expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' }, NAMED)).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
+    expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' }, NAMED)).toEqual({
+      of: 'problem',
+      problem: 'super-admin',
+      field: 'kind'
+    });
     for (const role of m.READER_ROLES) {
-      expect(m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', role, address: PRIVATE }, NAMED), role).toEqual({ of: 'problem', problem: 'role-reader', field: 'role' });
+      expect(
+        m.askOf({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', role, address: PRIVATE }, NAMED),
+        role
+      ).toEqual({ of: 'problem', problem: 'role-reader', field: 'role' });
     }
     kr.calls = 0;
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), { ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' })).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
+    expect(
+      await m.sendInvite('u1', aViewOf('acc_Company00001'), { ...m.emptyDraft(m.INVITE_KIND.superAdmin), name: 'Root' })
+    ).toEqual({ of: 'problem', problem: 'super-admin', field: 'kind' });
     expect(kr.calls).toBe(0);
   });
 
   /* RED WHEN: a date, an amount or a name is let through that the wallet would refuse, or the first problem is not named by its field. */
   it.each([
-    [{ name: ' ' }, 'no-name', 'name'], [{ startDate: '' }, 'no-start', 'startDate'], [{ startDate: '2026-02-30' }, 'bad-start', 'startDate'],
-    [{ endDate: '2026-10-01' }, 'end-before-start', 'endDate'], [{ endDate: 'soon' }, 'bad-end', 'endDate'], [{ email: 'ada' }, 'bad-email', 'email'],
-    [{ amount: '' }, 'no-amount', 'amount'], [{ amount: '1,5' }, 'bad-amount', 'amount'], [{ amount: '0' }, 'zero-amount', 'amount'],
-    [{ amount: '1.' + '1'.repeat(40) }, 'too-many-decimals', 'amount'], [{ amount: '9'.repeat(40) }, 'bad-amount', 'amount'],
-    [{ asset: 'ff'.repeat(32) }, 'no-asset', 'asset'], [{ way: 'address' as const, address: '' }, 'no-address', 'address'],
-    [{ way: 'address' as const, address: 'hello' }, 'bad-address', 'address'],
+    [{ name: ' ' }, 'no-name', 'name'],
+    [{ startDate: '' }, 'no-start', 'startDate'],
+    [{ startDate: '2026-02-30' }, 'bad-start', 'startDate'],
+    [{ endDate: '2026-10-01' }, 'end-before-start', 'endDate'],
+    [{ endDate: 'soon' }, 'bad-end', 'endDate'],
+    [{ email: 'ada' }, 'bad-email', 'email'],
+    [{ amount: '' }, 'no-amount', 'amount'],
+    [{ amount: '1,5' }, 'bad-amount', 'amount'],
+    [{ amount: '0' }, 'zero-amount', 'amount'],
+    [{ amount: '1.' + '1'.repeat(40) }, 'too-many-decimals', 'amount'],
+    [{ amount: '9'.repeat(40) }, 'bad-amount', 'amount'],
+    [{ asset: 'ff'.repeat(32) }, 'no-asset', 'asset'],
+    [{ way: 'address' as const, address: '' }, 'no-address', 'address'],
+    [{ way: 'address' as const, address: 'hello' }, 'bad-address', 'address']
   ])('finds %j wrong', async (patch, problem, field) => {
     const m = await load();
-    const draft = { ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', endDate: '', amount: '10', ...patch };
+    const draft = {
+      ...m.emptyDraft(m.INVITE_KIND.employee),
+      name: 'Ada',
+      startDate: '2026-11-01',
+      endDate: '',
+      amount: '10',
+      ...patch
+    };
     expect(m.askOf(draft, NAMED)).toEqual({ of: 'problem', problem, field });
   });
 
   /* RED WHEN: a trailing zero past the currency's decimals is refused, or the units are not scaled by the currency's decimals. */
-  it('reads an amount in the currency\'s own decimals', async () => {
+  it("reads an amount in the currency's own decimals", async () => {
     const m = await load();
     expect(m.unitsOf('7', { decimals: 6 })).toEqual({ of: 'units', units: 7_000_000n });
     expect(m.unitsOf('0.5000000', { decimals: 6 })).toEqual({ of: 'units', units: 500_000n });
@@ -105,15 +167,26 @@ describe('the ask made from the form', () => {
 });
 
 describe('sending an invitation', () => {
-  const draft = (m: Awaited<ReturnType<typeof load>>) => ({ ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '10' });
+  const draft = (m: Awaited<ReturnType<typeof load>>) => ({
+    ...m.emptyDraft(m.INVITE_KIND.employee),
+    name: 'Ada',
+    startDate: '2026-11-01',
+    amount: '10'
+  });
 
   /* RED WHEN: a filed invitation does not come back with the link made from the token the wallet was given. */
   it('gives back the link and the token of a filed invitation', async () => {
     const m = await load();
-    kr.acts.length = 0; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
+    kr.acts.length = 0;
+    kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
     const sent = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m));
     const token = kr.acts[0]!['token']!;
-    expect(sent).toEqual({ of: 'done', token, already: false, link: invitationLink(window.location.origin, token as never) });
+    expect(sent).toEqual({
+      of: 'done',
+      token,
+      already: false,
+      link: invitationLink(window.location.origin, token as never)
+    });
     expect(invitationIdOf(token as never)).toHaveLength(64);
   });
 
@@ -121,39 +194,83 @@ describe('sending an invitation', () => {
   it('tells an invitation filed before', async () => {
     const m = await load();
     kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'already-filed' } };
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toMatchObject({ of: 'done', already: true });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toMatchObject({
+      of: 'done',
+      already: true
+    });
   });
 
   /* RED WHEN: a refusal that follows transactions the wallet handed the page (sent, or not confirmed as sent) is told as one that sent nothing, or a refusal that handed over none is told as one that did. */
   it('says a stop handed transactions over when any were sent or left unconfirmed, whatever its reason, and none when none were', async () => {
     const m = await load();
-    for (const [relayed, unconfirmed, handedOver] of [[0, 0, false], [1, 0, true], [0, 1, true], [2, 1, true]] as const) {
-      kr.ended = { of: 'stopped', step: 3, steps: 4, relayed, unconfirmed, why: 'check-failed', refused: 'act.invite.why.offer-not-read' };
-      expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m)), `${relayed}/${unconfirmed}`).toMatchObject({ of: 'stopped', why: 'offer-not-read', handedOver });
+    for (const [relayed, unconfirmed, handedOver] of [
+      [0, 0, false],
+      [1, 0, true],
+      [0, 1, true],
+      [2, 1, true]
+    ] as const) {
+      kr.ended = {
+        of: 'stopped',
+        step: 3,
+        steps: 4,
+        relayed,
+        unconfirmed,
+        why: 'check-failed',
+        refused: 'act.invite.why.offer-not-read'
+      };
+      expect(
+        await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m)),
+        `${relayed}/${unconfirmed}`
+      ).toMatchObject({ of: 'stopped', why: 'offer-not-read', handedOver });
     }
   });
 
   /* RED WHEN: after a stop that may have made part of the invitation the next press makes a new token, or after one that made nothing it holds the old one. */
   it('keeps the token after a raise not filed, a part-way stop, a filed invitation not yet entered, an offer not read and a wallet stop, and after a refusal it does not know, and not after one that made nothing', async () => {
     const m = await load();
-    const stop = (refused?: string) => { kr.ended = { of: 'stopped', step: 3, steps: 4, relayed: 0, unconfirmed: 0, why: refused === undefined ? 'relay-refused' : 'check-failed', ...(refused === undefined ? {} : { refused }) }; };
+    const stop = (refused?: string) => {
+      kr.ended = {
+        of: 'stopped',
+        step: 3,
+        steps: 4,
+        relayed: 0,
+        unconfirmed: 0,
+        why: refused === undefined ? 'relay-refused' : 'check-failed',
+        ...(refused === undefined ? {} : { refused })
+      };
+    };
     for (const [refused, keeps, why] of [
-      ['act.invite.why.raised-not-filed', true, 'raised-not-filed'], ['act.invite.why.may-be-sent', true, 'may-be-sent'], [undefined, true, 'stopped'],
-      ['act.invite.why.not-made', false, 'not-made'], ['act.invite.why.own-address', false, 'own-address'], ['act.invite.why.nobody-knows', true, 'other'], ['act.invite.why.not-a-threshold', false, 'not-a-threshold'], ['act.invite.why.threshold-refused', false, 'threshold-refused'],
-      ['act.invite.why.filed-not-entered', true, 'filed-not-entered'], ['act.invite.why.offer-not-read', true, 'offer-not-read'],
+      ['act.invite.why.raised-not-filed', true, 'raised-not-filed'],
+      ['act.invite.why.may-be-sent', true, 'may-be-sent'],
+      [undefined, true, 'stopped'],
+      ['act.invite.why.not-made', false, 'not-made'],
+      ['act.invite.why.own-address', false, 'own-address'],
+      ['act.invite.why.nobody-knows', true, 'other'],
+      ['act.invite.why.not-a-threshold', false, 'not-a-threshold'],
+      ['act.invite.why.threshold-refused', false, 'threshold-refused'],
+      ['act.invite.why.filed-not-entered', true, 'filed-not-entered'],
+      ['act.invite.why.offer-not-read', true, 'offer-not-read']
     ] as const) {
       stop(refused);
       const sent = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m));
       expect(sent, why).toMatchObject({ of: 'stopped', why, keeps });
     }
     stop('act.invite.why.raised-not-filed');
-    const raised = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m)) as { link: string | null; token: string };
+    const raised = (await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as {
+      link: string | null;
+      token: string;
+    };
     expect(raised.link).toBe(invitationLink(window.location.origin, raised.token as never));
     stop('act.invite.why.may-be-sent');
-    expect(((await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as { link: string | null }).link).toBeNull();
+    expect(
+      ((await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as { link: string | null }).link
+    ).toBeNull();
     for (const key of ['act.invite.why.filed-not-entered', 'act.invite.why.offer-not-read']) {
       stop(key);
-      expect(((await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as { link: string | null }).link, key).toBeNull();
+      expect(
+        ((await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))) as { link: string | null }).link,
+        key
+      ).toBeNull();
     }
   });
 
@@ -161,13 +278,21 @@ describe('sending an invitation', () => {
   it('passes the kept token on a press again, and refuses a token that is not whole before the wallet is asked', async () => {
     const m = await load();
     const kept = 'cd'.repeat(32);
-    kr.acts.length = 0; kr.calls = 0; kr.ended = { of: 'done', steps: 1, relayed: 0 };
+    kr.acts.length = 0;
+    kr.calls = 0;
+    kr.ended = { of: 'done', steps: 1, relayed: 0 };
     const sent = await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), kept);
     expect(kr.acts[0]!['token']).toBe(kept);
     expect(sent).toMatchObject({ of: 'done', token: kept });
     kr.calls = 0;
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), 'CD'.repeat(32))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), 'cd')).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), 'CD'.repeat(32))).toEqual({
+      of: 'refused',
+      why: ACT_REFUSAL.didNotFinish
+    });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m), 'cd')).toEqual({
+      of: 'refused',
+      why: ACT_REFUSAL.didNotFinish
+    });
     expect(kr.calls).toBe(0);
   });
 
@@ -176,15 +301,22 @@ describe('sending an invitation', () => {
     const m = await load();
     kr.calls = 0;
     kr.user = null;
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toEqual({ of: 'refused', why: ACT_REFUSAL.notSignedIn });
-    kr.user = { id: 'u1' }; kr.named = {};
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toEqual({ of: 'refused', why: ACT_REFUSAL.didNotFinish });
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toEqual({
+      of: 'refused',
+      why: ACT_REFUSAL.notSignedIn
+    });
+    kr.user = { id: 'u1' };
+    kr.named = {};
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), draft(m))).toEqual({
+      of: 'refused',
+      why: ACT_REFUSAL.didNotFinish
+    });
     kr.named = { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) };
     expect(kr.calls).toBe(0);
   });
 
   /* RED WHEN: the wallet's key is read as another reason than the one it names. */
-  it('reads the wallet\'s refusal key', async () => {
+  it("reads the wallet's refusal key", async () => {
     const m = await load();
     expect(m.whyOf('act.invite.why.wider-scope')).toBe('wider-scope');
     expect(m.whyOf('act.invite.why.stopped')).toBe('other');
@@ -194,13 +326,17 @@ describe('sending an invitation', () => {
 });
 
 describe('the approvals adding a signer needs', () => {
-  const read = (count: number, raised: boolean, vaults: string[]) => ({ of: READ.read, value: { count, raisedAboveTheAccount: raised, vaultsAtThatNumber: vaults } }) as never;
+  const read = (count: number, raised: boolean, vaults: string[]) =>
+    ({ of: READ.read, value: { count, raisedAboveTheAccount: raised, vaultsAtThatNumber: vaults } }) as never;
 
   /* RED WHEN: the sentence is said for a number that could not be read, or says the account's number when a vault raised it. */
-  it('says the account\'s number, the raised one with its vaults, and nothing when the number is not read', async () => {
+  it("says the account's number, the raised one with its vaults, and nothing when the number is not read", async () => {
     const m = await load();
     expect(m.approvalsSentence(read(2, false, []))).toEqual({ code: 'account', values: { count: 2, vaults: 0 } });
-    expect(m.approvalsSentence(read(3, true, ['aa', 'bb']))).toEqual({ code: 'raised', values: { count: 3, vaults: 2 } });
+    expect(m.approvalsSentence(read(3, true, ['aa', 'bb']))).toEqual({
+      code: 'raised',
+      values: { count: 3, vaults: 2 }
+    });
     expect(m.approvalsSentence(read(3, true, []))).toEqual({ code: 'raisedUnnamed', values: { count: 3, vaults: 0 } });
     expect(m.approvalsSentence({ of: READ.unreadable })).toBeNull();
     expect(m.approvalsSentence(undefined)).toBeNull();
@@ -226,7 +362,12 @@ describe('which address is private', () => {
 });
 
 describe('the approvals needed once a signer is seated', () => {
-  const signer = (m: Awaited<ReturnType<typeof load>>, threshold: number | null) => ({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: PRIVATE, threshold });
+  const signer = (m: Awaited<ReturnType<typeof load>>, threshold: number | null) => ({
+    ...m.emptyDraft(m.INVITE_KIND.signer),
+    name: 'Sam',
+    address: PRIVATE,
+    threshold
+  });
 
   /* RED WHEN: the number chosen does not reach the ask, or nothing chosen puts a threshold in the ask (the company's number would then change with every invitation). */
   it('carries the number chosen into the ask, and leaves the ask without one when nothing is chosen', async () => {
@@ -242,36 +383,64 @@ describe('the approvals needed once a signer is seated', () => {
   it('refuses, at its own field, what is not a whole number of at least one', async () => {
     const m = await load();
     for (const bad of [0, -1, 1.5, Number.NaN, 2 ** 60]) {
-      expect(m.askOf(signer(m, bad), NAMED), String(bad)).toMatchObject({ of: 'problem', problem: 'bad-threshold', field: 'threshold' });
+      expect(m.askOf(signer(m, bad), NAMED), String(bad)).toMatchObject({
+        of: 'problem',
+        problem: 'bad-threshold',
+        field: 'threshold'
+      });
     }
   });
 
   /* RED WHEN: a number above the signers the company would have once the seat is taken is let through to the wallet, one at that count is refused, or a company whose seats were not read is refused on a guess. */
   it('refuses a number above the seats the company would hold, and guesses nothing when the seats are not known', async () => {
     const m = await load();
-    expect(m.askOf(signer(m, 4), NAMED, undefined, undefined, 2)).toMatchObject({ of: 'problem', problem: 'threshold-too-high', field: 'threshold', most: 3 });
+    expect(m.askOf(signer(m, 4), NAMED, undefined, undefined, 2)).toMatchObject({
+      of: 'problem',
+      problem: 'threshold-too-high',
+      field: 'threshold',
+      most: 3
+    });
     expect(m.askOf(signer(m, 3), NAMED, undefined, undefined, 2)).toMatchObject({ of: 'ask', ask: { threshold: 3 } });
-    expect(m.askOf(signer(m, 9), NAMED, undefined, undefined, null)).toMatchObject({ of: 'ask', ask: { threshold: 9 } });
+    expect(m.askOf(signer(m, 9), NAMED, undefined, undefined, null)).toMatchObject({
+      of: 'ask',
+      ask: { threshold: 9 }
+    });
     expect(m.askOf(signer(m, 9), NAMED)).toMatchObject({ of: 'ask', ask: { threshold: 9 } });
   });
 
   /* RED WHEN: an employee or a vendor carries a threshold chosen for a signer. */
   it('sends no threshold for an employee or a vendor', async () => {
     const m = await load();
-    const e = m.askOf({ ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '1', threshold: 2 }, NAMED);
+    const e = m.askOf(
+      { ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '1', threshold: 2 },
+      NAMED
+    );
     expect((e as { ask: Record<string, unknown> }).ask).not.toHaveProperty('threshold');
   });
 });
 
 describe('an invitation the wallet would refuse for its threshold is refused here first', () => {
-  const signer = (m: Awaited<ReturnType<typeof load>>, threshold: number | null) => ({ ...m.emptyDraft(m.INVITE_KIND.signer), name: 'Sam', address: PRIVATE, threshold });
-  const SAID = 'This change would leave a vault unable to pay: Payroll (its runs need 3 approvals and 2 signers could give them). Invite another approver or admin first, or ask for fewer approvals on that vault.';
+  const signer = (m: Awaited<ReturnType<typeof load>>, threshold: number | null) => ({
+    ...m.emptyDraft(m.INVITE_KIND.signer),
+    name: 'Sam',
+    address: PRIVATE,
+    threshold
+  });
+  const SAID =
+    'This change would leave a vault unable to pay: Payroll (its runs need 3 approvals and 2 signers could give them). Invite another approver or admin first, or ask for fewer approvals on that vault.';
 
   /* RED WHEN: the page sends to the wallet an invitation whose threshold the per-vault check refuses, or loses the vault it names. */
-  it('stops at the threshold field with the check\'s own sentence, and asks the wallet nothing', async () => {
+  it("stops at the threshold field with the check's own sentence, and asks the wallet nothing", async () => {
     const m = await load();
-    kr.calls = 0; kr.asked.length = 0; kr.refusal = SAID;
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, 3))).toEqual({ of: 'problem', problem: 'threshold-refused', field: 'threshold', says: SAID });
+    kr.calls = 0;
+    kr.asked.length = 0;
+    kr.refusal = SAID;
+    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, 3))).toEqual({
+      of: 'problem',
+      problem: 'threshold-refused',
+      field: 'threshold',
+      says: SAID
+    });
     expect(kr.calls).toBe(0);
     expect(kr.asked).toEqual([{ role: 'approver', threshold: 3 }]);
   });
@@ -279,7 +448,9 @@ describe('an invitation the wallet would refuse for its threshold is refused her
   /* RED WHEN: an invitation the check passes is held back, or the wallet is asked for one the page has not checked. */
   it('sends on to the wallet what the check passes', async () => {
     const m = await load();
-    kr.calls = 0; kr.refusal = null; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
+    kr.calls = 0;
+    kr.refusal = null;
+    kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
     expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, 3))).toMatchObject({ of: 'done' });
     expect(kr.calls).toBe(1);
   });
@@ -287,9 +458,19 @@ describe('an invitation the wallet would refuse for its threshold is refused her
   /* RED WHEN: the check is asked for an invitation that sets no threshold, or for an employee or a vendor, none of which can leave a vault short. */
   it('asks nothing of the check when no threshold is chosen or the person is not a signer', async () => {
     const m = await load();
-    kr.asked.length = 0; kr.refusal = SAID; kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
+    kr.asked.length = 0;
+    kr.refusal = SAID;
+    kr.ended = { of: 'done', steps: 1, relayed: 0, outcome: { state: 'filed' } };
     expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), signer(m, null))).toMatchObject({ of: 'done' });
-    expect(await m.sendInvite('u1', aViewOf('acc_Company00001'), { ...m.emptyDraft(m.INVITE_KIND.employee), name: 'Ada', startDate: '2026-11-01', amount: '10', threshold: 2 })).toMatchObject({ of: 'done' });
+    expect(
+      await m.sendInvite('u1', aViewOf('acc_Company00001'), {
+        ...m.emptyDraft(m.INVITE_KIND.employee),
+        name: 'Ada',
+        startDate: '2026-11-01',
+        amount: '10',
+        threshold: 2
+      })
+    ).toMatchObject({ of: 'done' });
     expect(kr.asked).toEqual([]);
     kr.refusal = null;
   });

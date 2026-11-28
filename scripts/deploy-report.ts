@@ -37,14 +37,18 @@
 export const SECRET_WINDOW = 8;
 
 export class WouldHaveShownASecret extends Error {
-  constructor(readonly what: string, line: string) {
+  constructor(
+    readonly what: string,
+    line: string
+  ) {
     super(
       `refusing to print a line carrying ${what}. A plain send to a vault's address is ` +
-      'money on chain that nobody can spend, permanently, and no contract can refuse it — so ' +
-      'the address is never shown, and neither is any part of it long enough to be worth ' +
-      'having. A vault is named to people by its NAME. If this line genuinely needs to say ' +
-      'which vault it means, say the name.\n' +
-      `  the line was: ${line.slice(0, 120)}`);
+        'money on chain that nobody can spend, permanently, and no contract can refuse it — so ' +
+        'the address is never shown, and neither is any part of it long enough to be worth ' +
+        'having. A vault is named to people by its NAME. If this line genuinely needs to say ' +
+        'which vault it means, say the name.\n' +
+        `  the line was: ${line.slice(0, 120)}`
+    );
     this.name = 'WouldHaveShownASecret';
   }
 }
@@ -58,7 +62,7 @@ export class WouldHaveShownASecret extends Error {
  */
 export function createScreen(
   forbidden: () => Array<{ what: string; value: string }>,
-  out: (line: string) => void = (l) => console.log(l),
+  out: (line: string) => void = (l) => console.log(l)
 ): (line?: string) => void {
   return (line = '') => {
     for (const { what, value } of forbidden()) {
@@ -93,7 +97,9 @@ export function phaseClock(say: (line?: string) => void) {
   let stage = 'startup';
 
   return {
-    get stage() { return stage; },
+    get stage() {
+      return stage;
+    },
     begin(n: number, of: number, name: string) {
       phases.push({ name: stage, ms: Date.now() - startedAt });
       startedAt = Date.now();
@@ -106,8 +112,8 @@ export function phaseClock(say: (line?: string) => void) {
         ...phases,
         {
           name: outcome === 'finished' ? stage : `${stage}  (did not finish)`,
-          ms: Date.now() - startedAt,
-        },
+          ms: Date.now() - startedAt
+        }
       ];
     },
     print(outcome: 'finished' | 'stopped') {
@@ -117,7 +123,7 @@ export function phaseClock(say: (line?: string) => void) {
       say('  \x1b[1mHow long each phase took\x1b[0m');
       for (const r of rows) say(`    ${r.name.padEnd(w)}  ${(r.ms / 1000).toFixed(1)}s`);
       say(`    ${'total'.padEnd(w)}  ${(rows.reduce((t, r) => t + r.ms, 0) / 1000).toFixed(1)}s`);
-    },
+    }
   };
 }
 
@@ -139,9 +145,8 @@ export async function withTimeout<T>(what: string, ms: number, p: Promise<T>): P
     return await Promise.race([
       p,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${what} did not answer within ${Math.round(ms / 1000)}s`)), ms);
-      }),
+        timer = setTimeout(() => reject(new Error(`${what} did not answer within ${Math.round(ms / 1000)}s`)), ms);
+      })
     ]);
   } finally {
     if (timer) clearTimeout(timer);
@@ -160,9 +165,7 @@ export async function withTimeout<T>(what: string, ms: number, p: Promise<T>): P
  * `explain` is passed in rather than imported so this module holds no table of
  * node error codes — `scripts/node-errors.ts` is the one place that lives.
  */
-export function describeError(
-  e: any, explain: (text: string) => string | null, depth = 0,
-): string {
+export function describeError(e: any, explain: (text: string) => string | null, depth = 0): string {
   if (e == null || depth > 4) return String(e);
   const pad = '  '.repeat(depth);
   const bits: string[] = [];
@@ -176,12 +179,18 @@ export function describeError(
    * sends you looking in the wrong place.
    */
   if (/normal closure|disconnected|socket hang up|ECONNRESET/i.test(String(msg))) {
-    bits.push(`${pad}  \x1b[1mthe node websocket dropped — the transaction was never submitted, so this is worth retrying\x1b[0m`);
+    bits.push(
+      `${pad}  \x1b[1mthe node websocket dropped — the transaction was never submitted, so this is worth retrying\x1b[0m`
+    );
   }
   if (e.code) bits.push(`${pad}  code: ${e.code}`);
   const data = e.response?.data;
-  if (data) bits.push(`${pad}  response: ${typeof data === 'string' ? data.slice(0, 400) : JSON.stringify(data).slice(0, 400)}`);
-  if (Array.isArray(e.errors)) for (const sub of e.errors.slice(0, 3)) bits.push(describeError(sub, explain, depth + 1));
+  if (data)
+    bits.push(
+      `${pad}  response: ${typeof data === 'string' ? data.slice(0, 400) : JSON.stringify(data).slice(0, 400)}`
+    );
+  if (Array.isArray(e.errors))
+    for (const sub of e.errors.slice(0, 3)) bits.push(describeError(sub, explain, depth + 1));
   if (e.cause && e.cause !== e) bits.push(describeError(e.cause, explain, depth + 1));
   return bits.join('\n');
 }
@@ -206,12 +215,16 @@ export function captureNodeLines(explain: (text: string) => string | null): stri
       original(...args);
       try {
         const joined = args.map(String).join(' ');
-        if (/Custom error:\s*\d+|Invalid Transaction|SubmissionError|1010:|dispatch|Priority is too low/i.test(joined)) {
+        if (
+          /Custom error:\s*\d+|Invalid Transaction|SubmissionError|1010:|dispatch|Priority is too low/i.test(joined)
+        ) {
           lines.push(joined);
         }
         const explained = explain(joined);
         if (explained) original(`  \x1b[1m\x1b[33m^ ${explained}\x1b[0m`);
-      } catch { /* never let annotation break logging */ }
+      } catch {
+        /* never let annotation break logging */
+      }
     };
   }
   return lines;

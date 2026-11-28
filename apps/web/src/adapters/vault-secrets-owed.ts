@@ -27,7 +27,11 @@ export type VaultSecretsOwed =
 export const OWED_READ = { read: 'read', unread: 'unread' } as const;
 
 type Indexer = { readonly indexerUri: string; readonly indexerWsUri: string } | null;
-interface OwedDoors { readonly account: AccountAddress; readonly builder: VaultBuilderClient; readonly indexer: () => Promise<Indexer> }
+interface OwedDoors {
+  readonly account: AccountAddress;
+  readonly builder: VaultBuilderClient;
+  readonly indexer: () => Promise<Indexer>;
+}
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 
@@ -67,23 +71,34 @@ export async function vaultSecretsOwed(personId: string, view: PageView): Promis
   }
   /* Every vault read through the view in one ask at the indexer the wallet names; when it fails, each on its own. */
   const at = indexer;
-  const reads = at === null || vaults.length === 0 ? null
-    : await Promise.all(vaults.map((v) => vaultOnChainIn(view, v, at).then((read) => ({ ok: true as const, read }), () => ({ ok: false as const }))));
-  const found = await Promise.all(vaults.map(async (vault, i) => {
-    const got = reads?.[i];
-    /* A wallet that names no indexer, or a vault whose own read failed, leaves that vault named unread, never owing nothing. */
-    if (got === undefined || !got.ok) return { vault, owed: null };
-    const { read } = got;
-    try {
-      return { vault, owed: await owedOnTheChain(doors, vault, read) };
-    } catch {
-      /* This vault's read failed: it is named unread, never counted as owing nothing. */
-      return { vault, owed: null };
-    }
-  }));
+  const reads =
+    at === null || vaults.length === 0
+      ? null
+      : await Promise.all(
+          vaults.map((v) =>
+            vaultOnChainIn(view, v, at).then(
+              (read) => ({ ok: true as const, read }),
+              () => ({ ok: false as const })
+            )
+          )
+        );
+  const found = await Promise.all(
+    vaults.map(async (vault, i) => {
+      const got = reads?.[i];
+      /* A wallet that names no indexer, or a vault whose own read failed, leaves that vault named unread, never owing nothing. */
+      if (got === undefined || !got.ok) return { vault, owed: null };
+      const { read } = got;
+      try {
+        return { vault, owed: await owedOnTheChain(doors, vault, read) };
+      } catch {
+        /* This vault's read failed: it is named unread, never counted as owing nothing. */
+        return { vault, owed: null };
+      }
+    })
+  );
   return {
     of: OWED_READ.read,
     owed: found.flatMap((f) => (f.owed === true ? [f.vault] : [])),
-    unread: found.flatMap((f) => (f.owed === null ? [f.vault] : [])),
+    unread: found.flatMap((f) => (f.owed === null ? [f.vault] : []))
   };
 }

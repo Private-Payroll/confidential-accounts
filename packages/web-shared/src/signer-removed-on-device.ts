@@ -21,9 +21,28 @@ import type { RecordsKeyStatement } from 'midnight-identity/profile/records-key'
 import type { DirectoryChangesKeptStore } from './tree-kept-here.js';
 import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors } from './company-key-here.js';
 import { directoryNotYetAnchored, type DirectoryHere } from './vault-page-doors.js';
-import { type GovernanceDoors, type GovernedOutcome, governOnDevice, riseWaitsForTheDirectory, stepsOf, type ThresholdChangeSteps } from './company-change-on-device.js';
+import {
+  type GovernanceDoors,
+  type GovernedOutcome,
+  governOnDevice,
+  riseWaitsForTheDirectory,
+  stepsOf,
+  type ThresholdChangeSteps
+} from './company-change-on-device.js';
 import { HEX64, type RoundOnThePage } from './governed-call-on-device.js';
-import { EVERY_RECORD_ASKED, keepSignaturesHere, leaversPendingIn, type RaiseRead, removalRefusalHere, retirementFiledHere, retirementGatheredHere, RetirementNotYetSigned, type RetirementSignaturesKept, retirementSignedHere, retirementTermsHere } from './retirement-signed-here.js';
+import {
+  EVERY_RECORD_ASKED,
+  keepSignaturesHere,
+  leaversPendingIn,
+  type RaiseRead,
+  removalRefusalHere,
+  retirementFiledHere,
+  retirementGatheredHere,
+  RetirementNotYetSigned,
+  type RetirementSignaturesKept,
+  retirementSignedHere,
+  retirementTermsHere
+} from './retirement-signed-here.js';
 import { removalsOpenHere, seatsLeavingHere } from './seats-leaving-here.js';
 
 /* ── A SIGNER REMOVED, FROM THIS DEVICE ──────────────────────────────────────── */
@@ -52,7 +71,10 @@ export type RemovalDoors = GovernanceDoors & {
    * key the wallet released, the copy the service serves this seat, the waiting answers, the seats the roster admitted,
    * and the filing of the change (`rotateTheCompanyKeyHere`). Absent, this device changes no key.
    */
-  readonly companyKey?: Pick<RotationDoors, 'filings' | 'served' | 'released' | 'askTheWallet' | 'waiting' | 'admitted' | 'file' | 'revoked'>;
+  readonly companyKey?: Pick<
+    RotationDoors,
+    'filings' | 'served' | 'released' | 'askTheWallet' | 'waiting' | 'admitted' | 'file' | 'revoked'
+  >;
 };
 
 /**
@@ -61,9 +83,11 @@ export type RemovalDoors = GovernanceDoors & {
  */
 export class RemovalRaisedAgain extends Error {
   constructor() {
-    super('a signer was removed or replaced since this removal was raised, so the chain will never carry it out. Nothing was filed '
-      + 'or sent. Withdraw it from the device of the signer who raised it, then raise the removal again: a retirement already '
-      + 'anchored for this seat stays, and is not signed again.');
+    super(
+      'a signer was removed or replaced since this removal was raised, so the chain will never carry it out. Nothing was filed ' +
+        'or sent. Withdraw it from the device of the signer who raised it, then raise the removal again: a retirement already ' +
+        'anchored for this seat stays, and is not signed again.'
+    );
     this.name = 'RemovalRaisedAgain';
   }
 }
@@ -75,7 +99,12 @@ export class RemovalRaisedAgain extends Error {
 export type RemovalOutcome = (
   | GovernedOutcome
   /** Approved on the chain, or carried out there, and its retirement not yet signed by enough seats to be filed. */
-  | { readonly state: 'waiting-for-the-retirement'; readonly round: RoundOnThePage | null; readonly signed: number; readonly needed: number }
+  | {
+      readonly state: 'waiting-for-the-retirement';
+      readonly round: RoundOnThePage | null;
+      readonly signed: number;
+      readonly needed: number;
+    }
 ) & { readonly rotation?: KeyRotated };
 
 /**
@@ -83,14 +112,25 @@ export type RemovalOutcome = (
  * (`rotateTheCompanyKeyHere`): never from the leaving seat's device, nor one under an approved removal. Whatever the change
  * of the key comes to, even a throw, the removal stays done.
  */
-const rotatedAfter = async (doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, outcome: RemovalOutcome): Promise<RemovalOutcome> => {
+const rotatedAfter = async (
+  doors: RemovalDoors,
+  viewingKey: KeysHeld,
+  leaf: string,
+  outcome: RemovalOutcome
+): Promise<RemovalOutcome> => {
   if (outcome.state !== 'done' || doors.companyKey === undefined || doors.records === undefined) return outcome;
   let rotation: KeyRotated;
   try {
-    rotation = await rotateTheCompanyKeyHere({
-      ...doors.companyKey, accountId: doors.accountId, material: doors.material, records: doors.records,
-      leaving: () => seatsLeavingHere(doors, viewingKey, true),
-    }, { leaf });
+    rotation = await rotateTheCompanyKeyHere(
+      {
+        ...doors.companyKey,
+        accountId: doors.accountId,
+        material: doors.material,
+        records: doors.records,
+        leaving: () => seatsLeavingHere(doors, viewingKey, true)
+      },
+      { leaf }
+    );
   } catch (e) {
     rotation = { state: 'not-rotated', why: (e as Error)?.message ?? String(e) };
   }
@@ -118,10 +158,12 @@ const directoryAnchoredFirst = async (doors: RemovalDoors): Promise<void> => {
   }
   const left = directoryNotYetAnchored(here);
   if (left.length > 0) {
-    throw new Error(`A signer is not removed while ${left.length > 1 ? 'versions' : 'version'} ${left.join(', ')} of the company's `
-      + 'directory are filed and not yet anchored: the retirement is filed after them and anchored at once, before the chain is '
-      + 'asked. Anything this press already sent may have gone through and stands; nothing more is sent. Open the '
-      + 'company on the device of a seat that may anchor, then carry out the removal again.');
+    throw new Error(
+      `A signer is not removed while ${left.length > 1 ? 'versions' : 'version'} ${left.join(', ')} of the company's ` +
+        'directory are filed and not yet anchored: the retirement is filed after them and anchored at once, before the chain is ' +
+        'asked. Anything this press already sent may have gone through and stands; nothing more is sent. Open the ' +
+        'company on the device of a seat that may anchor, then carry out the removal again.'
+    );
   }
 };
 
@@ -134,20 +176,33 @@ const directoryAnchoredFirst = async (doors: RemovalDoors): Promise<void> => {
  * already retired, leaves nothing to file. Once done, the company's key is
  * changed from here (`rotatedAfter`).
  */
-const removalFinishedHere = async (doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> =>
+const removalFinishedHere = async (
+  doors: RemovalDoors,
+  viewingKey: KeysHeld,
+  leaf: string,
+  here: DirectoryHere
+): Promise<RemovalOutcome> =>
   rotatedAfter(doors, viewingKey, leaf, await retirementFinishedHere(doors, viewingKey, leaf, here));
 
 /** What finishing a removal the chain carried out leaves to file: the retirement, from this device; `NoRetirementToFile` when it holds none. */
-async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld, leaf: string, here: DirectoryHere): Promise<RemovalOutcome> {
+async function retirementFinishedHere(
+  doors: RemovalDoors,
+  viewingKey: KeysHeld,
+  leaf: string,
+  here: DirectoryHere
+): Promise<RemovalOutcome> {
   const seat = here.dir.seats.find((x) => x.seat === leaf);
   if (seat === undefined || seat.retired !== null) return { state: 'done', round: null };
-  const kept = ((await doors.kept?.all(doors.accountId)) ?? []).find((k) => k.change.kind === 'retire' && k.change.seat === leaf
-    && k.signedAt === here.dir.version + 1);
+  const kept = ((await doors.kept?.all(doors.accountId)) ?? []).find(
+    (k) => k.change.kind === 'retire' && k.change.seat === leaf && k.signedAt === here.dir.version + 1
+  );
   if (kept !== undefined && doors.directoryChange !== undefined) {
     await doors.directoryChange(kept.change, kept.signedAt);
     return { state: 'done', round: null };
   }
-  const raised = (await removalsOpenHere(doors, viewingKey, false)).filter((r) => r.leaf === leaf && r.opened.retirement !== undefined);
+  const raised = (await removalsOpenHere(doors, viewingKey, false)).filter(
+    (r) => r.leaf === leaf && r.opened.retirement !== undefined
+  );
   let short: RetirementNotYetSigned | null = null;
   for (const r of raised) {
     try {
@@ -158,9 +213,15 @@ async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld,
       short ??= e;
     }
   }
-  if (short !== null) return { state: 'waiting-for-the-retirement', round: null, signed: short.signed, needed: short.needed };
-  throw Object.assign(new Error('The chain no longer holds this signer, and this device finds no retirement of their seat to file. Nothing '
-    + 'was sent. Open the company on the device of a signer who approved the removal, which keeps its retirement and files it.'), { name: 'NoRetirementToFile' });
+  if (short !== null)
+    return { state: 'waiting-for-the-retirement', round: null, signed: short.signed, needed: short.needed };
+  throw Object.assign(
+    new Error(
+      'The chain no longer holds this signer, and this device finds no retirement of their seat to file. Nothing ' +
+        'was sent. Open the company on the device of a signer who approved the removal, which keeps its retirement and files it.'
+    ),
+    { name: 'NoRetirementToFile' }
+  );
 }
 
 /**
@@ -185,32 +246,56 @@ async function retirementFinishedHere(doors: RemovalDoors, viewingKey: KeysHeld,
  * (`seatRaisingTheBarHere`).
  */
 export async function removeSignerOnDevice(
-  doors: RemovalDoors, input: { viewingKey: KeysHeld; leaf: string; name: string; newThreshold?: number; summary?: string } & ThresholdChangeSteps,
+  doors: RemovalDoors,
+  input: {
+    viewingKey: KeysHeld;
+    leaf: string;
+    name: string;
+    newThreshold?: number;
+    summary?: string;
+  } & ThresholdChangeSteps
 ): Promise<RemovalOutcome> {
   if (doors.records === undefined) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot remove a signer. Reload the page to get '
-      + 'the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's records, so it cannot remove a signer. Reload the page to get " +
+        'the current version.'
+    );
   }
   const leaf = input.leaf.toLowerCase();
-  if (!HEX64.test(leaf)) throw new Error('that is not a signer\'s seat. Nothing was sent.');
+  if (!HEX64.test(leaf)) throw new Error("that is not a signer's seat. Nothing was sent.");
   const newThreshold = input.newThreshold ?? 0;
   if (!Number.isSafeInteger(newThreshold) || newThreshold < 0) {
-    throw new Error('the approvals needed once the signer is removed must be a whole number; 0 keeps the number in force. Nothing was sent.');
+    throw new Error(
+      'the approvals needed once the signer is removed must be a whole number; 0 keeps the number in force. Nothing was sent.'
+    );
   }
   const records = doors.records;
   let here = await records.directory(EVERY_RECORD_ASKED);
   if (!here.holders.seats.includes(leaf)) return removalFinishedHere(doors, input.viewingKey, leaf, here);
   let seat = here.dir.seats.find((x) => x.seat === leaf);
   /* The removal asked, at the threshold asked: another open removal of the same seat is another proposal. */
-  const asked = { kind: 'remove-signer' as const, leaf, ...(newThreshold === 0 ? {} : { threshold: String(newThreshold) }) };
-  const live = (await removalsOpenHere(doors, input.viewingKey))
-    .find((r) => r.leaf === leaf && r.opened.governance !== undefined && sameGovernance(r.opened.governance as GovernanceOnTheWire, asked));
+  const asked = {
+    kind: 'remove-signer' as const,
+    leaf,
+    ...(newThreshold === 0 ? {} : { threshold: String(newThreshold) })
+  };
+  const live = (await removalsOpenHere(doors, input.viewingKey)).find(
+    (r) =>
+      r.leaf === leaf &&
+      r.opened.governance !== undefined &&
+      sameGovernance(r.opened.governance as GovernanceOnTheWire, asked)
+  );
   /*
    * Before a raise, what the leaving seat entered and the anchor does not hold yet is anchored first, so the boundary is
    * judged over it. Once raised, what that seat files is past the boundary the raise signed, and is not anchored for it.
    */
-  if (live === undefined && seat !== undefined && seat.retired === null && leaversPendingIn(here, seat.signingKey) > 0
-    && doors.anchorDirectory !== undefined) {
+  if (
+    live === undefined &&
+    seat !== undefined &&
+    seat.retired === null &&
+    leaversPendingIn(here, seat.signingKey) > 0 &&
+    doors.anchorDirectory !== undefined
+  ) {
     await doors.anchorDirectory();
     here = await records.directory(EVERY_RECORD_ASKED);
     seat = here.dir.seats.find((x) => x.seat === leaf);
@@ -222,12 +307,17 @@ export async function removeSignerOnDevice(
    */
   const refuse = async (terms: RetirementTerms | undefined, raised = false, raise?: RaiseRead): Promise<void> => {
     const now = await records.directory(EVERY_RECORD_ASKED);
-    const bound = raised ? null : removalThresholdRefusal(now.holders, leaf as Hex, newThreshold) ?? noAdminLeftRefusal(now.dir.seats, [...(await doors.approvers()).seats.keys()], leaf);
-    const why = bound?.replace(/\.$/u, '') ?? await removalRefusalHere(doors, now, leaf, terms, raised, raise);
+    const bound = raised
+      ? null
+      : (removalThresholdRefusal(now.holders, leaf as Hex, newThreshold) ??
+        noAdminLeftRefusal(now.dir.seats, [...(await doors.approvers()).seats.keys()], leaf));
+    const why = bound?.replace(/\.$/u, '') ?? (await removalRefusalHere(doors, now, leaf, terms, raised, raise));
     if (why === null) return;
-    throw new Error(raised
-      ? `This removal is raised, and this device does not approve it or carry it out: ${why}. Nothing more is sent for it from here.`
-      : `This removal is not raised from this device: ${why}. Nothing was sent.`);
+    throw new Error(
+      raised
+        ? `This removal is raised, and this device does not approve it or carry it out: ${why}. Nothing more is sent for it from here.`
+        : `This removal is not raised from this device: ${why}. Nothing was sent.`
+    );
   };
   try {
     /*
@@ -242,44 +332,62 @@ export async function removeSignerOnDevice(
         await retirementGatheredHere(doors, here, leaf, live.id, live.opened.retirement);
       }
     }
-    return await rotatedAfter(doors, input.viewingKey, leaf, await governOnDevice(doors, {
-      viewingKey: input.viewingKey,
-      change: asked,
-      summary: input.summary ?? (newThreshold === 0 ? `Remove ${input.name} as a signer` : `Remove ${input.name} as a signer, and need ${newThreshold} approvals`),
-      body: { leaf: leaf as Hex, ...(newThreshold === 0 ? {} : { newThreshold }), ...(made === undefined ? {} : { retirement: made }) },
-      /*
-       * Before a raise, the terms about to be raised; at an approval or the carrying out, the proposal's own, judged
-       * against what was anchored at the head the raise names, and that head against the block the raise landed in.
-       */
-      before: async (opened) => {
-        const seat = await seatRaisingTheBarHere(doors, input.viewingKey);
-        if (seat !== null) throw new Error(seat);
-        if (opened === undefined) await refuse(made);
-        else await refuse(opened.retirement, true, await refuseAnOutrunRemoval(doors, opened.chainId));
-        if (newThreshold > 0) await riseWaitsForTheDirectory(doors, newThreshold);
-        await input.before?.();
-      },
-      /* This seat's own signature is kept here the moment it is made, whatever the service later serves. */
-      signs: async (opened, round) => {
-        if (opened.retirement === undefined) return undefined;
-        const mine = retirementSignedHere(doors, await records.directory(), leaf, opened.retirement);
-        if (mine !== undefined) await keepSignaturesHere(doors, round.id, [mine]);
-        return mine;
-      },
-      beforeCarry: async (opened, round) => {
-        await refuseAnOutrunRemoval(doors, opened.chainId);
-        await directoryAnchoredFirst(doors);
-        const now = await records.directory();
-        const held = now.dir.seats.find((x) => x.seat === leaf);
-        if (opened.retirement !== undefined && held !== undefined && held.retired === null) {
-          await retirementFiledHere(doors, round.id, leaf, opened.retirement);
-        }
-      },
-      carry: (opened) => ({
-        circuit: 'removeSignerAndSetThreshold', leaf, threshold: String(newThreshold), proposal: opened.chainId, proposalSalt: opened.salt, removing: true,
-      }),
-      ...stepsOf(input),
-    }));
+    return await rotatedAfter(
+      doors,
+      input.viewingKey,
+      leaf,
+      await governOnDevice(doors, {
+        viewingKey: input.viewingKey,
+        change: asked,
+        summary:
+          input.summary ??
+          (newThreshold === 0
+            ? `Remove ${input.name} as a signer`
+            : `Remove ${input.name} as a signer, and need ${newThreshold} approvals`),
+        body: {
+          leaf: leaf as Hex,
+          ...(newThreshold === 0 ? {} : { newThreshold }),
+          ...(made === undefined ? {} : { retirement: made })
+        },
+        /*
+         * Before a raise, the terms about to be raised; at an approval or the carrying out, the proposal's own, judged
+         * against what was anchored at the head the raise names, and that head against the block the raise landed in.
+         */
+        before: async (opened) => {
+          const seat = await seatRaisingTheBarHere(doors, input.viewingKey);
+          if (seat !== null) throw new Error(seat);
+          if (opened === undefined) await refuse(made);
+          else await refuse(opened.retirement, true, await refuseAnOutrunRemoval(doors, opened.chainId));
+          if (newThreshold > 0) await riseWaitsForTheDirectory(doors, newThreshold);
+          await input.before?.();
+        },
+        /* This seat's own signature is kept here the moment it is made, whatever the service later serves. */
+        signs: async (opened, round) => {
+          if (opened.retirement === undefined) return undefined;
+          const mine = retirementSignedHere(doors, await records.directory(), leaf, opened.retirement);
+          if (mine !== undefined) await keepSignaturesHere(doors, round.id, [mine]);
+          return mine;
+        },
+        beforeCarry: async (opened, round) => {
+          await refuseAnOutrunRemoval(doors, opened.chainId);
+          await directoryAnchoredFirst(doors);
+          const now = await records.directory();
+          const held = now.dir.seats.find((x) => x.seat === leaf);
+          if (opened.retirement !== undefined && held !== undefined && held.retired === null) {
+            await retirementFiledHere(doors, round.id, leaf, opened.retirement);
+          }
+        },
+        carry: (opened) => ({
+          circuit: 'removeSignerAndSetThreshold',
+          leaf,
+          threshold: String(newThreshold),
+          proposal: opened.chainId,
+          proposalSalt: opened.salt,
+          removing: true
+        }),
+        ...stepsOf(input)
+      })
+    );
   } catch (e) {
     if (!(e instanceof RetirementNotYetSigned)) {
       /* A carrying out that failed may have lost to another device's: whether the leaf is off is read from the chain again. */
@@ -287,7 +395,11 @@ export async function removeSignerOnDevice(
       if (!now.holders.seats.includes(leaf)) return removalFinishedHere(doors, input.viewingKey, leaf, now);
       throw e;
     }
-    return { state: 'waiting-for-the-retirement', round: live === undefined ? null : { id: live.id, chainId: live.opened.chainId, status: 'open' },
-      signed: e.signed, needed: e.needed };
+    return {
+      state: 'waiting-for-the-retirement',
+      round: live === undefined ? null : { id: live.id, chainId: live.opened.chainId, status: 'open' },
+      signed: e.signed,
+      needed: e.needed
+    };
   }
 }

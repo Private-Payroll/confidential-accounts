@@ -7,9 +7,7 @@ import { MidnightBech32m } from '@midnightntwrk/wallet-sdk-address-format';
 import { addressFor, identityFromWords } from 'midnight-identity';
 import type { Identity } from 'midnight-identity';
 import { NETWORK } from '../config.js';
-import {
-  shortUnshielded, unshieldedAddressFor, unshieldedKeystoreFor, unshieldedWalletFor,
-} from './unshielded.js';
+import { shortUnshielded, unshieldedAddressFor, unshieldedKeystoreFor, unshieldedWalletFor } from './unshielded.js';
 import { ownedAddressFor } from '../accounts/owned-address.js';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 
@@ -57,8 +55,7 @@ describe('the right unshielded door — the address-agreement test', () => {
     /* The same thirty-two bytes under `'ecdsa'` produce a different address:
      * money paid there is at an address this interface never shows. */
     const bytes = ours.moneyAt(0).night;
-    const wrongKind = createKeystore({ kind: 'ecdsa', secret: bytes }, NETWORK)
-      .getBech32Address().asString();
+    const wrongKind = createKeystore({ kind: 'ecdsa', secret: bytes }, NETWORK).getBech32Address().asString();
     expect(wrongKind).toMatch(new RegExp(`^mn_addr_${NETWORK}1`)); /* plausible-looking… */
     expect(wrongKind).not.toBe(unshieldedAddressFor(ours, 0)); /* …and wrong. */
   });
@@ -66,17 +63,16 @@ describe('the right unshielded door — the address-agreement test', () => {
   it('the wrong BYTES are a different wallet — the zswap key is not the night key', () => {
     /* One field name away: `moneyAt(account).zswap` fed to the unshielded
      * keystore derives an address no route ever pays. */
-    const wrongBytes = createKeystore(
-      { kind: 'schnorr', secret: ours.moneyAt(0).zswap }, NETWORK,
-    ).getBech32Address().asString();
+    const wrongBytes = createKeystore({ kind: 'schnorr', secret: ours.moneyAt(0).zswap }, NETWORK)
+      .getBech32Address()
+      .asString();
     expect(wrongBytes).not.toBe(unshieldedAddressFor(ours, 0));
   });
 
   it('is unrelated to the shielded address — two kinds, two strings, one wallet', () => {
     /* Not a trap, a fact worth pinning: the card shows both because neither
      * can be computed from the other by the person holding them. */
-    expect(unshieldedAddressFor(ours, 0))
-      .not.toBe(addressFor(ours.moneyAt(0).zswap, NETWORK).bech32);
+    expect(unshieldedAddressFor(ours, 0)).not.toBe(addressFor(ours.moneyAt(0).zswap, NETWORK).bech32);
   });
 
   it('refuses the reserved account and slots the picker does not offer', () => {
@@ -91,8 +87,7 @@ describe('the unshielded address travels with its owner — the OwnedAddress rul
      * kinds — so a screen cannot show an unshielded address that is not the
      * synced wallet's own. */
     for (const account of [0, 2, 11]) {
-      expect(ownedAddressFor(ours, account, {}, NETWORK).unshieldedBech32)
-        .toBe(unshieldedAddressFor(ours, account));
+      expect(ownedAddressFor(ours, account, {}, NETWORK).unshieldedBech32).toBe(unshieldedAddressFor(ours, account));
     }
   });
 
@@ -100,8 +95,7 @@ describe('the unshielded address travels with its owner — the OwnedAddress rul
     const address = unshieldedAddressFor(ours, 0);
     const short = shortUnshielded(address);
     const payload = address.slice(address.lastIndexOf('1') + 1);
-    expect(short).toBe(
-      `${address.slice(0, address.lastIndexOf('1') + 1)}${payload.slice(0, 8)}…${payload.slice(-8)}`);
+    expect(short).toBe(`${address.slice(0, address.lastIndexOf('1') + 1)}${payload.slice(0, 8)}…${payload.slice(-8)}`);
     expect(short.startsWith(`mn_addr_${NETWORK}1`)).toBe(true);
     expect(short.endsWith(payload.slice(-8))).toBe(true);
   });

@@ -11,7 +11,7 @@ import { useLanguage } from 'vaults-ui/i18n/provider';
  */
 const POPUP_SIDE = {
   ltr: { start: 'left', end: 'right' },
-  rtl: { start: 'right', end: 'left' },
+  rtl: { start: 'right', end: 'left' }
 } as const;
 
 /** The popup library's sides for the start and the end of a line, in the language shown. */

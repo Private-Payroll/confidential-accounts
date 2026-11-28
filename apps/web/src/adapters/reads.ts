@@ -10,7 +10,11 @@ export type Read<T> = { of: typeof READ.read; value: T } | { of: typeof READ.unr
 
 /** Settle a read on its own. */
 export async function alone<T>(read: () => Promise<T>): Promise<Read<T>> {
-  try { return { of: READ.read, value: await read() }; } catch { return { of: READ.unreadable }; }
+  try {
+    return { of: READ.read, value: await read() };
+  } catch {
+    return { of: READ.unreadable };
+  }
 }
 
 /** Whether `read` was read. */
@@ -25,5 +29,5 @@ export const OPENED = {
   /** The saved keys are open and hold none for this company: it was created or joined on another device. */
   noKeysHere: 'no-keys-here',
   /** It could not be opened, for a reason a screen says. */
-  refused: 'refused',
+  refused: 'refused'
 } as const;

@@ -40,7 +40,7 @@ export interface FeePayerSetup {
 export function feePayerSetupFrom(
   env: Readonly<Record<string, string | undefined>>,
   root: string,
-  exists: (path: string) => boolean,
+  exists: (path: string) => boolean
 ): FeePayerSetup | { refusals: string[] } {
   const refusals: string[] = [];
 
@@ -48,26 +48,30 @@ export function feePayerSetupFrom(
   const port = /^[0-9]+$/.test(rawPort) ? Number(rawPort) : NaN;
   if (!(port >= 1 && port <= 65535)) {
     refusals.push(
-      `${FEE_PAYER_PORT_SETTING} is not a port, so there is nowhere to answer. Set it to the port `
-      + 'the web process\'s fee payer address names');
+      `${FEE_PAYER_PORT_SETTING} is not a port, so there is nowhere to answer. Set it to the port ` +
+        "the web process's fee payer address names"
+    );
   }
 
   const secret = env[FEE_PAYER_SECRET_SETTING] ?? '';
   if (secret.length < SHORTEST_SECRET) {
     refusals.push(
-      `${FEE_PAYER_SECRET_SETTING} is ${secret.length === 0 ? 'not set' : 'too short'}. It must be `
-      + `at least ${SHORTEST_SECRET} characters, and the web process must be given the same one`);
+      `${FEE_PAYER_SECRET_SETTING} is ${secret.length === 0 ? 'not set' : 'too short'}. It must be ` +
+        `at least ${SHORTEST_SECRET} characters, and the web process must be given the same one`
+    );
   }
 
   const seedFile = env[FEE_PAYER_SEED_SETTING]?.trim() ?? '';
   if (seedFile === '') {
     refusals.push(
-      `${FEE_PAYER_SEED_SETTING} is not set. It names the seed of the wallet that pays, and it `
-      + 'has no default: set it to a wallet no other process on this machine pays from');
+      `${FEE_PAYER_SEED_SETTING} is not set. It names the seed of the wallet that pays, and it ` +
+        'has no default: set it to a wallet no other process on this machine pays from'
+    );
   } else if (!exists(seedFile)) {
     refusals.push(
-      `there is no seed for the wallet that pays at the file ${FEE_PAYER_SEED_SETTING} names. `
-      + 'Put one there, or name the one to pay from');
+      `there is no seed for the wallet that pays at the file ${FEE_PAYER_SEED_SETTING} names. ` +
+        'Put one there, or name the one to pay from'
+    );
   }
 
   let ceiling: FeeCeiling | null = null;

@@ -2,7 +2,26 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { EVERY_PAGE, HOME, isBuilt, mayOpen, MENU_GROUPS, outerOf, pagesByShortcut, PAGES, reachedByName, SETTINGS_OF, valuesOf, VIEWS, viewFor, type Page, type PageId, type Screen, type Text, type Viewer } from './pages.js';
+import {
+  EVERY_PAGE,
+  HOME,
+  isBuilt,
+  mayOpen,
+  MENU_GROUPS,
+  outerOf,
+  pagesByShortcut,
+  PAGES,
+  reachedByName,
+  SETTINGS_OF,
+  valuesOf,
+  VIEWS,
+  viewFor,
+  type Page,
+  type PageId,
+  type Screen,
+  type Text,
+  type Viewer
+} from './pages.js';
 import { MODE_NAMES, MODES } from './preferences.js';
 import { addressOf, pageAt, resolve, RESOLVED } from './router.js';
 import { EVERY_SHORTCUT, SHORTCUTS, type Chord } from './shortcuts.js';
@@ -29,7 +48,9 @@ const read = (p: string): string => readFileSync(SRC + p, 'utf8');
 function staticImportsOf(files: { path: string; text: string }[], modules: readonly string[]): string[] {
   const found: string[] = [];
   for (const f of files) {
-    for (const m of f.text.matchAll(/^\s*(?:import|export)\b(?!\s+type\b)[^'"`;]*?(?:\bfrom\s*)?['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+    for (const m of f.text.matchAll(
+      /^\s*(?:import|export)\b(?!\s+type\b)[^'"`;]*?(?:\bfrom\s*)?['"](\.{1,2}\/[^'"]+)['"]/gm
+    )) {
       const target = posix.normalize(posix.join(posix.dirname(f.path), m[1]!)).replace(/\.(js|tsx?)$/, '');
       const hit = modules.find((mod) => mod.replace(/\.tsx?$/, '') === target);
       if (hit !== undefined) found.push(`${f.path} ${hit}`);
@@ -37,8 +58,14 @@ function staticImportsOf(files: { path: string; text: string }[], modules: reado
   }
   return found;
 }
-const walkSrc = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((d) =>
-  d.isDirectory() ? walkSrc(`${dir}${d.name}/`) : /\.tsx?$/.test(d.name) && !/\.test(-support)?\./.test(d.name) ? [`${dir}${d.name}`] : []);
+const walkSrc = (dir: string): string[] =>
+  readdirSync(SRC + dir, { withFileTypes: true }).flatMap((d) =>
+    d.isDirectory()
+      ? walkSrc(`${dir}${d.name}/`)
+      : /\.tsx?$/.test(d.name) && !/\.test(-support)?\./.test(d.name)
+        ? [`${dir}${d.name}`]
+        : []
+  );
 
 /** Every kind of person who looks at the application. */
 const VIEWERS: Record<string, Viewer> = {
@@ -50,17 +77,32 @@ const VIEWERS: Record<string, Viewer> = {
   nonSignerInTheCompanyView: { signedIn: true, view: VIEWS.company, signs: false },
   /* Someone whose wallet released read keys for a company on this visit: a reader, who signs for nothing, and a signer who also reads another company. */
   reader: { signedIn: true, view: viewFor(false, VIEWS.company), signs: false, reads: ['c-9'] },
-  signerWhoReads: { signedIn: true, view: VIEWS.company, signs: true, reads: ['c-9'] },
+  signerWhoReads: { signedIn: true, view: VIEWS.company, signs: true, reads: ['c-9'] }
 };
 
 /** Who may see each audience, written out by hand rather than worked out, so the rule is compared with the promise. */
 const WHO_SEES: Record<Page['audience'], string[]> = {
-  everyone: ['visitor', 'signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView', 'reader', 'signerWhoReads'],
+  everyone: [
+    'visitor',
+    'signerInTheCompanyView',
+    'signerSeeingTheirPay',
+    'employee',
+    'nonSignerInTheCompanyView',
+    'reader',
+    'signerWhoReads'
+  ],
   visitor: ['visitor'],
-  'signed-in': ['signerInTheCompanyView', 'signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView', 'reader', 'signerWhoReads'],
+  'signed-in': [
+    'signerInTheCompanyView',
+    'signerSeeingTheirPay',
+    'employee',
+    'nonSignerInTheCompanyView',
+    'reader',
+    'signerWhoReads'
+  ],
   company: ['signerInTheCompanyView', 'signerWhoReads'],
   employee: ['signerSeeingTheirPay', 'employee', 'nonSignerInTheCompanyView', 'reader'],
-  reader: ['reader', 'signerWhoReads'],
+  reader: ['reader', 'signerWhoReads']
 };
 
 describe('every page the design names is in the list', () => {
@@ -71,33 +113,87 @@ describe('every page the design names is in the list', () => {
    * Roles and permissions, Super admins, Recovery, Service, then Appearance and
    * Language). The design's page map and left menus, section 2, written out.
    */
-  it('has the design\'s pages, views and menu groups', () => {
+  it("has the design's pages, views and menu groups", () => {
     expect(EVERY_PAGE.filter((p) => p.holdsLinkToken === true).map((p) => p.id)).toEqual(['join']);
     const shape = EVERY_PAGE.map((p) => [p.id, p.audience, p.group ?? outerOf(p) ?? '-']);
     expect(shape).toEqual([
-      ['landing', 'everyone', '-'], ['join', 'everyone', '-'], ['readerSignUp', 'everyone', '-'], ['reader', 'reader', '-'], ['superAdminsByLink', 'signed-in', '-'], ['setup', 'signed-in', '-'],
-      ['home', 'company', 'top'], ['proposals', 'company', 'top'],
-      ['payroll', 'company', 'money'], ['run', 'company', 'payroll'], ['vaults', 'company', 'money'], ['vault', 'company', 'vaults'],
-      ['transactions', 'company', 'money'], ['reports', 'company', 'money'],
-      ['people', 'company', 'people'], ['vendors', 'company', 'people'], ['invitations', 'company', 'people'],
-      ['disclosures', 'company', 'compliance'], ['policies', 'company', 'compliance'], ['activity', 'company', 'compliance'],
-      ['apps', 'company', 'bottom'], ['settings', 'company', 'bottom'],
-      ['settingsCompany', 'company', 'settings'], ['settingsSigners', 'company', 'settings'], ['settingsRoles', 'company', 'settings'],
-      ['settingsSuperAdmins', 'company', 'settings'], ['settingsRecovery', 'company', 'settings'], ['settingsService', 'company', 'settings'],
-      ['settingsAppearance', 'company', 'settings'], ['settingsLanguage', 'company', 'settings'], ['settingsAccount', 'company', 'settings'],
-      ['settingsNotifications', 'company', 'settings'], ['settingsBilling', 'company', 'settings'],
-      ['payHome', 'employee', 'top'], ['payslips', 'employee', 'top'], ['paymentsReceived', 'employee', 'top'], ['myDetails', 'employee', 'top'],
-      ['documents', 'employee', 'top'], ['paySettings', 'employee', 'bottom'],
-      ['payAppearance', 'employee', 'paySettings'], ['payLanguage', 'employee', 'paySettings'], ['payAccount', 'employee', 'paySettings'],
-      ['payNotifications', 'employee', 'paySettings'],
+      ['landing', 'everyone', '-'],
+      ['join', 'everyone', '-'],
+      ['readerSignUp', 'everyone', '-'],
+      ['reader', 'reader', '-'],
+      ['superAdminsByLink', 'signed-in', '-'],
+      ['setup', 'signed-in', '-'],
+      ['home', 'company', 'top'],
+      ['proposals', 'company', 'top'],
+      ['payroll', 'company', 'money'],
+      ['run', 'company', 'payroll'],
+      ['vaults', 'company', 'money'],
+      ['vault', 'company', 'vaults'],
+      ['transactions', 'company', 'money'],
+      ['reports', 'company', 'money'],
+      ['people', 'company', 'people'],
+      ['vendors', 'company', 'people'],
+      ['invitations', 'company', 'people'],
+      ['disclosures', 'company', 'compliance'],
+      ['policies', 'company', 'compliance'],
+      ['activity', 'company', 'compliance'],
+      ['apps', 'company', 'bottom'],
+      ['settings', 'company', 'bottom'],
+      ['settingsCompany', 'company', 'settings'],
+      ['settingsSigners', 'company', 'settings'],
+      ['settingsRoles', 'company', 'settings'],
+      ['settingsSuperAdmins', 'company', 'settings'],
+      ['settingsRecovery', 'company', 'settings'],
+      ['settingsService', 'company', 'settings'],
+      ['settingsAppearance', 'company', 'settings'],
+      ['settingsLanguage', 'company', 'settings'],
+      ['settingsAccount', 'company', 'settings'],
+      ['settingsNotifications', 'company', 'settings'],
+      ['settingsBilling', 'company', 'settings'],
+      ['payHome', 'employee', 'top'],
+      ['payslips', 'employee', 'top'],
+      ['paymentsReceived', 'employee', 'top'],
+      ['myDetails', 'employee', 'top'],
+      ['documents', 'employee', 'top'],
+      ['paySettings', 'employee', 'bottom'],
+      ['payAppearance', 'employee', 'paySettings'],
+      ['payLanguage', 'employee', 'paySettings'],
+      ['payAccount', 'employee', 'paySettings'],
+      ['payNotifications', 'employee', 'paySettings']
     ]);
   });
 
   /* RED WHEN: a page that is built is shown as Coming soon, or a page not built yet is shown as working. */
-  it('builds the frame\'s pages and the company pages that read, and shows every other page Coming soon', () => {
+  it("builds the frame's pages and the company pages that read, and shows every other page Coming soon", () => {
     expect(EVERY_PAGE.filter(isBuilt).map((p) => p.id)).toEqual([
-      'landing', 'join', 'readerSignUp', 'reader', 'superAdminsByLink', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'policies', 'apps',
-      'settings', 'settingsSigners', 'settingsRoles', 'settingsSuperAdmins', 'settingsRecovery', 'settingsService', 'settingsAppearance', 'settingsLanguage', 'paySettings', 'payAppearance', 'payLanguage',
+      'landing',
+      'join',
+      'readerSignUp',
+      'reader',
+      'superAdminsByLink',
+      'setup',
+      'home',
+      'proposals',
+      'payroll',
+      'run',
+      'vaults',
+      'vault',
+      'people',
+      'vendors',
+      'invitations',
+      'policies',
+      'apps',
+      'settings',
+      'settingsSigners',
+      'settingsRoles',
+      'settingsSuperAdmins',
+      'settingsRecovery',
+      'settingsService',
+      'settingsAppearance',
+      'settingsLanguage',
+      'paySettings',
+      'payAppearance',
+      'payLanguage'
     ]);
   });
 
@@ -107,22 +203,63 @@ describe('every page the design names is in the list', () => {
    * the list names a screen its module does not export.
    */
   it('loads every company page and the setup wizard when it is first opened', async () => {
-    const onDemand = EVERY_PAGE.filter((p) => isBuilt(p) && typeof (p.shows.screen as { load?: unknown }).load === 'function').map((p) => p.id);
-    expect(onDemand).toEqual(['join', 'readerSignUp', 'reader', 'superAdminsByLink', 'setup', 'home', 'proposals', 'payroll', 'run', 'vaults', 'vault', 'people', 'vendors', 'invitations', 'policies', 'apps', 'settingsSigners', 'settingsRoles', 'settingsSuperAdmins', 'settingsRecovery', 'settingsService']);
+    const onDemand = EVERY_PAGE.filter(
+      (p) => isBuilt(p) && typeof (p.shows.screen as { load?: unknown }).load === 'function'
+    ).map((p) => p.id);
+    expect(onDemand).toEqual([
+      'join',
+      'readerSignUp',
+      'reader',
+      'superAdminsByLink',
+      'setup',
+      'home',
+      'proposals',
+      'payroll',
+      'run',
+      'vaults',
+      'vault',
+      'people',
+      'vendors',
+      'invitations',
+      'policies',
+      'apps',
+      'settingsSigners',
+      'settingsRoles',
+      'settingsSuperAdmins',
+      'settingsRecovery',
+      'settingsService'
+    ]);
     for (const id of onDemand) {
       const screen = PAGES[id].shows as { screen: { load: () => Promise<unknown>; screenName: string } };
-      expect(typeof await screen.screen.load(), id).toBe('function');
+      expect(typeof (await screen.screen.load()), id).toBe('function');
     }
     /* The part already built of a page not built yet is loaded the same way. */
-    const partsOnDemand = EVERY_PAGE.filter((p) => typeof (p.shows as { already?: { load?: unknown } }).already?.load === 'function').map((p) => p.id);
+    const partsOnDemand = EVERY_PAGE.filter(
+      (p) => typeof (p.shows as { already?: { load?: unknown } }).already?.load === 'function'
+    ).map((p) => p.id);
     expect(partsOnDemand).toEqual(['settingsCompany']);
-    for (const id of partsOnDemand) expect(typeof await (PAGES[id].shows as { already: { load: () => Promise<unknown> } }).already.load(), id).toBe('function');
+    for (const id of partsOnDemand)
+      expect(typeof (await (PAGES[id].shows as { already: { load: () => Promise<unknown> } }).already.load()), id).toBe(
+        'function'
+      );
     const eager = read('pages.ts').match(/^import .* from '\.\/screens\/[^']+';$/gm) ?? [];
-    expect(eager.map((l) => l.replace(/.*\/screens\/|';$/g, '')).sort()).toEqual(['appearance.js', 'landing.js', 'language.js', 'settings.js']);
+    expect(eager.map((l) => l.replace(/.*\/screens\/|';$/g, '')).sort()).toEqual([
+      'appearance.js',
+      'landing.js',
+      'language.js',
+      'settings.js'
+    ]);
     /* And no file anywhere in the application imports one of those pages' modules eagerly, which would put it back in the first download. */
-    const loaded = [...read('pages.ts').matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[^']+)\.js'\)/g)].map((m) => `${m[1]}.tsx`);
+    const loaded = [...read('pages.ts').matchAll(/onDemand\(\(\) => import\('\.\/(screens\/[^']+)\.js'\)/g)].map(
+      (m) => `${m[1]}.tsx`
+    );
     expect(loaded.length).toBe(onDemand.length + partsOnDemand.length);
-    expect(staticImportsOf(walkSrc('').map((path) => ({ path, text: read(path) })), loaded)).toEqual([]);
+    expect(
+      staticImportsOf(
+        walkSrc('').map((path) => ({ path, text: read(path) })),
+        loaded
+      )
+    ).toEqual([]);
   });
 
   /* RED WHEN: the eager-import rule misses an import of a page's module from another folder, by a bare import, a re-export or its source's own name, or reads a dynamic import, a type import or a similar name as one. */
@@ -134,18 +271,31 @@ describe('every page the design names is in the list', () => {
       { path: 'main.ts', text: "import './screens/home.js';" },
       { path: 'records/x/deep.tsx', text: "import {\n  Home,\n} from '../../screens/home.js';" },
       { path: 'pages.ts', text: "const s = onDemand(() => import('./screens/home.js'), 'Home');" },
-      { path: 'screens/homely.tsx', text: "import { A } from './home-parts.js';\nimport { B } from '../screens/homely.js';" },
+      {
+        path: 'screens/homely.tsx',
+        text: "import { A } from './home-parts.js';\nimport { B } from '../screens/homely.js';"
+      },
       { path: 'shell/tsx.tsx', text: "import { Run } from '../screens/run.tsx';" },
-      { path: 'shell/types.ts', text: "import type { Home } from '../screens/home.js';" },
+      { path: 'shell/types.ts', text: "import type { Home } from '../screens/home.js';" }
     ];
-    expect(staticImportsOf(files, mods)).toEqual(['shell/menu.tsx screens/home.tsx', 'records/parts.tsx screens/run.tsx', 'main.ts screens/home.tsx', 'records/x/deep.tsx screens/home.tsx', 'shell/tsx.tsx screens/run.tsx']);
+    expect(staticImportsOf(files, mods)).toEqual([
+      'shell/menu.tsx screens/home.tsx',
+      'records/parts.tsx screens/run.tsx',
+      'main.ts screens/home.tsx',
+      'records/x/deep.tsx screens/home.tsx',
+      'shell/tsx.tsx screens/run.tsx'
+    ]);
   });
 
   /* RED WHEN: a menu group is added that no page is in, or a page names a group the menu does not have. */
   it('puts every menu page in a group the menu has, and every group has a page', () => {
     const groups = Object.keys(MENU_GROUPS);
     expect(EVERY_PAGE.filter((p) => p.group !== null && !groups.includes(p.group)).map((p) => p.id)).toEqual([]);
-    for (const g of groups) expect(EVERY_PAGE.some((p) => p.group === g), g).toBe(true);
+    for (const g of groups)
+      expect(
+        EVERY_PAGE.some((p) => p.group === g),
+        g
+      ).toBe(true);
   });
 });
 
@@ -163,12 +313,20 @@ describe('every entry is a page, and every page is an entry', () => {
       const screen = (p.shows as { screen?: { load?: () => Promise<unknown> } }).screen;
       return typeof screen?.load === 'function' ? screen.load() : screen;
     };
-    const screens = await Promise.all(EVERY_PAGE.filter(isBuilt).map(async (p) => ({ id: p.id, screen: await screenOf(p) })));
-    const already = await Promise.all(EVERY_PAGE.filter((p) => (p.shows as { already?: unknown }).already !== undefined)
-      .map(async (p) => ({ id: p.id, screen: await screenOf({ ...p, shows: { screen: (p.shows as { already: Screen }).already } }) })));
+    const screens = await Promise.all(
+      EVERY_PAGE.filter(isBuilt).map(async (p) => ({ id: p.id, screen: await screenOf(p) }))
+    );
+    const already = await Promise.all(
+      EVERY_PAGE.filter((p) => (p.shows as { already?: unknown }).already !== undefined).map(async (p) => ({
+        id: p.id,
+        screen: await screenOf({ ...p, shows: { screen: (p.shows as { already: Screen }).already } })
+      }))
+    );
     const shown = new Set([...screens, ...already].map((x) => x.screen));
-    const walk = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true })
-      .flatMap((d) => (d.isDirectory() ? walk(`${dir}/${d.name}`) : [`${dir}/${d.name}`.slice('screens/'.length)]));
+    const walk = (dir: string): string[] =>
+      readdirSync(SRC + dir, { withFileTypes: true }).flatMap((d) =>
+        d.isDirectory() ? walk(`${dir}/${d.name}`) : [`${dir}/${d.name}`.slice('screens/'.length)]
+      );
     const files = walk('screens').filter((n) => /\.tsx?$/.test(n) && !/\.test(-support)?\./.test(n));
     expect(files.length).toBeGreaterThan(0);
     const unlisted: string[] = [];
@@ -181,7 +339,8 @@ describe('every entry is a page, and every page is an entry', () => {
     expect(unlisted).toEqual([]);
     /* And every screen an entry shows is one of those files'. */
     const fromScreens = new Set<unknown>();
-    for (const f of files) for (const v of Object.values((await import(`./screens/${f}`)) as Record<string, unknown>)) fromScreens.add(v);
+    for (const f of files)
+      for (const v of Object.values((await import(`./screens/${f}`)) as Record<string, unknown>)) fromScreens.add(v);
     expect([...screens, ...already].filter((x) => !fromScreens.has(x.screen)).map((x) => x.id)).toEqual([]);
   });
 
@@ -195,7 +354,10 @@ describe('every entry is a page, and every page is an entry', () => {
   it('asks for every name and line by its key, and writes none itself', () => {
     const en = ENGLISH;
     const asked: string[] = [];
-    const stub = ((k: string) => { asked.push(k); return `\u0000${k}`; }) as Text;
+    const stub = ((k: string) => {
+      asked.push(k);
+      return `\u0000${k}`;
+    }) as Text;
     const marked = (v: string) => v.startsWith('\u0000') && v.slice(1) in en;
     for (const p of EVERY_PAGE) {
       expect(marked(p.name(stub)), `${p.id} name`).toBe(true);
@@ -266,7 +428,10 @@ describe('no two pages share an address or a shortcut', () => {
       const r = resolve(at, viewer);
       expect(r.of === RESOLVED.page ? r.id : null, p.id).toBe(p.id);
       expect(r.of === RESOLVED.page ? r.params : null, p.id).toEqual(params);
-      expect(resolve(at + '/', viewer).of === RESOLVED.page ? (resolve(at + '/', viewer) as { id: PageId }).id : null, p.id).toBe(p.id);
+      expect(
+        resolve(at + '/', viewer).of === RESOLVED.page ? (resolve(at + '/', viewer) as { id: PageId }).id : null,
+        p.id
+      ).toBe(p.id);
     }
   });
 
@@ -277,8 +442,17 @@ describe('no two pages share an address or a shortcut', () => {
    */
   it('opens a page that stands for a value only with one, and never by name', () => {
     const viewer = VIEWERS.signerInTheCompanyView!;
-    expect(EVERY_PAGE.filter((p) => !reachedByName(p)).map((p) => [p.id, valuesOf(p)])).toEqual([['join', ['id']], ['readerSignUp', ['id', 'label', 'account']], ['reader', ['id', 'label', 'account']], ['superAdminsByLink', ['id', 'label', 'account']], ['run', ['run']], ['vault', ['vault']]]);
-    expect(resolve('/payroll/', viewer).of === RESOLVED.page ? (resolve('/payroll/', viewer) as { id: PageId }).id : null).toBe('payroll');
+    expect(EVERY_PAGE.filter((p) => !reachedByName(p)).map((p) => [p.id, valuesOf(p)])).toEqual([
+      ['join', ['id']],
+      ['readerSignUp', ['id', 'label', 'account']],
+      ['reader', ['id', 'label', 'account']],
+      ['superAdminsByLink', ['id', 'label', 'account']],
+      ['run', ['run']],
+      ['vault', ['vault']]
+    ]);
+    expect(
+      resolve('/payroll/', viewer).of === RESOLVED.page ? (resolve('/payroll/', viewer) as { id: PageId }).id : null
+    ).toBe('payroll');
     expect(resolve('/payroll/r-1/more', viewer).of).toBe(RESOLVED.nothing);
     expect(() => addressOf('run')).toThrow();
     expect(() => addressOf('run', { run: '' })).toThrow();
@@ -297,7 +471,10 @@ describe('no two pages share an address or a shortcut', () => {
   it('takes an address named outright before a page standing for a value there', () => {
     const run = EVERY_PAGE.find((p) => p.id === 'run')!;
     const named = { ...EVERY_PAGE.find((p) => p.id === 'payroll')!, id: 'payroll' as PageId, path: '/payroll/new' };
-    for (const pages of [[run, named], [named, run]]) {
+    for (const pages of [
+      [run, named],
+      [named, run]
+    ]) {
       expect(pageAt(pages, '/payroll/new')).toEqual({ page: named, params: {} });
       expect(pageAt(pages, '/payroll/r-1')).toEqual({ page: run, params: { run: 'r-1' } });
       expect(pageAt(pages, '/payroll/r-1/more')).toBeNull();
@@ -318,11 +495,24 @@ describe('no two pages share an address or a shortcut', () => {
       const all = EVERY_SHORTCUT.flatMap((s) => s.chords.map(way));
       expect(all.filter((c, i) => all.indexOf(c) !== i)).toEqual([]);
     }
-    for (const c of EVERY_SHORTCUT.flatMap((s) => s.chords)) if (/^[a-z]$/.test(c.key)) expect(c.code, c.key).toBe(`Key${c.key.toUpperCase()}`);
+    for (const c of EVERY_SHORTCUT.flatMap((s) => s.chords))
+      if (/^[a-z]$/.test(c.key)) expect(c.code, c.key).toBe(`Key${c.key.toUpperCase()}`);
     const byPages = EVERY_PAGE.flatMap((p) => (p.shortcut === undefined ? [] : [p.shortcut]));
     expect(byPages.filter((s) => !(s in SHORTCUTS))).toEqual([]);
     expect(byPages.filter((s, i) => byPages.indexOf(s) !== i)).toEqual([]);
-    const commands = ['commandBar', 'everyShortcut', 'searchThisPage', 'create', 'nextRow', 'previousRow', 'openRow', 'close', 'toggleMenu', 'switchCompany', 'lightOrDark'];
+    const commands = [
+      'commandBar',
+      'everyShortcut',
+      'searchThisPage',
+      'create',
+      'nextRow',
+      'previousRow',
+      'openRow',
+      'close',
+      'toggleMenu',
+      'switchCompany',
+      'lightOrDark'
+    ];
     expect(Object.keys(SHORTCUTS)).toEqual(commands);
     expect(byPages.filter((s) => commands.includes(s))).toEqual([]);
   });
@@ -353,14 +543,21 @@ describe('no page opens for a person who may not see it', () => {
       const listed = menuFor(viewer).flatMap((g) => g.pages.map((p) => p.id));
       expect(listed, who).toEqual(EVERY_PAGE.filter((p) => p.group !== null && mayOpen(p, viewer)).map((p) => p.id));
     }
-    expect(menuFor(VIEWERS.employee!).flatMap((g) => g.pages.map((p) => p.id))).toEqual(['payHome', 'payslips', 'paymentsReceived', 'myDetails', 'documents', 'paySettings']);
+    expect(menuFor(VIEWERS.employee!).flatMap((g) => g.pages.map((p) => p.id))).toEqual([
+      'payHome',
+      'payslips',
+      'paymentsReceived',
+      'myDetails',
+      'documents',
+      'paySettings'
+    ]);
   });
 
   /*
    * RED WHEN: the reader's page opens for a person whose wallet released no read keys on this visit, for a visitor, or after the set of
    * companies read is empty again; or a reader with keys is shown the company's own pages or kept out of the sign-up page.
    */
-  it('opens the reader\'s page only while the wallet has released read keys on this visit, and never to a visitor', () => {
+  it("opens the reader's page only while the wallet has released read keys on this visit, and never to a visitor", () => {
     const reader = PAGES.reader;
     const base = { signedIn: true, view: VIEWS.employee, signs: false } as const;
     expect(mayOpen(reader, base)).toBe(false);
@@ -373,8 +570,11 @@ describe('no page opens for a person who may not see it', () => {
   });
 
   /* RED WHEN: a page's own shortcut goes to it for a viewer who may not open it, or does not go to it for one who may. */
-  it('gives a page\'s shortcut only to a viewer who may open it', () => {
-    const pages = [{ ...EVERY_PAGE.find((p) => p.id === 'payroll')!, shortcut: 'create' }, { ...EVERY_PAGE.find((p) => p.id === 'payslips')!, shortcut: 'nextRow' }];
+  it("gives a page's shortcut only to a viewer who may open it", () => {
+    const pages = [
+      { ...EVERY_PAGE.find((p) => p.id === 'payroll')!, shortcut: 'create' },
+      { ...EVERY_PAGE.find((p) => p.id === 'payslips')!, shortcut: 'nextRow' }
+    ];
     expect(pagesByShortcut(pages, VIEWERS.signerInTheCompanyView!)).toEqual({ create: 'payroll' });
     expect(pagesByShortcut(pages, VIEWERS.employee!)).toEqual({ nextRow: 'payslips' });
     expect(pagesByShortcut(pages, VIEWERS.visitor!)).toEqual({});
@@ -384,7 +584,14 @@ describe('no page opens for a person who may not see it', () => {
   /* RED WHEN: an address in no entry opens a page. */
   it('opens nothing at an address the list does not name', () => {
     for (const viewer of Object.values(VIEWERS)) {
-      for (const at of ['/nowhere', '/settings/appearance/more', '/HOME', '/pay/settings/company', '/api/me', '/join']) {
+      for (const at of [
+        '/nowhere',
+        '/settings/appearance/more',
+        '/HOME',
+        '/pay/settings/company',
+        '/api/me',
+        '/join'
+      ]) {
         expect(resolve(at, viewer).of, at).toBe(RESOLVED.nothing);
       }
     }
@@ -392,8 +599,10 @@ describe('no page opens for a person who may not see it', () => {
 });
 
 describe('the menu, the command bar, the shortcuts and the router read the list and nothing else', () => {
-  const files = (dir: string): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? files(`${dir}${d.name}/`) : [`${dir}${d.name}`]))
-    .filter((p) => /\.tsx?$/.test(p) && !/\.test(-support)?\./.test(p));
+  const files = (dir: string): string[] =>
+    readdirSync(SRC + dir, { withFileTypes: true })
+      .flatMap((d) => (d.isDirectory() ? files(`${dir}${d.name}/`) : [`${dir}${d.name}`]))
+      .filter((p) => /\.tsx?$/.test(p) && !/\.test(-support)?\./.test(p));
   const own = files('');
 
   /*
@@ -409,10 +618,14 @@ describe('the menu, the command bar, the shortcuts and the router read the list 
     const key = (p: string, m: string): boolean => p === 'shortcuts.ts' && m === "'/'";
     /* A part that stands for a value (`/payroll/:run`) is an address too. */
     const address = /(['"`])\/(?:[a-z][\w-]*)?(?:\/:?[\w-]+)*(?:\1|\/?\$\{|[?#])/g;
-    const breaches = outside.flatMap((p) => [...read(p).matchAll(address)].filter((m) => !key(p, m[0])).map((m) => `${p}: ${m[0]}`));
+    const breaches = outside.flatMap((p) =>
+      [...read(p).matchAll(address)].filter((m) => !key(p, m[0])).map((m) => `${p}: ${m[0]}`)
+    );
     expect(breaches).toEqual([]);
     /* The rule reads what it is for: the list itself is full of addresses. */
-    expect([...read('pages.ts').matchAll(/(['"`])\/(?:[a-z][\w-]*)?(?:\/:?[\w-]+)*\1/g)].length).toBe(EVERY_PAGE.length);
+    expect([...read('pages.ts').matchAll(/(['"`])\/(?:[a-z][\w-]*)?(?:\/:?[\w-]+)*\1/g)].length).toBe(
+      EVERY_PAGE.length
+    );
   });
 
   /*
@@ -421,14 +634,16 @@ describe('the menu, the command bar, the shortcuts and the router read the list 
    * The command bar reads the arrow keys and Enter of its own list, and a link
    * reads whether a modifier asks for a new tab; neither is a shortcut.
    */
-  it('reads the keyboard only in the shortcut table, the command bar\'s list and a link', () => {
+  it("reads the keyboard only in the shortcut table, the command bar's list and a link", () => {
     const allowed: Record<string, RegExp> = {
       'shortcuts.ts': /./,
       'shell/command-bar.tsx': /onKeyDown/,
-      'router.tsx': /metaKey|ctrlKey|shiftKey|altKey/,
+      'router.tsx': /metaKey|ctrlKey|shiftKey|altKey/
     };
     const reads = /keydown|keyup|keypress|onKey(?:Down|Up|Press)|metaKey|ctrlKey|altKey|shiftKey/g;
-    const breaches = own.flatMap((p) => [...read(p).matchAll(reads)].filter((m) => !(allowed[p]?.test(m[0]) ?? false)).map((m) => `${p}: ${m[0]}`));
+    const breaches = own.flatMap((p) =>
+      [...read(p).matchAll(reads)].filter((m) => !(allowed[p]?.test(m[0]) ?? false)).map((m) => `${p}: ${m[0]}`)
+    );
     expect(breaches).toEqual([]);
     expect(read('shortcuts.ts').match(reads)?.length ?? 0).toBeGreaterThan(5);
   });

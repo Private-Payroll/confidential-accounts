@@ -49,7 +49,7 @@ import { fileURLToPath } from 'node:url';
  */
 export const SERVICE_PROXY: Readonly<Record<string, string>> = {
   '/api': 'http://localhost:8787',
-  '/artefacts/vault': 'http://localhost:8787',
+  '/artefacts/vault': 'http://localhost:8787'
 };
 
 /** The command the development script runs to start the product. */
@@ -77,7 +77,7 @@ export const PAGE_SETTING = 'PAYROLL_PAGE';
  * point the page server at each one's own configuration.
  */
 export const APPLICATION_PAGES = {
-  web: { label: 'the payroll application', config: ['--config', 'apps/web/vite.config.ts'] as readonly string[] },
+  web: { label: 'the payroll application', config: ['--config', 'apps/web/vite.config.ts'] as readonly string[] }
 } as const;
 
 export type ApplicationPage = keyof typeof APPLICATION_PAGES;
@@ -88,24 +88,29 @@ export type ApplicationPage = keyof typeof APPLICATION_PAGES;
  * **UNSET MEANS `apps/web`.** A value that names no application is refused
  * rather than taken as the default, because a person who set it meant something.
  */
-export function applicationPageFrom(settings: Record<string, string | undefined>):
-  { page: ApplicationPage } | { refusal: string } {
+export function applicationPageFrom(
+  settings: Record<string, string | undefined>
+): { page: ApplicationPage } | { refusal: string } {
   const value = settings[PAGE_SETTING];
   if (value === undefined || value === '') return { page: 'web' };
   if (Object.hasOwn(APPLICATION_PAGES, value)) return { page: value as ApplicationPage };
   return {
-    refusal: `${PAGE_SETTING} is "${value}", which names no application. It is one of `
-      + `${Object.keys(APPLICATION_PAGES).join(', ')}, or unset for the application in apps/web`,
+    refusal:
+      `${PAGE_SETTING} is "${value}", which names no application. It is one of ` +
+      `${Object.keys(APPLICATION_PAGES).join(', ')}, or unset for the application in apps/web`
   };
 }
 
 /** Every leading `NAME=VALUE` of a script, including ones assigned nothing. */
 export function leadingAssignments(script: string): Array<{ name: string; value: string }> {
   const lead = /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*/.exec(script)?.[0] ?? '';
-  return lead.split(/\s+/).filter(Boolean).map((a) => {
-    const eq = a.indexOf('=');
-    return { name: a.slice(0, eq), value: a.slice(eq + 1) };
-  });
+  return lead
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((a) => {
+      const eq = a.indexOf('=');
+      return { name: a.slice(0, eq), value: a.slice(eq + 1) };
+    });
 }
 
 /** What a script runs once its leading settings are taken off. */
@@ -118,19 +123,26 @@ export function commandOf(script: string): string {
  * An origin this machine can serve on its loopback, normalised, or the reason
  * it cannot be.
  */
-export function servableOrigin(setting: string, value: string | undefined):
-  { origin: string; port: string } | { refusal: string } {
+export function servableOrigin(
+  setting: string,
+  value: string | undefined
+): { origin: string; port: string } | { refusal: string } {
   if (!value) return { refusal: `${setting} is not set` };
   let u: URL;
-  try { u = new URL(value); } catch { return { refusal: `${setting} is "${value}", which is not an origin` }; }
+  try {
+    u = new URL(value);
+  } catch {
+    return { refusal: `${setting} is "${value}", which is not an origin` };
+  }
   if (u.protocol !== 'http:') {
     return { refusal: `${setting} is "${value}"; a page started on this machine is served over http` };
   }
   const host = u.hostname;
   if (host !== 'localhost' && !host.endsWith('.localhost')) {
     return {
-      refusal: `${setting} is "${value}", and a page started here listens only on this machine, `
-        + 'so it would be served somewhere that origin does not reach',
+      refusal:
+        `${setting} is "${value}", and a page started here listens only on this machine, ` +
+        'so it would be served somewhere that origin does not reach'
     };
   }
   if (!u.port) return { refusal: `${setting} is "${value}", which names no port to start it on` };
@@ -153,19 +165,24 @@ export function servableOrigin(setting: string, value: string | undefined):
  * wallet where nothing is listening.
  */
 export function pageStartsFor(
-  settings: Record<string, string | undefined>, page: ApplicationPage = 'web',
-  walletAnswers: string | null = theWalletsBuiltPageOrigin(),
-):
-  { starts: PageStart[] } | { refusals: string[] } {
+  settings: Record<string, string | undefined>,
+  page: ApplicationPage = 'web',
+  walletAnswers: string | null = theWalletsBuiltPageOrigin()
+): { starts: PageStart[] } | { refusals: string[] } {
   const refusals: string[] = [];
   const app = servableOrigin('APP_ORIGIN', settings.APP_ORIGIN);
   if ('origin' in app) {
     let answered: string | null = null;
-    try { answered = walletAnswers === null ? null : new URL(walletAnswers).origin; } catch { answered = null; }
+    try {
+      answered = walletAnswers === null ? null : new URL(walletAnswers).origin;
+    } catch {
+      answered = null;
+    }
     if (answered !== app.origin) {
       refusals.push(
-        `the application would be started at ${app.origin} (APP_ORIGIN), and the wallet is built to answer only the page at `
-        + `${walletAnswers ?? 'no origin'} (VITE_APP_ORIGIN in the "wallet" script), so the application would ask a wallet that never answers it`);
+        `the application would be started at ${app.origin} (APP_ORIGIN), and the wallet is built to answer only the page at ` +
+          `${walletAnswers ?? 'no origin'} (VITE_APP_ORIGIN in the "wallet" script), so the application would ask a wallet that never answers it`
+      );
     }
   }
   const wallet = servableOrigin('WALLET_ORIGIN', settings.WALLET_ORIGIN);
@@ -173,27 +190,33 @@ export function pageStartsFor(
   for (const r of [app, wallet, opened]) if ('refusal' in r) refusals.push(r.refusal);
   if ('origin' in wallet && 'origin' in opened && wallet.origin !== opened.origin) {
     refusals.push(
-      `the page opens the wallet at ${opened.origin} (VITE_WALLET_ORIGIN) and the wallet would be `
-      + `started at ${wallet.origin} (WALLET_ORIGIN), so the page would open a wallet where nothing is listening`);
+      `the page opens the wallet at ${opened.origin} (VITE_WALLET_ORIGIN) and the wallet would be ` +
+        `started at ${wallet.origin} (WALLET_ORIGIN), so the page would open a wallet where nothing is listening`
+    );
   }
   if ('origin' in app && 'origin' in wallet && app.port === wallet.port) {
     refusals.push(
-      `the application (${app.origin}) and the wallet (${wallet.origin}) are on one port. The wallet `
-      + 'is served on an origin of its own, because its keys are made for the origin it is served from');
+      `the application (${app.origin}) and the wallet (${wallet.origin}) are on one port. The wallet ` +
+        'is served on an origin of its own, because its keys are made for the origin it is served from'
+    );
   }
   if (refusals.length > 0 || !('origin' in app) || !('origin' in wallet)) return { refusals };
   const pinned = (port: string) => ['--host', LOOPBACK_HOST, '--port', port, '--strictPort'];
   return {
     starts: [
       {
-        label: APPLICATION_PAGES[page].label, setting: 'APP_ORIGIN', origin: app.origin,
-        command: ['node_modules/.bin/vite', ...APPLICATION_PAGES[page].config, ...pinned(app.port)],
+        label: APPLICATION_PAGES[page].label,
+        setting: 'APP_ORIGIN',
+        origin: app.origin,
+        command: ['node_modules/.bin/vite', ...APPLICATION_PAGES[page].config, ...pinned(app.port)]
       },
       {
-        label: 'the wallet', setting: 'WALLET_ORIGIN', origin: wallet.origin,
-        command: ['npm', 'run', 'wallet', '--', ...pinned(wallet.port)],
-      },
-    ],
+        label: 'the wallet',
+        setting: 'WALLET_ORIGIN',
+        origin: wallet.origin,
+        command: ['npm', 'run', 'wallet', '--', ...pinned(wallet.port)]
+      }
+    ]
   };
 }
 
@@ -209,7 +232,7 @@ export function pageStartsFor(
  */
 export function originsNotStarted(scripts: Record<string, string>): string[] {
   const dev = scripts.dev ?? '';
-  const devSettings = Object.fromEntries(leadingAssignments(dev).map(a => [a.name, a.value]));
+  const devSettings = Object.fromEntries(leadingAssignments(dev).map((a) => [a.name, a.value]));
   const started = new Set<string>();
   if (commandOf(dev) === LAUNCHER_COMMAND) {
     const plan = pageStartsFor(devSettings);
@@ -221,7 +244,11 @@ export function originsNotStarted(scripts: Record<string, string>): string[] {
       /* A setting whose value is not a web address is a switch, not an origin. */
       if (!a.name.endsWith('_ORIGIN') || !/^https?:\/\//.test(a.value)) continue;
       let origin: string;
-      try { origin = new URL(a.value).origin; } catch { origin = a.value; }
+      try {
+        origin = new URL(a.value).origin;
+      } catch {
+        origin = a.value;
+      }
       if (!started.has(origin)) {
         out.push(`"${name}" names ${a.name}=${a.value}, and "dev" starts nothing there`);
       }
@@ -240,20 +267,22 @@ export function originsNotStarted(scripts: Record<string, string>): string[] {
  * offered to anybody.
  */
 export function refuseWhatTheServerSaid(
-  promised: 'can write' | 'cannot write', said: string, port: number,
+  promised: 'can write' | 'cannot write',
+  said: string,
+  port: number
 ): string | null {
   if (promised === 'can write') {
     return said.includes('reading and writing')
       ? null
-      : `the server did not say it can write. It said: "${said || 'nothing, on port ' + port}". `
-        + 'No company can be created from the screen in this state. Nothing has been spent.';
+      : `the server did not say it can write. It said: "${said || 'nothing, on port ' + port}". ` +
+          'No company can be created from the screen in this state. Nothing has been spent.';
   }
   if (said === '') {
     return `the server did not answer on port ${port}, so the page and the wallet were not started.`;
   }
   return said.includes('reading and writing')
-    ? `the server says it can write: "${said}". This command starts the product read-only, `
-      + 'so nothing was started beside it and it has been stopped. Nothing has been spent.'
+    ? `the server says it can write: "${said}". This command starts the product read-only, ` +
+        'so nothing was started beside it and it has been stopped. Nothing has been spent.'
     : null;
 }
 
@@ -262,7 +291,7 @@ export function refuseWhatTheServerSaid(
  * `wallet` script in `package.json`, or null when the script names none.
  */
 export function theWalletsBuiltPageOrigin(
-  packageJson: string = fileURLToPath(new URL('../package.json', import.meta.url)),
+  packageJson: string = fileURLToPath(new URL('../package.json', import.meta.url))
 ): string | null {
   let scripts: Record<string, string>;
   try {

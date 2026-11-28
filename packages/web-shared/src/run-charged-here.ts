@@ -40,10 +40,21 @@ import { periodOf, periodWindowOf } from '../../../src/midnight/spending-policy-
 import type { PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
 import type { RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
-import { believedProposalIdsOnChainHere, believedRunsHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
+import {
+  believedProposalIdsOnChainHere,
+  believedRunsHere,
+  signedStateHere,
+  type CompanyRecordsHere
+} from './run-rebuilt-here.js';
 import { spendingPolicyHere } from './spending-policy-read-here.js';
 import { refuseARunALeaverRaisedHere } from './seats-leaving-here.js';
-import { oneOffOfTheProposalHere, oneOffsHere, OneOffRefused, refuseAOneOffToAnotherVendorHere, type OneOffBelieved } from './one-off-here.js';
+import {
+  oneOffOfTheProposalHere,
+  oneOffsHere,
+  OneOffRefused,
+  refuseAOneOffToAnotherVendorHere,
+  type OneOffBelieved
+} from './one-off-here.js';
 import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import { chainAtOneBlockHere } from './vault-read-here.js';
 import { DEPOSIT_TIME_TO_LIVE_MS } from './vault-private-deposit.js';
@@ -52,7 +63,10 @@ import { until, type BuiltOnHereDoors, type Pacing } from './vault-doors.js';
 /** Why this device did not charge a run to its period, or could not say what a period has been charged. Nothing was sent. */
 export class RunNotChargedHere extends Error {
   constructor(why: string, options?: { cause?: unknown }) {
-    super(`${why.replace(/\s*Nothing was (proved|built) or sent\.\s*$/u, '').replace(/\.?\s*$/u, '.')} Nothing was sent.`, options);
+    super(
+      `${why.replace(/\s*Nothing was (proved|built) or sent\.\s*$/u, '').replace(/\.?\s*$/u, '.')} Nothing was sent.`,
+      options
+    );
     this.name = 'RunNotChargedHere';
   }
 }
@@ -96,9 +110,14 @@ export interface ChargeDoors extends BuiltOnHereDoors, Pacing {
 
 /** **THE CHARGE WAS RELAYED, OR MAY HAVE BEEN, AND THE CHAIN THE WALLET READS DOES NOT SHOW IT YET.** Nothing was paid. */
 export class ChargeNotYetSeen extends Error {
-  constructor(readonly vault: string, why: string) {
-    super(`${why} Nothing was paid. Try again in a minute: paying again waits for this charge, and does not charge the `
-      + 'run again while it can still land.');
+  constructor(
+    readonly vault: string,
+    why: string
+  ) {
+    super(
+      `${why} Nothing was paid. Try again in a minute: paying again waits for this charge, and does not charge the ` +
+        'run again while it can still land.'
+    );
     this.name = 'ChargeNotYetSeen';
   }
 }
@@ -119,7 +138,9 @@ async function standingHere(doors: ChargeDoors, vault: Hex, proposal: string) {
  * because a read failed. Answers null when the wait ended unseen.
  */
 async function whereItStandsOnceSeen(
-  doors: ChargeDoors, vault: Hex, proposal: string,
+  doors: ChargeDoors,
+  vault: Hex,
+  proposal: string
 ): Promise<{ readonly where: 'charged' | 'not-open' | null; readonly failed: string | null }> {
   let failed: string | null = null;
   const where = await until(doors, async () => {
@@ -134,7 +155,8 @@ async function whereItStandsOnceSeen(
   return { where, failed };
 }
 
-const butRead = (failed: string | null): string => (failed === null ? '' : ` The last read of it did not finish (${failed}).`);
+const butRead = (failed: string | null): string =>
+  failed === null ? '' : ` The last read of it did not finish (${failed}).`;
 
 /**
  * **A CHARGE THIS DEVICE RELAYED EARLIER FROM THIS VAULT, SETTLED FIRST.**
@@ -149,8 +171,11 @@ async function earlierChargeSettled(doors: ChargeDoors, kept: ChargesInFlight, v
   const timedOut = now > earlier.recordedAt + DEPOSIT_TIME_TO_LIVE_MS;
   const seen = timedOut ? null : await whereItStandsOnceSeen(doors, vault, earlier.proposal);
   if (seen !== null && seen.where === null) {
-    throw new ChargeNotYetSeen(vault, 'a charge of a run from this vault was sent from this device and the chain your wallet '
-      + `reads does not show it yet, so no run from this vault is charged or paid from here until it does.${butRead(seen.failed)}`);
+    throw new ChargeNotYetSeen(
+      vault,
+      'a charge of a run from this vault was sent from this device and the chain your wallet ' +
+        `reads does not show it yet, so no run from this vault is charged or paid from here until it does.${butRead(seen.failed)}`
+    );
   }
   await kept.forget(vault, earlier.claim);
 }
@@ -162,12 +187,15 @@ async function earlierChargeSettled(doors: ChargeDoors, kept: ChargesInFlight, v
  * for a run of its own. Refused when no believed run raised the proposal.
  */
 function raisedAsHere(
-  runs: readonly PayrollRun[], proposalId: string,
+  runs: readonly PayrollRun[],
+  proposalId: string,
   input: {
-    readonly vault: string; readonly asset: string; readonly window: { readonly from: bigint; readonly until: bigint } | null;
+    readonly vault: string;
+    readonly asset: string;
+    readonly window: { readonly from: bigint; readonly until: bigint } | null;
     /** The identity on chain of every proposal this device believes, by the company's name for it. */
     readonly chainIds: ReadonlyMap<string, string>;
-  },
+  }
 ): Pick<RunToChargeOnTheWire, 'retry'> {
   const vault = input.vault.toLowerCase();
   const inside = (w: { opensAt: bigint; closesAt: bigint }) =>
@@ -177,25 +205,36 @@ function raisedAsHere(
       if (payout === undefined) continue;
       const amounts = payout.facts.map((f) => f.amount.toString());
       const treeOfRetry = (r: NonNullable<typeof payout.retries>[number]): RunTreeOnTheWire | null =>
-        r.originalIndices.some((i) => payout.leaves[i] === undefined || amounts[i] === undefined) ? null
-          : { root: r.root, leaves: r.originalIndices.map((i) => payout.leaves[i]!), amounts: r.originalIndices.map((i) => amounts[i]!) };
+        r.originalIndices.some((i) => payout.leaves[i] === undefined || amounts[i] === undefined)
+          ? null
+          : {
+              root: r.root,
+              leaves: r.originalIndices.map((i) => payout.leaves[i]!),
+              amounts: r.originalIndices.map((i) => amounts[i]!)
+            };
       if (run.proposalIds[leg as keyof typeof run.proposalIds] === proposalId) return {};
       const retry = payout.retries?.find((r) => r.proposalId === proposalId);
       if (retry === undefined) continue;
       if (assetIdHex(assetOfLeg(leg as never)).toLowerCase() !== input.asset.toLowerCase()) {
-        throw new RunNotChargedHere('the leg this retry pays again is in another currency than the retry, so it cannot be charged against it');
+        throw new RunNotChargedHere(
+          'the leg this retry pays again is in another currency than the retry, so it cannot be charged against it'
+        );
       }
       const others = (payout.retries ?? [])
         .filter((r) => r !== retry && r.vault.toLowerCase() === vault && inside(r))
         .flatMap((r) => {
           const tree = treeOfRetry(r);
-          return tree === null ? [] : [{ ...tree, proposal: r.proposalId === undefined ? null : input.chainIds.get(r.proposalId) ?? null }];
+          return tree === null
+            ? []
+            : [{ ...tree, proposal: r.proposalId === undefined ? null : (input.chainIds.get(r.proposalId) ?? null) }];
         });
       return { retry: { leg: { root: payout.root, leaves: [...payout.leaves], amounts }, others } };
     }
   }
-  throw new RunNotChargedHere('no payroll run of this company that this device believes raised this proposal, so this device cannot '
-    + 'say what it pays. Reload the page and try again');
+  throw new RunNotChargedHere(
+    'no payroll run of this company that this device believes raised this proposal, so this device cannot ' +
+      'say what it pays. Reload the page and try again'
+  );
 }
 
 /**
@@ -206,7 +245,8 @@ function raisedAsHere(
  * the worker makes its total again, whatever its proposal's status now.
  */
 export function runsInThePeriod(
-  runs: readonly PayrollRun[], input: { readonly vault: string; readonly asset: string; readonly from: bigint; readonly until: bigint },
+  runs: readonly PayrollRun[],
+  input: { readonly vault: string; readonly asset: string; readonly from: bigint; readonly until: bigint }
 ): RunTreeOnTheWire[] {
   const vault = input.vault.toLowerCase();
   const asset = input.asset.toLowerCase();
@@ -222,7 +262,11 @@ export function runsInThePeriod(
       for (const r of payout.retries ?? []) {
         if (r.vault.toLowerCase() !== vault || !inside(r)) continue;
         if (r.originalIndices.some((i) => payout.leaves[i] === undefined || amounts[i] === undefined)) continue;
-        found.push({ root: r.root, leaves: r.originalIndices.map((i) => payout.leaves[i]!), amounts: r.originalIndices.map((i) => amounts[i]!) });
+        found.push({
+          root: r.root,
+          leaves: r.originalIndices.map((i) => payout.leaves[i]!),
+          amounts: r.originalIndices.map((i) => amounts[i]!)
+        });
       }
     }
   }
@@ -237,28 +281,39 @@ export function runsInThePeriod(
  * (`runsInThePeriod`).
  */
 function oneOffsInThePeriod(
-  oneOffs: readonly OneOffBelieved[], input: { readonly vault: string; readonly asset: string; readonly from: bigint; readonly until: bigint },
+  oneOffs: readonly OneOffBelieved[],
+  input: { readonly vault: string; readonly asset: string; readonly from: bigint; readonly until: bigint }
 ): RunTreeOnTheWire[] {
   const vault = input.vault.toLowerCase();
   const asset = input.asset.toLowerCase();
   return oneOffs
-    .filter((o) => o.oneOff.vault === vault && assetIdHex(o.oneOff.asset).toLowerCase() === asset
-      && o.oneOff.run.opensAt >= input.from && o.oneOff.run.closesAt <= input.until)
+    .filter(
+      (o) =>
+        o.oneOff.vault === vault &&
+        assetIdHex(o.oneOff.asset).toLowerCase() === asset &&
+        o.oneOff.run.opensAt >= input.from &&
+        o.oneOff.run.closesAt <= input.until
+    )
     .map((o) => ({ root: o.tree.tree.root, leaves: [...o.tree.tree.leaves], amounts: [o.oneOff.amount.toString()] }));
 }
 
 /** Whether any of the company's runs this device believes names `proposalId` as a leg's or a retry's. */
 const aRunClaims = (runs: readonly PayrollRun[], proposalId: string): boolean =>
-  runs.some((r) => Object.values(r.proposalIds ?? {}).includes(proposalId)
-    || Object.values(r.payout ?? {}).some((p) => (p?.retries ?? []).some((x) => x.proposalId === proposalId)));
+  runs.some(
+    (r) =>
+      Object.values(r.proposalIds ?? {}).includes(proposalId) ||
+      Object.values(r.payout ?? {}).some((p) => (p?.retries ?? []).some((x) => x.proposalId === proposalId))
+  );
 
 /** The vault's policy for the currency, opened here, refused unless the vault has one for it. */
 async function policySetHere(doors: RecordsHereDoors, vault: string, asset: string) {
   const standing = await spendingPolicyHere(doors, { vault, asset: asset as AssetId });
   if (standing.state === 'none') return null;
   if (standing.state === 'not-for-this-currency') {
-    throw new RunNotChargedHere('the vault this run is paid from has a spending policy, but none for the currency it pays in, so '
-      + 'the chain will not charge it and the vault will not pay it. Set a policy for this currency first');
+    throw new RunNotChargedHere(
+      'the vault this run is paid from has a spending policy, but none for the currency it pays in, so ' +
+        'the chain will not charge it and the vault will not pay it. Set a policy for this currency first'
+    );
   }
   return standing;
 }
@@ -270,27 +325,38 @@ async function policySetHere(doors: RecordsHereDoors, vault: string, asset: stri
  * taken only when it opens the commitment the chain holds for the period.
  */
 export async function periodTotalHere(
-  doors: RecordsHereDoors & ChargeDoors, input: { readonly vault: string; readonly asset: string; readonly period: bigint },
+  doors: RecordsHereDoors & ChargeDoors,
+  input: { readonly vault: string; readonly asset: string; readonly period: bigint }
 ): Promise<bigint> {
   const vault = input.vault.toLowerCase() as Hex;
   const asset = input.asset.toLowerCase();
   const standing = await policySetHere(doors, vault, asset);
-  if (standing === null) throw new RunNotChargedHere('this vault has no spending policy, so nothing is charged to its periods');
+  if (standing === null)
+    throw new RunNotChargedHere('this vault has no spending policy, so nothing is charged to its periods');
   const window = periodWindowOf(standing.policy, input.period);
   const [runs, state, chain, oneOffs] = await Promise.all([
     believedRunsHere(doors.records, doors.accountId, doors.viewingKey),
     signedStateHere(doors.records, doors.accountId, doors.viewingKey),
     chainAtOneBlockHere(doors, vault),
-    oneOffsHere(doors.records, doors.accountId),
+    oneOffsHere(doors.records, doors.accountId)
   ]);
   try {
-    return BigInt(await doors.builder.periodTotal({
-      accountState: chain.accountState,
-      total: {
-        vault, asset, assetBlinding: state.assetBlinding, policy: standing.opening, period: input.period.toString(),
-        runs: [...runsInThePeriod(runs, { vault, asset, ...window }), ...oneOffsInThePeriod(oneOffs.believed, { vault, asset, ...window })],
-      },
-    }));
+    return BigInt(
+      await doors.builder.periodTotal({
+        accountState: chain.accountState,
+        total: {
+          vault,
+          asset,
+          assetBlinding: state.assetBlinding,
+          policy: standing.opening,
+          period: input.period.toString(),
+          runs: [
+            ...runsInThePeriod(runs, { vault, asset, ...window }),
+            ...oneOffsInThePeriod(oneOffs.believed, { vault, asset, ...window })
+          ]
+        }
+      })
+    );
   } catch (e) {
     throw new RunNotChargedHere(String((e as Error)?.message ?? e), { cause: e });
   }
@@ -307,8 +373,10 @@ type RunCharged =
  * asked to charge, or a payroll run of the company's, says it is something else, and when it pays another vendor.
  */
 async function oneOffChargedHere(
-  doors: RecordsHereDoors & ChargeDoors, run: { readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string },
-  runs: Awaited<ReturnType<typeof believedRunsHere>>, believed: Awaited<ReturnType<typeof oneOffsHere>>['believed'],
+  doors: RecordsHereDoors & ChargeDoors,
+  run: { readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string },
+  runs: Awaited<ReturnType<typeof believedRunsHere>>,
+  believed: Awaited<ReturnType<typeof oneOffsHere>>['believed']
 ): Promise<OneOffBelieved | null> {
   /*
    * A one-off payment, charged as a first payment with its fresh half from its record's seed: only when the proposal's own
@@ -321,9 +389,14 @@ async function oneOffChargedHere(
   } catch (e) {
     throw new RunNotChargedHere(String((e as Error)?.message ?? e).replace(/\.$/u, ''), { cause: e });
   }
-  if (oneOff !== null && (oneOff.oneOff.proposal.chainId !== String(run.order.proposal).toLowerCase() || aRunClaims(runs, run.proposalId))) {
-    throw new RunNotChargedHere('this proposal is raised as a one-off payment, and what this device was asked to charge, or a payroll run of the '
-      + 'company\'s, says it is something else, so it is not charged. Reload the page and try again');
+  if (
+    oneOff !== null &&
+    (oneOff.oneOff.proposal.chainId !== String(run.order.proposal).toLowerCase() || aRunClaims(runs, run.proposalId))
+  ) {
+    throw new RunNotChargedHere(
+      'this proposal is raised as a one-off payment, and what this device was asked to charge, or a payroll run of the ' +
+        "company's, says it is something else, so it is not charged. Reload the page and try again"
+    );
   }
   if (oneOff !== null) {
     try {
@@ -341,22 +414,26 @@ async function oneOffChargedHere(
  * the run as charged; `charged` only then.
  */
 async function chargeSentAndSeen(
-  doors: RecordsHereDoors & ChargeDoors, sending: { readonly kept: ChargesInFlight; readonly charge: NonNullable<ChargeDoors['charge']> },
+  doors: RecordsHereDoors & ChargeDoors,
+  sending: { readonly kept: ChargesInFlight; readonly charge: NonNullable<ChargeDoors['charge']> },
   { vault, proposal, proposalId }: { readonly vault: Hex; readonly proposal: string; readonly proposalId: string },
   built: { readonly tx: string; readonly spent: string | null },
-  account: Awaited<ReturnType<typeof chainAtOneBlockHere>>['account'],
+  account: Awaited<ReturnType<typeof chainAtOneBlockHere>>['account']
 ): Promise<RunCharged> {
   const claim = await sending.kept.claim(vault, { proposal, recordedAt: (doors.now?.() ?? new Date()).getTime() });
   if (claim === null) {
-    throw new RunNotChargedHere('another charge from this vault is being sent from this browser. Try again in a minute');
+    throw new RunNotChargedHere(
+      'another charge from this vault is being sent from this browser. Try again in a minute'
+    );
   }
   try {
     const { tx } = built;
     const { charge } = sending;
     await handedOver(doors.handOver, {
-      tx, call: { kind: 'account-call', contract: account, circuit: 'clearRun' },
+      tx,
+      call: { kind: 'account-call', contract: account, circuit: 'clearRun' },
       viaService: () => charge(proposalId, { tx, filer: doors.filer }),
-      after: async () => undefined,
+      after: async () => undefined
     });
   } catch (e) {
     if (sentNothing(e)) await sending.kept.forget(vault, claim);
@@ -365,13 +442,18 @@ async function chargeSentAndSeen(
   /* ---- the run is paid only once the chain the wallet reads holds it as charged ---- */
   const { where: seen, failed } = await whereItStandsOnceSeen(doors, vault, proposal);
   if (seen === null) {
-    throw new ChargeNotYetSeen(vault, 'the charge of this run to its period was sent, and the chain your wallet reads does not show '
-      + `it yet.${butRead(failed)}`);
+    throw new ChargeNotYetSeen(
+      vault,
+      'the charge of this run to its period was sent, and the chain your wallet reads does not show ' +
+        `it yet.${butRead(failed)}`
+    );
   }
   await sending.kept.forget(vault, claim);
   if (seen === 'not-open') {
-    throw new Error('the charge was sent, and the chain your wallet reads no longer holds this run\'s proposal open, so it cannot '
-      + 'be paid as it stands. Reload the run to see where it stands. Nothing was paid.');
+    throw new Error(
+      "the charge was sent, and the chain your wallet reads no longer holds this run's proposal open, so it cannot " +
+        'be paid as it stands. Reload the run to see where it stands. Nothing was paid.'
+    );
   }
   return { state: 'charged', spentBefore: BigInt(built.spent ?? '0') };
 }
@@ -396,10 +478,11 @@ async function chargeSentAndSeen(
 export async function chargeTheRunHere(
   doors: RecordsHereDoors & ChargeDoors,
   run: {
-    readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string;
+    readonly order: PrivatePaymentOrderOnTheWire;
+    readonly proposalId: string;
     /** What the proposal's salt was made from, as its filing seals it beside the salt (`legToPayHere`). */
     readonly vouched?: Vouched;
-  },
+  }
 ): Promise<RunCharged> {
   await refuseARunALeaverRaisedHere(doors.records, doors.accountId, doors.viewingKey, run.proposalId);
   const { order } = run;
@@ -409,8 +492,10 @@ export async function chargeTheRunHere(
   if (standing === null) return { state: 'no-policy' };
   const kept = doors.chargesInFlight;
   if (doors.charge === undefined || kept === undefined) {
-    throw new RunNotChargedHere('this page cannot charge a run to its vault\'s period, and a vault under a spending policy pays '
-      + 'only a run that is charged. Reload the page to get the current version');
+    throw new RunNotChargedHere(
+      "this page cannot charge a run to its vault's period, and a vault under a spending policy pays " +
+        'only a run that is charged. Reload the page to get the current version'
+    );
   }
   await earlierChargeSettled(doors, kept, vault);
   const opensAt = BigInt(order.opensAt);
@@ -419,7 +504,7 @@ export async function chargeTheRunHere(
     believedRunsHere(doors.records, doors.accountId, doors.viewingKey),
     signedStateHere(doors.records, doors.accountId, doors.viewingKey),
     chainAtOneBlockHere(doors, vault),
-    oneOffsHere(doors.records, doors.accountId),
+    oneOffsHere(doors.records, doors.accountId)
   ]);
   const oneOff = await oneOffChargedHere(doors, run, runs, oneOffs.believed);
   /*
@@ -427,39 +512,69 @@ export async function chargeTheRunHere(
    * asked about first: nothing the charge alone needs - what its salt was made
    * from, its leg - can then stop a run already charged from being paid.
    */
-  if (await doors.builder.runCharged({ accountState: chain.accountState, proposal: order.proposal }) === 'charged') {
+  if ((await doors.builder.runCharged({ accountState: chain.accountState, proposal: order.proposal })) === 'charged') {
     return { state: 'already-charged' };
   }
   if (oneOff === null && (run.vouched === undefined || vouchedRefusal(run.vouched) !== null)) {
-    throw new RunNotChargedHere('the company\'s record of this run\'s proposal does not say how its salt was made, so the chain will '
-      + 'not charge it and this device cannot. It was raised before this version: withdraw it and raise it again');
+    throw new RunNotChargedHere(
+      "the company's record of this run's proposal does not say how its salt was made, so the chain will " +
+        'not charge it and this device cannot. It was raised before this version: withdraw it and raise it again'
+    );
   }
   /* The runs that may share the run's period; a run in no single period is refused by the worker, with nothing summed. */
   const period = periodOf(standing.policy, { opensAt, closesAt });
   const window = period === null ? null : periodWindowOf(standing.policy, period);
   /* What its proposal was raised as: a run of its own, a retry of a leg, or a one-off payment, which is never a retry. */
-  const raisedAs = oneOff !== null ? {}
-    : raisedAsHere(runs, run.proposalId, { vault, asset, window, chainIds: await believedProposalIdsOnChainHere(doors.records, doors.accountId) });
+  const raisedAs =
+    oneOff !== null
+      ? {}
+      : raisedAsHere(runs, run.proposalId, {
+          vault,
+          asset,
+          window,
+          chainIds: await believedProposalIdsOnChainHere(doors.records, doors.accountId)
+        });
   const fresh = oneOff !== null ? oneOff.secrets.fresh : vouchedFreshOf(run.vouched!.head, run.vouched!.r);
   let built: { tx: string | null; spent: string | null };
   try {
     built = await doors.builder.clearRun({
       account: chain.account,
       run: {
-        proposal: order.proposal, vault, salt: order.salt, required: order.required ?? '0',
-        opensAt: opensAt.toString(), closesAt: closesAt.toString(), asset, assetBlinding: state.assetBlinding,
-        policy: standing.opening, root: order.root,
-        leaves: order.payments.map((p) => p.leaf), amounts: order.payments.map((p) => p.amount),
+        proposal: order.proposal,
+        vault,
+        salt: order.salt,
+        required: order.required ?? '0',
+        opensAt: opensAt.toString(),
+        closesAt: closesAt.toString(),
+        asset,
+        assetBlinding: state.assetBlinding,
+        policy: standing.opening,
+        root: order.root,
+        leaves: order.payments.map((p) => p.leaf),
+        amounts: order.payments.map((p) => p.amount),
         /* The fresh half of its salt: made from what a run's raiser sealed beside it, or from a one-off's seed. */
-        fresh, ...raisedAs,
+        fresh,
+        ...raisedAs
       },
-      runs: window === null ? [] : [...runsInThePeriod(runs, { vault, asset, ...window }), ...oneOffsInThePeriod(oneOffs.believed, { vault, asset, ...window })],
-      chain: { accountState: chain.accountState, parameters: chain.parameters },
+      runs:
+        window === null
+          ? []
+          : [
+              ...runsInThePeriod(runs, { vault, asset, ...window }),
+              ...oneOffsInThePeriod(oneOffs.believed, { vault, asset, ...window })
+            ],
+      chain: { accountState: chain.accountState, parameters: chain.parameters }
     });
   } catch (e) {
     throw new RunNotChargedHere(String((e as Error)?.message ?? e), { cause: e });
   }
   if (built.tx === null) return { state: 'already-charged' };
   const proposal = String(order.proposal).toLowerCase();
-  return chargeSentAndSeen(doors, { kept, charge: doors.charge }, { vault, proposal, proposalId: run.proposalId }, { ...built, tx: built.tx }, chain.account);
+  return chargeSentAndSeen(
+    doors,
+    { kept, charge: doors.charge },
+    { vault, proposal, proposalId: run.proposalId },
+    { ...built, tx: built.tx },
+    chain.account
+  );
 }

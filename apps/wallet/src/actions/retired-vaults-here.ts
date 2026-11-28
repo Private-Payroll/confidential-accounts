@@ -19,12 +19,19 @@ const lower = (x: string): Hex => String(x).toLowerCase() as Hex;
 type VaultReadDoors = Pick<ChainHereDoors, 'builder' | 'indexer' | 'account'>;
 
 /** Every vault the company's account retired and does not hold again now, as the account's own state lists them. */
-export async function retiredVaultsOnChain(r: Pick<CompanyReach, 'builder' | 'chain' | 'account'>): Promise<readonly Hex[]> {
+export async function retiredVaultsOnChain(
+  r: Pick<CompanyReach, 'builder' | 'chain' | 'account'>
+): Promise<readonly Hex[]> {
   const reads = r.builder.superAdmins?.reads(r.chain.indexer);
-  if (reads === undefined) throw new Error('this wallet cannot read the vaults the company\'s account retired. Reload it to get the current version.');
+  if (reads === undefined)
+    throw new Error(
+      "this wallet cannot read the vaults the company's account retired. Reload it to get the current version."
+    );
   const read = await reads.accountAt(lower(String(r.account)));
   if (read === null || read.vaults === null) {
-    throw new Error('the company\'s account does not list the vaults it adopted and retired, so the vaults a removal reaches are not known.');
+    throw new Error(
+      "the company's account does not list the vaults it adopted and retired, so the vaults a removal reaches are not known."
+    );
   }
   const adopted = new Set(read.vaults.adopted.map(lower));
   return read.vaults.retired.map(lower).filter((v) => !adopted.has(v));
@@ -51,7 +58,11 @@ export type SecretAtStake = 'private-money' | 'copies' | 'deposits';
  * `deposits` when a secret is set, since it takes private money at any time; else null. A retired vault takes no
  * deposit, so one read empty with its change finished has nothing at stake.
  */
-export async function secretAtStakeHere(doors: VaultReadDoors, vault: Hex, retired: boolean): Promise<SecretAtStake | null> {
+export async function secretAtStakeHere(
+  doors: VaultReadDoors,
+  vault: Hex,
+  retired: boolean
+): Promise<SecretAtStake | null> {
   const read = await readHereOrUnread(doors, vault);
   if (read === null || moneyOnChainOf(read).notes !== ON_CHAIN.none) return 'private-money';
   if (secretChangeHalfWritten(read)) return 'copies';
@@ -64,7 +75,10 @@ export async function secretAtStakeHere(doors: VaultReadDoors, vault: Hex, retir
  * half written, each read once and all of them together. Their secret's change is raised after a removal and finished, and their secret is given
  * to the seats that lack it, as an adopted vault's is; a retired vault that never started is passed over.
  */
-export async function retiredVaultsKeptHere(r: Pick<CompanyReach, 'builder' | 'chain' | 'account'>, doors: VaultReadDoors): Promise<readonly Hex[]> {
+export async function retiredVaultsKeptHere(
+  r: Pick<CompanyReach, 'builder' | 'chain' | 'account'>,
+  doors: VaultReadDoors
+): Promise<readonly Hex[]> {
   const retired = await retiredVaultsOnChain(r);
   const stakes = await Promise.all(retired.map((vault) => secretAtStakeHere(doors, vault, true)));
   return retired.filter((_v, i) => stakes[i] !== null);

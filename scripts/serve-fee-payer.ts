@@ -72,13 +72,16 @@ async function main() {
   const setup = feePayerSetupFrom(process.env, ROOT, existsSync);
   if ('refusals' in setup) {
     throw new Error(
-      'the fee payer cannot be served from this machine:\n\n  '
-      + setup.refusals.join(';\n\n  ') + '.\n\nNothing has been brought up and nothing has been spent.');
+      'the fee payer cannot be served from this machine:\n\n  ' +
+        setup.refusals.join(';\n\n  ') +
+        '.\n\nNothing has been brought up and nothing has been spent.'
+    );
   }
   if (!(await proofServerAnswers(PROVER_PORT))) {
     throw new Error(
-      `no proof server answers on port ${PROVER_PORT}, and the fee payer proves the fee it adds. `
-      + 'Start one, then start this again. Nothing has been brought up.');
+      `no proof server answers on port ${PROVER_PORT}, and the fee payer proves the fee it adds. ` +
+        'Start one, then start this again. Nothing has been brought up.'
+    );
   }
   good(`no transaction may spend more than ${setup.ceiling.perTransaction} SPECKs of DUST`);
 
@@ -86,16 +89,26 @@ async function main() {
   step(2, 3, 'Bringing up the wallet that pays (a sync, then DUST)');
 
   const logger: any = {
-    info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, trace: () => {},
-    fatal: () => {}, silent: () => {}, level: 'silent',
-    child() { return this; },
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+    trace: () => {},
+    fatal: () => {},
+    silent: () => {},
+    level: 'silent',
+    child() {
+      return this;
+    }
   };
   const { env, how } = testEnvironmentFor(NETWORK, logger);
   good(how);
   const cfg = await startEnvironment(env, new StaticProofServerContainer(PROVER_PORT), (s) => good(s));
-  const payerLive = await bringUpWallet(
-    logger, cfg, readFileSync(setup.seedFile, 'utf8').trim(), NETWORK, ROOT,
-    { withDust: true, requireDust: true, onNote: (m) => good(m) });
+  const payerLive = await bringUpWallet(logger, cfg, readFileSync(setup.seedFile, 'utf8').trim(), NETWORK, ROOT, {
+    withDust: true,
+    requireDust: true,
+    onNote: (m) => good(m)
+  });
   good(`the wallet that pays holds ${payerLive.night()} NIGHT and ${payerLive.dust()} DUST`);
 
   /* ---------------------------------------------------------------- 3 */
@@ -107,22 +120,27 @@ async function main() {
   const feeRecord = fileFeeSink(FEE_RECORD, (p, l) => appendFileSync(p, l));
 
   const parts: LiveWalletParts = {
-    provider: payerLive.wallet, facade: payerLive.wallet.wallet,
-    dust: () => payerLive.dust(), night: () => payerLive.night(),
+    provider: payerLive.wallet,
+    facade: payerLive.wallet.wallet,
+    dust: () => payerLive.dust(),
+    night: () => payerLive.night()
   };
   const app = feePayerApp({
-    newPayer: () => feePayerOver(
-      parts,
-      paidFeeFrom(publicData),
-      feeRecord,
-      ({ fee, remaining }) => good(
-        `paid ${fee ?? 'an amount that was not read back'}; `
-        + `${remaining} DUST reported after (it lags, and is not a capacity reading)`),
-      setup.ceiling,
-    ),
+    newPayer: () =>
+      feePayerOver(
+        parts,
+        paidFeeFrom(publicData),
+        feeRecord,
+        ({ fee, remaining }) =>
+          good(
+            `paid ${fee ?? 'an amount that was not read back'}; ` +
+              `${remaining} DUST reported after (it lags, and is not a capacity reading)`
+          ),
+        setup.ceiling
+      ),
     codec: finalisedTransactionCodec(),
     secret: setup.secret,
-    capacity: async () => ({ dust: payerLive.dust(), night: payerLive.night() }),
+    capacity: async () => ({ dust: payerLive.dust(), night: payerLive.night() })
   });
 
   await new Promise<void>((resolve) => {

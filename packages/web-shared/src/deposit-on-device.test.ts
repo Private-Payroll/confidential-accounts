@@ -5,12 +5,24 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  depositCoinOnThisDevice, startVaultNonceSecretAgainOnThisDevice, startVaultNonceSecretOnThisDevice, recordsReaderOf,
-  fileTheChainsSecretAsTheNewest, VaultSecretBeingChanged, type DeviceSigner, type DeviceRecords,
+  depositCoinOnThisDevice,
+  startVaultNonceSecretAgainOnThisDevice,
+  startVaultNonceSecretOnThisDevice,
+  recordsReaderOf,
+  fileTheChainsSecretAsTheNewest,
+  VaultSecretBeingChanged,
+  type DeviceSigner,
+  type DeviceRecords
 } from './deposit-on-device.js';
 import { MemorySealedPoolStore, SealedNotePool, type PoolSigner } from '../../../src/midnight/vault-pool.js';
 import {
-  openNonceSecrets, recordsKeypairFrom, rotateNonceSecret, newNonceSecret, currentDepositNonceKey, startNonceSecret, startNonceSecretAgain,
+  openNonceSecrets,
+  recordsKeypairFrom,
+  rotateNonceSecret,
+  newNonceSecret,
+  currentDepositNonceKey,
+  startNonceSecret,
+  startNonceSecretAgain
 } from '../../../src/midnight/company-nonce-secret.js';
 import { depositNonceAt, DepositCoinAlreadyMade } from '../../../src/midnight/deposit-nonce.js';
 import type { Hex } from '../../../src/core/crypto.js';
@@ -22,7 +34,7 @@ const person = (id: string, fill: number) => {
   const w = recordsKeypairFrom(new Uint8Array(32).fill(fill));
   return {
     me: { signerId: id, wrappingSecret: w.secret, companyKey: new Uint8Array(32).fill(fill) } as DeviceSigner,
-    who: { id, wrappingPublicKey: w.publicKey } as PoolSigner,
+    who: { id, wrappingPublicKey: w.publicKey } as PoolSigner
   };
 };
 const storesFor = (): { records: DeviceRecords; kept: Map<WireRecord, MemorySealedPoolStore> } => {
@@ -31,59 +43,138 @@ const storesFor = (): { records: DeviceRecords; kept: Map<WireRecord, MemorySeal
 };
 /** The chain with nothing made for the vault, its secret set before any removal. */
 const nothingMade = {
-  everCreated: new Set<string>(), outputCommitmentOf: () => 'none', heldNow: () => false, secretIsTheVaults: () => true, removals: 0,
-  secretSet: async () => 0,
+  everCreated: new Set<string>(),
+  outputCommitmentOf: () => 'none',
+  heldNow: () => false,
+  secretIsTheVaults: () => true,
+  removals: 0,
+  secretSet: async () => 0
 };
 
-describe('a deposit\'s coin, chosen on the device', () => {
-  it('IS DERIVED FROM THE VAULT\'S CURRENT EPOCH AT THE FIRST FREE SLOT, by any signer, and filed as a sealed line', async () => {
-    const ada = person('ada', 1); const bo = person('bo', 2);
+describe("a deposit's coin, chosen on the device", () => {
+  it("IS DERIVED FROM THE VAULT'S CURRENT EPOCH AT THE FIRST FREE SLOT, by any signer, and filed as a sealed line", async () => {
+    const ada = person('ada', 1);
+    const bo = person('bo', 2);
     const { records, kept } = storesFor();
     await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [recordsReaderOf(bo.me.companyKey)], records, new Set());
-    await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: ada.me.wrappingSecret }, async () => [ada.who, bo.who]).create(VAULT, { notes: [] });
+    await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: ada.me.wrappingSecret }, async () => [
+      ada.who,
+      bo.who
+    ]).create(VAULT, { notes: [] });
     const signers = async () => [ada.who, bo.who];
     const made = { ...nothingMade, everCreated: new Set(['x', 'y']) };
-    const byBo = await depositCoinOnThisDevice({ vault: VAULT, money: { token: TOKEN, value: 70n }, me: bo.me, signers, records, chain: made });
-    const secrets = openNonceSecrets((await kept.get('nonce-secret')!.get(VAULT))!, VAULT, recordsKeypairFrom(ada.me.companyKey));
+    const byBo = await depositCoinOnThisDevice({
+      vault: VAULT,
+      money: { token: TOKEN, value: 70n },
+      me: bo.me,
+      signers,
+      records,
+      chain: made
+    });
+    const secrets = openNonceSecrets(
+      (await kept.get('nonce-secret')!.get(VAULT))!,
+      VAULT,
+      recordsKeypairFrom(ada.me.companyKey)
+    );
     /* Two outputs of other money: neither is this money's coin, so the lowest slot is free. */
-    expect(byBo.slot, 'RED WHEN: the slot is taken from the vault\'s output count rather than the lowest free slot').toBe(1);
-    expect(byBo.coin.nonce, 'RED WHEN: a signer\'s deposit is not derived from the company\'s secret, so only they could name it')
-      .toBe(depositNonceAt(currentDepositNonceKey(secrets), { token: TOKEN, value: 70n }, 1));
+    expect(
+      byBo.slot,
+      "RED WHEN: the slot is taken from the vault's output count rather than the lowest free slot"
+    ).toBe(1);
+    expect(
+      byBo.coin.nonce,
+      "RED WHEN: a signer's deposit is not derived from the company's secret, so only they could name it"
+    ).toBe(depositNonceAt(currentDepositNonceKey(secrets), { token: TOKEN, value: 70n }, 1));
     expect(byBo.epoch).toBe(1);
-    expect((await kept.get('deposit-journal')!.versions(VAULT)), 'the line is filed before the coin is handed back').toHaveLength(1);
-    expect(JSON.stringify(await kept.get('deposit-journal')!.versions(VAULT)), 'RED WHEN: the line is filed in the clear').not.toContain(byBo.coin.nonce);
+    expect(
+      await kept.get('deposit-journal')!.versions(VAULT),
+      'the line is filed before the coin is handed back'
+    ).toHaveLength(1);
+    expect(
+      JSON.stringify(await kept.get('deposit-journal')!.versions(VAULT)),
+      'RED WHEN: the line is filed in the clear'
+    ).not.toContain(byBo.coin.nonce);
   });
 
   it('DEPOSITS UNDER THE NEWEST EPOCH, and refuses when the pool already holds the coin at every slot', async () => {
-    const ada = person('ada', 1); const bo = person('bo', 2);
+    const ada = person('ada', 1);
+    const bo = person('bo', 2);
     const { records, kept } = storesFor();
     await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [recordsReaderOf(bo.me.companyKey)], records, new Set());
     const store = kept.get('nonce-secret')!;
-    await store.put(VAULT, rotateNonceSecret((await store.get(VAULT))!, VAULT, recordsKeypairFrom(ada.me.companyKey),
-      { remaining: [recordsReaderOf(ada.me.companyKey)], leaving: [recordsReaderOf(bo.me.companyKey)] }, newNonceSecret(), 0));
-    const pool = new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: ada.me.wrappingSecret }, async () => [ada.who, bo.who]);
+    await store.put(
+      VAULT,
+      rotateNonceSecret(
+        (await store.get(VAULT))!,
+        VAULT,
+        recordsKeypairFrom(ada.me.companyKey),
+        { remaining: [recordsReaderOf(ada.me.companyKey)], leaving: [recordsReaderOf(bo.me.companyKey)] },
+        newNonceSecret(),
+        0
+      )
+    );
+    const pool = new SealedNotePool(
+      records('pool'),
+      { signerId: 'ada', wrappingSecret: ada.me.wrappingSecret },
+      async () => [ada.who, bo.who]
+    );
     await pool.create(VAULT, { notes: [] });
-    const got = await depositCoinOnThisDevice({ vault: VAULT, money: { token: TOKEN, value: 9n }, me: ada.me, signers: async () => [ada.who, bo.who], records, chain: nothingMade });
+    const got = await depositCoinOnThisDevice({
+      vault: VAULT,
+      money: { token: TOKEN, value: 9n },
+      me: ada.me,
+      signers: async () => [ada.who, bo.who],
+      records,
+      chain: nothingMade
+    });
     expect(got.epoch, 'RED WHEN: a deposit is made under an epoch a signer who left knows').toBe(2);
-    await expect(depositCoinOnThisDevice({ vault: VAULT, money: { token: TOKEN, value: 9n }, me: bo.me, signers: async () => [ada.who, bo.who], records, chain: nothingMade }),
-      'RED WHEN: a signer who left deposits under the epoch before they left').rejects.toThrow(/no copy is wrapped/);
-    await expect(depositCoinOnThisDevice({
-      vault: VAULT, money: { token: TOKEN, value: 9n }, me: ada.me, signers: async () => [ada.who, bo.who], records,
-      chain: { ...nothingMade, heldNow: () => true },
-    }), 'RED WHEN: a coin the vault holds is made again').rejects.toBeInstanceOf(DepositCoinAlreadyMade);
+    await expect(
+      depositCoinOnThisDevice({
+        vault: VAULT,
+        money: { token: TOKEN, value: 9n },
+        me: bo.me,
+        signers: async () => [ada.who, bo.who],
+        records,
+        chain: nothingMade
+      }),
+      'RED WHEN: a signer who left deposits under the epoch before they left'
+    ).rejects.toThrow(/no copy is wrapped/);
+    await expect(
+      depositCoinOnThisDevice({
+        vault: VAULT,
+        money: { token: TOKEN, value: 9n },
+        me: ada.me,
+        signers: async () => [ada.who, bo.who],
+        records,
+        chain: { ...nothingMade, heldNow: () => true }
+      }),
+      'RED WHEN: a coin the vault holds is made again'
+    ).rejects.toBeInstanceOf(DepositCoinAlreadyMade);
   });
 
   it('REFUSES a deposit into a vault with no nonce secret, and a second secret for a vault that has one', async () => {
     const ada = person('ada', 1);
     const { records } = storesFor();
-    await expect(depositCoinOnThisDevice({ vault: VAULT, money: { token: TOKEN, value: 9n }, me: ada.me, signers: async () => [ada.who], records, chain: nothingMade }),
-      'RED WHEN: a deposit is made with no secret the company holds, so nobody could name it again').rejects.toThrow(/no nonce secret yet/);
-    await expect(startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set(['made'])),
-      'RED WHEN: a vault that already holds money and has lost its secret is given a new one, and every earlier deposit loses its name')
-      .rejects.toThrow(/already made coins for this vault/);
+    await expect(
+      depositCoinOnThisDevice({
+        vault: VAULT,
+        money: { token: TOKEN, value: 9n },
+        me: ada.me,
+        signers: async () => [ada.who],
+        records,
+        chain: nothingMade
+      }),
+      'RED WHEN: a deposit is made with no secret the company holds, so nobody could name it again'
+    ).rejects.toThrow(/no nonce secret yet/);
+    await expect(
+      startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set(['made'])),
+      'RED WHEN: a vault that already holds money and has lost its secret is given a new one, and every earlier deposit loses its name'
+    ).rejects.toThrow(/already made coins for this vault/);
     expect(await records('nonce-secret').versions(VAULT)).toEqual([]);
     await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set());
-    await expect(startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set())).rejects.toThrow(/already has a nonce secret/);
+    await expect(startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set())).rejects.toThrow(
+      /already has a nonce secret/
+    );
   });
 
   it('HANDS BACK THE RECORD IT MADE, so the device that made the secret builds on that and not on what is read back', async () => {
@@ -95,14 +186,37 @@ describe('a deposit\'s coin, chosen on the device', () => {
   });
 
   it('A FRESH FIRST SECRET IS FILED AS THE NEXT VERSION, ONLY OVER THE VERSION READ, AND NEVER FOR A VAULT WITH MONEY', async () => {
-    const ada = person('ada', 1); const bo = person('bo', 2);
+    const ada = person('ada', 1);
+    const bo = person('bo', 2);
     const { records } = storesFor();
-    const first = await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [recordsReaderOf(bo.me.companyKey)], records, new Set());
-    const opened = (r: Awaited<typeof first>, who = ada) => openNonceSecrets(r, VAULT, recordsKeypairFrom(who.me.companyKey));
+    const first = await startVaultNonceSecretOnThisDevice(
+      VAULT,
+      ada.me,
+      [recordsReaderOf(bo.me.companyKey)],
+      records,
+      new Set()
+    );
+    const opened = (r: Awaited<typeof first>, who = ada) =>
+      openNonceSecrets(r, VAULT, recordsKeypairFrom(who.me.companyKey));
     /* RED WHEN: a vault the chain has made coins for has its secret replaced, and its deposits lose their names. */
-    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [recordsReaderOf(ada.me.companyKey)], records, new Set(['made']), first))
-      .rejects.toThrow(/already made coins for this vault/);
-    const again = await startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [recordsReaderOf(ada.me.companyKey)], records, new Set(), first);
+    await expect(
+      startVaultNonceSecretAgainOnThisDevice(
+        VAULT,
+        bo.me,
+        [recordsReaderOf(ada.me.companyKey)],
+        records,
+        new Set(['made']),
+        first
+      )
+    ).rejects.toThrow(/already made coins for this vault/);
+    const again = await startVaultNonceSecretAgainOnThisDevice(
+      VAULT,
+      bo.me,
+      [recordsReaderOf(ada.me.companyKey)],
+      records,
+      new Set(),
+      first
+    );
     /* RED WHEN: the fresh secret is the one before, or is not the newest version, or is not one epoch, or misses a signer. */
     expect(again.version).toBe(2);
     expect(await records('nonce-secret').get(VAULT)).toEqual(again);
@@ -110,18 +224,28 @@ describe('a deposit\'s coin, chosen on the device', () => {
     expect(opened(again).secrets[0]).not.toBe(opened(first).secrets[0]);
     expect(opened(again, bo).secrets).toEqual(opened(again).secrets);
     /* RED WHEN: a fresh secret is anything but newly random - worked out from the vault or the record before, say. */
-    const twice = [0, 1].map(() => opened(startNonceSecretAgain(first, VAULT, [recordsReaderOf(ada.me.companyKey)])).secrets[0]);
+    const twice = [0, 1].map(
+      () => opened(startNonceSecretAgain(first, VAULT, [recordsReaderOf(ada.me.companyKey)])).secrets[0]
+    );
     expect(twice[0]).not.toBe(twice[1]);
     /* RED WHEN: a fresh secret is filed over a version the device did not read - somebody filed another since. */
-    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [], records, new Set(), first))
-      .rejects.toThrow(/another secret was filed for this vault/);
-    expect((await records('nonce-secret').versions(VAULT))).toHaveLength(2);
+    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, bo.me, [], records, new Set(), first)).rejects.toThrow(
+      /another secret was filed for this vault/
+    );
+    expect(await records('nonce-secret').versions(VAULT)).toHaveLength(2);
     /* RED WHEN: a record of another vault is taken as the one a fresh secret follows. */
     const other = storesFor();
-    const elsewhere = await startVaultNonceSecretOnThisDevice('cd'.repeat(32) as Hex, ada.me, [], other.records, new Set());
+    const elsewhere = await startVaultNonceSecretOnThisDevice(
+      'cd'.repeat(32) as Hex,
+      ada.me,
+      [],
+      other.records,
+      new Set()
+    );
     await other.records('nonce-secret').put(VAULT, startNonceSecret(VAULT, [recordsReaderOf(ada.me.companyKey)]));
-    await expect(startVaultNonceSecretAgainOnThisDevice(VAULT, ada.me, [], other.records, new Set(), { ...elsewhere, version: 1 }))
-      .rejects.toThrow(/is not this vault's, so nothing is written/);
+    await expect(
+      startVaultNonceSecretAgainOnThisDevice(VAULT, ada.me, [], other.records, new Set(), { ...elsewhere, version: 1 })
+    ).rejects.toThrow(/is not this vault's, so nothing is written/);
   });
 
   it('REFUSES A DEPOSIT UNDER A SECRET THE VAULT DOES NOT HOLD, before a coin is chosen or a line is filed', async () => {
@@ -130,28 +254,66 @@ describe('a deposit\'s coin, chosen on the device', () => {
     await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set());
     const asked: string[] = [];
     /* RED WHEN: a deposit is made under the secret the records hold without asking whether the vault holds it. */
-    await expect(depositCoinOnThisDevice({
-      vault: VAULT, money: { token: TOKEN, value: 9n }, me: ada.me, signers: async () => [ada.who], records,
-      chain: { ...nothingMade, secretIsTheVaults: (secret) => { asked.push(secret); return false; } },
-    })).rejects.toThrow(/not the one the vault holds on the chain/);
-    expect(asked).toEqual(openNonceSecrets((await records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(ada.me.companyKey)).secrets);
-    expect(kept.get('deposit-journal')?.versions(VAULT) === undefined || (await kept.get('deposit-journal')!.versions(VAULT)).length === 0).toBe(true);
+    await expect(
+      depositCoinOnThisDevice({
+        vault: VAULT,
+        money: { token: TOKEN, value: 9n },
+        me: ada.me,
+        signers: async () => [ada.who],
+        records,
+        chain: {
+          ...nothingMade,
+          secretIsTheVaults: (secret) => {
+            asked.push(secret);
+            return false;
+          }
+        }
+      })
+    ).rejects.toThrow(/not the one the vault holds on the chain/);
+    expect(asked).toEqual(
+      openNonceSecrets((await records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(ada.me.companyKey))
+        .secrets
+    );
+    expect(
+      kept.get('deposit-journal')?.versions(VAULT) === undefined ||
+        (await kept.get('deposit-journal')!.versions(VAULT)).length === 0
+    ).toBe(true);
   });
 
   it('REFUSES A DEPOSIT WHILE THE ACCOUNT HAS COUNTED A REMOVAL THE SECRET IS NOT GOOD FOR, before the journal and the claim', async () => {
     const ada = person('ada', 1);
     const { records, kept } = storesFor();
     await startVaultNonceSecretOnThisDevice(VAULT, ada.me, [], records, new Set(), 1);
-    await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: ada.me.wrappingSecret }, async () => [ada.who]).create(VAULT, { notes: [] });
+    await new SealedNotePool(records('pool'), { signerId: 'ada', wrappingSecret: ada.me.wrappingSecret }, async () => [
+      ada.who
+    ]).create(VAULT, { notes: [] });
     const asked = { n: 0 };
-    const deposit = (removals: number) => depositCoinOnThisDevice({
-      vault: VAULT, money: { token: TOKEN, value: 9n }, me: ada.me, signers: async () => [ada.who], records,
-      chain: { ...nothingMade, removals, secretSet: async () => 1, secretIsTheVaults: () => { asked.n += 1; return true; } },
-    });
-    await expect(deposit(2), 'RED WHEN: a deposit is made under a secret a signer who left may still open').rejects.toBeInstanceOf(VaultSecretBeingChanged);
+    const deposit = (removals: number) =>
+      depositCoinOnThisDevice({
+        vault: VAULT,
+        money: { token: TOKEN, value: 9n },
+        me: ada.me,
+        signers: async () => [ada.who],
+        records,
+        chain: {
+          ...nothingMade,
+          removals,
+          secretSet: async () => 1,
+          secretIsTheVaults: () => {
+            asked.n += 1;
+            return true;
+          }
+        }
+      });
+    await expect(
+      deposit(2),
+      'RED WHEN: a deposit is made under a secret a signer who left may still open'
+    ).rejects.toBeInstanceOf(VaultSecretBeingChanged);
     expect(asked.n, 'RED WHEN: the count is checked after the chain is asked about the secret').toBe(0);
     expect(kept.get('deposit-journal'), 'RED WHEN: a refused deposit leaves a journal line').toBeUndefined();
-    await expect(deposit(Number.NaN), 'RED WHEN: a deposit goes ahead with the count unread').rejects.toThrow(/was not read from the chain/);
+    await expect(deposit(Number.NaN), 'RED WHEN: a deposit goes ahead with the count unread').rejects.toThrow(
+      /was not read from the chain/
+    );
     expect((await deposit(1)).epoch, 'RED WHEN: a secret good for the count is refused').toBe(1);
   });
 
@@ -165,12 +327,19 @@ describe('a deposit\'s coin, chosen on the device', () => {
     await store.put(VAULT, v1);
     await store.put(VAULT, rotateNonceSecret(v1, VAULT, by, { remaining: me, leaving: [] }, newNonceSecret(), 0));
     const older = openNonceSecrets(v1, VAULT, by).secrets[0]!;
-    expect(await fileTheChainsSecretAsTheNewest({ vault: VAULT, me: ada.me, records, secretIsTheVaults: (s) => s === older }),
-      'RED WHEN: the version before a rotation is filed over it').toBe('none-names-it');
+    expect(
+      await fileTheChainsSecretAsTheNewest({
+        vault: VAULT,
+        me: ada.me,
+        records,
+        secretIsTheVaults: (s) => s === older
+      }),
+      'RED WHEN: the version before a rotation is filed over it'
+    ).toBe('none-names-it');
     expect((await kept.get('nonce-secret')!.versions(VAULT)).length).toBe(2);
   });
 
-  it('NEVER FILES AGAIN A VERSION OF THE SAME COUNT WHOSE EARLIER SECRET DIFFERS FROM THE NEWER ONE\'S', async () => {
+  it("NEVER FILES AGAIN A VERSION OF THE SAME COUNT WHOSE EARLIER SECRET DIFFERS FROM THE NEWER ONE'S", async () => {
     const ada = person('ada', 1);
     const { records, kept } = storesFor();
     const by = recordsKeypairFrom(ada.me.companyKey);
@@ -182,8 +351,10 @@ describe('a deposit\'s coin, chosen on the device', () => {
     const cd = rotateNonceSecret(c, VAULT, by, { remaining: me, leaving: [] }, newNonceSecret(), 0);
     for (const v of [a, ab, c, cd]) await store.put(VAULT, v);
     const b = openNonceSecrets(ab, VAULT, by).secrets[1]!;
-    expect(await fileTheChainsSecretAsTheNewest({ vault: VAULT, me: ada.me, records, secretIsTheVaults: (s) => s === b }),
-      'RED WHEN: a version of the same count with a different earlier secret is filed over the newest').toBe('none-names-it');
+    expect(
+      await fileTheChainsSecretAsTheNewest({ vault: VAULT, me: ada.me, records, secretIsTheVaults: (s) => s === b }),
+      'RED WHEN: a version of the same count with a different earlier secret is filed over the newest'
+    ).toBe('none-names-it');
     expect((await kept.get('nonce-secret')!.versions(VAULT)).length).toBe(4);
   });
 });

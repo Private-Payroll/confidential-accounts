@@ -69,8 +69,9 @@ export function feeFloorFrom(raw: string | undefined, fallback: bigint): { value
   if (!/^-?[0-9]+$/.test(text)) {
     return {
       value: 0n,
-      problem: `the fee floor was set to "${text.slice(0, 40)}", which is not a whole number of specks. `
-        + 'Digits only, with no separators, no point and no exponent.',
+      problem:
+        `the fee floor was set to "${text.slice(0, 40)}", which is not a whole number of specks. ` +
+        'Digits only, with no separators, no point and no exponent.'
     };
   }
   return { value: BigInt(text) };
@@ -165,7 +166,7 @@ export function feeFloorVerdict(r: FeeFloorReading): FeeFloorVerdict {
         /* THE REASON TRAVELS WITH THE REFUSAL. A floor of nothing that came from an
          * override nobody could read is a different thing to fix from one that was
          * deliberately set to zero, and only one of the two is a typing mistake. */
-        (r.problem ? ` ${r.problem}` : ''),
+        (r.problem ? ` ${r.problem}` : '')
     };
   }
   if (r.arrived === null) {
@@ -175,7 +176,7 @@ export function feeFloorVerdict(r: FeeFloorReading): FeeFloorVerdict {
       line:
         `the fee floor could not be read back off the wallet that will pay ` +
         `(asked for ${r.passed})${r.problem ? `: ${r.problem}` : ''}. ` +
-        'Nothing here can say what fee this run would offer, so it stops rather than guess.',
+        'Nothing here can say what fee this run would offer, so it stops rather than guess.'
     };
   }
   if (r.arrived !== r.passed) {
@@ -185,7 +186,7 @@ export function feeFloorVerdict(r: FeeFloorReading): FeeFloorVerdict {
       line:
         `the fee floor did not reach the wallet: asked for ${r.passed}, the wallet carries ` +
         `${r.arrived}. A zero floor lets a fee come out at zero, and a transaction that owes ` +
-        'nothing carries no dust spend and is refused as malformed.',
+        'nothing carries no dust spend and is refused as malformed.'
     };
   }
   if (r.applied !== null && r.applied !== r.arrived) {
@@ -194,7 +195,7 @@ export function feeFloorVerdict(r: FeeFloorReading): FeeFloorVerdict {
       reason: 'not-applied',
       line:
         `the wallet carries a fee floor of ${r.arrived} and its fee arithmetic added ` +
-        `${n(r.applied)}. The number is stored but not spent, so the floor is not in force.`,
+        `${n(r.applied)}. The number is stored but not spent, so the floor is not in force.`
     };
   }
   return {
@@ -204,7 +205,7 @@ export function feeFloorVerdict(r: FeeFloorReading): FeeFloorVerdict {
       `fee floor ${r.arrived}, read back off the wallet that will pay` +
       (r.applied === null
         ? ' (its effect on a fee was not measured here)'
-        : `, and its fee arithmetic adds exactly ${r.applied}`),
+        : `, and its fee arithmetic adds exactly ${r.applied}`)
   };
 }
 
@@ -248,7 +249,7 @@ export type AppliedOverheadDeps = {
  */
 export function appliedOverhead(
   costParameters: unknown,
-  deps: AppliedOverheadDeps,
+  deps: AppliedOverheadDeps
 ): { value: bigint | null; problem?: string } {
   try {
     const margin = Number((costParameters as any)?.feeBlocksMargin ?? 0);

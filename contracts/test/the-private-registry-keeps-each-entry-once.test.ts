@@ -10,9 +10,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import {
-  createCircuitContext, createConstructorContext, sampleContractAddress,
-} from '@midnight-ntwrk/compact-runtime';
+import { createCircuitContext, createConstructorContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { Contract, ledger } from '../managed-registry/contract/index.js';
 
 const BLOCK = '0'.repeat(64);
@@ -30,12 +28,19 @@ class Registry {
     return r;
   }
 
-  get entries() { return ledger(this.state.data ?? this.state).entries; }
+  get entries() {
+    return ledger(this.state.data ?? this.state).entries;
+  }
 
   async put(at: Uint8Array, sealed: Uint8Array): Promise<void> {
     const ctx = createCircuitContext({
-      circuitId: 'put' as never, contractAddress: this.address as never, coinPublicKeyOrZswapState: BLOCK,
-      contractState: this.state, privateState: {}, time: 1_800_000_000, parentBlockHash: BLOCK,
+      circuitId: 'put' as never,
+      contractAddress: this.address as never,
+      coinPublicKeyOrZswapState: BLOCK,
+      contractState: this.state,
+      privateState: {},
+      time: 1_800_000_000,
+      parentBlockHash: BLOCK
     });
     const out: any = await (this.contract.impureCircuits as any).put(ctx, at, sealed);
     this.state = out.context.callContext.currentQueryContext.state;
@@ -81,8 +86,12 @@ describe('THE PRIVATE REGISTRY KEEPS EACH ENTRY ONCE, AT ITS OWN TAG', () => {
 });
 
 describe('THE COMPILED REGISTRY HAS EXACTLY THE SHAPE IT IS DEPLOYED AND PROVED AS', () => {
-  const info = JSON.parse(readFileSync(new URL('../managed-registry/compiler/contract-info.json', import.meta.url), 'utf8')) as {
-    circuits: { name: string; proof: boolean }[]; witnesses: unknown[]; ledger: { name: string }[];
+  const info = JSON.parse(
+    readFileSync(new URL('../managed-registry/compiler/contract-info.json', import.meta.url), 'utf8')
+  ) as {
+    circuits: { name: string; proof: boolean }[];
+    witnesses: unknown[];
+    ledger: { name: string }[];
   };
 
   it('has one proving circuit, put, no witnesses, and one ledger field, entries', () => {

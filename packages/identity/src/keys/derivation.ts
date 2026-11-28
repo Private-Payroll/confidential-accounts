@@ -319,7 +319,7 @@ export const Purposes = {
    * was added under. The nine purposes above are untouched, so every credential already in existence derives to the
    * same bytes; `derivation.portability.test.ts` ADDS a vector rather than changing one.
    */
-  Reader: 'reader',
+  Reader: 'reader'
 } as const;
 
 export type Purpose = (typeof Purposes)[keyof typeof Purposes];
@@ -435,8 +435,9 @@ export function wordsFromSecret(secret: Secret): string[] {
   if (secret?.length !== SECRET_BYTES) {
     throw new DerivationError(
       'secret-wrong-length',
-      `a secret is ${SECRET_BYTES} bytes; got ${secret?.length ?? 'nothing'}. `
-      + 'This is the entropy, not the 64-byte seed.');
+      `a secret is ${SECRET_BYTES} bytes; got ${secret?.length ?? 'nothing'}. ` +
+        'This is the entropy, not the 64-byte seed.'
+    );
   }
   return entropyToMnemonic(secret, wordlist).split(' ');
 }
@@ -454,9 +455,10 @@ export function secretFromWords(words: readonly string[] | string): Secret {
   if (!validateMnemonic(phrase)) {
     throw new DerivationError(
       'not-a-recovery-phrase',
-      'that is not a valid recovery phrase. Every word must be from the BIP-39 '
-      + 'list and the phrase carries its own checksum, so a single mistyped or '
-      + 'reordered word fails here rather than silently opening a different wallet.');
+      'that is not a valid recovery phrase. Every word must be from the BIP-39 ' +
+        'list and the phrase carries its own checksum, so a single mistyped or ' +
+        'reordered word fails here rather than silently opening a different wallet.'
+    );
   }
   return mnemonicToEntropy(phrase, wordlist);
 }
@@ -498,10 +500,11 @@ export function identityFromWords(words: readonly string[] | string): Identity {
   if (secret.length !== SECRET_BYTES) {
     throw new DerivationError(
       'not-a-recovery-phrase',
-      `this library uses ${WORD_COUNT}-word recovery phrases and that one has `
-      + `${phrase.split(' ').length}. It is a valid phrase, and a wallet built from it here `
-      + 'could not be recovered from its own pieces later — so it is refused now rather '
-      + 'than when it matters.');
+      `this library uses ${WORD_COUNT}-word recovery phrases and that one has ` +
+        `${phrase.split(' ').length}. It is a valid phrase, and a wallet built from it here ` +
+        'could not be recovered from its own pieces later — so it is refused now rather ' +
+        'than when it matters.'
+    );
   }
   return build(phrase);
 }
@@ -524,8 +527,8 @@ function build(phrase: string): Identity {
   if (result.type !== 'seedOk') {
     throw new DerivationError(
       'seed-rejected',
-      `the wallet SDK refused this seed: ${String(
-        (result as { error?: unknown }).error ?? 'no reason given')}`);
+      `the wallet SDK refused this seed: ${String((result as { error?: unknown }).error ?? 'no reason given')}`
+    );
   }
   const hd = result.hdWallet;
 
@@ -546,13 +549,14 @@ function build(phrase: string): Identity {
     if (money.type !== 'keysDerived') {
       throw new DerivationError(
         'key-out-of-bounds',
-        `the wallet SDK could not derive the money keys for roles ${money.roles.join(', ')}`);
+        `the wallet SDK could not derive the money keys for roles ${money.roles.join(', ')}`
+      );
     }
 
     return Object.freeze({
       zswap: money.keys[Roles.Zswap] as MoneyKey,
       dust: money.keys[Roles.Dust] as MoneyKey,
-      night: money.keys[Roles.NightExternal] as MoneyKey,
+      night: money.keys[Roles.NightExternal] as MoneyKey
     });
   };
 
@@ -564,15 +568,17 @@ function build(phrase: string): Identity {
     if (!Number.isSafeInteger(account) || account < 0 || account >= MAX_INDEX) {
       throw new DerivationError(
         'key-out-of-bounds',
-        `a wallet account must be a whole number from 0 to ${MAX_INDEX - 1}; got ${account}`);
+        `a wallet account must be a whole number from 0 to ${MAX_INDEX - 1}; got ${account}`
+      );
     }
     if (account === AUTHORITY_ACCOUNT) {
       throw new DerivationError(
         'account-reserved',
-        `account ${AUTHORITY_ACCOUNT} is the authority compartment, not a wallet. Its NIGHT `
-        + 'key is the root every login and device credential expands from, so offering it '
-        + 'as a wallet would put a spending key on screens and servers that only ever '
-        + 'expect credentials. Subwallets start at account 2.');
+        `account ${AUTHORITY_ACCOUNT} is the authority compartment, not a wallet. Its NIGHT ` +
+          'key is the root every login and device credential expands from, so offering it ' +
+          'as a wallet would put a spending key on screens and servers that only ever ' +
+          'expect credentials. Subwallets start at account 2.'
+      );
     }
     if (account === MONEY_ACCOUNT) return keys;
     return deriveMoneyKeys(account);
@@ -583,8 +589,7 @@ function build(phrase: string): Identity {
     .selectRole(AUTHORITY_ROOT_ROLE)
     .deriveKeyAt(AUTHORITY_ROOT_INDEX);
   if (rootResult.type !== 'keyDerived') {
-    throw new DerivationError(
-      'key-out-of-bounds', 'the wallet SDK could not derive the authority root');
+    throw new DerivationError('key-out-of-bounds', 'the wallet SDK could not derive the authority root');
   }
   const authorityRoot = rootResult.key;
 
@@ -592,7 +597,8 @@ function build(phrase: string): Identity {
     if (!Number.isSafeInteger(index) || index < 0 || index >= MAX_INDEX) {
       throw new DerivationError(
         'key-out-of-bounds',
-        `an authority index must be a whole number from 0 to ${MAX_INDEX - 1}; got ${index}`);
+        `an authority index must be a whole number from 0 to ${MAX_INDEX - 1}; got ${index}`
+      );
     }
     const info = new TextEncoder().encode(`${purpose}/${index}`);
     return hkdf(sha256, authorityRoot, AUTHORITY_SALT, info, 32) as AuthorityKey;
@@ -607,7 +613,7 @@ function build(phrase: string): Identity {
     words: Object.freeze(phrase.split(' ')),
     money: keys,
     moneyAt,
-    authority,
+    authority
   });
 }
 

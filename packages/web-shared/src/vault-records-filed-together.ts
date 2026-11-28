@@ -41,8 +41,9 @@ export interface VaultFiling extends RecordFiling {
 }
 
 /** Why a filing of a batch was not sent, for `what`, the version and record it names. */
-export const notSentInTheBatch = (what: string): string => `${what} was not sent, so it is not filed: a write before it in the `
-  + 'same batch was refused, or its outcome is not known. It is filed again the next time.';
+export const notSentInTheBatch = (what: string): string =>
+  `${what} was not sent, so it is not filed: a write before it in the ` +
+  'same batch was refused, or its outcome is not known. It is filed again the next time.';
 
 /** A vault filing not sent, refused as a filing of that vault's record. */
 export const vaultFilingNotSent = (record: string, version: number): Error =>
@@ -57,7 +58,8 @@ const answeredBefore = (cause: unknown): readonly unknown[] => {
   return Array.isArray(answered) ? answered : [];
 };
 
-const nothingWasSent = (cause: unknown): boolean => (cause as { readonly nothingWasSent?: unknown } | null)?.nothingWasSent === true;
+const nothingWasSent = (cause: unknown): boolean =>
+  (cause as { readonly nothingWasSent?: unknown } | null)?.nothingWasSent === true;
 
 /**
  * Sends `filings` through `send` (the view's one checked write of a batch) and takes each answer: each filing's
@@ -65,7 +67,8 @@ const nothingWasSent = (cause: unknown): boolean => (cause as { readonly nothing
  * answered with that failure, as a filing sent alone is.
  */
 export async function filedTogether(
-  send: (writes: readonly RecordWrite[]) => Promise<readonly unknown[]>, filings: readonly RecordFiling[],
+  send: (writes: readonly RecordWrite[]) => Promise<readonly unknown[]>,
+  filings: readonly RecordFiling[]
 ): Promise<readonly FiledOutcome[]> {
   if (filings.length === 0) return [];
   let answers: readonly unknown[];
@@ -112,12 +115,15 @@ export class VaultRecordsHeld {
 
   /** The newest version held for this vault's record, which a read of it is answered with until the batch is sent. */
   newestHeld(record: string, vault: string): SealedPool | undefined {
-    for (let i = this.held.length - 1; i >= 0; i--) if (this.held[i]!.record === record && this.held[i]!.vault === vault) return this.held[i]!.sealed;
+    for (let i = this.held.length - 1; i >= 0; i--)
+      if (this.held[i]!.record === record && this.held[i]!.vault === vault) return this.held[i]!.sealed;
     return undefined;
   }
 
   /** Sends every filing held, once, and lets go of them: each one's record, vault and outcome, in order. */
-  async sent(): Promise<readonly { readonly record: string; readonly vault: string; readonly outcome: FiledOutcome }[]> {
+  async sent(): Promise<
+    readonly { readonly record: string; readonly vault: string; readonly outcome: FiledOutcome }[]
+  > {
     const filings = this.held;
     this.held = [];
     const outcomes = await filedTogether(this.send, filings);

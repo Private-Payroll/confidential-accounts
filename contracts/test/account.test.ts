@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  AccountSimulator, privateStateFor, change,
-} from './simulator.js';
+import { AccountSimulator, privateStateFor, change } from './simulator.js';
 import type { AccountPrivateState } from '../src/witnesses.js';
 
 /**
@@ -18,7 +16,10 @@ import type { AccountPrivateState } from '../src/witnesses.js';
  * balance escape, is here.
  */
 
-const ADA = 1, BLAKE = 2, CLEO = 3, MALLORY = 9;
+const ADA = 1,
+  BLAKE = 2,
+  CLEO = 3,
+  MALLORY = 9;
 
 describe('confidential account contract', () => {
   let ada: AccountPrivateState;
@@ -80,7 +81,9 @@ describe('confidential account contract', () => {
     return sim.proposalId(payload, c.salt);
   };
 
-  beforeEach(async () => { await deploy(); });
+  beforeEach(async () => {
+    await deploy();
+  });
 
   /* ---------------- deployment ---------------- */
 
@@ -133,7 +136,7 @@ describe('confidential account contract', () => {
     expect(fields).not.toContain('assetBalances');
     expect(fields).not.toContain('settled');
     // And nothing else grew a balance in their place.
-    expect(fields.filter(f => /balance/i.test(f))).toEqual([]);
+    expect(fields.filter((f) => /balance/i.test(f))).toEqual([]);
   });
 
   /* ---------------- membership ---------------- */
@@ -212,11 +215,9 @@ describe('confidential account contract', () => {
     await sim.as(sim.applying(blake, c)).approve(id);
     // The nullifier is already burned. Without this, one signer reaches any
     // threshold alone and M of N means nothing.
-    await expect(sim.as(sim.applying(blake, c)).approve(id))
-      .rejects.toThrow(/already approved/i);
+    await expect(sim.as(sim.applying(blake, c)).approve(id)).rejects.toThrow(/already approved/i);
     /* The raiser's approval is burned by the raise itself, so the raiser is refused too. */
-    await expect(sim.as(sim.applying(ada, c)).approve(id))
-      .rejects.toThrow(/already approved/i);
+    await expect(sim.as(sim.applying(ada, c)).approve(id)).rejects.toThrow(/already approved/i);
     expect(sim.approvalsFor(id)).toBe(2n);
   });
 
@@ -268,8 +269,7 @@ describe('confidential account contract', () => {
   });
 
   it('refuses to approve a proposal that does not exist', async () => {
-    await expect(sim.as(ada).approve(new Uint8Array(32).fill(9)))
-      .rejects.toThrow(/no open proposal/i);
+    await expect(sim.as(ada).approve(new Uint8Array(32).fill(9))).rejects.toThrow(/no open proposal/i);
   });
 
   it('holds a second proposal open alongside the first', async () => {
@@ -305,8 +305,7 @@ describe('confidential account contract', () => {
     const c = change(0n, 41);
     const payload = new Uint8Array(32);
     await propose(payload, c);
-    await expect(sim.as(sim.applying(ada, c)).propose(payload))
-      .rejects.toThrow(/already open/i);
+    await expect(sim.as(sim.applying(ada, c)).propose(payload)).rejects.toThrow(/already open/i);
   });
 
   /* ---------------- one proposal does not disturb another ---------------- */
@@ -320,8 +319,7 @@ describe('confidential account contract', () => {
 
     const second = change(0n, 43);
     const next = await propose(new Uint8Array(32).fill(3), second);
-    await expect(sim.as(sim.applying(blake, second)).approve(next))
-      .resolves.not.toThrow();
+    await expect(sim.as(sim.applying(blake, second)).approve(next)).resolves.not.toThrow();
   });
 
   it('carries no approvals from a cancelled proposal to a new one', async () => {
@@ -357,8 +355,7 @@ describe('confidential account contract', () => {
      * (`ConfidentialAccount.compact`, `setThreshold`), which is why the message
      * asserted below is the approval one and is the one that fires.
      */
-    await expect(sim.as(sim.applying(ada, second)).setThreshold(2n, next))
-      .rejects.toThrow(/not enough approvals/i);
+    await expect(sim.as(sim.applying(ada, second)).setThreshold(2n, next)).rejects.toThrow(/not enough approvals/i);
   });
 
   it('cancels one proposal without touching another', async () => {
@@ -421,8 +418,7 @@ describe('confidential account contract', () => {
     // Still good against the tree it was taken from.
     const c = change(0n, 41);
     const id = await propose(new Uint8Array(32), c);
-    await expect(sim.as({ ...sim.applying(blake, c), pinnedPath: pinned })
-      .approve(id)).resolves.not.toThrow();
+    await expect(sim.as({ ...sim.applying(blake, c), pinnedPath: pinned }).approve(id)).resolves.not.toThrow();
     await sim.as(ada).cancel(id);
 
     // The tree moves on, so the root moves, so the cached proof is stale.
@@ -430,12 +426,12 @@ describe('confidential account contract', () => {
 
     const c2 = change(0n, 43);
     const id2 = await propose(new Uint8Array(32).fill(2), c2);
-    await expect(sim.as({ ...sim.applying(blake, c2), pinnedPath: pinned })
-      .approve(id2)).rejects.toThrow(/not a signer/);
+    await expect(sim.as({ ...sim.applying(blake, c2), pinnedPath: pinned }).approve(id2)).rejects.toThrow(
+      /not a signer/
+    );
 
     // And Blake is not locked out — he is one re-derived path away.
-    await expect(sim.as({ ...sim.applying(blake, c2), pinnedPath: null })
-      .approve(id2)).resolves.not.toThrow();
+    await expect(sim.as({ ...sim.applying(blake, c2), pinnedPath: null }).approve(id2)).resolves.not.toThrow();
   });
 
   it('rejects a forged membership path', async () => {
@@ -446,5 +442,4 @@ describe('confidential account contract', () => {
     const id = await propose(new Uint8Array(32));
     await expect(sim.as(mallory).approve(id)).rejects.toThrow();
   });
-
 });

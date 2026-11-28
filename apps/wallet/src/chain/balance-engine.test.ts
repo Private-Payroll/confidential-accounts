@@ -38,25 +38,33 @@ vi.mock('@midnightntwrk/wallet-sdk/shielded', () => {
   const standIn = () => ({
     state: {
       subscribe: (observer: { next: (state: unknown) => void }) => {
-        queueMicrotask(() => observer.next({
-          progress: { isConnected: true, isStrictlyComplete: () => true },
-          balances: reported,
-          serialize: () => snapshotForTest({ inFlight }),
-        }));
+        queueMicrotask(() =>
+          observer.next({
+            progress: { isConnected: true, isStrictlyComplete: () => true },
+            balances: reported,
+            serialize: () => snapshotForTest({ inFlight })
+          })
+        );
         return { unsubscribe: () => {} };
-      },
+      }
     },
     start: () => Promise.resolve(),
-    stop: () => Promise.resolve(),
+    stop: () => Promise.resolve()
   });
   return {
     ShieldedWallet: (config: unknown) => {
       configured.push(config);
       return {
-        startWithKeys: async () => { doors.push('cold'); return standIn(); },
-        restore: () => { doors.push('restore'); return standIn(); },
+        startWithKeys: async () => {
+          doors.push('cold');
+          return standIn();
+        },
+        restore: () => {
+          doors.push('restore');
+          return standIn();
+        }
       };
-    },
+    }
   };
 });
 
@@ -69,7 +77,7 @@ vi.mock('../accounts/storage.js', async (original) => {
       const answered = real.saveWalletCheckpoint(...args);
       saves.push(answered);
       return answered;
-    },
+    }
   };
 });
 
@@ -109,11 +117,12 @@ const sealAsBefore = async (coinPublicKey: string, serialized: string): Promise<
     open.onsuccess = () => resolve(open.result);
     open.onerror = () => reject(open.error);
   });
-  const get = (key: string): Promise<unknown> => new Promise((resolve, reject) => {
-    const request = db.transaction('keys', 'readonly').objectStore('keys').get(key);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+  const get = (key: string): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const request = db.transaction('keys', 'readonly').objectStore('keys').get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
   const key = (await get(sealKeyFor(ORIGINAL_SLOT))) as CryptoKey;
   const record = (await get(checkpointKeyFor(ORIGINAL_SLOT))) as {
     perAccount: Record<string, { coinPublicKey: string; iv: string; sealed: string }>;
@@ -123,7 +132,10 @@ const sealAsBefore = async (coinPublicKey: string, serialized: string): Promise<
   const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain as BufferSource));
   record.perAccount['0'] = { coinPublicKey, iv: toBase64Url(iv), sealed: toBase64Url(sealed) };
   await new Promise<void>((resolve, reject) => {
-    const request = db.transaction('keys', 'readwrite').objectStore('keys').put(record, checkpointKeyFor(ORIGINAL_SLOT));
+    const request = db
+      .transaction('keys', 'readwrite')
+      .objectStore('keys')
+      .put(record, checkpointKeyFor(ORIGINAL_SLOT));
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
@@ -141,7 +153,8 @@ beforeEach(() => {
 
 /** Runs the engine until it has said `count` synced states, then stops it. */
 const syncedStates = async (
-  identity: ReturnType<typeof identityFromSecret>, count: number,
+  identity: ReturnType<typeof identityFromSecret>,
+  count: number
 ): Promise<Extract<BalanceState, { name: 'synced' }>[]> => {
   const seen: Extract<BalanceState, { name: 'synced' }>[] = [];
   const stop = startBalance(identity, 0, (state) => {
@@ -165,16 +178,26 @@ describe('the engine reads the whole balance map and seals all of it', () => {
     await vi.waitFor(async () => {
       const saved = await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT);
       expect(saved).toMatchObject({
-        serialized: snapshotForTest(), night: 1_234_567n, others: { [TOKEN]: 5_000n },
+        serialized: snapshotForTest(),
+        night: 1_234_567n,
+        others: { [TOKEN]: 5_000n }
       });
     });
   });
 
   it('opens from a checkpoint that recorded other tokens WITH them, before the live answer', async () => {
     const identity = identityFromSecret(newSecret());
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, {
-      serialized: snapshotForTest(), night: 9n, others: { [TOKEN]: 7n }, asOf: 1_000,
-    }, ORIGINAL_SLOT);
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 0),
+      0,
+      {
+        serialized: snapshotForTest(),
+        night: 9n,
+        others: { [TOKEN]: 7n },
+        asOf: 1_000
+      },
+      ORIGINAL_SLOT
+    );
     reported = { [TOKEN]: 5_000n };
     const [fromDisk] = await syncedStates(identity, 2);
     expect(doors).toEqual(['restore']);
@@ -185,9 +208,16 @@ describe('the engine reads the whole balance map and seals all of it', () => {
 
   it('opens from an old checkpoint as NIGHT only, then the live sync brings the whole map', async () => {
     const identity = identityFromSecret(newSecret());
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, {
-      serialized: snapshotForTest(), night: 9n, asOf: 1_000,
-    }, ORIGINAL_SLOT);
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 0),
+      0,
+      {
+        serialized: snapshotForTest(),
+        night: 9n,
+        asOf: 1_000
+      },
+      ORIGINAL_SLOT
+    );
     reported = { [TOKEN]: 5_000n };
     const [fromDisk, live] = await syncedStates(identity, 2);
     expect(doors).toEqual(['restore']);
@@ -233,7 +263,9 @@ describe('A CHECKPOINT IS NEVER WRITTEN WITH ANYTHING IN FLIGHT', () => {
     await vi.waitFor(() => expect(saves.length).toBeGreaterThan(0));
     await Promise.all(saves);
     /* RED WHEN: the refused snapshot stays, and is never replaced by the clean read that followed. */
-    expect((await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT))?.serialized).toBe(snapshotForTest());
+    expect((await loadWalletCheckpoint(coinPublicKeyOf(identity, 0), 0, ORIGINAL_SLOT))?.serialized).toBe(
+      snapshotForTest()
+    );
   });
 });
 

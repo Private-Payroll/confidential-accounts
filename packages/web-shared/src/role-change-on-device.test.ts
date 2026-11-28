@@ -3,7 +3,11 @@ import { newSigningKeypair, sign } from '../../../src/core/crypto.js';
 import { directoryChangeMessage, type DirectoryChange } from '../../../src/midnight/seat-directory.js';
 import { withRoleChangeDone, withRoleChangeKept } from './keyring-blob.js';
 import {
-  addressTieOf, keptRoleChangeRefusal, retiredInTheDirectory, roleAskedRefusal, roleChangeStageOf,
+  addressTieOf,
+  keptRoleChangeRefusal,
+  retiredInTheDirectory,
+  roleAskedRefusal,
+  roleChangeStageOf
 } from './role-change-on-device.js';
 
 /*
@@ -27,15 +31,17 @@ describe('A ROLE CHANGE GOES ON TO ITS NEXT STEP AS THE CHAIN AND THE DIRECTORY 
   });
 });
 
-describe('THE ROLE ASKED IS ONE A SIGNER\'S SEAT CAN BE GIVEN', () => {
-  it('a signer role other than the seat\'s own is let through', () => {
+describe("THE ROLE ASKED IS ONE A SIGNER'S SEAT CAN BE GIVEN", () => {
+  it("a signer role other than the seat's own is let through", () => {
     expect(roleAskedRefusal('approver', 'admin')).toBeNull();
     expect(roleAskedRefusal('initiator', null)).toBeNull();
   });
 
   it('REFUSES a reader role, naming the removal that comes first and where read access is given, and a role no seat can hold', () => {
     /* RED WHEN: a signer's seat is changed into a reader's, which holds no seat on the chain, or the person is sent to a screen that does not exist. */
-    expect(roleAskedRefusal('accountant', 'admin')).toMatch(/hold no seat.*remove them first with Remove\. Read access is given on the Roles tab in Settings$/u);
+    expect(roleAskedRefusal('accountant', 'admin')).toMatch(
+      /hold no seat.*remove them first with Remove\. Read access is given on the Roles tab in Settings$/u
+    );
     expect(roleAskedRefusal('limited', 'admin')).not.toMatch(/\ba (?:accountant|limited)\b/u);
     expect(roleAskedRefusal('owner', 'admin')).toMatch(/not one a seat of a company can hold/u);
   });
@@ -45,14 +51,14 @@ describe('THE ROLE ASKED IS ONE A SIGNER\'S SEAT CAN BE GIVEN', () => {
     expect(roleAskedRefusal('admin', undefined)).toBeNull();
   });
 
-  it('REFUSES the role the seat already holds, the founding seat holding an admin\'s', () => {
+  it("REFUSES the role the seat already holds, the founding seat holding an admin's", () => {
     /* RED WHEN: a seat is removed and invited again at the role it already holds. */
     expect(roleAskedRefusal('approver', 'approver')).toMatch(/already holds the role approver/u);
     expect(roleAskedRefusal('admin', null)).toMatch(/already holds the role admin/u);
   });
 });
 
-describe('THE ADDRESS GIVEN IS THE ONE THE SEAT WAS INVITED AT, WHERE THE COMPANY\'S LIST OF SIGNERS RECORDS ONE', () => {
+describe("THE ADDRESS GIVEN IS THE ONE THE SEAT WAS INVITED AT, WHERE THE COMPANY'S LIST OF SIGNERS RECORDS ONE", () => {
   it('an address whose coin key the list records for the seat is tied to it; one the list records none for is not, and said so', () => {
     expect(addressTieOf('ABCD', 'abcd')).toBe('tied');
     expect(addressTieOf(undefined, 'abcd')).toBe('untied');
@@ -60,12 +66,21 @@ describe('THE ADDRESS GIVEN IS THE ONE THE SEAT WAS INVITED AT, WHERE THE COMPAN
 
   it('REFUSES an address whose coin key is not the one the list records for the seat', () => {
     /* RED WHEN: another person's address is invited at the new role in place of the one removed. */
-    expect(addressTieOf('abcd', 'ef01')).toMatch(/not the one this seat was invited at.*Give the address of the wallet that holds the seat/u);
+    expect(addressTieOf('abcd', 'ef01')).toMatch(
+      /not the one this seat was invited at.*Give the address of the wallet that holds the seat/u
+    );
   });
 });
 
 describe('THE INVITATION AFTER THE REMOVAL IS HELD TO WHAT THE REMOVAL WAS RAISED FOR', () => {
-  const kept = withRoleChangeKept({ accounts: {} }, 'acc_1', LEAF.toUpperCase(), 'ABCD', 'approver', LINK.toUpperCase());
+  const kept = withRoleChangeKept(
+    { accounts: {} },
+    'acc_1',
+    LEAF.toUpperCase(),
+    'ABCD',
+    'approver',
+    LINK.toUpperCase()
+  );
   it('the address and role confirmed at the removal are let through', () => {
     expect(keptRoleChangeRefusal(kept, 'acc_1', LEAF, 'abcd', 'approver')).toBeNull();
   });
@@ -77,7 +92,7 @@ describe('THE INVITATION AFTER THE REMOVAL IS HELD TO WHAT THE REMOVAL WAS RAISE
     expect(keptRoleChangeRefusal(kept, 'acc_2', LEAF, 'abcd', 'approver')).toBe('not-started-here');
     expect(keptRoleChangeRefusal({ accounts: {} }, 'acc_1', LEAF, 'abcd', 'approver')).toBe('not-started-here');
   });
-  it('raising the same seat\'s removal again replaces what was kept, and once the invitation is filed what was kept is taken out', () => {
+  it("raising the same seat's removal again replaces what was kept, and once the invitation is filed what was kept is taken out", () => {
     const again = withRoleChangeKept(kept, 'acc_1', LEAF, 'ef01', 'initiator', LINK);
     /* RED WHEN: a second raise of the same seat's removal keeps a second entry, so the saved keys grow with every press. */
     expect(Object.keys(again.roleChangesKept ?? {})).toHaveLength(1);
@@ -90,21 +105,39 @@ describe('THE INVITATION AFTER THE REMOVAL IS HELD TO WHAT THE REMOVAL WAS RAISE
   });
 });
 
-describe('A SEAT IS SET ASIDE ONLY WHEN THE COMPANY\'S DIRECTORY ALSO HOLDS ITS RETIREMENT', () => {
+describe("A SEAT IS SET ASIDE ONLY WHEN THE COMPANY'S DIRECTORY ALSO HOLDS ITS RETIREMENT", () => {
   const named = newSigningKeypair();
-  const claim = { company: 'acc_1', version: 1, change: { kind: 'claim', entry: { statement: { signingKey: named.publicKey } } } };
+  const claim = {
+    company: 'acc_1',
+    version: 1,
+    change: { kind: 'claim', entry: { statement: { signingKey: named.publicKey } } }
+  };
   const second = newSigningKeypair();
-  const claimed = { company: 'acc_1', version: 1, change: { kind: 'claim', entry: { statement: { signingKey: second.publicKey } } } };
-  const retirementBy = (seat: string, by: ReadonlyArray<{ secret: string; publicKey: string }>, threshold: unknown = 1, version = 2, signedFor = version) => {
+  const claimed = {
+    company: 'acc_1',
+    version: 1,
+    change: { kind: 'claim', entry: { statement: { signingKey: second.publicKey } } }
+  };
+  const retirementBy = (
+    seat: string,
+    by: ReadonlyArray<{ secret: string; publicKey: string }>,
+    threshold: unknown = 1,
+    version = 2,
+    signedFor = version
+  ) => {
     const unsigned = { kind: 'retire', seat, filedUpTo: {}, threshold, signatures: [] } as unknown as DirectoryChange;
-    const signatures = by.map((k) => ({ publicKey: k.publicKey, signature: sign(directoryChangeMessage('acc_1', signedFor, unsigned), k.secret as never) }));
+    const signatures = by.map((k) => ({
+      publicKey: k.publicKey,
+      signature: sign(directoryChangeMessage('acc_1', signedFor, unsigned), k.secret as never)
+    }));
     return { company: 'acc_1', version, change: { ...unsigned, signatures } };
   };
-  const retirement = (seat: string, by: { secret: string; publicKey: string }, version = 2, signedFor = version) => retirementBy(seat, [by], 1, version, signedFor);
+  const retirement = (seat: string, by: { secret: string; publicKey: string }, version = 2, signedFor = version) =>
+    retirementBy(seat, [by], 1, version, signedFor);
   it('a retirement of the seat signed by a seat the directory names is held', () => {
     expect(retiredInTheDirectory('acc_1', [claim, retirement(LEAF, named)], LEAF.toUpperCase())).toBe(true);
   });
-  it('a retirement is held only when signed by as many named seats as its own threshold, whatever the chain\'s bar is now', () => {
+  it("a retirement is held only when signed by as many named seats as its own threshold, whatever the chain's bar is now", () => {
     /* RED WHEN: a seat is set aside on a retirement signed by fewer seats than its own threshold. */
     expect(retiredInTheDirectory('acc_1', [claim, claimed, retirementBy(LEAF, [named], 2)], LEAF)).toBe(false);
     expect(retiredInTheDirectory('acc_1', [claim, claimed, retirementBy(LEAF, [named, second], 2)], LEAF)).toBe(true);
@@ -112,7 +145,7 @@ describe('A SEAT IS SET ASIDE ONLY WHEN THE COMPANY\'S DIRECTORY ALSO HOLDS ITS 
     expect(retiredInTheDirectory('acc_1', [claim, retirementBy(LEAF, [named], 0)], LEAF)).toBe(false);
     expect(retiredInTheDirectory('acc_1', [claim, retirementBy(LEAF, [named], 1.5)], LEAF)).toBe(false);
   });
-  it('REFUSES as not held: another seat\'s retirement, one signed for another version, and one signed by a key no entry names', () => {
+  it("REFUSES as not held: another seat's retirement, one signed for another version, and one signed by a key no entry names", () => {
     /* RED WHEN: another seat's retirement sets this seat aside. */
     expect(retiredInTheDirectory('acc_1', [claim, retirement(OTHER, named)], LEAF)).toBe(false);
     /* RED WHEN: a retirement whose signatures do not verify for the version it is filed at is taken as held. */

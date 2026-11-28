@@ -8,14 +8,20 @@ import { VaultPoolVersionAlreadyFiled } from '../../../../src/midnight/vault-poo
 import { heldFilingsSent } from './upkeep.js';
 
 const batchOf = (...outcomes: PromiseSettledResult<void>[]) => ({
-  sent: async () => outcomes.map((outcome, i) => ({ record: i === 0 ? 'pool' : 'nonce-secret', vault: `v${i}`, outcome })),
+  sent: async () =>
+    outcomes.map((outcome, i) => ({ record: i === 0 ? 'pool' : 'nonce-secret', vault: `v${i}`, outcome }))
 });
 
-describe('AN UPKEEP\'S BATCH OF VAULT FILINGS', () => {
+describe("AN UPKEEP'S BATCH OF VAULT FILINGS", () => {
   it('leaves a pool version another seat filed first for the next seat action, as it leaves a refused one', async () => {
     let left = 0;
     const lost = new VaultPoolVersionAlreadyFiled('v0', 2);
-    await heldFilingsSent(batchOf({ status: 'rejected', reason: lost }, { status: 'fulfilled', value: undefined }), () => { left += 1; });
+    await heldFilingsSent(
+      batchOf({ status: 'rejected', reason: lost }, { status: 'fulfilled', value: undefined }),
+      () => {
+        left += 1;
+      }
+    );
     /* RED WHEN: a lost race on a pool is passed over, so the step says done while the notes it found are filed nowhere. */
     expect(left).toBe(1);
   });

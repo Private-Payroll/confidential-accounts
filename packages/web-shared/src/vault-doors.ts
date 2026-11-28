@@ -84,15 +84,35 @@ export interface VaultChainView {
 }
 
 export type VaultStage =
-  | 'checking the committee' | 'building the vault' | 'sending the vault'
+  | 'checking the committee'
+  | 'building the vault'
+  | 'sending the vault'
   | 'waiting for the chain'
-  | 'filing the name' | 'adopting the vault' | 'reading the secret back' | 'setting the secret' | 'writing the sealed copies'
+  | 'filing the name'
+  | 'adopting the vault'
+  | 'reading the secret back'
+  | 'setting the secret'
+  | 'writing the sealed copies'
   | 'waiting for approvals'
-  | 'opening the pool' | 'checking the vault' | 'choosing the coin' | 'building the deposit'
-  | 'asking your wallet' | 'sending the deposit' | 'recording the deposit'
-  | 'choosing the notes' | 'reading the chain' | 'writing the payment down' | 'building the payment'
-  | 'sending the payment' | 'waiting for the payment' | 'recording the payment'
-  | 'writing the merge down' | 'building the merge' | 'sending the merge' | 'waiting for the merge' | 'recording the merge'
+  | 'opening the pool'
+  | 'checking the vault'
+  | 'choosing the coin'
+  | 'building the deposit'
+  | 'asking your wallet'
+  | 'sending the deposit'
+  | 'recording the deposit'
+  | 'choosing the notes'
+  | 'reading the chain'
+  | 'writing the payment down'
+  | 'building the payment'
+  | 'sending the payment'
+  | 'waiting for the payment'
+  | 'recording the payment'
+  | 'writing the merge down'
+  | 'building the merge'
+  | 'sending the merge'
+  | 'waiting for the merge'
+  | 'recording the merge'
   | 'done';
 
 export interface Pacing {
@@ -104,9 +124,7 @@ export interface Pacing {
 }
 
 /** Asks `ask` every `everyMs` until it answers something, for at most `waitMs`; null when it never did. */
-export async function until<T>(
-  pacing: Pacing, ask: () => Promise<T | null>,
-): Promise<T | null> {
+export async function until<T>(pacing: Pacing, ask: () => Promise<T | null>): Promise<T | null> {
   const every = pacing.everyMs ?? 6_000;
   const tries = Math.max(1, Math.ceil((pacing.waitMs ?? 10 * 60_000) / every));
   for (let i = 0; i < tries; i += 1) {
@@ -171,7 +189,8 @@ export interface VaultStartProposals {
   /** The company's id at the service, which its proposals are kept under. */
   readonly accountId: string;
   /** `cancel` withdraws a record whose raise can no longer reach the chain, before another is raised in its place. */
-  readonly service: Required<Pick<GovernedCallService, 'callState' | 'file' | 'send' | 'sealedProposals'>> & Pick<GovernedCallService, 'cancel'>;
+  readonly service: Required<Pick<GovernedCallService, 'callState' | 'file' | 'send' | 'sealedProposals'>> &
+    Pick<GovernedCallService, 'cancel'>;
   readonly directory: DirectoryRead;
   /** The company's keys, as this device holds them: each record is sealed under the one in force. */
   readonly companyKeys: KeysHeld;
@@ -182,7 +201,15 @@ export interface VaultStartProposals {
    * Asks the service to write the vault's adoption, or with `run` its first secret run, down as carried out, for this
    * seat; it checks the proposal and the chain itself. `run` is the run's public parts, given only once its secret is set.
    */
-  readonly carried?: (proposalId: string, body: { readonly vault: string; readonly filer: string; readonly run?: FirstSecretRunParts; readonly again?: string }) => Promise<unknown>;
+  readonly carried?: (
+    proposalId: string,
+    body: {
+      readonly vault: string;
+      readonly filer: string;
+      readonly run?: FirstSecretRunParts;
+      readonly again?: string;
+    }
+  ) => Promise<unknown>;
 }
 
 /**

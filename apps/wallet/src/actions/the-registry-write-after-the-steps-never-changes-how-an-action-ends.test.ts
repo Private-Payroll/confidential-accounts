@@ -12,10 +12,14 @@ import type { ActionStep, Held, StepContext } from './definition.js';
 
 const held = { identity: {}, secret: new Uint8Array(32) } as unknown as Held;
 const requestUntil = (expiresAt: number): ActRequest => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'act',
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'act',
   requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'A test.', nonce: 'n1', expiresAt, hearsProgress: true,
-  intent: { name: 'move-between-vaults' as never, fields: {} },
+  purpose: 'A test.',
+  nonce: 'n1',
+  expiresAt,
+  hearsProgress: true,
+  intent: { name: 'move-between-vaults' as never, fields: {} }
 });
 
 const ranWith = async (steps: readonly ActionStep[], expiresAt = Date.now() + 20 * 60_000, said = true) => {
@@ -24,18 +28,34 @@ const ranWith = async (steps: readonly ActionStep[], expiresAt = Date.now() + 20
   const channel = {
     step: (_at: StepAt) => true,
     relay: async () => 'relayed' as const,
-    answer: (a: unknown) => { order.push('answered'); ended.push(a as ActEnded); return true; },
+    answer: (a: unknown) => {
+      order.push('answered');
+      ended.push(a as ActEnded);
+      return true;
+    }
   } as unknown as ActingChannel;
   await runAction({
-    definition: { headline: 'ask.act.headline', shown: async () => [], checks: [], check: async () => null, steps: () => steps },
-    request: requestUntil(expiresAt), channel, held, stop: new AbortController().signal,
-    confirm: async () => said,
+    definition: {
+      headline: 'ask.act.headline',
+      shown: async () => [],
+      checks: [],
+      check: async () => null,
+      steps: () => steps
+    },
+    request: requestUntil(expiresAt),
+    channel,
+    held,
+    stop: new AbortController().signal,
+    confirm: async () => said
   });
   return { order, ended };
 };
 const stepOwing = (order: string[], write: (c: StepContext) => Promise<void>): ActionStep => ({
   title: { key: 'x' },
-  run: async (c) => { order.push('step'); c.registryEntryOwed!(write); },
+  run: async (c) => {
+    order.push('step');
+    c.registryEntryOwed!(write);
+  }
 });
 
 describe('the registry write owed after the steps', () => {
@@ -43,8 +63,16 @@ describe('the registry write owed after the steps', () => {
     const order: string[] = [];
     let ran = 0;
     const { order: seen, ended } = await ranWith([
-      stepOwing(order, async () => { ran += 1; order.push('write'); }),
-      { title: { key: 'y' }, run: async () => { order.push('last step'); } },
+      stepOwing(order, async () => {
+        ran += 1;
+        order.push('write');
+      }),
+      {
+        title: { key: 'y' },
+        run: async () => {
+          order.push('last step');
+        }
+      }
     ]);
     /* RED WHEN: the write runs before the steps end, more than once, or after the end is answered. */
     expect(ran).toBe(1);
@@ -55,10 +83,22 @@ describe('the registry write owed after the steps', () => {
   it('a write that throws, or that the person declines, ends the action done all the same', async () => {
     const order: string[] = [];
     /* RED WHEN: a write that throws stops the action, or changes what its end says. */
-    const threw = await ranWith([stepOwing(order, async () => { throw new Error('the registry could not be read'); })]);
+    const threw = await ranWith([
+      stepOwing(order, async () => {
+        throw new Error('the registry could not be read');
+      })
+    ]);
     expect(threw.ended).toEqual([expect.objectContaining({ ended: 'done', steps: 1, unconfirmed: 0 })]);
     /* RED WHEN: a no to the fee in the window stops the action. */
-    const declined = await ranWith([stepOwing(order, async (c) => { await c.confirmFee!([{ key: 'act.fee.own-offer' }]); })], undefined, false);
+    const declined = await ranWith(
+      [
+        stepOwing(order, async (c) => {
+          await c.confirmFee!([{ key: 'act.fee.own-offer' }]);
+        })
+      ],
+      undefined,
+      false
+    );
     expect(declined.ended).toEqual([expect.objectContaining({ ended: 'done', steps: 1 })]);
   });
 
@@ -66,18 +106,23 @@ describe('the registry write owed after the steps', () => {
     const order: string[] = [];
     const started = Date.now();
     /* The ask runs out just after the margin, so the write has a moment and no more. */
-    const { ended } = await ranWith([stepOwing(order, () => new Promise<void>(() => undefined))], Date.now() + DEADLINE_MARGIN_MS + 300);
+    const { ended } = await ranWith(
+      [stepOwing(order, () => new Promise<void>(() => undefined))],
+      Date.now() + DEADLINE_MARGIN_MS + 300
+    );
     /* RED WHEN: a write that never ends holds the action's end up, or ends it as stopped. */
     expect(ended).toEqual([expect.objectContaining({ ended: 'done', steps: 1 })]);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it('a write that never ends is let go at its own time limit, well inside the ask\'s deadline', async () => {
+  it("a write that never ends is let go at its own time limit, well inside the ask's deadline", async () => {
     vi.useFakeTimers();
     try {
       const order: string[] = [];
       let ended: ActEnded[] | null = null;
-      void ranWith([stepOwing(order, () => new Promise<void>(() => undefined))]).then((r) => { ended = r.ended; });
+      void ranWith([stepOwing(order, () => new Promise<void>(() => undefined))]).then((r) => {
+        ended = r.ended;
+      });
       await vi.advanceTimersByTimeAsync(REGISTRY_WRITE_MS + 1_000);
       /* RED WHEN: the write is waited for until the ask's own deadline, twenty minutes away, rather than its time limit. */
       expect(ended).toEqual([expect.objectContaining({ ended: 'done', steps: 1 })]);
@@ -86,7 +131,7 @@ describe('the registry write owed after the steps', () => {
     }
   });
 
-  it('asks the registry write\'s fee on its own, whatever the steps were answered', async () => {
+  it("asks the registry write's fee on its own, whatever the steps were answered", async () => {
     const order: string[] = [];
     let asks = 0;
     const answers: boolean[] = [];
@@ -94,19 +139,39 @@ describe('the registry write owed after the steps', () => {
       const ended: ActEnded[] = [];
       await runAction({
         definition: {
-          headline: 'ask.act.headline', shown: async () => [], checks: [], check: async () => null,
-          steps: () => [{
-            title: { key: 'x' },
-            run: async (c) => {
-              await c.relay('AAAA');
-              answers.push(await c.confirmFee!([{ key: 'act.fee.own-offer' }], 10n));
-              c.registryEntryOwed!(async (w) => { order.push('write'); answers.push(await w.confirmFee!([{ key: 'act.fee.own-offer' }], 1n)); });
-            },
-          }],
+          headline: 'ask.act.headline',
+          shown: async () => [],
+          checks: [],
+          check: async () => null,
+          steps: () => [
+            {
+              title: { key: 'x' },
+              run: async (c) => {
+                await c.relay('AAAA');
+                answers.push(await c.confirmFee!([{ key: 'act.fee.own-offer' }], 10n));
+                c.registryEntryOwed!(async (w) => {
+                  order.push('write');
+                  answers.push(await w.confirmFee!([{ key: 'act.fee.own-offer' }], 1n));
+                });
+              }
+            }
+          ]
         },
         request: requestUntil(Date.now() + 20 * 60_000),
-        channel: { step: () => true, relay: async () => 'relayed' as const, answer: (a: unknown) => { ended.push(a as ActEnded); return true; } } as unknown as ActingChannel,
-        held, stop: new AbortController().signal, confirm: async () => { asks += 1; return true; },
+        channel: {
+          step: () => true,
+          relay: async () => 'relayed' as const,
+          answer: (a: unknown) => {
+            ended.push(a as ActEnded);
+            return true;
+          }
+        } as unknown as ActingChannel,
+        held,
+        stop: new AbortController().signal,
+        confirm: async () => {
+          asks += 1;
+          return true;
+        }
       });
     })();
     /* RED WHEN: the registry write's fee is paid on the steps' yes, without its own question and fee shown. */
@@ -119,8 +184,15 @@ describe('the registry write owed after the steps', () => {
     const order: string[] = [];
     let ran = 0;
     const { ended } = await ranWith([
-      stepOwing(order, async () => { ran += 1; }),
-      { title: { key: 'y' }, run: async () => { throw new Error('the second step failed'); } },
+      stepOwing(order, async () => {
+        ran += 1;
+      }),
+      {
+        title: { key: 'y' },
+        run: async () => {
+          throw new Error('the second step failed');
+        }
+      }
     ]);
     /* RED WHEN: a write is made for an action that did not finish its steps. */
     expect(ran).toBe(0);

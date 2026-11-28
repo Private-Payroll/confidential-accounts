@@ -53,8 +53,7 @@ describe('the right DUST door — the address-agreement test', () => {
     /* One field name away, twice over: the zswap key and the night key each
      * derive a plausible-looking DUST address that is not this wallet's. */
     for (const role of ['zswap', 'night'] as const) {
-      const wrong = DustAddress.encodePublicKey(
-        NETWORK, DustSecretKey.fromSeed(ours.moneyAt(0)[role]).publicKey);
+      const wrong = DustAddress.encodePublicKey(NETWORK, DustSecretKey.fromSeed(ours.moneyAt(0)[role]).publicKey);
       expect(wrong).toMatch(new RegExp(`^mn_dust_${NETWORK}1`)); /* plausible-looking… */
       expect(wrong).not.toBe(dustAddressFor(ours, 0)); /* …and wrong. */
     }

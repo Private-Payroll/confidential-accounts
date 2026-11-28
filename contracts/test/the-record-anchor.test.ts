@@ -52,7 +52,11 @@ let sim: AccountSimulator;
 type Step = readonly [by: AccountPrivateState, batch: Uint8Array];
 /** What every device computes: the head after folding these anchors, in order, from the empty head, each judged against `h`. */
 const foldAs = (h: Held, ...steps: Step[]) =>
-  steps.reduce((head, [by, b]) => pureCircuits.anchorHeadOf(head, pureCircuits.anchorHeldOf(b, h.approvals, h.signerRoot, sim.anchorTagOf(by))), ZERO_32);
+  steps.reduce(
+    (head, [by, b]) =>
+      pureCircuits.anchorHeadOf(head, pureCircuits.anchorHeldOf(b, h.approvals, h.signerRoot, sim.anchorTagOf(by))),
+    ZERO_32
+  );
 const fold = (...steps: Step[]) => foldAs(held, ...steps);
 
 describe('the record anchor', () => {
@@ -82,22 +86,25 @@ describe('the record anchor', () => {
     await sim.as(A).anchor(ZERO_32, batch(1));
     await sim.as(B).anchor(fold([A, batch(1)]), batch(2));
     /* RED WHEN the compare-and-swap is removed: A's batch would overwrite B's and B's records would no longer fold. */
-    await expect(sim.as(A).anchor(fold([A, batch(1)]), batch(3)))
-      .rejects.toThrow(/another device anchored the company's records first; read the anchor again/);
+    await expect(sim.as(A).anchor(fold([A, batch(1)]), batch(3))).rejects.toThrow(
+      /another device anchored the company's records first; read the anchor again/
+    );
     expect(hex(sim.anchorHead())).toBe(hex(fold([A, batch(1)], [B, batch(2)])));
   });
 
   it('the first anchor cannot name a head the chain never held', async () => {
     /* RED WHEN the empty-head check is removed: a signer could start the chain from a head of their choosing. */
-    await expect(sim.as(A).anchor(batch(9), batch(1)))
-      .rejects.toThrow(/never been anchored, so the first anchor follows the empty head/);
+    await expect(sim.as(A).anchor(batch(9), batch(1))).rejects.toThrow(
+      /never been anchored, so the first anchor follows the empty head/
+    );
     expect(sim.anchorHead()).toBeUndefined();
   });
 
   it('a batch that covers nothing is refused', async () => {
     /* RED WHEN the empty-batch check is removed. */
-    await expect(sim.as(A).anchor(ZERO_32, ZERO_32))
-      .rejects.toThrow(/that batch covers no records; file a record first, then anchor it/);
+    await expect(sim.as(A).anchor(ZERO_32, ZERO_32)).rejects.toThrow(
+      /that batch covers no records; file a record first, then anchor it/
+    );
     expect(sim.anchorHead()).toBeUndefined();
   });
 
@@ -112,16 +119,19 @@ describe('the record anchor', () => {
     /* Between the device's read and its anchor landing, the account's threshold changes from 2 to 1. */
     await sim.raiseThreshold(1n, [A, B], 390);
     /* RED WHEN the approvals check is removed: a batch judged at 2 approvals would land while the account requires 1. */
-    await expect(sim.as(A).anchor(ZERO_32, batch(1), judged))
-      .rejects.toThrow(/the approvals the account requires changed after this device judged the batch; read the account again and anchor again/);
+    await expect(sim.as(A).anchor(ZERO_32, batch(1), judged)).rejects.toThrow(
+      /the approvals the account requires changed after this device judged the batch; read the account again and anchor again/
+    );
     expect(sim.anchorHead()).toBeUndefined();
     /* RED WHEN the check only refuses fewer approvals than the batch named: a batch judged at 1 would land while the account requires 2. */
     const now = sim.heldNow();
-    await expect(sim.as(A).anchor(ZERO_32, batch(1), { ...now, approvals: now.approvals + 1n }))
-      .rejects.toThrow(/the approvals the account requires changed after this device judged the batch/);
+    await expect(sim.as(A).anchor(ZERO_32, batch(1), { ...now, approvals: now.approvals + 1n })).rejects.toThrow(
+      /the approvals the account requires changed after this device judged the batch/
+    );
     await sim.raiseThreshold(2n, [A, B], 393);
-    await expect(sim.as(A).anchor(ZERO_32, batch(1), now))
-      .rejects.toThrow(/the approvals the account requires changed after this device judged the batch/);
+    await expect(sim.as(A).anchor(ZERO_32, batch(1), now)).rejects.toThrow(
+      /the approvals the account requires changed after this device judged the batch/
+    );
     expect(sim.anchorHead()).toBeUndefined();
   });
 
@@ -130,8 +140,9 @@ describe('the record anchor', () => {
     /* Between the device's read and its anchor landing, another signer is seated: the signer tree's root moves. */
     await sim.seatSigner(privateStateFor(4), [A, B], 392);
     /* RED WHEN the signer-root check is removed: a batch judged against the old signers would land. */
-    await expect(sim.as(A).anchor(ZERO_32, batch(1), judged))
-      .rejects.toThrow(/the account's signers changed after this device judged the batch; read the account again and anchor again/);
+    await expect(sim.as(A).anchor(ZERO_32, batch(1), judged)).rejects.toThrow(
+      /the account's signers changed after this device judged the batch; read the account again and anchor again/
+    );
     expect(sim.anchorHead()).toBeUndefined();
     /* The device reads again and anchors again, naming who holds the account now. */
     const now = sim.heldNow();
@@ -145,7 +156,9 @@ describe('the record anchor', () => {
     expect(hex(sim.anchorHead())).toBe(hex(foldAs(held, [A, batch(1)])));
     /* RED WHEN anchorHeldOf stops hashing the approvals or the root: a header could then name holders the call never checked. */
     expect(hex(sim.anchorHead())).not.toBe(hex(foldAs({ ...held, approvals: held.approvals + 1n }, [A, batch(1)])));
-    expect(hex(sim.anchorHead())).not.toBe(hex(foldAs({ ...held, signerRoot: { field: held.signerRoot.field + 1n } }, [A, batch(1)])));
+    expect(hex(sim.anchorHead())).not.toBe(
+      hex(foldAs({ ...held, signerRoot: { field: held.signerRoot.field + 1n } }, [A, batch(1)]))
+    );
     /* RED WHEN anchorHeldOf stops hashing the batch. */
     expect(hex(foldAs(held, [A, batch(1)]))).not.toBe(hex(foldAs(held, [A, batch(2)])));
   });
@@ -200,14 +213,32 @@ describe('a recovery of the record anchor', () => {
     /* Carried out by A, whose tag is not the one the head was last moved under. */
     await sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest, id);
     /* RED WHEN the recovery folds anything but anchorRecoveredOf(batch, approvals, root, tag, resumesFrom) on from the head held. */
-    expect(hex(sim.anchorHead())).toBe(hex(pureCircuits.anchorHeadOf(now,
-      pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes))));
+    expect(hex(sim.anchorHead())).toBe(
+      hex(
+        pureCircuits.anchorHeadOf(
+          now,
+          pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes)
+        )
+      )
+    );
     /* RED WHEN anchorRecoveredOf stops hashing the head it resumes from: a recovery from one head would read as from any. */
-    expect(hex(sim.anchorHead())).not.toBe(hex(pureCircuits.anchorHeadOf(now,
-      pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), now))));
+    expect(hex(sim.anchorHead())).not.toBe(
+      hex(
+        pureCircuits.anchorHeadOf(
+          now,
+          pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), now)
+        )
+      )
+    );
     /* RED WHEN the recovery folds under the plain anchor's tag: a plain anchor could then be read as a recovery. */
-    expect(hex(sim.anchorHead())).not.toBe(hex(pureCircuits.anchorHeadOf(now,
-      pureCircuits.anchorHeldOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A)))));
+    expect(hex(sim.anchorHead())).not.toBe(
+      hex(
+        pureCircuits.anchorHeadOf(
+          now,
+          pureCircuits.anchorHeldOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A))
+        )
+      )
+    );
     /* RED WHEN the recovery does not name the seat that carried it out. */
     expect(hex(sim.anchorSeat())).toBe(hex(sim.anchorTagOf(A)));
     /* RED WHEN the proposal stays open: one approval could carry out a second recovery. */
@@ -218,14 +249,18 @@ describe('a recovery of the record anchor', () => {
     const { resumes, now } = await twoAnchors();
     const short = await sim.approvedRecovery(resumes, [A], 471);
     /* RED WHEN requireApproved or requireSeatBar is dropped: one seat could give up the company's batches alone. */
-    await expect(sim.as(sim.applying(A, short.c)).recoverAnchor(now, batch(9), resumes, short.latest, short.id)).rejects.toThrow(/not enough approvals yet/);
+    await expect(
+      sim.as(sim.applying(A, short.c)).recoverAnchor(now, batch(9), resumes, short.latest, short.id)
+    ).rejects.toThrow(/not enough approvals yet/);
     const { id, c, latest } = await sim.approvedRecovery(resumes, [A, B]);
     /* RED WHEN the approval does not bind the head it resumes from: a carrying-out device could resume from any head. */
-    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), now, latest, id))
-      .rejects.toThrow(/that proposal is not a recovery of the company's records from that head/);
+    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), now, latest, id)).rejects.toThrow(
+      /that proposal is not a recovery of the company's records from that head/
+    );
     /* RED WHEN the recovery skips the compare-and-swap: a carrying-out device could drop an anchor that landed after its read. */
-    await expect(sim.as(sim.applying(A, c)).recoverAnchor(resumes, batch(9), resumes, latest, id))
-      .rejects.toThrow(/another device anchored the company's records first/);
+    await expect(sim.as(sim.applying(A, c)).recoverAnchor(resumes, batch(9), resumes, latest, id)).rejects.toThrow(
+      /another device anchored the company's records first/
+    );
     expect(hex(sim.anchorHead())).toBe(hex(now));
     expect(sim.isOpen(id)).toBe(true);
   });
@@ -245,8 +280,9 @@ describe('a recovery of the record anchor', () => {
     const { resumes, now } = await twoAnchors();
     const two = await sim.approvedRecovery(resumes, [A, B], 482);
     /* RED WHEN requireSeatBar is dropped: a recovery rewrites who the records say is seated, below the bar for that. */
-    await expect(sim.as(sim.applying(A, two.c)).recoverAnchor(now, batch(9), resumes, two.latest, two.id))
-      .rejects.toThrow(/needs as many approvals as a policy change needs, and at least the threshold/);
+    await expect(
+      sim.as(sim.applying(A, two.c)).recoverAnchor(now, batch(9), resumes, two.latest, two.id)
+    ).rejects.toThrow(/needs as many approvals as a policy change needs, and at least the threshold/);
     await sim.as(C).approve(two.id);
     await sim.as(sim.applying(A, two.c)).recoverAnchor(now, batch(9), resumes, two.latest, two.id);
     expect(sim.isOpen(two.id)).toBe(false);
@@ -256,7 +292,9 @@ describe('a recovery of the record anchor', () => {
     const { resumes, now } = await twoAnchors();
     const { id, c, latest } = await sim.approvedRecovery(resumes, [A, B]);
     /* RED WHEN the recovery proves no seat. */
-    await expect(sim.as(sim.applying(OUTSIDER, c)).recoverAnchor(now, batch(9), resumes, latest, id)).rejects.toThrow(/not a signer on this account/);
+    await expect(sim.as(sim.applying(OUTSIDER, c)).recoverAnchor(now, batch(9), resumes, latest, id)).rejects.toThrow(
+      /not a signer on this account/
+    );
     expect(hex(sim.anchorHead())).toBe(hex(now));
   });
 
@@ -264,12 +302,14 @@ describe('a recovery of the record anchor', () => {
     const { resumes, now } = await twoAnchors();
     const { id, c, latest } = await sim.approvedRecovery(resumes, [A, B], 491, BigInt(NOW + 100));
     /* RED WHEN the approval does not bind its latest time: a carrying-out device could name any later one. */
-    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest + 1n, id))
-      .rejects.toThrow(/that proposal is not a recovery of the company's records from that head before that time/);
+    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest + 1n, id)).rejects.toThrow(
+      /that proposal is not a recovery of the company's records from that head before that time/
+    );
     sim.at(NOW + 100);
     /* RED WHEN the recovery is not held to its latest time: one seat could carry out an old approval after the records resumed. */
-    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest, id))
-      .rejects.toThrow(/the time to carry out this recovery has passed; raise it again/);
+    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest, id)).rejects.toThrow(
+      /the time to carry out this recovery has passed; raise it again/
+    );
     expect(hex(sim.anchorHead())).toBe(hex(now));
     expect(sim.isOpen(id)).toBe(true);
     /* Raised again with a later time, the same quorum carries it out. */
@@ -287,8 +327,14 @@ describe('a recovery of the record anchor', () => {
     expect(hex(sim.anchorHead())).toBe(hex(moved));
     /* RED WHEN the approval binds the head it was approved against: any seat could void every recovery by anchoring once. */
     await sim.as(sim.applying(A, c)).recoverAnchor(moved, batch(9), resumes, latest, id);
-    expect(hex(sim.anchorHead())).toBe(hex(pureCircuits.anchorHeadOf(moved,
-      pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes))));
+    expect(hex(sim.anchorHead())).toBe(
+      hex(
+        pureCircuits.anchorHeadOf(
+          moved,
+          pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes)
+        )
+      )
+    );
     expect(sim.isOpen(id)).toBe(false);
   });
 
@@ -298,18 +344,34 @@ describe('a recovery of the record anchor', () => {
     const second = await sim.approvedRecovery(resumes, [A, B], 502);
     /* Before any recovery is carried out, each approval names 32 zero bytes as the latest recovery's head. */
     expect(hex(first.lastRecovery)).toBe(hex(ZERO_32));
-    await sim.as(sim.applying(A, first.c)).recoverAnchor(now, batch(9), resumes, first.latest, first.id, held, first.lastRecovery);
+    await sim
+      .as(sim.applying(A, first.c))
+      .recoverAnchor(now, batch(9), resumes, first.latest, first.id, held, first.lastRecovery);
     const recovered = sim.anchorHead()!;
     /* RED WHEN a recovery carried out does not write the head it moved the anchor to as the latest recovery's head. */
     expect(hex(sim.lastRecovery())).toBe(hex(recovered));
-    expect(hex(recovered)).toBe(hex(pureCircuits.anchorHeadOf(now,
-      pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes))));
+    expect(hex(recovered)).toBe(
+      hex(
+        pureCircuits.anchorHeadOf(
+          now,
+          pureCircuits.anchorRecoveredOf(batch(9), held.approvals, held.signerRoot, sim.anchorTagOf(A), resumes)
+        )
+      )
+    );
     /* RED WHEN recoverAnchor stops checking the latest recovery its approval names against the chain's: one seat could use a second approval to give up batches anchored since the first. */
-    await expect(sim.as(sim.applying(B, second.c)).recoverAnchor(recovered, batch(8), resumes, second.latest, second.id, held, second.lastRecovery))
-      .rejects.toThrow(/this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved/);
+    await expect(
+      sim
+        .as(sim.applying(B, second.c))
+        .recoverAnchor(recovered, batch(8), resumes, second.latest, second.id, held, second.lastRecovery)
+    ).rejects.toThrow(
+      /this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved/
+    );
     /* RED WHEN the approval does not bind the latest recovery it names: a carrying-out device could name the chain's instead. */
-    await expect(sim.as(sim.applying(B, second.c)).recoverAnchor(recovered, batch(8), resumes, second.latest, second.id, held, recovered))
-      .rejects.toThrow(/that proposal is not a recovery of the company's records from that head before that time/);
+    await expect(
+      sim
+        .as(sim.applying(B, second.c))
+        .recoverAnchor(recovered, batch(8), resumes, second.latest, second.id, held, recovered)
+    ).rejects.toThrow(/that proposal is not a recovery of the company's records from that head before that time/);
     expect(hex(sim.anchorHead())).toBe(hex(recovered));
     expect(sim.isOpen(second.id)).toBe(true);
     /* A plain anchor after it leaves the latest recovery's head where the recovery wrote it. */
@@ -320,7 +382,9 @@ describe('a recovery of the record anchor', () => {
     /* Raised again after it, against the head the first recovery wrote, the same quorum carries it out. */
     const again = await sim.approvedRecovery(recovered, [A, B], 503);
     expect(hex(again.lastRecovery)).toBe(hex(recovered));
-    await sim.as(sim.applying(A, again.c)).recoverAnchor(moved, batch(8), recovered, again.latest, again.id, held, again.lastRecovery);
+    await sim
+      .as(sim.applying(A, again.c))
+      .recoverAnchor(moved, batch(8), recovered, again.latest, again.id, held, again.lastRecovery);
     expect(sim.isOpen(again.id)).toBe(false);
     expect(hex(sim.lastRecovery())).toBe(hex(sim.anchorHead()!));
   });
@@ -329,8 +393,13 @@ describe('a recovery of the record anchor', () => {
     const { resumes, now } = await twoAnchors();
     const named = await sim.approvedRecovery(resumes, [A, B], 504, undefined, now);
     /* RED WHEN the account reads an absent latest recovery as anything but 32 zero bytes: an approval naming a head no recovery wrote would pass. */
-    await expect(sim.as(sim.applying(A, named.c)).recoverAnchor(now, batch(9), resumes, named.latest, named.id, held, named.lastRecovery))
-      .rejects.toThrow(/this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved/);
+    await expect(
+      sim
+        .as(sim.applying(A, named.c))
+        .recoverAnchor(now, batch(9), resumes, named.latest, named.id, held, named.lastRecovery)
+    ).rejects.toThrow(
+      /this recovery names a latest recovery that is no longer the latest one carried out, so it is void; raise it again and have it approved/
+    );
     expect(hex(sim.anchorHead())).toBe(hex(now));
     expect(sim.isOpen(named.id)).toBe(true);
   });
@@ -352,8 +421,9 @@ describe('a recovery of the record anchor', () => {
     await sim.as(sim.applying(A, r)).removeSigner(sim.leafOf(D), rid);
     await sim.as(C).approve(id);
     /* RED WHEN a removal only adds one approval to the bar instead of voiding the recovery: the removed seat's approval would still count. */
-    await expect(sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest, id, sim.heldNow()))
-      .rejects.toThrow(/a signer has been removed or replaced since this was raised; raise it again/);
+    await expect(
+      sim.as(sim.applying(A, c)).recoverAnchor(now, batch(9), resumes, latest, id, sim.heldNow())
+    ).rejects.toThrow(/a signer has been removed or replaced since this was raised; raise it again/);
     expect(hex(sim.anchorHead())).toBe(hex(now));
     expect(sim.isOpen(id)).toBe(true);
   });

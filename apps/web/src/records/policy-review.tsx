@@ -20,21 +20,30 @@ export function usePeriodSaid(): (seconds: bigint) => string {
     const named = policyPeriodOf(seconds);
     if (named.id === null) return t('policies.period.days', { days: named.days, count: named.days });
     switch (named.id) {
-      case 'week': return t('policies.period.week');
-      case 'two-weeks': return t('policies.period.two-weeks');
-      case 'four-weeks': return t('policies.period.four-weeks');
-      case 'year': return t('policies.period.year');
+      case 'week':
+        return t('policies.period.week');
+      case 'two-weeks':
+        return t('policies.period.two-weeks');
+      case 'four-weeks':
+        return t('policies.period.four-weeks');
+      case 'year':
+        return t('policies.period.year');
     }
   };
 }
 
 function PublicFactSays({ fact, t }: { fact: PublicFact; t: Words }) {
   switch (fact.fact) {
-    case 'policy-bar': return <p data-public-fact={fact.fact}>{t('policies.review.public.bar', { value: fact.value })}</p>;
-    case 'highest-band': return <p data-public-fact={fact.fact}>{t('policies.review.public.highest-band', { value: fact.value })}</p>;
-    case 'vault-has-a-policy': return <p data-public-fact={fact.fact}>{t('policies.review.public.vault-has-a-policy')}</p>;
-    case 'approval-count': return <p data-public-fact={fact.fact}>{t('policies.review.public.approval-count')}</p>;
-    default: return null;
+    case 'policy-bar':
+      return <p data-public-fact={fact.fact}>{t('policies.review.public.bar', { value: fact.value })}</p>;
+    case 'highest-band':
+      return <p data-public-fact={fact.fact}>{t('policies.review.public.highest-band', { value: fact.value })}</p>;
+    case 'vault-has-a-policy':
+      return <p data-public-fact={fact.fact}>{t('policies.review.public.vault-has-a-policy')}</p>;
+    case 'approval-count':
+      return <p data-public-fact={fact.fact}>{t('policies.review.public.approval-count')}</p>;
+    default:
+      return null;
   }
 }
 
@@ -59,33 +68,65 @@ export function ChangeReview({ cost, held, kind, vaultCalled, period, busy, onCo
   const t = useText();
   const after = cost.barRaisedTo ?? cost.barLoweredTo ?? held.seatBar;
   const staysRaised = cost.barRaisedTo === undefined && after > held.approvals;
-  const because = cost.because === 'account' ? t('policies.review.because.account')
-    : cost.because === 'policy-bar' ? t('policies.review.because.bar')
-      : t('policies.review.because.vault', { vault: vaultCalled(cost.because.vault) ?? t('policies.review.aVault') });
+  const because =
+    cost.because === 'account'
+      ? t('policies.review.because.account')
+      : cost.because === 'policy-bar'
+        ? t('policies.review.because.bar')
+        : t('policies.review.because.vault', { vault: vaultCalled(cost.because.vault) ?? t('policies.review.aVault') });
   return (
     <div className="flex flex-col gap-3 text-sm" data-review={kind}>
       <p className="font-medium">{t('policies.review.heading')}</p>
-      <p data-needs={cost.needed}>{t('policies.review.needs', { count: cost.needed })} <span data-because>{because}</span></p>
+      <p data-needs={cost.needed}>
+        {t('policies.review.needs', { count: cost.needed })} <span data-because>{because}</span>
+      </p>
       {period === undefined ? null : <p data-review-period>{t('policies.review.period', { period })}</p>}
       {!cost.everySigner ? null : (
         <Alert variant="destructive" data-warning="every-signer">
           <AlertDescription>{t('policies.warn.every-signer', { seated: held.seated })}</AlertDescription>
-          {kind === REVIEW_OF.policy ? <AlertDescription>{t('policies.warn.every-signer.runs')}</AlertDescription> : null}
+          {kind === REVIEW_OF.policy ? (
+            <AlertDescription>{t('policies.warn.every-signer.runs')}</AlertDescription>
+          ) : null}
         </Alert>
       )}
-      {cost.barRaisedTo === undefined ? null : <Alert data-warning="bar-raised"><AlertDescription>{t('policies.warn.bar-raised', { bar: cost.barRaisedTo })}</AlertDescription></Alert>}
-      {cost.barLoweredTo === undefined ? null : <Alert data-warning="bar-lowered"><AlertDescription>{t('policies.warn.bar-lowered', { bar: cost.barLoweredTo })}</AlertDescription></Alert>}
+      {cost.barRaisedTo === undefined ? null : (
+        <Alert data-warning="bar-raised">
+          <AlertDescription>{t('policies.warn.bar-raised', { bar: cost.barRaisedTo })}</AlertDescription>
+        </Alert>
+      )}
+      {cost.barLoweredTo === undefined ? null : (
+        <Alert data-warning="bar-lowered">
+          <AlertDescription>{t('policies.warn.bar-lowered', { bar: cost.barLoweredTo })}</AlertDescription>
+        </Alert>
+      )}
       {!staysRaised ? null : (
-        <Alert data-warning="bar-stays"><AlertDescription>{t('policies.warn.bar-stays', { bar: after, approvals: held.approvals })}</AlertDescription></Alert>
+        <Alert data-warning="bar-stays">
+          <AlertDescription>{t('policies.warn.bar-stays', { bar: after, approvals: held.approvals })}</AlertDescription>
+        </Alert>
       )}
       <div className="flex flex-col gap-1" data-public>
         <p className="font-medium">{t('policies.review.public.heading')}</p>
-        <div className="flex flex-col gap-1">{cost.publicFacts.map((f) => <PublicFactSays key={f.fact} fact={f} t={t} />)}</div>
-        {kind === REVIEW_OF.policy ? <p className="text-muted-foreground" data-hidden>{t('policies.review.hidden')}</p> : null}
+        <div className="flex flex-col gap-1">
+          {cost.publicFacts.map((f) => (
+            <PublicFactSays key={f.fact} fact={f} t={t} />
+          ))}
+        </div>
+        {kind === REVIEW_OF.policy ? (
+          <p className="text-muted-foreground" data-hidden>
+            {t('policies.review.hidden')}
+          </p>
+        ) : null}
       </div>
       {kind === REVIEW_OF.policy ? <p data-reset-confirmation>{t('policies.review.reset')}</p> : null}
       <div>
-        <Button type="button" disabled={busy} data-action={kind === REVIEW_OF.policy ? 'confirm-policy' : 'confirm-bar'} onClick={onConfirm}>{t('policies.review.confirm')}</Button>
+        <Button
+          type="button"
+          disabled={busy}
+          data-action={kind === REVIEW_OF.policy ? 'confirm-policy' : 'confirm-bar'}
+          onClick={onConfirm}
+        >
+          {t('policies.review.confirm')}
+        </Button>
       </div>
     </div>
   );

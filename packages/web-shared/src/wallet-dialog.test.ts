@@ -4,9 +4,17 @@ import { identityFromWords } from 'midnight-identity';
 import { READY_PING } from 'midnight-identity/profile/channel';
 import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
-import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers } from '../../../src/testing/a-wallet-founds-a-company.js';
 import {
-  PAYMENT_FAILED_SAYS, WALLET_DIALOG_NAME, WALLET_DIALOG_SIZE, WalletClosed, askWallet, openWalletDialog,
+  foundedAsTheWalletAnswers,
+  keyringAsTheWalletAnswers
+} from '../../../src/testing/a-wallet-founds-a-company.js';
+import {
+  PAYMENT_FAILED_SAYS,
+  WALLET_DIALOG_NAME,
+  WALLET_DIALOG_SIZE,
+  WalletClosed,
+  askWallet,
+  openWalletDialog
 } from './wallet-sign-in.js';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
@@ -50,11 +58,16 @@ const identity = identityFromWords(TEST_MNEMONIC);
 const givesTheKeys = (ask: unknown): unknown => {
   const parsed = parseAsk(ask, US, Date.now());
   if (parsed.kind !== 'keyring') return { schema: 'a-sign-in' };
-  if ((parsed as KeyringRequest).drawLabel) return foundedAsTheWalletAnswers(identity, parsed as KeyringRequest, (a) => a === SIGNED_IN);
+  if ((parsed as KeyringRequest).drawLabel)
+    return foundedAsTheWalletAnswers(identity, parsed as KeyringRequest, (a) => a === SIGNED_IN);
   return keyringAsTheWalletAnswers(identity, parsed as KeyringRequest, (a) => a === SIGNED_IN);
 };
 
-interface Opened { url: string; target: string; features: string }
+interface Opened {
+  url: string;
+  target: string;
+  features: string;
+}
 
 /**
  * A window that records what was opened, and can be driven through the
@@ -155,7 +168,9 @@ class ARecordingView implements Openable {
           queueMicrotask(() => this.fromTheWallet(said, WALLET, made));
         }
       },
-      focus: () => { this.focused += 1; },
+      focus: () => {
+        this.focused += 1;
+      },
       /*
        * **CLOSING IS A STATE AND NOT A TALLY.** This counted and returned, so
        * every window in this file went on answering after it had been put away
@@ -164,8 +179,13 @@ class ARecordingView implements Openable {
        * times* a dialog is closed are about a real property; what is added is
        * that the window is afterwards GONE.
        */
-      close: () => { gone = true; this.closed += 1; },
-      get closed(): boolean { return gone; },
+      close: () => {
+        gone = true;
+        this.closed += 1;
+      },
+      get closed(): boolean {
+        return gone;
+      }
     };
     this.windows.set(target, made);
     this.made.push(made);
@@ -174,19 +194,25 @@ class ARecordingView implements Openable {
   }
 
   /** Windows this view made that are still on somebody's screen. */
-  stillOpen(): WalletWindow[] { return this.made.filter(w => w.closed !== true); }
+  stillOpen(): WalletWindow[] {
+    return this.made.filter((w) => w.closed !== true);
+  }
 
   addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
     this.handler = h;
     if (this.answers) queueMicrotask(() => this.fromTheWallet({ schema: READY_PING }));
   }
-  removeEventListener(): void { this.handler = null; }
+  removeEventListener(): void {
+    this.handler = null;
+  }
   setTimeout(handler: () => void): number {
     const id = this.nextTimer++;
     this.timers.set(id, handler);
     return id;
   }
-  clearTimeout(id: number): void { this.timers.delete(id); }
+  clearTimeout(id: number): void {
+    this.timers.delete(id);
+  }
 
   /**
    * **THE DEADLINE, RUN RATHER THAN WAITED FOR.** `setTimeout` above records
@@ -202,7 +228,9 @@ class ARecordingView implements Openable {
   }
 
   /** Is anything still waiting on a deadline? */
-  get waiting(): number { return this.timers.size; }
+  get waiting(): number {
+    return this.timers.size;
+  }
 
   /**
    * A message from the wallet's window, at the wallet's origin.
@@ -227,7 +255,7 @@ class ABlockedView extends ARecordingView {
 }
 
 const featureOf = (features: string, key: string): number =>
-  Number(new Map(features.split(',').map(p => p.split('=') as [string, string])).get(key));
+  Number(new Map(features.split(',').map((p) => p.split('=') as [string, string])).get(key));
 
 /* ------------------------------------------------------------------------ */
 
@@ -243,7 +271,9 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
 
   const aServer = (happened: string[], hold?: string) => {
     let release: (() => void) | null = null;
-    const held = new Promise<void>(resolve => { release = resolve; });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const fetchImpl = (async (url: string, init?: RequestInit) => {
       happened.push(`fetch ${String(init?.method ?? 'GET')} ${String(url)}`);
       if (hold && String(url).includes(hold)) await held;
@@ -251,11 +281,16 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
         ok: true,
         status: 200,
         json: async () => ({
-          nonce: 'n1', handle: 'h1', expiresAt: new Date(Date.now() + 600_000).toISOString(),
-          session: { token: 'tok' }, address: SIGNED_IN, created: true,
+          nonce: 'n1',
+          handle: 'h1',
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+          session: { token: 'tok' },
+          address: SIGNED_IN,
+          created: true,
           user: { id: 'usr_1', email: null, name: '' },
-          company: 'co_' + 'a1'.repeat(32), account: 'a2'.repeat(32),
-        }),
+          company: 'co_' + 'a1'.repeat(32),
+          account: 'a2'.repeat(32)
+        })
       } as Response;
     }) as typeof fetch;
     return { fetchImpl, letItAnswer: () => release?.() };
@@ -268,55 +303,51 @@ describe('§1 — THE WINDOW IS OPENED IN THE CLICK, BEFORE ANYTHING IS AWAITED'
     keyring.forgetLocally();
   });
 
-  it('WATCHED FAILING: SIGNING IN OPENS THE WALLET BEFORE THE CHALLENGE IS ASKED FOR',
-    async () => {
-      const happened: string[] = [];
-      const view = new ARecordingView(happened);
-      view.answers = () => ({ schema: 'a-sign-in' });
-      const server = aServer(happened, '/challenge');
-      (globalThis as { window?: unknown }).window =
-        Object.assign(view, { location: { origin: US } });
-      globalThis.fetch = server.fetchImpl;
+  it('WATCHED FAILING: SIGNING IN OPENS THE WALLET BEFORE THE CHALLENGE IS ASKED FOR', async () => {
+    const happened: string[] = [];
+    const view = new ARecordingView(happened);
+    view.answers = () => ({ schema: 'a-sign-in' });
+    const server = aServer(happened, '/challenge');
+    (globalThis as { window?: unknown }).window = Object.assign(view, { location: { origin: US } });
+    globalThis.fetch = server.fetchImpl;
 
-      const keyring = await import('./keyring.js');
-      /*
-       * NOT AWAITED, AND THAT IS THE TEST. Everything before the first `await`
-       * inside `signInWithWallet` has run by the time this line returns. That
-       * is precisely what a browser means by *while the click is still being
-       * handled*, and it is the only place a window may be opened.
-       */
-      const journey = keyring.signInWithWallet(WALLET, undefined, view);
+    const keyring = await import('./keyring.js');
+    /*
+     * NOT AWAITED, AND THAT IS THE TEST. Everything before the first `await`
+     * inside `signInWithWallet` has run by the time this line returns. That
+     * is precisely what a browser means by *while the click is still being
+     * handled*, and it is the only place a window may be opened.
+     */
+    const journey = keyring.signInWithWallet(WALLET, undefined, view);
 
-      expect(happened[0]).toBe(`open ${WALLET_DIALOG_NAME}`);
-      expect(happened[1]).toBe('fetch POST /api/auth/wallet/challenge');
-      expect(view.opened).toHaveLength(1);
-      expect(view.opened[0]!.url.startsWith(`${WALLET}/`)).toBe(true);
-      expect(view.opened[0]!.url).toContain('#/approve');
-      /* The window is open and the server has still not said one word. */
-      expect(view.posted).toHaveLength(0);
+    expect(happened[0]).toBe(`open ${WALLET_DIALOG_NAME}`);
+    expect(happened[1]).toBe('fetch POST /api/auth/wallet/challenge');
+    expect(view.opened).toHaveLength(1);
+    expect(view.opened[0]!.url.startsWith(`${WALLET}/`)).toBe(true);
+    expect(view.opened[0]!.url).toContain('#/approve');
+    /* The window is open and the server has still not said one word. */
+    expect(view.posted).toHaveLength(0);
 
-      server.letItAnswer();
-      await journey;
-    });
-
+    server.letItAnswer();
+    await journey;
+  });
 });
 
 describe('§1 — IT IS A DIALOG RATHER THAN A TAB', () => {
-  it('WATCHED FAILING: it is opened with a size and centred on the page that opened it',
-    () => {
-      const view = new ARecordingView();
-      openWalletDialog(view, WALLET);
+  it('WATCHED FAILING: it is opened with a size and centred on the page that opened it', () => {
+    const view = new ARecordingView();
+    openWalletDialog(view, WALLET);
 
-      const { features } = view.opened[0]!;
-      /* `popup` is the only thing that makes it a window rather than a tab. */
-      expect(features).toContain('popup=1');
-      expect(featureOf(features, 'width')).toBe(WALLET_DIALOG_SIZE.width);
-      expect(featureOf(features, 'height')).toBe(WALLET_DIALOG_SIZE.height);
-      /* Centred across the opener: 100 + (1200 - 460) / 2. */
-      expect(featureOf(features, 'left')).toBe(470);
-      /* A third of the way down it: 50 + (900 - 760) / 3. */
-      expect(featureOf(features, 'top')).toBe(97);
-    });
+    const { features } = view.opened[0]!;
+    /* `popup` is the only thing that makes it a window rather than a tab. */
+    expect(features).toContain('popup=1');
+    expect(featureOf(features, 'width')).toBe(WALLET_DIALOG_SIZE.width);
+    expect(featureOf(features, 'height')).toBe(WALLET_DIALOG_SIZE.height);
+    /* Centred across the opener: 100 + (1200 - 460) / 2. */
+    expect(featureOf(features, 'left')).toBe(470);
+    /* A third of the way down it: 50 + (900 - 760) / 3. */
+    expect(featureOf(features, 'top')).toBe(97);
+  });
 
   it('AND `noopener` IS NOT AMONG THEM, because it would break both sides', () => {
     /*
@@ -337,7 +368,7 @@ describe('§1 — IT IS A DIALOG RATHER THAN A TAB', () => {
     const second = openWalletDialog(view, WALLET);
 
     /* One name, so the browser hands back the window already on screen. */
-    expect(view.opened.map(o => o.target)).toEqual([WALLET_DIALOG_NAME, WALLET_DIALOG_NAME]);
+    expect(view.opened.map((o) => o.target)).toEqual([WALLET_DIALOG_NAME, WALLET_DIALOG_NAME]);
     expect(second.wallet).toBe(first.wallet);
     /* Brought forward both times — a wallet behind the page that asked looks
      * exactly like a page that did nothing. */
@@ -366,8 +397,7 @@ describe('§1 — IT IS A DIALOG RATHER THAN A TAB', () => {
     const view = new ARecordingView();
     const answer = askWallet(view, WALLET, { schema: 'an-ask' });
     view.fromTheWallet({ schema: READY_PING });
-    view.fromTheWallet(
-      { schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined' });
+    view.fromTheWallet({ schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined' });
 
     await expect(answer).rejects.toBeInstanceOf(WalletClosed);
     expect(view.closed).toBe(1);
@@ -375,43 +405,46 @@ describe('§1 — IT IS A DIALOG RATHER THAN A TAB', () => {
 });
 
 describe('§1 — THE PERSON CAN STOP WAITING, AND THE REFUSAL IS NOT BLAME', () => {
-  it('WATCHED FAILING: GIVING UP CLOSES THE DIALOG AND REFUSES WHAT IS IN FLIGHT',
-    async () => {
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
-      const answer = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
+  it('WATCHED FAILING: GIVING UP CLOSES THE DIALOG AND REFUSES WHAT IS IN FLIGHT', async () => {
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    const answer = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
 
-      dialog.giveUp();
+    dialog.giveUp();
 
-      const refusal = await answer.then(() => null, (e: unknown) => e as WalletClosed);
-      expect(refusal).toBeInstanceOf(WalletClosed);
-      expect(refusal!.refusal.of).toBe('gave-up');
-      expect(refusal!.message).toContain('Nothing was signed');
-      expect(view.closed).toBe(1);
-      /* Twice is not two closes and not two refusals. */
-      dialog.giveUp();
-      expect(view.closed).toBe(1);
-    });
+    const refusal = await answer.then(
+      () => null,
+      (e: unknown) => e as WalletClosed
+    );
+    expect(refusal).toBeInstanceOf(WalletClosed);
+    expect(refusal!.refusal.of).toBe('gave-up');
+    expect(refusal!.message).toContain('Nothing was signed');
+    expect(view.closed).toBe(1);
+    /* Twice is not two closes and not two refusals. */
+    dialog.giveUp();
+    expect(view.closed).toBe(1);
+  });
 
-  it('WATCHED FAILING: A WINDOW THAT DID NOT OPEN DOES NOT BLAME THE PERSON’S BROWSER',
-    async () => {
-      /*
-       * The second half of that rule. The page once said *"your browser stopped this page opening
-       * your wallet. Allow pop-ups for this site"* — advice for a problem the
-       * person does not have, because the usual reason is that the page spent
-       * the permission before it used it.
-       */
-      const view = new ABlockedView();
-      const refusal = await askWallet(view, WALLET, { schema: 'an-ask' })
-        .then(() => null, (e: unknown) => e as WalletClosed);
+  it('WATCHED FAILING: A WINDOW THAT DID NOT OPEN DOES NOT BLAME THE PERSON’S BROWSER', async () => {
+    /*
+     * The second half of that rule. The page once said *"your browser stopped this page opening
+     * your wallet. Allow pop-ups for this site"* — advice for a problem the
+     * person does not have, because the usual reason is that the page spent
+     * the permission before it used it.
+     */
+    const view = new ABlockedView();
+    const refusal = await askWallet(view, WALLET, { schema: 'an-ask' }).then(
+      () => null,
+      (e: unknown) => e as WalletClosed
+    );
 
-      expect(refusal).toBeInstanceOf(WalletClosed);
-      expect(refusal!.refusal.of).toBe('no-wallet-tab');
-      expect(refusal!.message).not.toContain('Allow pop-ups');
-      expect(refusal!.message).not.toContain('your browser stopped');
-      expect(refusal!.message).toContain('nothing has been signed');
-      expect(refusal!.message).toContain('this page has to get right');
-    });
+    expect(refusal).toBeInstanceOf(WalletClosed);
+    expect(refusal!.refusal.of).toBe('no-wallet-tab');
+    expect(refusal!.message).not.toContain('Allow pop-ups');
+    expect(refusal!.message).not.toContain('your browser stopped');
+    expect(refusal!.message).toContain('nothing has been signed');
+    expect(refusal!.message).toContain('this page has to get right');
+  });
 });
 
 /* ------------------------------------------------------------------------ */
@@ -434,7 +467,10 @@ describe('§1 — THE PERSON CAN STOP WAITING, AND THE REFUSAL IS NOT BLAME', ()
  */
 describe('§2 — TWO ASKS THROUGH ONE DIALOG', () => {
   /** Let queued work run, the way a browser would between two paints. */
-  const flush = (): Promise<void> => new Promise(resolve => { setTimeout(resolve, 0); });
+  const flush = (): Promise<void> =>
+    new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
 
   /**
    * **WHAT HAPPENED, RATHER THAN WHETHER IT HUNG.** An ask that reaches nothing
@@ -443,21 +479,27 @@ describe('§2 — TWO ASKS THROUGH ONE DIALOG', () => {
    * the deadline is RUN, and what comes back is a value.
    */
   async function whatHappened<T>(
-    view: ARecordingView, journey: Promise<T>,
+    view: ARecordingView,
+    journey: Promise<T>
   ): Promise<
     | { readonly of: 'answered'; readonly answer: T }
     | { readonly of: 'refused'; readonly refusal: WalletClosed }
     | { readonly of: 'never' }
   > {
-    let seen:
-      | { of: 'answered'; answer: T }
-      | { of: 'refused'; refusal: WalletClosed }
-      | null = null;
+    let seen: { of: 'answered'; answer: T } | { of: 'refused'; refusal: WalletClosed } | null = null;
     void journey.then(
-      answer => { seen = { of: 'answered', answer }; },
-      (refusal: WalletClosed) => { seen = { of: 'refused', refusal }; });
+      (answer) => {
+        seen = { of: 'answered', answer };
+      },
+      (refusal: WalletClosed) => {
+        seen = { of: 'refused', refusal };
+      }
+    );
     await flush();
-    if (seen === null) { view.fireTimers(); await flush(); }
+    if (seen === null) {
+      view.fireTimers();
+      await flush();
+    }
     return seen ?? { of: 'never' };
   }
 
@@ -487,212 +529,204 @@ describe('§2 — TWO ASKS THROUGH ONE DIALOG', () => {
     expect(openWalletDialog(view, WALLET).wallet).not.toBe(window);
   });
 
-  it('WATCHED FAILING: BOTH ASKS GET AN ANSWER, AND THE SECOND DOES NOT TIME OUT',
-    async () => {
-      /*
-       * **THE WHOLE OF THE INVITEE'S JOURNEY, AT THE LAYER THAT BREAKS IT.**
-       * One dialog, opened in the click; two asks driven through it, in order,
-       * each answered by the wallet. The second one is the one nobody could
-       * see: the first ask's success put the window away, so the second was
-       * handed a window that was no longer there and waited out its twenty
-       * seconds against it.
-       */
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
-      /* What the invitation screen says the moment it opens the window, and
-       * the whole of what it says. Without it the first answer takes the
-       * window away with it. */
-      dialog.moreThanOneAsk();
+  it('WATCHED FAILING: BOTH ASKS GET AN ANSWER, AND THE SECOND DOES NOT TIME OUT', async () => {
+    /*
+     * **THE WHOLE OF THE INVITEE'S JOURNEY, AT THE LAYER THAT BREAKS IT.**
+     * One dialog, opened in the click; two asks driven through it, in order,
+     * each answered by the wallet. The second one is the one nobody could
+     * see: the first ask's success put the window away, so the second was
+     * handed a window that was no longer there and waited out its twenty
+     * seconds against it.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    /* What the invitation screen says the moment it opens the window, and
+     * the whole of what it says. Without it the first answer takes the
+     * window away with it. */
+    dialog.moreThanOneAsk();
 
-      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-key' });
-      expect(await whatHappened(view, one))
-        .toEqual({ of: 'answered', answer: { schema: 'the-key' } });
-      /* The window is STILL THERE, which is the whole of the repair. */
-      expect(dialog.wallet!.closed).toBe(false);
+    const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-key' });
+    expect(await whatHappened(view, one)).toEqual({ of: 'answered', answer: { schema: 'the-key' } });
+    /* The window is STILL THERE, which is the whole of the repair. */
+    expect(dialog.wallet!.closed).toBe(false);
 
-      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-address' });
-      expect(await whatHappened(view, two))
-        .toEqual({ of: 'answered', answer: { schema: 'the-address' } });
+    const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-address' });
+    expect(await whatHappened(view, two)).toEqual({ of: 'answered', answer: { schema: 'the-address' } });
 
-      /* Two asks, and the person saw ONE window — which is the thing the
-       * shared dialog was for. */
-      expect(view.opened.map(o => o.target)).toEqual(
-        [WALLET_DIALOG_NAME, WALLET_DIALOG_NAME]);
-      expect(new Set(view.opened.map(o => o.url)).size).toBe(2);
-    });
+    /* Two asks, and the person saw ONE window — which is the thing the
+     * shared dialog was for. */
+    expect(view.opened.map((o) => o.target)).toEqual([WALLET_DIALOG_NAME, WALLET_DIALOG_NAME]);
+    expect(new Set(view.opened.map((o) => o.url)).size).toBe(2);
+  });
 
-  it('WATCHED FAILING: AND THE SECOND ASK REACHES A DOCUMENT THAT HAS NOT ANSWERED YET',
-    async () => {
-      /*
-       * **THE SECOND MECHANISM, AND IT IS INDEPENDENT OF THE FIRST.** Even
-       * with the window left open, the wallet's channel answers ONE request
-       * per load and ignores every later one — so a window that is merely
-       * still there is not a window that can be asked again. The URL carries a
-       * number that goes up precisely so that each ask meets a fresh document,
-       * and this is the assertion that the second ask gets one.
-       *
-       * Turning it red: make the second ask reuse the URL the first one had.
-       */
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
-      dialog.moreThanOneAsk();
+  it('WATCHED FAILING: AND THE SECOND ASK REACHES A DOCUMENT THAT HAS NOT ANSWERED YET', async () => {
+    /*
+     * **THE SECOND MECHANISM, AND IT IS INDEPENDENT OF THE FIRST.** Even
+     * with the window left open, the wallet's channel answers ONE request
+     * per load and ignores every later one — so a window that is merely
+     * still there is not a window that can be asked again. The URL carries a
+     * number that goes up precisely so that each ask meets a fresh document,
+     * and this is the assertion that the second ask gets one.
+     *
+     * Turning it red: make the second ask reuse the URL the first one had.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    dialog.moreThanOneAsk();
 
-      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-key' });
-      await whatHappened(view, one);
+    const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-key' });
+    await whatHappened(view, one);
 
-      const before = view.opened.length;
-      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-address' });
-      await whatHappened(view, two);
+    const before = view.opened.length;
+    const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-address' });
+    await whatHappened(view, two);
 
-      expect(view.opened.length).toBe(before + 1);
-      const [first, second] = [view.opened[before - 1]!.url, view.opened[before]!.url];
-      expect(second).not.toBe(first);
-    });
+    expect(view.opened.length).toBe(before + 1);
+    const [first, second] = [view.opened[before - 1]!.url, view.opened[before]!.url];
+    expect(second).not.toBe(first);
+  });
 
-  it('WATCHED FAILING: A WINDOW THE PERSON CLOSED IS REFUSED BY NAME RATHER THAN WAITED ON',
-    async () => {
-      /*
-       * **AND WHEN THERE IS GENUINELY NO WINDOW, IT SAYS SO AT ONCE.** A page
-       * may only open a window while it is handling a press, so a dialog whose
-       * window has gone cannot quietly make another one — the honest answer is
-       * a refusal naming what happened, now, rather than twenty seconds of
-       * *your wallet did not answer*, which sends somebody to look at their
-       * wallet for a window this page no longer has.
-       */
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
-      dialog.wallet!.close!();
+  it('WATCHED FAILING: A WINDOW THE PERSON CLOSED IS REFUSED BY NAME RATHER THAN WAITED ON', async () => {
+    /*
+     * **AND WHEN THERE IS GENUINELY NO WINDOW, IT SAYS SO AT ONCE.** A page
+     * may only open a window while it is handling a press, so a dialog whose
+     * window has gone cannot quietly make another one — the honest answer is
+     * a refusal naming what happened, now, rather than twenty seconds of
+     * *your wallet did not answer*, which sends somebody to look at their
+     * wallet for a window this page no longer has.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    dialog.wallet!.close!();
 
-      const asking = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
-      /*
-       * **READ BEFORE ANYTHING RUNS THE TIMERS, AND THAT IS THE ASSERTION.**
-       * `whatHappened` fires whatever is pending, so a `waiting` read after it
-       * is zero whichever way the product behaves — which is an assertion that
-       * cannot fail dressed as the one that carries the point. `askWallet`
-       * sets its deadline synchronously, so by the line below it either
-       * refused without one or it is waiting out twenty seconds.
-       *
-       * Turning it red: take the `closed` read out of `take()`.
-       */
-      expect(view.waiting).toBe(0);
+    const asking = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
+    /*
+     * **READ BEFORE ANYTHING RUNS THE TIMERS, AND THAT IS THE ASSERTION.**
+     * `whatHappened` fires whatever is pending, so a `waiting` read after it
+     * is zero whichever way the product behaves — which is an assertion that
+     * cannot fail dressed as the one that carries the point. `askWallet`
+     * sets its deadline synchronously, so by the line below it either
+     * refused without one or it is waiting out twenty seconds.
+     *
+     * Turning it red: take the `closed` read out of `take()`.
+     */
+    expect(view.waiting).toBe(0);
 
-      const what = await whatHappened(view, asking);
+    const what = await whatHappened(view, asking);
 
-      expect(what.of).toBe('refused');
-      const refusal = (what as { refusal: WalletClosed }).refusal;
-      expect(refusal.refusal.of).toBe('window-gone');
-      expect(refusal.message).toContain('nothing has been signed');
-      /* And it did not talk to the window that is not there. */
-      expect(view.posted).toHaveLength(0);
-    });
+    expect(what.of).toBe('refused');
+    const refusal = (what as { refusal: WalletClosed }).refusal;
+    expect(refusal.refusal.of).toBe('window-gone');
+    expect(refusal.message).toContain('nothing has been signed');
+    /* And it did not talk to the window that is not there. */
+    expect(view.posted).toHaveLength(0);
+  });
 
-  it('WATCHED FAILING: A RE-NAVIGATION THE BROWSER REFUSES IS REFUSED BY NAME TOO',
-    async () => {
-      /*
-       * **THE ANSWER FROM `view.open` IS THE ONLY THING THAT KNOWS.** A page
-       * may open a window while it is handling a press and not afterwards, and
-       * the second ask is well after the press — so the re-navigation can be
-       * refused. A refusal that is DROPPED leaves this page posting into the
-       * document that has already answered, which produces twenty seconds of
-       * *your wallet did not answer*: the very failure this section exists
-       * about, reached by a second road.
-       *
-       * Turning it red: ignore what `view.open` returns inside `take()`.
-       */
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
-      dialog.moreThanOneAsk();
+  it('WATCHED FAILING: A RE-NAVIGATION THE BROWSER REFUSES IS REFUSED BY NAME TOO', async () => {
+    /*
+     * **THE ANSWER FROM `view.open` IS THE ONLY THING THAT KNOWS.** A page
+     * may open a window while it is handling a press and not afterwards, and
+     * the second ask is well after the press — so the re-navigation can be
+     * refused. A refusal that is DROPPED leaves this page posting into the
+     * document that has already answered, which produces twenty seconds of
+     * *your wallet did not answer*: the very failure this section exists
+     * about, reached by a second road.
+     *
+     * Turning it red: ignore what `view.open` returns inside `take()`.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    dialog.moreThanOneAsk();
 
-      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-key' });
-      await whatHappened(view, one);
+    const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-key' });
+    await whatHappened(view, one);
 
-      view.refuseTheNextOpen = true;
-      const posted = view.posted.length;
-      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
-      expect(view.waiting).toBe(0);
+    view.refuseTheNextOpen = true;
+    const posted = view.posted.length;
+    const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+    expect(view.waiting).toBe(0);
 
-      const what = await whatHappened(view, two);
-      expect(what.of).toBe('refused');
-      expect((what as { refusal: WalletClosed }).refusal.refusal.of).toBe('window-gone');
-      /* Nothing was said into the document that had already answered. */
-      expect(view.posted).toHaveLength(posted);
-    });
+    const what = await whatHappened(view, two);
+    expect(what.of).toBe('refused');
+    expect((what as { refusal: WalletClosed }).refusal.refusal.of).toBe('window-gone');
+    /* Nothing was said into the document that had already answered. */
+    expect(view.posted).toHaveLength(posted);
+  });
 
-  it('WATCHED FAILING: A WINDOW CLOSED WHILE THE PAGE IS OPENING ONE LEAVES NOTHING BEHIND',
-    async () => {
-      /*
-       * **THE GAP BETWEEN READING `closed` AND OPENING.** A person can close
-       * the wallet in that gap. The name then reaches nothing, so the browser
-       * makes a NEW window and hands it back — and a dialog that kept its old
-       * handle would afterwards be talking to a window that is gone and
-       * closing that one, while the window actually on the person's screen
-       * stays there with nothing in this product able to put it away.
-       *
-       * Turning it red: drop what `view.open` returns inside `take()` and go
-       * on using the handle from the first open.
-       */
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
-      dialog.moreThanOneAsk();
-      const firstWindow = dialog.wallet!;
+  it('WATCHED FAILING: A WINDOW CLOSED WHILE THE PAGE IS OPENING ONE LEAVES NOTHING BEHIND', async () => {
+    /*
+     * **THE GAP BETWEEN READING `closed` AND OPENING.** A person can close
+     * the wallet in that gap. The name then reaches nothing, so the browser
+     * makes a NEW window and hands it back — and a dialog that kept its old
+     * handle would afterwards be talking to a window that is gone and
+     * closing that one, while the window actually on the person's screen
+     * stays there with nothing in this product able to put it away.
+     *
+     * Turning it red: drop what `view.open` returns inside `take()` and go
+     * on using the handle from the first open.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
+    dialog.moreThanOneAsk();
+    const firstWindow = dialog.wallet!;
 
-      const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-key' });
-      await whatHappened(view, one);
+    const one = askWallet(view, WALLET, { schema: 'the-company-key' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-key' });
+    await whatHappened(view, one);
 
-      /* The person closes it exactly as this page reaches for it. */
-      view.duringTheNextOpen = () => { firstWindow.close!(); };
+    /* The person closes it exactly as this page reaches for it. */
+    view.duringTheNextOpen = () => {
+      firstWindow.close!();
+    };
 
-      const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-address' });
-      expect(await whatHappened(view, two))
-        .toEqual({ of: 'answered', answer: { schema: 'the-address' } });
+    const two = askWallet(view, WALLET, { schema: 'where-the-money-goes' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-address' });
+    expect(await whatHappened(view, two)).toEqual({ of: 'answered', answer: { schema: 'the-address' } });
 
-      /* It is talking to the window that exists, not to the one that went. */
-      expect(view.made).toHaveLength(2);
-      expect(dialog.wallet).not.toBe(firstWindow);
+    /* It is talking to the window that exists, not to the one that went. */
+    expect(view.made).toHaveLength(2);
+    expect(dialog.wallet).not.toBe(firstWindow);
 
-      /* And when the journey ends, no wallet is left on the screen. */
-      dialog.giveUp();
-      expect(view.stillOpen()).toHaveLength(0);
-    });
+    /* And when the journey ends, no wallet is left on the screen. */
+    dialog.giveUp();
+    expect(view.stillOpen()).toHaveLength(0);
+  });
 
-  it('AND A DIALOG NOBODY CLAIMED IS STILL PUT AWAY BY THE ASK THAT USED IT',
-    async () => {
-      /*
-       * **THE DEFAULT IS UNCHANGED, AND THAT IS DELIBERATE.** Every other
-       * wallet journey in this product is one ask through one window, and for
-       * those the ask closing the window when it settles is the right
-       * behaviour and the reason a person never meets a wallet screen that is
-       * no longer about anything. Only a caller with a second ask coming says
-       * otherwise.
-       *
-       * Turning it red: make `askEnded` never close, or make
-       * `moreThanOneAsk` the default.
-       */
-      const view = new ARecordingView();
-      const dialog = openWalletDialog(view, WALLET);
+  it('AND A DIALOG NOBODY CLAIMED IS STILL PUT AWAY BY THE ASK THAT USED IT', async () => {
+    /*
+     * **THE DEFAULT IS UNCHANGED, AND THAT IS DELIBERATE.** Every other
+     * wallet journey in this product is one ask through one window, and for
+     * those the ask closing the window when it settles is the right
+     * behaviour and the reason a person never meets a wallet screen that is
+     * no longer about anything. Only a caller with a second ask coming says
+     * otherwise.
+     *
+     * Turning it red: make `askEnded` never close, or make
+     * `moreThanOneAsk` the default.
+     */
+    const view = new ARecordingView();
+    const dialog = openWalletDialog(view, WALLET);
 
-      const one = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
-      view.fromTheWallet({ schema: READY_PING });
-      view.fromTheWallet({ schema: 'the-answer' });
-      await whatHappened(view, one);
+    const one = askWallet(view, WALLET, { schema: 'an-ask' }, dialog);
+    view.fromTheWallet({ schema: READY_PING });
+    view.fromTheWallet({ schema: 'the-answer' });
+    await whatHappened(view, one);
 
-      expect(dialog.wallet!.closed).toBe(true);
-      expect(view.closed).toBe(1);
-    });
+    expect(dialog.wallet!.closed).toBe(true);
+    expect(view.closed).toBe(1);
+  });
 
   it('AND THE CALLER THAT CLAIMED IT IS WHAT CLOSES IT, ON EVERY OUTCOME', async () => {
     /*
@@ -763,19 +797,24 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
         return { ok: false, status: 500, json: async () => ({ error: 'the server fell over' }) } as Response;
       }
       if (String(url) === '/api/me/keys') {
-        if (method === 'PUT') saved = { keyBundle: JSON.parse(String(init?.body)).keyBundle, version: saved.version + 1 };
+        if (method === 'PUT')
+          saved = { keyBundle: JSON.parse(String(init?.body)).keyBundle, version: saved.version + 1 };
         return { ok: true, status: 200, json: async () => saved } as Response;
       }
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          nonce: 'n1', handle: 'h1', expiresAt: new Date(Date.now() + 600_000).toISOString(),
+          nonce: 'n1',
+          handle: 'h1',
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
           session: { expiresAt: new Date(Date.now() + 600_000).toISOString() },
-          address: SIGNED_IN, created: true,
+          address: SIGNED_IN,
+          created: true,
           user: { id: 'usr_1', email: null, name: '' },
-          company: 'co_' + 'a1'.repeat(32), account: 'a2'.repeat(32),
-        }),
+          company: 'co_' + 'a1'.repeat(32),
+          account: 'a2'.repeat(32)
+        })
       } as Response;
     }) as typeof fetch;
   };
@@ -807,9 +846,14 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     const creation = await import('./company-creation.js');
     view.answers = givesTheKeys;
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
-    await expect(creation.startCompanyHeldFromTheStart(
-      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
-    )).rejects.toThrow('the server fell over');
+    await expect(
+      creation.startCompanyHeldFromTheStart(
+        { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+        WALLET,
+        view,
+        US
+      )
+    ).rejects.toThrow('the server fell over');
     expect(view.stillOpen()).toEqual([]);
   });
 
@@ -835,9 +879,14 @@ describe('§3 — A JOURNEY WHOSE SERVER CALL FAILS PUTS ITS WALLET AWAY', () =>
     const said: Array<unknown> = [];
     const stop = walletAsks.onWalletWaiting((d) => said.push(d === null ? 'done' : 'waiting'));
     globalThis.fetch = aServerThatFails((method, url) => method === 'POST' && url === '/api/accounts');
-    await creation.startCompanyHeldFromTheStart(
-      { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 }, WALLET, view, US,
-    ).catch(() => {});
+    await creation
+      .startCompanyHeldFromTheStart(
+        { name: 'Acme', signers: [{ name: 'Ada', role: 'admin' }], threshold: 1 },
+        WALLET,
+        view,
+        US
+      )
+      .catch(() => {});
     stop();
     expect(said).toEqual(['waiting', 'done']);
   });
@@ -849,7 +898,10 @@ describe('A PAYMENT THE PERSON APPROVED AND THE WALLET COULD NOT MAKE IS NOT A D
     const answer = askWallet(view, WALLET, { schema: 'an-ask' });
     view.fromTheWallet({ schema: READY_PING });
     view.fromTheWallet({ schema: 'midnight-identity/disclosure-refused/v1', ...body });
-    const refusal = await answer.then(() => null, (e: unknown) => e as WalletClosed);
+    const refusal = await answer.then(
+      () => null,
+      (e: unknown) => e as WalletClosed
+    );
     expect(refusal).toBeInstanceOf(WalletClosed);
     expect(view.closed).toBe(1);
     return refusal!;

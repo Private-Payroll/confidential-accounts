@@ -10,6 +10,8 @@ import { useLanguage, useText } from 'vaults-ui';
 export function DocumentTitle(): null {
   const t = useText();
   const language = useLanguage();
-  useLayoutEffect(() => { document.title = t('app.title'); }, [language]);
+  useLayoutEffect(() => {
+    document.title = t('app.title');
+  }, [language]);
   return null;
 }

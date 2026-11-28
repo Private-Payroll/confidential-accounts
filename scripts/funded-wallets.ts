@@ -33,7 +33,13 @@
  */
 import type { WalletFacade } from '@midnightntwrk/wallet-sdk-facade';
 import { SponsoredCustomerWallet, type BalancingWallet } from '../src/midnight/wallet.js';
-import { WalletFeeSponsor, finalisedHandleFor, type FeePayerView, type SponsorWallet, type SponsorWalletHeld } from '../src/midnight/sponsor.js';
+import {
+  WalletFeeSponsor,
+  finalisedHandleFor,
+  type FeePayerView,
+  type SponsorWallet,
+  type SponsorWalletHeld
+} from '../src/midnight/sponsor.js';
 import { finalisedTransactionOf } from '../src/midnight/finalised-transaction.js';
 import { dustIndexerHttpOf, dustNumbers, dustProgressOf, networkHeightAt } from './dust-wallet.js';
 import { dustViewHeight } from '../src/midnight/sponsor.js';
@@ -74,15 +80,12 @@ export interface LiveWalletParts {
  * from held NIGHT while nothing is happening, and a second sponsored
  * transaction in the window contaminates it.
  */
-export function paidFeeFrom(
-  publicDataProvider: any,
-  waitMs = 60_000,
-): (ref: string) => Promise<bigint | null> {
+export function paidFeeFrom(publicDataProvider: any, waitMs = 60_000): (ref: string) => Promise<bigint | null> {
   return async (ref: string) => {
     try {
       const answered = await Promise.race([
         publicDataProvider.watchForTxData(ref),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs))
       ]);
       const paid = (answered as any)?.fees?.paidFees;
       if (paid === undefined || paid === null || paid === '') return null;
@@ -102,8 +105,9 @@ const views = new WeakMap<object, FeePayerView>();
  */
 export const indexerHttpOf = (wsUrl: string): string => {
   const ws = new URL(wsUrl);
-  const recorded = NETWORK_IDS.map((id) => networkRecord(id).endpoints)
-    .find((e) => e !== null && sameAddress(new URL(e.indexerWs), ws));
+  const recorded = NETWORK_IDS.map((id) => networkRecord(id).endpoints).find(
+    (e) => e !== null && sameAddress(new URL(e.indexerWs), ws)
+  );
   const http = recorded ? new URL(recorded.indexer) : new URL(ws.href.replace(/^ws/u, 'http'));
   if (!recorded) http.pathname = http.pathname.replace(/\/ws\/?$/u, '');
   http.search = ws.search;
@@ -119,11 +123,14 @@ const sameAddress = (a: URL, b: URL): boolean =>
  */
 export async function newestBlockTimeAt(httpUrl: string, fetcher: typeof fetch = fetch): Promise<number> {
   const answered = await fetcher(httpUrl, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query: 'query { block { timestamp } }' }), signal: AbortSignal.timeout(15_000),
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query: 'query { block { timestamp } }' }),
+    signal: AbortSignal.timeout(15_000)
   });
   if (!answered.ok) throw new Error(`the indexer answered ${answered.status} when asked for its newest block`);
-  const time = ((await answered.json()) as { data?: { block?: { timestamp?: unknown } | null } })?.data?.block?.timestamp;
+  const time = ((await answered.json()) as { data?: { block?: { timestamp?: unknown } | null } })?.data?.block
+    ?.timestamp;
   if (!Number.isSafeInteger(time) || (time as number) <= 0) throw new Error('the indexer named no newest block');
   return time as number;
 }
@@ -145,20 +152,24 @@ export function feePayerViewOf(
   facade: any,
   tipAt: (httpUrl: string) => Promise<bigint> = (url) => networkHeightAt(url),
   note: (line: string) => void = (line) => console.log(`      fee payer: ${line}`),
-  blockTimeAt: (httpUrl: string) => Promise<number> = newestBlockTimeAt,
+  blockTimeAt: (httpUrl: string) => Promise<number> = newestBlockTimeAt
 ): FeePayerView | undefined {
   if (!facade || typeof facade !== 'object' || typeof facade.state !== 'function') return undefined;
   const kept = views.get(facade);
   if (kept) return kept;
   let latest: any = null;
-  facade.state().subscribe({ next: (s: any) => { latest = s; } });
+  facade.state().subscribe({
+    next: (s: any) => {
+      latest = s;
+    }
+  });
   let lastTip: bigint | null = null;
   const view: FeePayerView = {
     lastAccepted: null,
     applied: () => dustViewHeight(dustProgressOf(latest)),
     tip: async () => {
       const http = dustIndexerHttpOf(facade.dust);
-      if (http === null) throw new Error('the wallet names no indexer to read the network\'s newest block from');
+      if (http === null) throw new Error("the wallet names no indexer to read the network's newest block from");
       lastTip = await tipAt(http);
       return lastTip;
     },
@@ -172,7 +183,7 @@ export function feePayerViewOf(
       const http = dustIndexerHttpOf(facade.dust);
       if (http === null) throw new Error('the wallet names no indexer to read the newest block from');
       return blockTimeAt(http);
-    },
+    }
   };
   views.set(facade, view);
   return view;
@@ -186,10 +197,7 @@ export function feePayerViewOf(
  * of the bugs in this flow's first run were shapes somebody guessed while `any`
  * kept the compiler quiet.
  */
-export function sponsorWalletOver(
-  w: LiveWalletParts,
-  paidFee: (ref: string) => Promise<bigint | null>,
-): SponsorWallet {
+export function sponsorWalletOver(w: LiveWalletParts, paidFee: (ref: string) => Promise<bigint | null>): SponsorWallet {
   const facade: WalletFacade = w.facade;
   return {
     handleOf: finalisedHandleFor(facade.adoptTransaction.bind(facade)),
@@ -203,7 +211,7 @@ export function sponsorWalletOver(
     estimateFee: (tx, ttl) => facade.estimateTransactionFee(tx, { ttl }),
     paidFee,
     balances: async () => ({ dust: w.dust(), night: w.night() }),
-    view: feePayerViewOf(facade),
+    view: feePayerViewOf(facade)
   };
 }
 
@@ -225,16 +233,12 @@ export function customerWalletOver(w: LiveWalletParts): SponsoredCustomerWallet 
     signRecipe: facade.signRecipe.bind(facade),
     finalizeRecipe: facade.finalizeRecipe.bind(facade),
     /* The coins this releases are the company's, on a device the service does not operate. */
-    revert: facade.revert.bind(facade),
+    revert: facade.revert.bind(facade)
   };
-  return new SponsoredCustomerWallet(
-    wallet,
-    (payload) => w.provider.unshieldedKeystore.signDataAsync(payload),
-    {
-      coinPublicKey: w.provider.getCoinPublicKey(),
-      encryptionPublicKey: w.provider.getEncryptionPublicKey(),
-    },
-  );
+  return new SponsoredCustomerWallet(wallet, (payload) => w.provider.unshieldedKeystore.signDataAsync(payload), {
+    coinPublicKey: w.provider.getCoinPublicKey(),
+    encryptionPublicKey: w.provider.getEncryptionPublicKey()
+  });
 }
 
 /**
@@ -261,7 +265,7 @@ export function feePayerOver(
   paidFee: (ref: string) => Promise<bigint | null>,
   feeRecord: SponsoredFeeSink,
   onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
-  ceiling: FeeCeiling,
+  ceiling: FeeCeiling
 ): WalletFeeSponsor {
   return sponsorOver(sponsorWalletOver(payer, paidFee), feeRecord, onPay, ceiling);
 }
@@ -275,14 +279,14 @@ export function feePayerHeldOver(
   paidFee: (ref: string) => Promise<bigint | null>,
   feeRecord: SponsoredFeeSink,
   onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
-  ceiling: FeeCeiling,
+  ceiling: FeeCeiling
 ): WalletFeeSponsor {
   const held: SponsorWalletHeld = {
     next: () => {
       const handed = holder.settle();
       return handed === null ? null : sponsorWalletOver(handed, paidFee);
     },
-    recover: (why) => holder.recover(why),
+    recover: (why) => holder.recover(why)
   };
   return sponsorOver(sponsorWalletOver(holder.current(), paidFee), feeRecord, onPay, ceiling, held);
 }
@@ -292,13 +296,14 @@ function sponsorOver(
   feeRecord: SponsoredFeeSink,
   onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
   ceiling: FeeCeiling,
-  held?: SponsorWalletHeld,
+  held?: SponsorWalletHeld
 ): WalletFeeSponsor {
   if (!feeRecord || typeof feeRecord.record !== 'function') {
     throw new Error(
-      'a fee payer was about to be built with nowhere to record what it pays. Which company '
-      + 'a sponsored transaction was for cannot be recovered from the transaction afterwards, '
-      + 'so nothing was built and nothing was spent.');
+      'a fee payer was about to be built with nowhere to record what it pays. Which company ' +
+        'a sponsored transaction was for cannot be recovered from the transaction afterwards, ' +
+        'so nothing was built and nothing was spent.'
+    );
   }
   return new WalletFeeSponsor(wallet, ceiling, onPay, feeRecord, undefined, held);
 }
@@ -315,10 +320,10 @@ export function fundedPartiesOver(
   paidFee: (ref: string) => Promise<bigint | null>,
   feeRecord: SponsoredFeeSink,
   onPay: (info: { fee?: bigint; remaining?: bigint }) => void,
-  ceiling: FeeCeiling,
+  ceiling: FeeCeiling
 ): FundedParties {
   return {
     sponsor: feePayerOver(payer, paidFee, feeRecord, onPay, ceiling),
-    customer: customerWalletOver(company),
+    customer: customerWalletOver(company)
   };
 }

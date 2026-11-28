@@ -2,14 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC, WalletSeeds } from '@midnight-ntwrk/testkit-js';
 import { DustSecretKey, ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
 import {
-  MidnightBech32m, ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey,
+  MidnightBech32m,
+  ShieldedAddress,
+  ShieldedCoinPublicKey,
+  ShieldedEncryptionPublicKey
 } from '@midnightntwrk/wallet-sdk-address-format';
 import { HDKey } from '@scure/bip32';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import {
-  DerivationError, Purposes, SECRET_BYTES, identityFromSecret, identityFromWords,
-  newSecret, secretFromWords, seedFromWords, wordsFromSecret,
+  DerivationError,
+  Purposes,
+  SECRET_BYTES,
+  identityFromSecret,
+  identityFromWords,
+  newSecret,
+  secretFromWords,
+  seedFromWords,
+  wordsFromSecret
 } from './derivation.js';
 import type { AuthorityKey, MoneyKey, Purpose } from './derivation.js';
 
@@ -80,10 +90,13 @@ describe('the same phrase produces the same wallet here as in testkit', () => {
      */
     const address = (seed: Uint8Array): string => {
       const zswap = ZswapSecretKeys.fromSeed(seed);
-      return MidnightBech32m.encode('testnet', new ShieldedAddress(
-        ShieldedCoinPublicKey.fromHexString(zswap.coinPublicKey),
-        ShieldedEncryptionPublicKey.fromHexString(zswap.encryptionPublicKey),
-      )).asString();
+      return MidnightBech32m.encode(
+        'testnet',
+        new ShieldedAddress(
+          ShieldedCoinPublicKey.fromHexString(zswap.coinPublicKey),
+          ShieldedEncryptionPublicKey.fromHexString(zswap.encryptionPublicKey)
+        )
+      ).asString();
     };
     expect(address(ours.money.zswap)).toBe(address(theirs.shielded));
     expect(address(ours.money.zswap)).toMatch(/^mn_shield-addr_testnet1/u);
@@ -188,8 +201,7 @@ describe('the failures are loud, because the silent ones are the dangerous ones'
   });
 
   it('accepts the words as an array as well as a string', () => {
-    expect(hex(identityFromWords(TEST_MNEMONIC.split(' ')).money.zswap))
-      .toBe(hex(ours.money.zswap));
+    expect(hex(identityFromWords(TEST_MNEMONIC.split(' ')).money.zswap)).toBe(hex(ours.money.zswap));
   });
 });
 
@@ -233,8 +245,7 @@ describe('the authority compartment', () => {
    */
   const AUTHORITY_PATH = "m/44'/2400'/1'/0/0";
   const SALT = new TextEncoder().encode('midnight-identity/authority/v1');
-  const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC))
-    .derive(AUTHORITY_PATH).privateKey!;
+  const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC)).derive(AUTHORITY_PATH).privateKey!;
   const independently = (purpose: string, index: number): string =>
     hex(hkdf(sha256, independentRoot, SALT, new TextEncoder().encode(`${purpose}/${index}`), 32));
 
@@ -253,22 +264,22 @@ describe('the authority compartment', () => {
    */
   const VECTORS: Readonly<Record<string, Readonly<Record<number, string>>>> = {
     login: {
-      0: 'be06ea61ff49837c5120a333bcceb8c06df8eef36bae181df9d58e89b7a6ab3f',
+      0: 'be06ea61ff49837c5120a333bcceb8c06df8eef36bae181df9d58e89b7a6ab3f'
     },
     device: {
-      0: '2bb98c427b3ef0e765f0317a9a944185675e48d18b23942e55fd1ed014e10fca',
+      0: '2bb98c427b3ef0e765f0317a9a944185675e48d18b23942e55fd1ed014e10fca'
     },
     seat: {
       0: '5027bf96c5abbdcc57cbe951bade35703da241780beb490f67acaa65fb7be8ed',
-      1: '5a6bb078678fde19bf9ac2d09dc79a823f0cab92d68baef80ad86949c0316909',
+      1: '5a6bb078678fde19bf9ac2d09dc79a823f0cab92d68baef80ad86949c0316909'
     },
     recovery: {
       0: 'e1ff1d00734d77a22d4fa6eae2f7f2b45f44f4399afb671b5d75b35c77ad88a7',
-      1: '7f86f78d6385be18557795f4901b23fbe9d4ea598343fabf3eba5d210233ee1e',
+      1: '7f86f78d6385be18557795f4901b23fbe9d4ea598343fabf3eba5d210233ee1e'
     },
     profile: {
       0: '4c755c4d51e59644ff70b7edb6a6ad7a51f937f5ebaf0d6e5a3c17f961bc007d',
-      1: '614eb242e9ae0209287d6f184097645048c2e9d33c515768278f262ac870488b',
+      1: '614eb242e9ae0209287d6f184097645048c2e9d33c515768278f262ac870488b'
     },
     /* The sixth purpose, and the vector this block's own comment says
      * there is no way to add quietly. Computed by the INDEPENDENT walk
@@ -277,7 +288,7 @@ describe('the authority compartment', () => {
      * agreeing with itself. */
     unlock: {
       0: '5781ec70bd641bfd8bb8db7fb0661258cec3153e149ae82ec74252ee29ff1b86',
-      1: '8782d69f6d5cea3dfe8f7f3b2bd9846f1e555182b8e67bd8b0aa02ba7f6f0aae',
+      1: '8782d69f6d5cea3dfe8f7f3b2bd9846f1e555182b8e67bd8b0aa02ba7f6f0aae'
     },
     /* The seventh purpose, added under the same sentence the sixth was:
      * the six above are untouched and every value in this table is the value it
@@ -287,7 +298,7 @@ describe('the authority compartment', () => {
      * itself. */
     inbox: {
       0: 'c53175dd655d250662a98b32534f5db591dade6810e9388d6c93f2511ea0ceef',
-      1: '3a393f6b50893112e50df41e950f1aa15dca1a47f6dac565f976700edd2b1610',
+      1: '3a393f6b50893112e50df41e950f1aa15dca1a47f6dac565f976700edd2b1610'
     },
     /* The eighth purpose, added under the same sentence as the two before it:
      * every value above is the value it already had. Computed by an independent
@@ -297,7 +308,7 @@ describe('the authority compartment', () => {
      * independent walk below. */
     keyring: {
       0: '0105236d9d8345e4edf21d77ad4a325c04b1f36456c75f310a104cfc32fd5bbf',
-      1: '845113ced8a0706a307d58e8fe825e8c4044c747ac7126cc9e533ae1643c4075',
+      1: '845113ced8a0706a307d58e8fe825e8c4044c747ac7126cc9e533ae1643c4075'
     },
     /* The ninth purpose, added under the same sentence as the three before it:
      * every value above is the value it already had. Computed by an independent
@@ -306,15 +317,15 @@ describe('the authority compartment', () => {
      * vectors above byte for byte before these two were trusted. */
     maintenance: {
       0: 'fef9ff639a1cf52b690927055ab8fb1f8d702576d4234a799e46b8098eda7a8f',
-      1: '8906085371a8aef6957f11f6c6591789ce73cbc04ca4350f1cf33493e5d61f48',
+      1: '8906085371a8aef6957f11f6c6591789ce73cbc04ca4350f1cf33493e5d61f48'
     },
     /* The tenth purpose, added under the same sentence as the four before it: every value above is the value it already
      * had. Recorded from this repository's derivation and checked against the independent walk below
      * (`@scure/bip32` + `@noble/hashes`), which must agree byte for byte. */
     reader: {
       0: '02d35dade72770ec29f1aeecb4cba84f690840fcb2535d3f41ee146e71ad5e38',
-      1: 'e2be060aaedb5380c8c644d41848575a9f6077a40eebf958adb68385deac35ee',
-    },
+      1: 'e2be060aaedb5380c8c644d41848575a9f6077a40eebf958adb68385deac35ee'
+    }
   };
 
   /**
@@ -325,15 +336,14 @@ describe('the authority compartment', () => {
    * which one. **Watched failing on a sixth purpose before it was believed.**
    */
   it('every purpose in the object has a recorded vector', () => {
-    const unpinned = EVERY_PURPOSE.filter(
-      (purpose) => Object.keys(VECTORS[purpose] ?? {}).length === 0);
+    const unpinned = EVERY_PURPOSE.filter((purpose) => Object.keys(VECTORS[purpose] ?? {}).length === 0);
     expect(
       unpinned,
-      `these purposes exist in \`Purposes\` and have NO recorded vector: `
-      + `${unpinned.join(', ')}. A purpose string is part of the derivation — renaming `
-      + 'one re-keys every credential of that kind for every person who exists — so a '
-      + 'purpose with no vector is a rename nothing in this suite would notice. Add its '
-      + 'bytes to VECTORS above, in the same block.',
+      `these purposes exist in \`Purposes\` and have NO recorded vector: ` +
+        `${unpinned.join(', ')}. A purpose string is part of the derivation — renaming ` +
+        'one re-keys every credential of that kind for every person who exists — so a ' +
+        'purpose with no vector is a rename nothing in this suite would notice. Add its ' +
+        'bytes to VECTORS above, in the same block.'
     ).toEqual([]);
   });
 
@@ -341,10 +351,8 @@ describe('the authority compartment', () => {
    * stale expectation nobody is checking, which is the same disease facing the
    * other way. */
   it('every recorded vector belongs to a purpose that still exists', () => {
-    const orphans = Object.keys(VECTORS).filter(
-      (name) => !EVERY_PURPOSE.includes(name as Purpose));
-    expect(orphans, `VECTORS names purposes that are not in \`Purposes\`: ${orphans.join(', ')}`)
-      .toEqual([]);
+    const orphans = Object.keys(VECTORS).filter((name) => !EVERY_PURPOSE.includes(name as Purpose));
+    expect(orphans, `VECTORS names purposes that are not in \`Purposes\`: ${orphans.join(', ')}`).toEqual([]);
   });
 
   it('matches the recorded vectors, so a renamed purpose cannot slip through', () => {
@@ -353,8 +361,7 @@ describe('the authority compartment', () => {
     let checked = 0;
     for (const [purpose, byIndex] of Object.entries(VECTORS)) {
       for (const [index, expected] of Object.entries(byIndex)) {
-        expect(hex(ours.authority(purpose as Purpose, Number(index))), `${purpose}/${index}`)
-          .toBe(expected);
+        expect(hex(ours.authority(purpose as Purpose, Number(index))), `${purpose}/${index}`).toBe(expected);
         checked += 1;
       }
     }
@@ -377,8 +384,7 @@ describe('the authority compartment', () => {
   it('walks the path this repository says it walks — every purpose', () => {
     for (const purpose of EVERY_PURPOSE) {
       for (const index of [0, 1, 41]) {
-        expect(hex(ours.authority(purpose, index)), `${purpose}/${index}`)
-          .toBe(independently(purpose, index));
+        expect(hex(ours.authority(purpose, index)), `${purpose}/${index}`).toBe(independently(purpose, index));
       }
     }
     expect(EVERY_PURPOSE.length).toBeGreaterThan(0);
@@ -409,8 +415,7 @@ describe('the authority compartment', () => {
       const keys = ours.moneyAt(account);
       for (const key of [keys.zswap, keys.dust, keys.night]) {
         const clash = authority.get(hex(key));
-        expect(clash, `a money key at account ${account} IS the authority key ${clash}`)
-          .toBeUndefined();
+        expect(clash, `a money key at account ${account} IS the authority key ${clash}`).toBeUndefined();
       }
     }
     /* And the root itself is not a money key either. */
@@ -444,8 +449,7 @@ describe('the authority compartment', () => {
     expect(reachable.size).toBe(45);
     for (const purpose of EVERY_PURPOSE) {
       for (const index of [0, 1, 2]) {
-        expect(reachable.has(hex(ours.authority(purpose, index))), `${purpose}/${index}`)
-          .toBe(false);
+        expect(reachable.has(hex(ours.authority(purpose, index))), `${purpose}/${index}`).toBe(false);
       }
     }
   });
@@ -473,8 +477,9 @@ describe('the authority compartment', () => {
   });
 
   it('is the same key every time for the same purpose and index', () => {
-    expect(hex(ours.authority(Purposes.Seat, 3)))
-      .toBe(hex(identityFromWords(TEST_MNEMONIC).authority(Purposes.Seat, 3)));
+    expect(hex(ours.authority(Purposes.Seat, 3))).toBe(
+      hex(identityFromWords(TEST_MNEMONIC).authority(Purposes.Seat, 3))
+    );
   });
 
   it('refuses an index outside the range, rather than returning something', () => {

@@ -42,15 +42,15 @@ vi.mock('@midnightntwrk/wallet-sdk', async (original) => {
           subscribe: ({ next }: { next: (state: unknown) => void }) => {
             next({
               progress: { isConnected: true, isStrictlyComplete: () => true },
-              balances: reported,
+              balances: reported
             });
             return { unsubscribe: () => undefined };
-          },
+          }
         },
         start: () => Promise.resolve(),
-        stop: () => Promise.resolve(),
-      }),
-    }),
+        stop: () => Promise.resolve()
+      })
+    })
   };
 });
 
@@ -92,20 +92,25 @@ describe('every public token an account holds, from the SDK to the card', () => 
   it('the public card shows a non-NIGHT public token on its own line, NIGHT unchanged', () => {
     /* Each engine has its own stand-in, and both answer, so a card fed by the wrong one shows it. */
     const tells: Record<'shielded' | 'unshielded', Array<(s: BalanceState) => void>> = { shielded: [], unshielded: [] };
-    const standIn = (kind: 'shielded' | 'unshielded'): BalanceEngine => (_identity, _account, onState) => {
-      tells[kind].push(onState);
-      return () => undefined;
-    };
+    const standIn =
+      (kind: 'shielded' | 'unshielded'): BalanceEngine =>
+      (_identity, _account, onState) => {
+        tells[kind].push(onState);
+        return () => undefined;
+      };
     const secret = newSecret();
     const { container } = render(
-      <BalanceEnginesContext.Provider value={{ shielded: standIn('shielded'), unshielded: standIn('unshielded'), dust: inert }}>
+      <BalanceEnginesContext.Provider
+        value={{ shielded: standIn('shielded'), unshielded: standIn('unshielded'), dust: inert }}
+      >
         <Home identity={identityFromSecret(secret)} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     fireEvent.click(screen.getByText('Check the balance'));
     act(() => {
       for (const tell of tells.shielded) tell({ name: 'synced', night: 1_000_000n, asOf: Date.now(), others: {} });
-      for (const tell of tells.unshielded) tell({ name: 'synced', night: 5_000_000n, asOf: Date.now(), others: { [TOKEN]: 700n } });
+      for (const tell of tells.unshielded)
+        tell({ name: 'synced', night: 5_000_000n, asOf: Date.now(), others: { [TOKEN]: 700n } });
     });
     const line = container.querySelector(`[data-kind="unshielded"] [data-token="${TOKEN}"]`);
     /* RED WHEN the card lists other tokens on the private line only. */
@@ -113,8 +118,7 @@ describe('every public token an account holds, from the SDK to the card', () => 
     expect(line?.textContent).toContain(shortColour(TOKEN));
     expect(line?.textContent).toContain(TOKEN);
     /* NIGHT's figure is still NIGHT's. */
-    expect(container.querySelector('[data-kind="unshielded"] .balance-big')?.textContent)
-      .toMatch(/^5 tNIGHT$/u);
+    expect(container.querySelector('[data-kind="unshielded"] .balance-big')?.textContent).toMatch(/^5 tNIGHT$/u);
     /* RED WHEN the private card is fed by the public engine: it then lists the public token. */
     expect(container.querySelector(`[data-kind="shielded"] [data-token="${TOKEN}"]`)).toBeNull();
   });

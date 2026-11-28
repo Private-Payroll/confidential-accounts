@@ -6,10 +6,26 @@
  */
 import { type SeatRights } from '../../../src/core/vault-approvers.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { SealedNotePool, assertNoSignerWouldLoseAccess, isALostPoolRace, openPool, passedOverAbove, sealPool, type FiledPoolVersion, type PassedOverVersion, type PoolSigner } from '../../../src/midnight/vault-pool.js';
+import {
+  SealedNotePool,
+  assertNoSignerWouldLoseAccess,
+  isALostPoolRace,
+  openPool,
+  passedOverAbove,
+  sealPool,
+  type FiledPoolVersion,
+  type PassedOverVersion,
+  type PoolSigner
+} from '../../../src/midnight/vault-pool.js';
 import type { Note } from '../../../src/midnight/vault-notes.js';
 import { attemptsFromJournalVersions, noteKey } from '../../../src/midnight/vault-journal.js';
-import { coinsFileRead, coinsFileText, type CoinKept, type CoinsFileCompany, type CoinsKeptHere } from './vault-coins-kept-here.js';
+import {
+  coinsFileRead,
+  coinsFileText,
+  type CoinKept,
+  type CoinsFileCompany,
+  type CoinsKeptHere
+} from './vault-coins-kept-here.js';
 import { openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
 import { ownCopyOpened } from '../../../src/midnight/sealed-secret-copy.js';
 import { signingPublicKeyOf } from '../../../src/core/crypto.js';
@@ -32,8 +48,11 @@ import type { UnnamedNotesKeptStore } from './tree-kept-here.js';
  * device keeps. Every payment's and deposit's doors carry all of it.
  */
 export interface RebuildDoors extends ChainHereDoors {
-  readonly builder: Pick<VaultBuilderClient, 'vaultOnChain' | 'commitments' | 'creatingTransaction' | 'eventsOf' | 'createdBy'>
-    & Partial<Pick<VaultBuilderClient, 'vaultRebuilt'>>;
+  readonly builder: Pick<
+    VaultBuilderClient,
+    'vaultOnChain' | 'commitments' | 'creatingTransaction' | 'eventsOf' | 'createdBy'
+  > &
+    Partial<Pick<VaultBuilderClient, 'vaultRebuilt'>>;
   readonly me: DeviceSigner;
   readonly records: DeviceRecords;
   readonly signers: () => Promise<readonly PoolSigner[]>;
@@ -61,11 +80,19 @@ interface UnnamedNotes {
 }
 
 /** The unnamed notes the device's stores of a view's company keep, for the rebuild's doors; nothing when it keeps none. */
-export const unnamedKeptIn = (view: { readonly company: string; readonly stores: { readonly unnamed?: UnnamedNotesKeptStore } }): Pick<RebuildDoors, 'unnamed'> => {
+export const unnamedKeptIn = (view: {
+  readonly company: string;
+  readonly stores: { readonly unnamed?: UnnamedNotesKeptStore };
+}): Pick<RebuildDoors, 'unnamed'> => {
   const store = view.stores.unnamed;
-  return store === undefined ? {} : {
-    unnamed: { lookedIn: (notes) => store.lookedIn(view.company, notes), keep: (notes, lookedIn) => store.keep(view.company, notes, lookedIn) },
-  };
+  return store === undefined
+    ? {}
+    : {
+        unnamed: {
+          lookedIn: (notes) => store.lookedIn(view.company, notes),
+          keep: (notes, lookedIn) => store.keep(view.company, notes, lookedIn)
+        }
+      };
 };
 
 /**
@@ -75,7 +102,8 @@ export const unnamedKeptIn = (view: { readonly company: string; readonly stores:
  * the chain now) - the one rule every reader of a seat keeps.
  */
 export const seatHereIn = async (
-  directory: DirectoryRead, signingSecret: Hex,
+  directory: DirectoryRead,
+  signingSecret: Hex
 ): Promise<{ readonly role: Role | null; readonly retired: unknown; readonly rights?: SeatRights } | null> => {
   const me = signingPublicKeyOf(signingSecret).toLowerCase();
   const here = await directory();
@@ -116,12 +144,17 @@ async function filableHere(doors: RebuildDoors, said: string[]): Promise<Readonl
 export const NOT_SEALED = Object.freeze({
   signersNotRead: 'signers-not-read',
   notFiledHere: 'not-filed-here',
-  notFiledFailed: 'not-filed-failed',
+  notFiledFailed: 'not-filed-failed'
 } as const);
-export type NotSealed = typeof NOT_SEALED[keyof typeof NOT_SEALED];
+export type NotSealed = (typeof NOT_SEALED)[keyof typeof NOT_SEALED];
 
 export type NotesHere = (
-  | { readonly of: 'as-filed' | 'filed' | 'not-filed'; readonly notes: readonly Note[]; readonly unexplained: number; readonly said: readonly string[] }
+  | {
+      readonly of: 'as-filed' | 'filed' | 'not-filed';
+      readonly notes: readonly Note[];
+      readonly unexplained: number;
+      readonly said: readonly string[];
+    }
   | { readonly of: 'not-read'; readonly said: readonly string[] }
 ) & { readonly leaver?: readonly string[]; readonly unsealed?: readonly NotSealed[] };
 
@@ -141,19 +174,31 @@ interface LookedForIn {
  * for again by the same signer in the same records, and is looked for again once a version is filed, a secret is given
  * or another signer looks.
  */
-const lookedForText = (at: LookedForIn): string => `${at.signer}:${at.pool}:${at.deposits}:${at.payments}:${at.nonceSecret}`;
+const lookedForText = (at: LookedForIn): string =>
+  `${at.signer}:${at.pool}:${at.deposits}:${at.payments}:${at.nonceSecret}`;
 
 /** Whether every one of `notes` was kept as looked for already in `lookedIn`; with nothing kept on this device, none was. */
-const everyLookedIn = async (unnamed: UnnamedNotes | undefined, notes: readonly string[], lookedIn: string): Promise<boolean> =>
+const everyLookedIn = async (
+  unnamed: UnnamedNotes | undefined,
+  notes: readonly string[],
+  lookedIn: string
+): Promise<boolean> =>
   unnamed !== undefined && notes.length > 0 && (await unnamed.lookedIn(notes)).every((kept) => kept === lookedIn);
 
-const newestOf = (versions: readonly { readonly version: number }[]): number => versions.reduce((n, v) => Math.max(n, v.version), 0);
+const newestOf = (versions: readonly { readonly version: number }[]): number =>
+  versions.reduce((n, v) => Math.max(n, v.version), 0);
 
 const sameNote = (a: Note, b: Note): boolean =>
-  a.nonce.toLowerCase() === b.nonce.toLowerCase() && a.token.toLowerCase() === b.token.toLowerCase() && a.value === b.value;
-const noteText = (n: Note): string => `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}:${n.createdIn ?? ''}`;
-const coinWire = (c: { readonly nonce: string; readonly token: string; readonly value: bigint | string }) =>
-  ({ nonce: String(c.nonce).toLowerCase(), token: c.token, value: String(c.value) });
+  a.nonce.toLowerCase() === b.nonce.toLowerCase() &&
+  a.token.toLowerCase() === b.token.toLowerCase() &&
+  a.value === b.value;
+const noteText = (n: Note): string =>
+  `${n.nonce.toLowerCase()}:${n.token.toLowerCase()}:${n.value}:${n.createdIn ?? ''}`;
+const coinWire = (c: { readonly nonce: string; readonly token: string; readonly value: bigint | string }) => ({
+  nonce: String(c.nonce).toLowerCase(),
+  token: c.token,
+  value: String(c.value)
+});
 const failedSaying = (e: unknown): string => (e as Error)?.message ?? String(e);
 
 /**
@@ -165,41 +210,75 @@ const failedSaying = (e: unknown): string => (e as Error)?.message ?? String(e);
  * so when it is not. A copy that does not open is said and left out.
  */
 async function rebuiltWithOwnCopy(
-  me: DeviceSigner, rebuild: (input: VaultRebuildAsked) => Promise<VaultRebuilt>, vault: Hex,
-  asked: Omit<VaultRebuildAsked, 'copyFor' | 'copySecret'>, secrets: readonly string[], said: string[],
+  me: DeviceSigner,
+  rebuild: (input: VaultRebuildAsked) => Promise<VaultRebuilt>,
+  vault: Hex,
+  asked: Omit<VaultRebuildAsked, 'copyFor' | 'copySecret'>,
+  secrets: readonly string[],
+  said: string[]
 ): Promise<{ readonly rebuilt: VaultRebuilt; readonly copySecret?: string }> {
   const reader = recordsKeypairFrom(me.companyKey).publicKey;
   const rebuilt = await rebuild({ ...asked, copyFor: reader });
   if (rebuilt.copy === null) return { rebuilt };
   const own = ownCopyOpened(me.companyKey, vault, [{ reader, parts: rebuilt.copy }]);
-  if (own === null) said.push('this signer\'s sealed copy of the vault\'s secret on the chain does not open with this signer\'s records key');
+  if (own === null)
+    said.push(
+      "this signer's sealed copy of the vault's secret on the chain does not open with this signer's records key"
+    );
   if (own === null || secrets.includes(own)) return { rebuilt };
   return { rebuilt: await rebuild({ ...asked, copySecret: own }), copySecret: own };
 }
 
 /** A leaving seat's versions the chain vouches for, filed again first, as every read of this vault does, by a seat that may file them. */
 async function leaversVersionsFiledAgain(
-  doors: RebuildDoors, vault: Hex,
-  { filable, notFiledBecause, onChain, held }: { readonly filable: Awaited<ReturnType<typeof filableHere>>; readonly notFiledBecause: string; readonly onChain: Set<string>; readonly held: (n: { readonly nonce: string; readonly token: string; readonly value: bigint | string }) => Promise<string> },
-  said: string[], leaver: string[],
+  doors: RebuildDoors,
+  vault: Hex,
+  {
+    filable,
+    notFiledBecause,
+    onChain,
+    held
+  }: {
+    readonly filable: Awaited<ReturnType<typeof filableHere>>;
+    readonly notFiledBecause: string;
+    readonly onChain: Set<string>;
+    readonly held: (n: {
+      readonly nonce: string;
+      readonly token: string;
+      readonly value: bigint | string;
+    }) => Promise<string>;
+  },
+  said: string[],
+  leaver: string[]
 ): Promise<void> {
-if (filable.size < 3) said.push(`${notFiledBecause}; what a seat that left filed is not filed again from here`);
-else try {
-  const filedAgain = await fileThePoolTheChainHolds({
-    vault, me: doors.me, records: doors.records, signers: doors.signers, held: async (n) => onChain.has(await held(n)),
-  });
-  said.push(...filedAgain.said);
-  leaver.push(...filedAgain.said);
-} catch (e) {
-  said.push(`what a seat that left filed could not be checked against the chain: ${failedSaying(e)}`);
-}
+  if (filable.size < 3) said.push(`${notFiledBecause}; what a seat that left filed is not filed again from here`);
+  else
+    try {
+      const filedAgain = await fileThePoolTheChainHolds({
+        vault,
+        me: doors.me,
+        records: doors.records,
+        signers: doors.signers,
+        held: async (n) => onChain.has(await held(n))
+      });
+      said.push(...filedAgain.said);
+      leaver.push(...filedAgain.said);
+    } catch (e) {
+      said.push(`what a seat that left filed could not be checked against the chain: ${failedSaying(e)}`);
+    }
 }
 
 /** A step the payment journal names, as the vault worker is handed one. */
-const stepWire = (a: { spent: Note | { nonce: string; token: string; value: bigint }; further?: readonly { nonce: string; token: string; value: bigint }[]; amount: bigint; merge?: boolean }) => ({
-  spent: coinWire(a.spent), amount: a.amount.toString(),
+const stepWire = (a: {
+  spent: Note | { nonce: string; token: string; value: bigint };
+  further?: readonly { nonce: string; token: string; value: bigint }[];
+  amount: bigint;
+  merge?: boolean;
+}) => ({
+  spent: coinWire(a.spent),
+  amount: a.amount.toString(),
   ...(a.further === undefined || a.further.length === 0 ? {} : { further: a.further.map(coinWire) }),
-  ...(a.merge === true ? { merge: true } : {}),
+  ...(a.merge === true ? { merge: true } : {})
 });
 
 /**
@@ -209,13 +288,30 @@ const stepWire = (a: { spent: Note | { nonce: string; token: string; value: bigi
  * false when any version was not read, not believed or did not open: what such a pass left unnamed may yet be named.
  */
 async function rebuiltFromEveryVersion(
-  doors: RebuildDoors, vault: Hex, said: string[], rebuild: (input: VaultRebuildAsked) => Promise<VaultRebuilt>,
-  { asked, secrets, copySecret, loaded, kept, newestRead, journals }: {
-    readonly asked: Omit<VaultRebuildAsked, 'copyFor' | 'copySecret'>; readonly secrets: string[]; readonly copySecret: string | undefined;
-    readonly loaded: Awaited<ReturnType<SealedNotePool['load']>> | null; readonly kept: readonly CoinKept[];
+  doors: RebuildDoors,
+  vault: Hex,
+  said: string[],
+  rebuild: (input: VaultRebuildAsked) => Promise<VaultRebuilt>,
+  {
+    asked,
+    secrets,
+    copySecret,
+    loaded,
+    kept,
+    newestRead,
+    journals
+  }: {
+    readonly asked: Omit<VaultRebuildAsked, 'copyFor' | 'copySecret'>;
+    readonly secrets: string[];
+    readonly copySecret: string | undefined;
+    readonly loaded: Awaited<ReturnType<SealedNotePool['load']>> | null;
+    readonly kept: readonly CoinKept[];
     readonly newestRead: { readonly deposits: FiledPoolVersion[]; readonly payments: FiledPoolVersion[] };
-    readonly journals: (deposits: readonly (FiledPoolVersion | PassedOverVersion)[], payments: readonly (FiledPoolVersion | PassedOverVersion)[]) => Promise<ReturnType<typeof attemptsFromJournalVersions>>;
-  },
+    readonly journals: (
+      deposits: readonly (FiledPoolVersion | PassedOverVersion)[],
+      payments: readonly (FiledPoolVersion | PassedOverVersion)[]
+    ) => Promise<ReturnType<typeof attemptsFromJournalVersions>>;
+  }
 ): Promise<{ readonly rebuilt: VaultRebuilt; readonly whole: boolean }> {
   let whole = true;
   const every = async (record: 'pool' | 'deposit-journal' | 'payment-journal'): Promise<FiledPoolVersion[]> => {
@@ -223,7 +319,10 @@ async function rebuiltFromEveryVersion(
       /* A version the company's records do not believe is said and left out; every other version is still read. */
       const listed = await versionsBelievedOf(doors.records(record), vault);
       if (listed.refused.length > 0) whole = false;
-      for (const r of listed.refused) said.push(`version ${r.version} of this vault's ${record} is not believed, because ${r.why}, so it is left out and every other version is read`);
+      for (const r of listed.refused)
+        said.push(
+          `version ${r.version} of this vault's ${record} is not believed, because ${r.why}, so it is left out and every other version is read`
+        );
       return listed.versions.filter((v): v is FiledPoolVersion => v.neverEntered !== true);
     } catch (e) {
       said.push(`every version of this vault's ${record} was not read: ${failedSaying(e)}`);
@@ -234,7 +333,9 @@ async function rebuiltFromEveryVersion(
   const versions: Array<{ version: number; notes: readonly ReturnType<typeof coinWire>[] }> = [];
   for (const v of await every('pool')) {
     try {
-      const page = openPool(v.sealed, doors.me.signerId, doors.me.wrappingSecret, { record: 'pool' }) as { notes?: unknown };
+      const page = openPool(v.sealed, doors.me.signerId, doors.me.wrappingSecret, { record: 'pool' }) as {
+        notes?: unknown;
+      };
       if (Array.isArray(page.notes)) versions.push({ version: v.version, notes: (page.notes as Note[]).map(coinWire) });
     } catch (e) {
       said.push(`version ${v.version} of this vault's pool does not open for this signer: ${failedSaying(e)}`);
@@ -243,15 +344,30 @@ async function rebuiltFromEveryVersion(
   }
   if (loaded !== null && !versions.some((v) => v.version === loaded!.readAt.version)) versions.push(asked.versions[0]!);
   /* Each journal's newest version read above is kept even when every version could not be listed, as the pool's is. */
-  const withNewest = (all: FiledPoolVersion[], read: FiledPoolVersion[]) => [...all, ...read.filter((n) => !all.some((v) => v.version === n.version))];
-  const all = await journals(withNewest(await every('deposit-journal'), newestRead.deposits), withNewest(await every('payment-journal'), newestRead.payments));
+  const withNewest = (all: FiledPoolVersion[], read: FiledPoolVersion[]) => [
+    ...all,
+    ...read.filter((n) => !all.some((v) => v.version === n.version))
+  ];
+  const all = await journals(
+    withNewest(await every('deposit-journal'), newestRead.deposits),
+    withNewest(await every('payment-journal'), newestRead.payments)
+  );
   if (all.unread.length > 0) whole = false;
   const amounts = new Map<string, { token: string; value: string }>();
-  for (const c of [...all.deposits.map(coinWire), ...versions.flatMap((v) => v.notes), ...kept]) amounts.set(`${c.token}:${c.value}`, { token: c.token, value: c.value });
+  for (const c of [...all.deposits.map(coinWire), ...versions.flatMap((v) => v.notes), ...kept])
+    amounts.set(`${c.token}:${c.value}`, { token: c.token, value: c.value });
   const rebuilt = await rebuild({
-    ...asked, secrets, versions, ...(copySecret === undefined ? {} : { copySecret }),
+    ...asked,
+    secrets,
+    versions,
+    ...(copySecret === undefined ? {} : { copySecret }),
     attempted: { deposits: all.deposits.map(coinWire), payments: all.payments.map(stepWire) },
-    walk: { deposited: [...amounts.values()], paid: all.payments.filter((p) => p.merge !== true).map((p) => ({ token: p.spent.token, amount: p.amount.toString() })) },
+    walk: {
+      deposited: [...amounts.values()],
+      paid: all.payments
+        .filter((p) => p.merge !== true)
+        .map((p) => ({ token: p.spent.token, amount: p.amount.toString() }))
+    }
   });
   return { rebuilt, whole };
 }
@@ -262,8 +378,24 @@ async function rebuiltFromEveryVersion(
  * that made it where the chain says.
  */
 async function notesTheChainHolds(
-  doors: RebuildDoors, vault: Hex, view: VaultChainView,
-  { poolNotes, rebuilt, onChain, held }: { readonly poolNotes: readonly Note[]; readonly rebuilt: VaultRebuilt; readonly onChain: Set<string>; readonly held: (n: { readonly nonce: string; readonly token: string; readonly value: bigint | string }) => Promise<string> },
+  doors: RebuildDoors,
+  vault: Hex,
+  view: VaultChainView,
+  {
+    poolNotes,
+    rebuilt,
+    onChain,
+    held
+  }: {
+    readonly poolNotes: readonly Note[];
+    readonly rebuilt: VaultRebuilt;
+    readonly onChain: Set<string>;
+    readonly held: (n: {
+      readonly nonce: string;
+      readonly token: string;
+      readonly value: bigint | string;
+    }) => Promise<string>;
+  }
 ): Promise<Note[]> {
   const rebuiltHeld = new Map(rebuilt.held.map((h) => [h.nonce.toLowerCase(), h]));
   const next: Note[] = [];
@@ -274,15 +406,23 @@ async function notesTheChainHolds(
       next.push(n);
       continue;
     }
-    if (onChain.has(await held(n))) { next.push(n); continue; }
+    if (onChain.has(await held(n))) {
+      next.push(n);
+      continue;
+    }
     /* Made and spent only when the history shows it made and a second read, after that history, still shows it gone. */
     const { output } = await doors.builder.commitments({ vault, coin: coinWire(n) });
-    const made = (view.everCreated ?? []).some((c) => c.toLowerCase().replace(/^0x/u, '') === output.toLowerCase().replace(/^0x/u, ''));
+    const made = (view.everCreated ?? []).some(
+      (c) => c.toLowerCase().replace(/^0x/u, '') === output.toLowerCase().replace(/^0x/u, '')
+    );
     if (made && again === null) {
       /* A second read that fails or holds no notes confirms nothing: every pool note is then kept. */
       try {
         const read = await readHere(doors, vault);
-        again = read.onChain && Array.isArray(read.notes) ? new Set(read.notes.map((x) => x.toLowerCase())) : 'keep-every-note';
+        again =
+          read.onChain && Array.isArray(read.notes)
+            ? new Set(read.notes.map((x) => x.toLowerCase()))
+            : 'keep-every-note';
       } catch {
         again = 'keep-every-note';
       }
@@ -293,8 +433,10 @@ async function notesTheChainHolds(
     if (next.some((n) => n.nonce.toLowerCase() === h.nonce.toLowerCase())) continue;
     const found = await creatingTransactionOfOutput(doors, vault, h.output, null, 'a note this vault holds');
     next.push({
-      nonce: h.nonce, token: h.token, value: BigInt(h.value),
-      ...(found.state === 'found' ? { createdIn: found.createdIn } : {}),
+      nonce: h.nonce,
+      token: h.token,
+      value: BigInt(h.value),
+      ...(found.state === 'found' ? { createdIn: found.createdIn } : {})
     } as Note);
   }
   return next;
@@ -302,20 +444,39 @@ async function notesTheChainHolds(
 
 /** The notes found, filed as the vault's record only when they change it and this device's seat may file it; what was not filed is said. */
 async function filedIfItChanges(
-  doors: RebuildDoors, vault: Hex, said: string[], unsealed: NotSealed[],
-  { pool, loaded, poolNotes, next, readers, filable, notFiledBecause, unexplained }: {
-    readonly pool: SealedNotePool; readonly loaded: Awaited<ReturnType<SealedNotePool['load']>> | null; readonly poolNotes: readonly Note[]; readonly next: Note[];
-    readonly readers: Awaited<ReturnType<typeof readersMissing>>; readonly filable: Awaited<ReturnType<typeof filableHere>>; readonly notFiledBecause: string; readonly unexplained: number;
-  },
+  doors: RebuildDoors,
+  vault: Hex,
+  said: string[],
+  unsealed: NotSealed[],
+  {
+    pool,
+    loaded,
+    poolNotes,
+    next,
+    readers,
+    filable,
+    notFiledBecause,
+    unexplained
+  }: {
+    readonly pool: SealedNotePool;
+    readonly loaded: Awaited<ReturnType<SealedNotePool['load']>> | null;
+    readonly poolNotes: readonly Note[];
+    readonly next: Note[];
+    readonly readers: Awaited<ReturnType<typeof readersMissing>>;
+    readonly filable: Awaited<ReturnType<typeof filableHere>>;
+    readonly notFiledBecause: string;
+    readonly unexplained: number;
+  }
 ): Promise<NotesHere | 'lost-a-race'> {
   const before = new Set(poolNotes.map(noteText));
   const changed = next.length !== poolNotes.length || next.some((n) => !before.has(noteText(n)));
   if (!changed) {
-    if (loaded !== null && readers.length > 0) await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said, unsealed);
+    if (loaded !== null && readers.length > 0)
+      await sealedToEverySigner(doors, vault, pool, loaded, readers, filable, said, unsealed);
     return { of: loaded === null ? 'not-filed' : 'as-filed', notes: poolNotes, unexplained: unexplained, said };
   }
   if (loaded === null) {
-    said.push('the notes found are not filed, because this vault\'s record of its notes could not be read to build on');
+    said.push("the notes found are not filed, because this vault's record of its notes could not be read to build on");
     return { of: 'not-filed', notes: next, unexplained: unexplained, said };
   }
   if (!filable.has('pool')) {
@@ -337,11 +498,19 @@ async function filedIfItChanges(
  * The vault's nonce secrets, opened from the company's records with this signer's records key, and the version they were
  * read at (0 for none); none, and said, when they cannot be.
  */
-async function nonceSecretsHere(doors: RebuildDoors, vault: Hex, said: string[]): Promise<{ readonly secrets: string[]; readonly version: number }> {
+async function nonceSecretsHere(
+  doors: RebuildDoors,
+  vault: Hex,
+  said: string[]
+): Promise<{ readonly secrets: string[]; readonly version: number }> {
   try {
     const filed = await doors.records('nonce-secret').get(vault);
-    if (filed !== null) return { secrets: [...openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey)).secrets], version: filed.version };
-    said.push('the company\'s records hold no nonce secret for this vault');
+    if (filed !== null)
+      return {
+        secrets: [...openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey)).secrets],
+        version: filed.version
+      };
+    said.push("the company's records hold no nonce secret for this vault");
   } catch (e) {
     said.push(`the vault's nonce secret was not read from the company's records: ${failedSaying(e)}`);
   }
@@ -350,35 +519,44 @@ async function nonceSecretsHere(doors: RebuildDoors, vault: Hex, said: string[])
 
 /** The coins this device keeps for the vault; none, and said, when they cannot be read. */
 async function coinsKeptFor(doors: RebuildDoors, vault: Hex, said: string[]): Promise<readonly CoinKept[]> {
-let kept: readonly CoinKept[] = [];
-try {
-  kept = (await doors.kept?.coins(vault)) ?? [];
-} catch (e) {
-  said.push(`the coins this device keeps for this vault were not read: ${failedSaying(e)}`);
-}
+  let kept: readonly CoinKept[] = [];
+  try {
+    kept = (await doors.kept?.coins(vault)) ?? [];
+  } catch (e) {
+    said.push(`the coins this device keeps for this vault were not read: ${failedSaying(e)}`);
+  }
   return kept;
 }
 
 /** The vault's record of its notes as filed, or null, and said, when it cannot be read. */
-async function poolRecordHere(pool: SealedNotePool, vault: Hex, said: string[]): Promise<Awaited<ReturnType<SealedNotePool['load']>> | null> {
-let loaded: Awaited<ReturnType<SealedNotePool['load']>> | null = null;
-try {
-  loaded = await pool.load(vault);
-} catch (e) {
-  said.push(`this vault's record of its notes was not read: ${failedSaying(e)}`);
-}
+async function poolRecordHere(
+  pool: SealedNotePool,
+  vault: Hex,
+  said: string[]
+): Promise<Awaited<ReturnType<SealedNotePool['load']>> | null> {
+  let loaded: Awaited<ReturnType<SealedNotePool['load']>> | null = null;
+  try {
+    loaded = await pool.load(vault);
+  } catch (e) {
+    said.push(`this vault's record of its notes was not read: ${failedSaying(e)}`);
+  }
   return loaded;
 }
 
 /** The newest version of one of the vault's journals as the company's records hold it; none, and said, when it cannot be read. */
 async function newestJournalOf(
-  doors: RebuildDoors, vault: Hex, record: 'deposit-journal' | 'payment-journal', said: string[],
+  doors: RebuildDoors,
+  vault: Hex,
+  record: 'deposit-journal' | 'payment-journal',
+  said: string[]
 ): Promise<FiledPoolVersion[]> {
   try {
     const rec = await doors.records(record).get(vault);
     return rec === null ? [] : [{ version: rec.version, sealed: rec }];
   } catch (e) {
-    said.push(`this vault's ${record === 'deposit-journal' ? 'deposit' : 'payment'} journal was not read: ${failedSaying(e)}`);
+    said.push(
+      `this vault's ${record === 'deposit-journal' ? 'deposit' : 'payment'} journal was not read: ${failedSaying(e)}`
+    );
     return [];
   }
 }
@@ -388,24 +566,40 @@ async function newestJournalOf(
  * deposits read are kept on this device only where the chain made their coin (`everCreated`), as a coin handed over is.
  */
 async function journalsRead(
-  doors: RebuildDoors, vault: Hex,
-  { deposits, payments, everCreated }: {
-    readonly deposits: readonly (FiledPoolVersion | PassedOverVersion)[]; readonly payments: readonly (FiledPoolVersion | PassedOverVersion)[];
+  doors: RebuildDoors,
+  vault: Hex,
+  {
+    deposits,
+    payments,
+    everCreated
+  }: {
+    readonly deposits: readonly (FiledPoolVersion | PassedOverVersion)[];
+    readonly payments: readonly (FiledPoolVersion | PassedOverVersion)[];
     readonly everCreated: VaultChainView['everCreated'];
   },
-  said: string[],
+  said: string[]
 ) {
   const read = attemptsFromJournalVersions({
-    deposits, payments, opener: { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    deposits,
+    payments,
+    opener: { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }
   });
-  for (const u of read.unread) said.push(`version ${u.version} of this vault's ${u.record === 'deposit-journal' ? 'deposit' : 'payment'} journal: ${u.why}`);
+  for (const u of read.unread)
+    said.push(
+      `version ${u.version} of this vault's ${u.record === 'deposit-journal' ? 'deposit' : 'payment'} journal: ${u.why}`
+    );
   if (read.deposits.length > 0 && doors.kept !== undefined) {
     try {
       /* Kept on this device only where the chain made the coin, as a coin handed over is. */
       const made = new Set((everCreated ?? []).map((c) => c.toLowerCase().replace(/^0x/u, '')));
-      const chainMade: typeof read.deposits[number][] = [];
+      const chainMade: (typeof read.deposits)[number][] = [];
       for (const c of read.deposits) {
-        if (made.has((await doors.builder.commitments({ vault, coin: coinWire(c) })).output.toLowerCase().replace(/^0x/u, ''))) chainMade.push(c);
+        if (
+          made.has(
+            (await doors.builder.commitments({ vault, coin: coinWire(c) })).output.toLowerCase().replace(/^0x/u, '')
+          )
+        )
+          chainMade.push(c);
       }
       await doors.kept.keep(vault, chainMade);
     } catch (e) {
@@ -463,7 +657,9 @@ export async function vaultNotesHere(doors: RebuildDoors, vault: Hex, view?: Vau
       const done = await rebuiltOnce(doors, vault, attempt === 1 ? view : undefined, said, leaver, unsealed);
       if (done !== 'lost-a-race') return { ...done, leaver, unsealed };
       if (attempt === REBUILD_ATTEMPTS) {
-        said.push(`another device filed this vault's record first on all ${REBUILD_ATTEMPTS} attempts, so nothing was filed from here`);
+        said.push(
+          `another device filed this vault's record first on all ${REBUILD_ATTEMPTS} attempts, so nothing was filed from here`
+        );
         return { of: 'not-read', said, leaver, unsealed };
       }
     }
@@ -474,7 +670,12 @@ export async function vaultNotesHere(doors: RebuildDoors, vault: Hex, view?: Vau
 }
 
 async function rebuiltOnce(
-  doors: RebuildDoors, vault: Hex, given: VaultChainView | undefined, said: string[], leaver: string[], unsealed: NotSealed[],
+  doors: RebuildDoors,
+  vault: Hex,
+  given: VaultChainView | undefined,
+  said: string[],
+  leaver: string[],
+  unsealed: NotSealed[]
 ): Promise<NotesHere | 'lost-a-race'> {
   let view = given;
   if (view === undefined) {
@@ -485,27 +686,40 @@ async function rebuiltOnce(
     view = standing.view;
   }
   if (view.onChain !== true || !Array.isArray(view.notes)) {
-    return { of: 'not-read', said: [...said, view.notesWhy ?? 'the chain was read and did not say which notes this vault holds'] };
+    return {
+      of: 'not-read',
+      said: [...said, view.notesWhy ?? 'the chain was read and did not say which notes this vault holds']
+    };
   }
   const chainNotes = view.notes.map((n) => n.toLowerCase());
   const onChain = new Set(chainNotes);
   const heldOf = new Map<string, string>();
-  const held = async (n: { readonly nonce: string; readonly token: string; readonly value: bigint | string }): Promise<string> => {
+  const held = async (n: {
+    readonly nonce: string;
+    readonly token: string;
+    readonly value: bigint | string;
+  }): Promise<string> => {
     const key = noteKey(n);
-    if (!heldOf.has(key)) heldOf.set(key, (await doors.builder.commitments({ vault, coin: coinWire(n) })).held.toLowerCase());
+    if (!heldOf.has(key))
+      heldOf.set(key, (await doors.builder.commitments({ vault, coin: coinWire(n) })).held.toLowerCase());
     return heldOf.get(key)!;
   };
 
   /* What this seat may file, asked once, before anything is filed: a seat that may not file files nothing. */
   const filable = await filableHere(doors, said);
-  const notFiledBecause = doors.seatHere === undefined
-    ? 'a read files nothing, so what was found is not filed from here; it is owed a filing by a seat action in a signer\'s wallet'
-    : 'this device\'s seat may not file this vault\'s records (its role files none, or this device does not believe '
-      + 'the seat), so what was found is not filed from this device';
+  const notFiledBecause =
+    doors.seatHere === undefined
+      ? "a read files nothing, so what was found is not filed from here; it is owed a filing by a seat action in a signer's wallet"
+      : "this device's seat may not file this vault's records (its role files none, or this device does not believe " +
+        'the seat), so what was found is not filed from this device';
 
   await leaversVersionsFiledAgain(doors, vault, { filable, notFiledBecause, onChain, held }, said, leaver);
 
-  const pool = new SealedNotePool(doors.records('pool'), { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers);
+  const pool = new SealedNotePool(
+    doors.records('pool'),
+    { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+    doors.signers
+  );
   const loaded = await poolRecordHere(pool, vault, said);
   const poolNotes: readonly Note[] = loaded?.notes ?? [];
   const recorded = new Set<string>();
@@ -519,58 +733,83 @@ async function rebuiltOnce(
     return { of: 'as-filed', notes: poolNotes, unexplained: 0, said };
   }
   if (doors.builder.vaultRebuilt === undefined) {
-    said.push('this page cannot rebuild the vault\'s notes; reload it to use the current build');
+    said.push("this page cannot rebuild the vault's notes; reload it to use the current build");
     return { of: 'not-filed', notes: poolNotes, unexplained: unnamed.length, said };
   }
 
   if (view.nonceCommitment === undefined || view.splitJournal === undefined) {
-    said.push('the read of the chain did not give the vault\'s secret commitment and split journal, so its notes are not rebuilt; '
-      + 'a journal not read is not an empty one');
+    said.push(
+      "the read of the chain did not give the vault's secret commitment and split journal, so its notes are not rebuilt; " +
+        'a journal not read is not an empty one'
+    );
     return { of: 'not-read', said };
   }
 
   /* ---- 1: the newest of each record, the secrets, the coins kept here ---- */
   const { secrets, version: nonceSecret } = await nonceSecretsHere(doors, vault, said);
-  const journals = (deposits: readonly (FiledPoolVersion | PassedOverVersion)[], payments: readonly (FiledPoolVersion | PassedOverVersion)[]) =>
-    journalsRead(doors, vault, { deposits, payments, everCreated: view.everCreated }, said);
+  const journals = (
+    deposits: readonly (FiledPoolVersion | PassedOverVersion)[],
+    payments: readonly (FiledPoolVersion | PassedOverVersion)[]
+  ) => journalsRead(doors, vault, { deposits, payments, everCreated: view.everCreated }, said);
   const kept = await coinsKeptFor(doors, vault, said);
-  const newestRead = { deposits: await newestJournalOf(doors, vault, 'deposit-journal', said), payments: await newestJournalOf(doors, vault, 'payment-journal', said) };
+  const newestRead = {
+    deposits: await newestJournalOf(doors, vault, 'deposit-journal', said),
+    payments: await newestJournalOf(doors, vault, 'payment-journal', said)
+  };
   const newest = await journals(newestRead.deposits, newestRead.payments);
   const asked = {
-    vault, ...(view.state === undefined ? {} : { state: view.state }),
+    vault,
+    ...(view.state === undefined ? {} : { state: view.state }),
     chain: {
-      notes: chainNotes, everCreated: view.everCreated ?? [],
+      notes: chainNotes,
+      everCreated: view.everCreated ?? [],
       ...(view.nonceCommitment === undefined ? {} : { nonceCommitment: view.nonceCommitment }),
-      ...(view.splitJournal === undefined ? {} : { splitJournal: view.splitJournal }),
+      ...(view.splitJournal === undefined ? {} : { splitJournal: view.splitJournal })
     },
     secrets,
     versions: loaded === null ? [] : [{ version: loaded.readAt.version, notes: poolNotes.map(coinWire) }],
     attempted: { deposits: newest.deposits.map(coinWire), payments: newest.payments.map(stepWire) },
-    named: kept,
+    named: kept
   };
   const first = await rebuiltWithOwnCopy(doors.me, (i) => doors.builder.vaultRebuilt!(i), vault, asked, secrets, said);
   let rebuilt = first.rebuilt;
 
   /* ---- 2: every version and the walk, only for a note still unnamed and not looked for in these same records ---- */
   const at: LookedForIn = {
-    signer: doors.me.signerId, pool: loaded?.readAt.version ?? 0, deposits: newestOf(newestRead.deposits), payments: newestOf(newestRead.payments), nonceSecret,
+    signer: doors.me.signerId,
+    pool: loaded?.readAt.version ?? 0,
+    deposits: newestOf(newestRead.deposits),
+    payments: newestOf(newestRead.payments),
+    nonceSecret
   };
   const [lookedFor, lookedIn] = [rebuilt.unexplained.map((note) => `${vault}:${note}`), lookedForText(at)];
   if (rebuilt.unexplained.length > 0 && !(await everyLookedIn(doors.unnamed, lookedFor, lookedIn))) {
     const slow = await rebuiltFromEveryVersion(doors, vault, said, (i) => doors.builder.vaultRebuilt!(i), {
-      asked, secrets, copySecret: first.copySecret, loaded, kept, newestRead, journals,
+      asked,
+      secrets,
+      copySecret: first.copySecret,
+      loaded,
+      kept,
+      newestRead,
+      journals
     });
     rebuilt = slow.rebuilt;
     /*
      * Kept only for the notes a slow pass that read every version still leaves unnamed. A note it named stays unkept, so
      * every later read looks for it again until a pool version names it; a pass that missed a version keeps nothing.
      */
-    if (rebuilt.unexplained.length > 0 && slow.whole) await doors.unnamed?.keep(rebuilt.unexplained.map((note) => `${vault}:${note}`), lookedIn);
+    if (rebuilt.unexplained.length > 0 && slow.whole)
+      await doors.unnamed?.keep(
+        rebuilt.unexplained.map((note) => `${vault}:${note}`),
+        lookedIn
+      );
   }
   said.push(...rebuilt.said);
   if (rebuilt.unexplained.length > 0) {
-    said.push(`the chain holds ${rebuilt.unexplained.length} note(s) for this vault that no record this device can read names. They are `
-      + 'the vault\'s and stay on the chain; they are named once a record that names them can be read here');
+    said.push(
+      `the chain holds ${rebuilt.unexplained.length} note(s) for this vault that no record this device can read names. They are ` +
+        "the vault's and stay on the chain; they are named once a record that names them can be read here"
+    );
   }
 
   /* ---- 3: the notes the chain holds ---- */
@@ -578,7 +817,14 @@ async function rebuiltOnce(
 
   /* ---- 4: filed only when it changes anything ---- */
   return filedIfItChanges(doors, vault, said, unsealed, {
-    pool, loaded, poolNotes, next, readers, filable, notFiledBecause, unexplained: rebuilt.unexplained.length,
+    pool,
+    loaded,
+    poolNotes,
+    next,
+    readers,
+    filable,
+    notFiledBecause,
+    unexplained: rebuilt.unexplained.length
   });
 }
 
@@ -588,12 +834,19 @@ async function rebuiltOnce(
  * open, because it was last filed before they were seated. When the signers
  * cannot be read, that is said and coded in `unsealed`.
  */
-async function readersMissing(doors: RebuildDoors, vault: Hex, said: string[], unsealed: NotSealed[]): Promise<Array<'pool' | 'deposit-journal' | 'payment-journal'>> {
+async function readersMissing(
+  doors: RebuildDoors,
+  vault: Hex,
+  said: string[],
+  unsealed: NotSealed[]
+): Promise<Array<'pool' | 'deposit-journal' | 'payment-journal'>> {
   let ids: string[];
   try {
     ids = (await doors.signers()).map((x) => x.id);
   } catch (e) {
-    said.push(`who the company's signers are was not read, so no record was sealed to more of them: ${failedSaying(e)}`);
+    said.push(
+      `who the company's signers are was not read, so no record was sealed to more of them: ${failedSaying(e)}`
+    );
     unsealed.push(NOT_SEALED.signersNotRead);
     return [];
   }
@@ -617,13 +870,23 @@ async function readersMissing(doors: RebuildDoors, vault: Hex, said: string[], u
  * `pool` and `loaded` are given only when the pool itself still needs it.
  */
 async function sealedToEverySigner(
-  doors: RebuildDoors, vault: Hex, pool: SealedNotePool | null, loaded: Awaited<ReturnType<SealedNotePool['load']>> | null,
-  records: ReadonlyArray<VaultRecordKind>, filable: ReadonlySet<VaultRecordKind>, said: string[], unsealed: NotSealed[],
+  doors: RebuildDoors,
+  vault: Hex,
+  pool: SealedNotePool | null,
+  loaded: Awaited<ReturnType<SealedNotePool['load']>> | null,
+  records: ReadonlyArray<VaultRecordKind>,
+  filable: ReadonlySet<VaultRecordKind>,
+  said: string[],
+  unsealed: NotSealed[]
 ): Promise<void> {
   for (const record of records) {
     if (!filable.has(record)) {
-      said.push(`this vault's ${record} is not filed again for a signer who cannot open it yet: `
-        + (doors.seatHere === undefined ? 'a read files nothing, and a seat action in a signer\'s wallet owes it' : 'this device\'s seat may not file it'));
+      said.push(
+        `this vault's ${record} is not filed again for a signer who cannot open it yet: ` +
+          (doors.seatHere === undefined
+            ? "a read files nothing, and a seat action in a signer's wallet owes it"
+            : "this device's seat may not file it")
+      );
       unsealed.push(NOT_SEALED.notFiledHere);
       continue;
     }
@@ -636,10 +899,15 @@ async function sealedToEverySigner(
       const rec = await store.get(vault);
       if (rec === null) continue;
       const page = openPool(rec, doors.me.signerId, doors.me.wrappingSecret, {
-        record, unlabelled: store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
+        record,
+        unlabelled: store.unlabelledRecordsFiled === true ? 'accept' : 'refuse'
       });
       const to = await doors.signers();
-      assertNoSignerWouldLoseAccess(rec.wrapped.map((w) => w.signerId), to.map((x) => x.id), `this vault's ${record}`);
+      assertNoSignerWouldLoseAccess(
+        rec.wrapped.map((w) => w.signerId),
+        to.map((x) => x.id),
+        `this vault's ${record}`
+      );
       passedOverAbove(store, vault, record, rec.version);
       await store.put(vault, sealPool(vault, page, to, rec.version + 1, record));
     } catch (e) {
@@ -655,7 +923,11 @@ async function sealedToEverySigner(
  * (`coinsFileText`), sealed for the company's signers: the signer saves it and
  * hands it over themselves; nothing is sent to the company's service.
  */
-export async function coinsToHandOverHere(doors: Pick<RebuildDoors, 'kept'>, vault: Hex, company: CoinsFileCompany): Promise<string> {
+export async function coinsToHandOverHere(
+  doors: Pick<RebuildDoors, 'kept'>,
+  vault: Hex,
+  company: CoinsFileCompany
+): Promise<string> {
   return coinsFileText(vault, (await doors.kept?.coins(vault)) ?? [], company);
 }
 
@@ -667,12 +939,19 @@ export async function coinsToHandOverHere(doors: Pick<RebuildDoors, 'kept'>, vau
  * nowhere. Kept coins are then read by every rebuild of the vault's notes.
  */
 export async function coinsHandedOverHere(
-  doors: RebuildDoors, vault: Hex, text: string, company: CoinsFileCompany,
+  doors: RebuildDoors,
+  vault: Hex,
+  text: string,
+  company: CoinsFileCompany
 ): Promise<{ readonly kept: number; readonly refused: number }> {
   const coins = coinsFileRead(text, vault, company);
-  if (doors.kept === undefined) throw new Error('this device keeps no coins, so the file was not taken. Nothing was kept.');
+  if (doors.kept === undefined)
+    throw new Error('this device keeps no coins, so the file was not taken. Nothing was kept.');
   const read = await readHere(doors, vault);
-  if (!read.onChain) throw new Error(`the chain, as this device read it, does not show this vault, so no coin was kept. ${NO_VAULT_YET}`);
+  if (!read.onChain)
+    throw new Error(
+      `the chain, as this device read it, does not show this vault, so no coin was kept. ${NO_VAULT_YET}`
+    );
   const made = new Set(read.everCreated.map((c) => c.toLowerCase().replace(/^0x/u, '')));
   const taken: CoinKept[] = [];
   for (const c of coins) {

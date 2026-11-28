@@ -46,7 +46,12 @@ try {
 const problem = messageProblem(message);
 if (problem !== null) {
   process.stderr.write(`\n  THIS MESSAGE CANNOT BE COMMITTED AS IT STANDS.\n\n      ${problem}\n\n`);
-  process.stderr.write(`  What it says now:\n\n${message.split('\n').map((l) => `      ${l}`).join('\n')}\n\n`);
+  process.stderr.write(
+    `  What it says now:\n\n${message
+      .split('\n')
+      .map((l) => `      ${l}`)
+      .join('\n')}\n\n`
+  );
   process.exit(1);
 }
 

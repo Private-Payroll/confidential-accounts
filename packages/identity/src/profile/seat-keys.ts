@@ -52,11 +52,14 @@ export function seatKeysFor(identity: Identity, company: CompanyLabel, n: number
   const label = readCompanyLabel(company);
   if (label === null) {
     throw new SeatKeysError(
-      'a seat\'s keys belong to one company, named by its label, and what was given is not one. '
-      + 'An account\'s address is not a label. No keys were made.');
+      "a seat's keys belong to one company, named by its label, and what was given is not one. " +
+        "An account's address is not a label. No keys were made."
+    );
   }
   if (!Number.isSafeInteger(n) || n < 0 || n >= MAX_SEAT) {
-    throw new SeatKeysError(`a seat's number is a whole number from 0 to ${MAX_SEAT - 1}; got ${n}. No keys were made.`);
+    throw new SeatKeysError(
+      `a seat's number is a whole number from 0 to ${MAX_SEAT - 1}; got ${n}. No keys were made.`
+    );
   }
   const parent = identity.authority(Purposes.Seat, SEAT_PARENT_INDEX);
   const part = (name: string): Uint8Array =>

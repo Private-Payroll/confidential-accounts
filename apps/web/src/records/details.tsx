@@ -12,8 +12,12 @@ export function Details({ rows }: { rows: readonly (readonly [label: string, val
     <div className="flex flex-col" data-details>
       {rows.map(([label, value]) => (
         <Item key={label} size="sm" className="px-0">
-          <ItemContent><ItemDescription>{label}</ItemDescription></ItemContent>
-          <ItemContent><ItemTitle className="line-clamp-none">{value}</ItemTitle></ItemContent>
+          <ItemContent>
+            <ItemDescription>{label}</ItemDescription>
+          </ItemContent>
+          <ItemContent>
+            <ItemTitle className="line-clamp-none">{value}</ItemTitle>
+          </ItemContent>
         </Item>
       ))}
     </div>

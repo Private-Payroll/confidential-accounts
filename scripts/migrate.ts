@@ -16,8 +16,9 @@ const key = useTest ? 'TEST_DATABASE_URL' : 'DATABASE_URL';
 const url = process.env[key];
 
 if (!url) {
-  console.error(`\n  ${key} is not set. Put it in .env — never on the command line,\n` +
-                `  where it lands in your shell history.\n`);
+  console.error(
+    `\n  ${key} is not set. Put it in .env — never on the command line,\n` + `  where it lands in your shell history.\n`
+  );
   process.exit(1);
 }
 
@@ -25,7 +26,7 @@ const sql = postgres(url, { onnotice: () => {} });
 
 try {
   console.log(`  database   ${describeDb(url)}`);
-  const r = await migrate(sql as any, { log: m => console.log(`  ${m}`) });
+  const r = await migrate(sql as any, { log: (m) => console.log(`  ${m}`) });
 
   if (r.applied.length === 0) {
     console.log(`  up to date (${r.alreadyApplied.length} already applied)`);
@@ -34,7 +35,11 @@ try {
   }
 } catch (e: any) {
   console.error(`\n  MIGRATION FAILED\n`);
-  console.error(`  ${String(e?.message ?? e).split('\n').join('\n  ')}\n`);
+  console.error(
+    `  ${String(e?.message ?? e)
+      .split('\n')
+      .join('\n  ')}\n`
+  );
   process.exitCode = 1;
 } finally {
   await sql.end();

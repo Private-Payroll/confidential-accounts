@@ -40,7 +40,7 @@ function sealNotice(over: Record<string, unknown> = {}, id = 'host-ref-1'): Seal
     at: 1_756_000_000_000,
     from: { name: 'Bright Coffee Ltd', rdns: 'com.brightcoffee.payroll' },
     where: 'https://payroll.brightcoffee.example',
-    ...over,
+    ...over
   });
   const ephemeral = x25519.keygen();
   const shared = x25519.getSharedSecret(ephemeral.secretKey, hexToBytes(inboxKeyOf(identity)));
@@ -50,7 +50,7 @@ function sealNotice(over: Record<string, unknown> = {}, id = 'host-ref-1'): Seal
     ephemeral: bytesToHex(ephemeral.publicKey),
     iv: bytesToHex(iv),
     tag: '',
-    body: bytesToHex(gcm(sha256(shared), iv).encrypt(new TextEncoder().encode(plaintext))),
+    body: bytesToHex(gcm(sha256(shared), iv).encrypt(new TextEncoder().encode(plaintext)))
   };
 }
 
@@ -62,9 +62,10 @@ function hostHolding(items: readonly SealedItem[]): InboxHost & { asks: InboxAsk
     items: (ask: InboxAsk) => {
       asks.push(ask);
       return Promise.resolve<InboxAnswer>({
-        schema: 'midnight-identity/inbox-answer/v1', items,
+        schema: 'midnight-identity/inbox-answer/v1',
+        items
       });
-    },
+    }
   };
 }
 
@@ -126,9 +127,11 @@ describe('a notice on the card', () => {
 
   it('renders the sender words as TEXT and never as markup', async () => {
     const nasty = '<img src=x onerror="document.title=1">';
-    openInbox(identity, () => true, hostHolding([
-      sealNotice({ from: { name: nasty, rdns: 'com.example' }, says: nasty }),
-    ]));
+    openInbox(
+      identity,
+      () => true,
+      hostHolding([sealNotice({ from: { name: nasty, rdns: 'com.example' }, says: nasty })])
+    );
     const { container } = render(<InboxCard />);
     await screen.findByText(NOTICE_SAYS.invitation);
     expect(container.querySelector('img'), 'the sender drew markup on this screen').toBeNull();
@@ -136,11 +139,9 @@ describe('a notice on the card', () => {
      * and no `<img` anywhere. Asserting on the substring `onerror` would pass
      * either way, because escaped text contains it too — which is how a check
      * like this dies without anybody noticing. */
-    expect(container.innerHTML, 'an element the sender wrote reached the DOM')
-      .not.toContain('<img');
+    expect(container.innerHTML, 'an element the sender wrote reached the DOM').not.toContain('<img');
     expect(container.innerHTML).toContain('&lt;img');
-    expect(screen.getAllByText((_, node) => (node?.textContent ?? '').includes(nasty)))
-      .not.toHaveLength(0);
+    expect(screen.getAllByText((_, node) => (node?.textContent ?? '').includes(nasty))).not.toHaveLength(0);
   });
 
   /**
@@ -153,8 +154,7 @@ describe('a notice on the card', () => {
     openInbox(identity, () => true, hostHolding([sealNotice()]));
     const { container } = render(<InboxCard />);
     await screen.findByText('https://payroll.brightcoffee.example');
-    const links = [...container.querySelectorAll('a')]
-      .map((a) => a.getAttribute('href') ?? '');
+    const links = [...container.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
     expect(links.filter((h) => h.includes('brightcoffee'))).toEqual([]);
     expect(screen.getByText(/go to\s+this address yourself/u)).toBeTruthy();
     expect(screen.getByText(/Nothing here approves anything/u)).toBeTruthy();
@@ -182,7 +182,7 @@ describe('an item nobody can open', () => {
       ephemeral: bytesToHex(ephemeral.publicKey),
       iv: bytesToHex(iv),
       tag: '',
-      body: bytesToHex(gcm(sha256(shared), iv).encrypt(new TextEncoder().encode('{}'))),
+      body: bytesToHex(gcm(sha256(shared), iv).encrypt(new TextEncoder().encode('{}')))
     };
     openInbox(identity, () => true, hostHolding([notMine]));
     render(<InboxCard />);
@@ -190,8 +190,7 @@ describe('an item nobody can open', () => {
      * deliberately: a query that demanded exactly one would go red the day the
      * reason stopped being shown, which is the opposite of this test's point. */
     expect(await screen.findAllByText(/cannot open/u)).not.toHaveLength(0);
-    expect(screen.queryByText('Nothing is waiting'), 'an unopenable item was shown as nothing')
-      .toBeNull();
+    expect(screen.queryByText('Nothing is waiting'), 'an unopenable item was shown as nothing').toBeNull();
     expect(screen.getByText('host-ref-9')).toBeTruthy();
   });
 });

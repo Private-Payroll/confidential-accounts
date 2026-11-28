@@ -4,8 +4,11 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  establishCreatingTransaction, type EventOnTheWire, type ServedEvent, theTransactionTheseEventsAreFrom,
-  vaultNoteCommitment,
+  establishCreatingTransaction,
+  type EventOnTheWire,
+  type ServedEvent,
+  theTransactionTheseEventsAreFrom,
+  vaultNoteCommitment
 } from '../../../src/midnight/note-index.js';
 import { afterStep, type Note, notesToSpend } from '../../../src/midnight/vault-notes.js';
 import type { VaultCoin } from '../../../src/midnight/vault-coins.js';
@@ -24,20 +27,33 @@ export interface NoteOnTheWire {
 export const DIGITS = /^[0-9]+$/u;
 
 export const noteFromWire = (n: NoteOnTheWire): Note => {
-  if (!HEX64.test(n.nonce) || !HEX64.test(n.token) || !DIGITS.test(n.value)
-    || (n.createdIn !== undefined && !HEX64.test(n.createdIn))) {
+  if (
+    !HEX64.test(n.nonce) ||
+    !HEX64.test(n.token) ||
+    !DIGITS.test(n.value) ||
+    (n.createdIn !== undefined && !HEX64.test(n.createdIn))
+  ) {
     throw new Error('the pool handed over holds a note that is not one, so nothing was chosen.');
   }
-  const checked = n as unknown as { readonly nonce: Hex; readonly token: Hex; readonly value: string; readonly createdIn?: Hex };
+  const checked = n as unknown as {
+    readonly nonce: Hex;
+    readonly token: Hex;
+    readonly value: string;
+    readonly createdIn?: Hex;
+  };
   return {
-    nonce: checked.nonce, token: checked.token, value: BigInt(checked.value),
-    ...(checked.createdIn === undefined ? {} : { createdIn: checked.createdIn }),
+    nonce: checked.nonce,
+    token: checked.token,
+    value: BigInt(checked.value),
+    ...(checked.createdIn === undefined ? {} : { createdIn: checked.createdIn })
   };
 };
 
 export const noteToWire = (n: Note): NoteOnTheWire => ({
-  nonce: n.nonce, token: n.token, value: n.value.toString(),
-  ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn }),
+  nonce: n.nonce,
+  token: n.token,
+  value: n.value.toString(),
+  ...(n.createdIn === undefined ? {} : { createdIn: n.createdIn })
 });
 
 /**
@@ -46,9 +62,11 @@ export const noteToWire = (n: Note): NoteOnTheWire => ({
  * the vault is offered, the rest the further notes the payment takes. Refuses
  * with what the pool holds.
  */
-export function notesForPayment(
-  input: { readonly notes: readonly NoteOnTheWire[]; readonly token: string; readonly amount: string },
-): NoteOnTheWire[] {
+export function notesForPayment(input: {
+  readonly notes: readonly NoteOnTheWire[];
+  readonly token: string;
+  readonly amount: string;
+}): NoteOnTheWire[] {
   if (!HEX64.test(input.token) || !DIGITS.test(input.amount)) {
     throw new Error('this payment names no token or amount a note could cover, so nothing was chosen.');
   }
@@ -71,30 +89,41 @@ export function poolAfterPayment(input: {
   readonly createdIn: string | null;
 }): NoteOnTheWire[] {
   const further = input.further ?? [];
-  if (!HEX64.test(input.spent) || further.some((n) => !HEX64.test(n)) || !DIGITS.test(input.amount)
-    || (input.createdIn !== null && !HEX64.test(input.createdIn))) {
+  if (
+    !HEX64.test(input.spent) ||
+    further.some((n) => !HEX64.test(n)) ||
+    !DIGITS.test(input.amount) ||
+    (input.createdIn !== null && !HEX64.test(input.createdIn))
+  ) {
     throw new Error('this payment cannot be recorded as it was described, so the pool was not changed.');
   }
-  const change: VaultCoin | undefined = input.change === null ? undefined : (() => {
-    const c = noteFromWire(input.change);
-    return { nonce: c.nonce, token: c.token, value: c.value };
-  })();
+  const change: VaultCoin | undefined =
+    input.change === null
+      ? undefined
+      : (() => {
+          const c = noteFromWire(input.change);
+          return { nonce: c.nonce, token: c.token, value: c.value };
+        })();
   const next = afterStep(
     { notes: input.notes.map(noteFromWire) },
     { spent: [input.spent as Hex, ...further.map((n) => n as Hex)], pays: BigInt(input.amount), kept: change },
-    input.createdIn === null ? undefined : input.createdIn as Hex);
+    input.createdIn === null ? undefined : (input.createdIn as Hex)
+  );
   return next.notes.map(noteToWire);
 }
 
-export const servedFromWire = (events: readonly EventOnTheWire[]): ServedEvent[] => events.map((e) => ({
-  transactionHash: e.transactionHash,
-  details: {
-    tag: e.details.tag,
-    ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
-    ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
-    ...(e.details.mtIndex === undefined || !DIGITS.test(e.details.mtIndex) ? {} : { mtIndex: BigInt(e.details.mtIndex) }),
-  },
-}));
+export const servedFromWire = (events: readonly EventOnTheWire[]): ServedEvent[] =>
+  events.map((e) => ({
+    transactionHash: e.transactionHash,
+    details: {
+      tag: e.details.tag,
+      ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
+      ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
+      ...(e.details.mtIndex === undefined || !DIGITS.test(e.details.mtIndex)
+        ? {}
+        : { mtIndex: BigInt(e.details.mtIndex) })
+    }
+  }));
 
 /** What a payment's own events say: it landed as built, the chain has not answered yet, or it is not as built. */
 export type PaymentConfirmation =
@@ -140,10 +169,15 @@ export async function confirmPayment(input: {
     }
     const paysAPerson = served.some((e) => e.details.tag === 'zswapOutput' && e.details.contract === undefined);
     if (input.merge === true) {
-      if (paysAPerson) return { state: 'not-as-built', why: 'the transaction under this merge\'s name pays somebody, and a merge pays nobody' };
-      if (input.change === null) return { state: 'not-as-built', why: 'a merge keeps one coin, and none was named for this one' };
+      if (paysAPerson)
+        return {
+          state: 'not-as-built',
+          why: "the transaction under this merge's name pays somebody, and a merge pays nobody"
+        };
+      if (input.change === null)
+        return { state: 'not-as-built', why: 'a merge keeps one coin, and none was named for this one' };
     } else if (!paysAPerson) {
-      return { state: 'not-as-built', why: 'the transaction under this payment\'s name paid nobody' };
+      return { state: 'not-as-built', why: "the transaction under this payment's name paid nobody" };
     }
     if (input.change === null) return { state: 'landed', createdIn: hash };
     const change = noteFromWire(input.change);

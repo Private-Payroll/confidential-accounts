@@ -13,7 +13,15 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
 import type { ActionDefinition, ActionStep, ShownLine, StepContext, Words } from './definition.js';
-import { approveStep, approving, confirmFirst, isChainOnly, proposalKinds, readsFirstFor, type ProposalKindsReach } from './proposal-kinds.js';
+import {
+  approveStep,
+  approving,
+  confirmFirst,
+  isChainOnly,
+  proposalKinds,
+  readsFirstFor,
+  type ProposalKindsReach
+} from './proposal-kinds.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
 /** What the action reads beside the company; `reachFor` stands in for the company read in tests. */
@@ -22,7 +30,8 @@ export type ApproveProposalReach = ProposalKindsReach & {
 };
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.approve-proposal.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.approve-proposal.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const NAMED = ['record', 'proposal', 'kind'] as const;
 /** What is checked after the passkey for every kind that runs the shared steps; a chain-only kind lists its own. */
@@ -31,21 +40,22 @@ const CHECKS: readonly Words[] = [
   { key: 'act.approve-proposal.check.same' },
   { key: 'act.approve-proposal.check.one-seat' },
   { key: 'act.approve-proposal.check.chain' },
-  UPKEEP_CHECK,
+  UPKEEP_CHECK
 ];
 
 export function approveProposalAction(reach: ApproveProposalReach): ActionDefinition {
   const kinds = proposalKinds(reach);
-  const kindOf = (intent: ActIntent) => (Object.prototype.hasOwnProperty.call(kinds, intent.fields['kind'] ?? '') ? kinds[intent.fields['kind']!]! : null);
+  const kindOf = (intent: ActIntent) =>
+    Object.prototype.hasOwnProperty.call(kinds, intent.fields['kind'] ?? '') ? kinds[intent.fields['kind']!]! : null;
   return Object.freeze({
     headline: 'act.approve-proposal.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => {
       const kind = kindOf(intent);
       if (kind !== null && isChainOnly(kind)) return kind.shown(intent);
       return [
-        ...(await kind?.shown(intent) ?? []),
+        ...((await kind?.shown(intent)) ?? []),
         ...upkeepShown(),
-        { key: 'act.approve-proposal.shown.nothing-else', from: 'action' as const },
+        { key: 'act.approve-proposal.shown.nothing-else', from: 'action' as const }
       ];
     },
     checks: CHECKS,
@@ -63,15 +73,23 @@ export function approveProposalAction(reach: ApproveProposalReach): ActionDefini
       const kind = kindOf(intent);
       if (kind === null) return [];
       if (isChainOnly(kind)) return kind.steps(intent);
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const here = approving();
       const seat: ActionStep = {
-        title: { key: readsFirstFor(kind, intent) ? 'act.approve-proposal.step.seat-and-confirm' : 'act.approve-proposal.step.seat' },
-        run: async (ctx) => { await confirmFirst(kind, intent, await read.at(ctx), here, ctx); },
+        title: {
+          key: readsFirstFor(kind, intent)
+            ? 'act.approve-proposal.step.seat-and-confirm'
+            : 'act.approve-proposal.step.seat'
+        },
+        run: async (ctx) => {
+          await confirmFirst(kind, intent, await read.at(ctx), here, ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, kind.upkeep ?? {});
       const approve = approveStep(kind, intent, read, here, { key: 'act.approve-proposal.step.approve' });
       return [seat, upkeep.first, approve, ...(kind.carry?.(here, read, intent) ?? []), upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

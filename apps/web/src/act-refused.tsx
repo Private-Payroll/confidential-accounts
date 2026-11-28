@@ -45,7 +45,7 @@ export function ActRefused({ why }: { why: ActRefusal }) {
     [ACT_REFUSAL.vaultNotTheCompanys]: t('act.refused.vaultNotTheCompanys'),
     [ACT_REFUSAL.vaultInfoRefused]: t('act.refused.vaultInfoRefused'),
     [ACT_REFUSAL.rosterNotBelieved]: t('act.refused.rosterNotBelieved'),
-    [ACT_REFUSAL.notOpenedYet]: t('act.refused.notOpenedYet'),
+    [ACT_REFUSAL.notOpenedYet]: t('act.refused.notOpenedYet')
   };
   return (
     <Alert data-refusal={why}>

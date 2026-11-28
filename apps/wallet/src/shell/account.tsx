@@ -50,7 +50,10 @@ import { useWallets } from './wallets.js';
  * which is that failure with the disagreement moved into the chrome, and
  * exactly what `shell.test.tsx` claim 2 exists to catch.
  */
-function ChipFace({ owned, wallet }: {
+function ChipFace({
+  owned,
+  wallet
+}: {
   readonly owned: OwnedAddress;
   /** The name of the WHOLE wallet, or null. Above the account's own
    * name because it is the larger fact: which wallet, then which account in
@@ -67,15 +70,13 @@ function ChipFace({ owned, wallet }: {
           </span>
         )}
         {/* Was `text-[0.82rem]`. `text-sm` is 0.875rem: the nearest
-          * step up, and the chip's name is the line that may truncate, so a
-          * slightly larger one costs nothing the layout was protecting. */}
-        <span className="block truncate text-sm font-semibold text-foreground">
-          {owned.name}
-        </span>
+         * step up, and the chip's name is the line that may truncate, so a
+         * slightly larger one costs nothing the layout was protecting. */}
+        <span className="block truncate text-sm font-semibold text-foreground">{owned.name}</span>
         {/* The address is NOT allowed to truncate. A name is a label and a
-          * clipped one is still recognisable; a clipped address fragment loses
-          * the end, which is the half worth comparing. So the name
-          * gives way first. */}
+         * clipped one is still recognisable; a clipped address fragment loses
+         * the end, which is the half worth comparing. So the name
+         * gives way first. */}
         <span className="block">
           <AddressEnds short={shortPayee(owned.address)} />
         </span>
@@ -104,23 +105,24 @@ const CHIP_BOX = 'flex min-w-0 items-center gap-2 rounded-lg border bg-card px-2
  * `<button>` would be wrong twice: it would still be a control, and it would
  * invite the press it exists to refuse.
  */
-export function FlowAccountChip({ identity, secret }: {
+export function FlowAccountChip({
+  identity,
+  secret
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
 }): ReactNode {
   const { names, account, wallet } = useWallets(secret);
-  const owned = useMemo(
-    () => ownedAddressFor(identity, account, names, NETWORK),
-    [identity, account, names],
-  );
+  const owned = useMemo(() => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
   return (
     <div
       data-account={account}
       data-tappable="false"
       /* Named for a screen reader, which otherwise meets a mark, a name and
        * eight characters of address with nothing saying what they are. */
-      aria-label={`This is about ${owned.owner}, ${endsOf(shortPayee(owned.address))}`
-        + (wallet !== null ? `, in ${wallet}` : '')}
+      aria-label={
+        `This is about ${owned.owner}, ${endsOf(shortPayee(owned.address))}` + (wallet !== null ? `, in ${wallet}` : '')
+      }
       className={CHIP_BOX}
     >
       <ChipFace owned={owned} wallet={wallet} />
@@ -143,7 +145,11 @@ export function FlowAccountChip({ identity, secret }: {
  * from the start. Both are the same component reading the same record, because two
  * surfaces naming the wallet differently is a disagreement moved into the chrome.
  */
-export function AccountChip({ identity, secret, variant }: {
+export function AccountChip({
+  identity,
+  secret,
+  variant
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
   readonly variant: 'bar' | 'sidebar';
@@ -151,17 +157,15 @@ export function AccountChip({ identity, secret, variant }: {
   const { names, account, wallet } = useWallets(secret);
   const { state } = useSidebar();
   const collapsed = variant === 'sidebar' && state === 'collapsed';
-  const owned = useMemo(
-    () => ownedAddressFor(identity, account, names, NETWORK),
-    [identity, account, names],
-  );
+  const owned = useMemo(() => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
 
-  const label = `${owned.owner}, ${endsOf(shortPayee(owned.address))}`
-    + (wallet !== null ? `, in ${wallet}` : '')
-    + ' — change wallet';
+  const label =
+    `${owned.owner}, ${endsOf(shortPayee(owned.address))}` +
+    (wallet !== null ? `, in ${wallet}` : '') +
+    ' — change wallet';
 
-  const trigger = variant === 'sidebar'
-    ? (
+  const trigger =
+    variant === 'sidebar' ? (
       <SidebarMenuButton
         size="lg"
         data-account={account}
@@ -186,8 +190,7 @@ export function AccountChip({ identity, secret, variant }: {
           </>
         )}
       </SidebarMenuButton>
-    )
-    : (
+    ) : (
       <Button
         type="button"
         variant="outline"

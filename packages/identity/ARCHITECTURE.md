@@ -45,13 +45,15 @@ safe to reason about — the interesting cryptography has no I/O anywhere near i
 The core does not know where anything is kept. It declares what it needs:
 
 ```ts
-export interface PieceStore {          // where a recovery piece goes
+export interface PieceStore {
+  // where a recovery piece goes
   put(id: string, piece: Uint8Array): Promise<void>;
   get(id: string): Promise<Uint8Array | null>;
-  readonly holder: string;             // for "no two pieces behind one account"
+  readonly holder: string; // for "no two pieces behind one account"
 }
 
-export interface KeyringStore {        // where a device keeps its copy
+export interface KeyringStore {
+  // where a device keeps its copy
   read(): Promise<Sealed | null>;
   write(next: Sealed, ifVersion: number): Promise<number>;
 }

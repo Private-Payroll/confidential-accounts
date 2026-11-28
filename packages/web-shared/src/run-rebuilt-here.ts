@@ -30,21 +30,50 @@ import { keysByPurpose } from './keys-by-purpose.js';
 import { fromHex, parseCanonical, toHex, unseal } from '../../../src/core/crypto.js';
 import { payrollRoundOf } from '../../../src/core/retry-cover.js';
 import type { PayrollRound } from '../../../src/core/account.js';
-import type { Account, Employee, PayrollRun, RosterEmployee, RunLeg, RunList, SealedProposal, SealedRun, StateBlinding } from '../../../src/core/types.js';
+import type {
+  Account,
+  Employee,
+  PayrollRun,
+  RosterEmployee,
+  RunLeg,
+  RunList,
+  SealedProposal,
+  SealedRun,
+  StateBlinding
+} from '../../../src/core/types.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import {
-  assetOfLeg, factsOfThePaid, legEmployees, legsOfRun, listOfRun, openSealedRun, payRecordsOf, runIdForLeg,
+  assetOfLeg,
+  factsOfThePaid,
+  legEmployees,
+  legsOfRun,
+  listOfRun,
+  openSealedRun,
+  payRecordsOf,
+  runIdForLeg
 } from '../../../src/core/run-legs.js';
 import { vendorAmountOnTheRun, type VendorRecord } from '../../../src/core/vendor-record.js';
 import type { VendorsHere } from './vendors-on-device.js';
 import {
-  CREATED_BEFORE_SIGNED_STATE, FOUNDING_KEY_EPOCH, foundingStateRefusal, openStateRecord, stateRecordId,
+  CREATED_BEFORE_SIGNED_STATE,
+  FOUNDING_KEY_EPOCH,
+  foundingStateRefusal,
+  openStateRecord,
+  stateRecordId
 } from '../../../src/core/founding-state.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { SpendingPoliciesHere } from './spending-policy-read-here.js';
 import type { RoundOnChain } from './governed-call-builder.js';
 import {
-  FOUNDING_ASKED, foundingRecordRefusalHere, judgeIn, kindAsked, listedHere, refusedForItsKey, withLeftOut, type DirectoryRead, type Listed,
+  FOUNDING_ASKED,
+  foundingRecordRefusalHere,
+  judgeIn,
+  kindAsked,
+  listedHere,
+  refusedForItsKey,
+  withLeftOut,
+  type DirectoryRead,
+  type Listed
 } from './vault-page-doors.js';
 import { runFilingRefusal } from '../../../src/core/run-filing.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
@@ -128,7 +157,9 @@ export interface CompanyRecordsHere {
  * run sealed under an older key than the one in force at its entry left out by
  * name: the one way a run is listed on this device.
  */
-export async function runsListedHere(records: Pick<CompanyRecordsHere, 'runs' | 'directory'>): Promise<Listed<SealedRun>> {
+export async function runsListedHere(
+  records: Pick<CompanyRecordsHere, 'runs' | 'directory'>
+): Promise<Listed<SealedRun>> {
   const [runs, here] = await Promise.all([records.runs(), records.directory(kindAsked('run'))]);
   return listedHere(here, 'run', runs, 'payroll run');
 }
@@ -143,10 +174,15 @@ export async function runsListedHere(records: Pick<CompanyRecordsHere, 'runs' | 
  * decision, judged the same way.
  */
 export async function proposalsListedHere(
-  records: Pick<CompanyRecordsHere, 'directory' | 'roundsOnChain'> & { readonly proposals: () => Promise<readonly SealedProposal[]> },
-  served?: readonly SealedProposal[],
+  records: Pick<CompanyRecordsHere, 'directory' | 'roundsOnChain'> & {
+    readonly proposals: () => Promise<readonly SealedProposal[]>;
+  },
+  served?: readonly SealedProposal[]
 ): Promise<Listed<SealedProposal>> {
-  const [proposals, here] = await Promise.all([served ?? records.proposals(), records.directory(kindAsked('proposal'))]);
+  const [proposals, here] = await Promise.all([
+    served ?? records.proposals(),
+    records.directory(kindAsked('proposal'))
+  ]);
   const listed = listedHere(here, 'proposal', proposals, 'proposal');
   return withLeftOut(await standingOnChainHere(records, listed), listed.leftOut, listed.setAside);
 }
@@ -168,7 +204,8 @@ export function closedAs(closedBy: readonly string[]): ClosedAs {
 }
 
 /** A closed proposal's status: `executed` when it was carried out, and `cancelled` however else it closed (`closedAs`). */
-export const statusOfAClose = (closedBy: readonly string[]): 'executed' | 'cancelled' => (closedAs(closedBy) === 'executed' ? 'executed' : 'cancelled');
+export const statusOfAClose = (closedBy: readonly string[]): 'executed' | 'cancelled' =>
+  closedAs(closedBy) === 'executed' ? 'executed' : 'cancelled';
 
 /**
  * **WHERE EACH PROPOSAL STANDS, AS THE CHAIN SAYS IT DOES**, never as the
@@ -199,30 +236,44 @@ export const statusOfAClose = (closedBy: readonly string[]): 'executed' | 'cance
  * `outrun`, on one still open, is the chain's word that a signer was removed or replaced since it was raised, so a change
  * to the company is never carried out. Refused, saying what resolves it, when the page cannot read the chain.
  */
-export async function standingOnChainHere<P extends {
-  readonly id: string; readonly chainId: string; readonly status: string; readonly approvalCount?: number;
-  readonly raisedAt?: string; readonly txRef?: string; readonly executedAt?: string; readonly approvedHere?: boolean;
-  readonly outrun?: true;
-}>(records: Pick<CompanyRecordsHere, 'roundsOnChain'>, proposals: readonly P[]): Promise<P[]> {
+export async function standingOnChainHere<
+  P extends {
+    readonly id: string;
+    readonly chainId: string;
+    readonly status: string;
+    readonly approvalCount?: number;
+    readonly raisedAt?: string;
+    readonly txRef?: string;
+    readonly executedAt?: string;
+    readonly approvedHere?: boolean;
+    readonly outrun?: true;
+  }
+>(records: Pick<CompanyRecordsHere, 'roundsOnChain'>, proposals: readonly P[]): Promise<P[]> {
   if (proposals.length === 0) return [];
   if (records.roundsOnChain === undefined) {
-    throw new Error('this page cannot read where the company\'s proposals stand on the chain, so it decides nothing from them. '
-      + 'Reload the page to get the current version');
+    throw new Error(
+      "this page cannot read where the company's proposals stand on the chain, so it decides nothing from them. " +
+        'Reload the page to get the current version'
+    );
   }
   const rounds = await records.roundsOnChain([...new Set(proposals.map((p) => String(p.chainId).toLowerCase()))]);
   return proposals.map((p) => {
     const r = rounds[String(p.chainId).toLowerCase()];
     if (r === undefined) {
-      throw new Error(`where proposal ${p.id} stands on the chain was not read, so nothing is decided from it. Reload the page`);
+      throw new Error(
+        `where proposal ${p.id} stands on the chain was not read, so nothing is decided from it. Reload the page`
+      );
     }
     const { raisedAt: _r, txRef: _t, executedAt: _e, approvedHere: _a, outrun: _o, ...rest } = p;
     const status = r.held !== 'closed' ? 'open' : statusOfAClose(r.closedBy ?? []);
     return {
-      ...rest, status, approvalCount: r.approvals,
+      ...rest,
+      status,
+      approvalCount: r.approvals,
       ...(r.raisedAt === undefined ? {} : { raisedAt: new Date(r.raisedAt).toISOString() }),
       ...(r.txRef === undefined ? {} : { txRef: r.txRef }),
       ...(r.approvedHere === undefined ? {} : { approvedHere: r.approvedHere }),
-      ...(r.held !== 'closed' && r.outrun === true ? { outrun: true } : {}),
+      ...(r.held !== 'closed' && r.outrun === true ? { outrun: true } : {})
     } as unknown as P;
   });
 }
@@ -249,27 +300,45 @@ const IF_AGAIN = 'If it happens again, do not approve it.';
  * one seed would make their runs' payments one another's.
  */
 export async function signedStateHere(
-  records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld,
-): Promise<{ readonly seeds: NonNullable<StateBlinding['payoutSeeds']>; readonly payKey: string; readonly assetBlinding: string }> {
+  records: CompanyRecordsHere,
+  accountId: string,
+  viewingKey: KeysHeld
+): Promise<{
+  readonly seeds: NonNullable<StateBlinding['payoutSeeds']>;
+  readonly payKey: string;
+  readonly assetBlinding: string;
+}> {
   const rec = await records.state(stateRecordId(FOUNDING_KEY_EPOCH));
-  if (rec === null) throw new RunNotReadHere(CREATED_BEFORE_SIGNED_STATE.replace(/ Nothing was approved or sent\./u, ''));
-  const refused = foundingRecordRefusalHere(await records.directory(FOUNDING_ASKED), rec, (key) => foundingStateRefusal(rec, accountId, key));
+  if (rec === null)
+    throw new RunNotReadHere(CREATED_BEFORE_SIGNED_STATE.replace(/ Nothing was approved or sent\./u, ''));
+  const refused = foundingRecordRefusalHere(await records.directory(FOUNDING_ASKED), rec, (key) =>
+    foundingStateRefusal(rec, accountId, key)
+  );
   if (refused !== null) {
-    throw new RunNotReadHere(`This device does not believe the company state it was given (${refused}), so it cannot check `
-      + `what this proposal pays. Reload the page and try again. ${IF_AGAIN}`);
+    throw new RunNotReadHere(
+      `This device does not believe the company state it was given (${refused}), so it cannot check ` +
+        `what this proposal pays. Reload the page and try again. ${IF_AGAIN}`
+    );
   }
   let blinding;
   try {
     ({ blinding } = openStateRecord(rec, keyOf(viewingKey, FOUNDING_KEY_EPOCH)));
   } catch (e) {
-    throw new RunNotReadHere(`This device cannot open the company's state with the key it holds, so it cannot check what `
-      + `this proposal pays. Reload the page and try again. ${IF_AGAIN}`, { cause: e });
+    throw new RunNotReadHere(
+      `This device cannot open the company's state with the key it holds, so it cannot check what ` +
+        `this proposal pays. Reload the page and try again. ${IF_AGAIN}`,
+      { cause: e }
+    );
   }
   const payKey = String(blinding.payRecordKey ?? '');
   if (!/^[0-9a-f]{64}$/u.test(payKey)) {
-    throw new RunNotReadHere('The company\'s state carries no pay-record key, so no run of it can be checked here.');
+    throw new RunNotReadHere("The company's state carries no pay-record key, so no run of it can be checked here.");
   }
-  return { seeds: seedsOfEveryEpoch(blinding.payoutSeeds ?? [], viewingKey), payKey, assetBlinding: blinding.assetBlinding };
+  return {
+    seeds: seedsOfEveryEpoch(blinding.payoutSeeds ?? [], viewingKey),
+    payKey,
+    assetBlinding: blinding.assetBlinding
+  };
 }
 
 /**
@@ -278,15 +347,20 @@ export async function signedStateHere(
  * seed would make their runs' payments one another's.
  */
 export const seedsOfEveryEpoch = (
-  first: NonNullable<StateBlinding['payoutSeeds']>, keys: KeysHeld,
+  first: NonNullable<StateBlinding['payoutSeeds']>,
+  keys: KeysHeld
 ): NonNullable<StateBlinding['payoutSeeds']> => {
   const later = rotationSeedsOf(keys);
   const reused = later.find((s) => first.some((f) => String(f.seed).toLowerCase() === String(s.seed).toLowerCase()));
   if (reused !== undefined) {
-    throw new RunNotReadHere(`The change of the company's key at epoch ${reused.epoch} carries a payout seed the company's first state `
-      + `already had, so no run of it is checked here. Tell the company's other signers. ${IF_AGAIN}`);
+    throw new RunNotReadHere(
+      `The change of the company's key at epoch ${reused.epoch} carries a payout seed the company's first state ` +
+        `already had, so no run of it is checked here. Tell the company's other signers. ${IF_AGAIN}`
+    );
   }
-  return [...first, ...later.map((s) => ({ epoch: s.epoch, seed: s.seed }))] as NonNullable<StateBlinding['payoutSeeds']>;
+  return [...first, ...later.map((s) => ({ epoch: s.epoch, seed: s.seed }))] as NonNullable<
+    StateBlinding['payoutSeeds']
+  >;
 };
 
 /** A run of the company opened here with the key of the epoch it was sealed at, or refused by name. */
@@ -294,7 +368,9 @@ const openedHere = (sealed: SealedRun, viewingKey: KeysHeld, what: string): Payr
   try {
     return openSealedRun(sealed, keysByPurpose(viewingKey).at(sealed.keyEpoch));
   } catch (e) {
-    throw new RunNotReadHere(`This device cannot open ${what}. Reload the page and try again. ${IF_AGAIN}`, { cause: e });
+    throw new RunNotReadHere(`This device cannot open ${what}. Reload the page and try again. ${IF_AGAIN}`, {
+      cause: e
+    });
   }
 };
 
@@ -312,34 +388,59 @@ const openedHere = (sealed: SealedRun, viewingKey: KeysHeld, what: string): Payr
  * A run nobody signed, a seat signed and the service then changed, or one the
  * service serves from before a newer version was filed, is not read.
  */
-async function refuseARunNoSeatFiled(records: Pick<CompanyRecordsHere, 'directory'>, accountId: string, sealed: SealedRun): Promise<void> {
+async function refuseARunNoSeatFiled(
+  records: Pick<CompanyRecordsHere, 'directory'>,
+  accountId: string,
+  sealed: SealedRun
+): Promise<void> {
   const read = { store: 'run' as const, kind: 'run', id: sealed.id, digest: runEntry(accountId, sealed, 1).digest };
-  const why = runFilingRefusal(accountId, sealed)
-    ?? judgeIn(await records.directory({ records: [read] }))(sealed.filedBy!.publicKey.toLowerCase() as Hex, 'run', companyRecordKey('run', sealed.id), read, true, sealed.keyEpoch);
+  const why =
+    runFilingRefusal(accountId, sealed) ??
+    judgeIn(await records.directory({ records: [read] }))(
+      sealed.filedBy!.publicKey.toLowerCase() as Hex,
+      'run',
+      companyRecordKey('run', sealed.id),
+      read,
+      true,
+      sealed.keyEpoch
+    );
   if (why !== null) {
-    throw new RunNotReadHere(`This device does not believe the company's record of this payroll run (${why}). Do not act on it. `
-      + IF_AGAIN);
+    throw new RunNotReadHere(
+      `This device does not believe the company's record of this payroll run (${why}). Do not act on it. ` + IF_AGAIN
+    );
   }
 }
 
-export async function openedRunHere(records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld): Promise<PayrollRun> {
+export async function openedRunHere(
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld
+): Promise<PayrollRun> {
   return (await keptRunHere(records, accountId, runId, viewingKey)).run;
 }
 
 /** The run as the company keeps it, sealed, and as this device opened it, once a believed seat is shown to have filed it. */
 export async function keptRunHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld,
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld
 ): Promise<{ readonly sealed: SealedRun; readonly run: PayrollRun }> {
   const listed = await runsListedHere(records);
   const sealed = listed.find((r) => r.id === runId);
   if (sealed === undefined) refusedForItsKey(listed, runId, 'payroll run');
   if (sealed === undefined || sealed.accountId !== accountId) {
-    throw new RunNotReadHere(`This company's records hold no payroll run by that name. Reload the page to see its runs.`);
+    throw new RunNotReadHere(
+      `This company's records hold no payroll run by that name. Reload the page to see its runs.`
+    );
   }
   await refuseARunNoSeatFiled(records, accountId, sealed);
   const run = openedHere(sealed, viewingKey, 'this payroll run');
   if (run.id !== runId || run.accountId !== accountId) {
-    throw new RunNotReadHere(`The payroll run this company's records hold under that name was built for another run or another company. ${IF_AGAIN}`);
+    throw new RunNotReadHere(
+      `The payroll run this company's records hold under that name was built for another run or another company. ${IF_AGAIN}`
+    );
   }
   return { sealed, run };
 }
@@ -350,13 +451,28 @@ export async function keptRunHere(
  * it, and held by the anchor as the newest version (`judgeIn`). One the
  * service wrote itself, or this device does not believe, names nothing.
  */
-export async function believedProposalIdsOnChainHere(records: CompanyRecordsHere, accountId: string): Promise<ReadonlyMap<string, string>> {
+export async function believedProposalIdsOnChainHere(
+  records: CompanyRecordsHere,
+  accountId: string
+): Promise<ReadonlyMap<string, string>> {
   const judge = judgeIn(await records.directory(kindAsked('proposal')));
   const ids = new Map<string, string>();
   const readProposals = records.proposals;
-  for (const p of readProposals === undefined ? [] : await proposalsListedHere({ ...records, proposals: readProposals })) {
+  for (const p of readProposals === undefined
+    ? []
+    : await proposalsListedHere({ ...records, proposals: readProposals })) {
     if (p.filedBy === undefined || p.accountId !== accountId || proposalFilingRefusal(accountId, p) !== null) continue;
-    if (judge(p.filedBy.publicKey, 'proposal', companyRecordKey('proposal', p.id), proposalEntry(accountId, p), true, p.keyEpoch) !== null) continue;
+    if (
+      judge(
+        p.filedBy.publicKey,
+        'proposal',
+        companyRecordKey('proposal', p.id),
+        proposalEntry(accountId, p),
+        true,
+        p.keyEpoch
+      ) !== null
+    )
+      continue;
     ids.set(p.id, p.chainId.toLowerCase());
   }
   return ids;
@@ -369,13 +485,17 @@ export async function believedProposalIdsOnChainHere(records: CompanyRecordsHere
  * read: whatever is worked out from these runs is then short of it, and a sum
  * that must open a commitment on the chain is refused rather than believed.
  */
-export async function believedRunsHere(records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld): Promise<readonly PayrollRun[]> {
+export async function believedRunsHere(
+  records: CompanyRecordsHere,
+  accountId: string,
+  viewingKey: KeysHeld
+): Promise<readonly PayrollRun[]> {
   const believed: PayrollRun[] = [];
   for (const sealed of await runsListedHere(records)) {
     if (sealed.accountId !== accountId) continue;
     try {
       await refuseARunNoSeatFiled(records, accountId, sealed);
-      const run = openedHere(sealed, viewingKey, 'one of the company\'s payroll runs');
+      const run = openedHere(sealed, viewingKey, "one of the company's payroll runs");
       if (run.id === sealed.id && run.accountId === accountId) believed.push(run);
     } catch (e) {
       if (!(e instanceof RunNotReadHere)) throw e;
@@ -398,25 +518,36 @@ export interface PayeesHere {
   readonly list?: RunList;
   readonly people: readonly { readonly person: ListPayee; readonly handedOver?: boolean }[];
   readonly notBelieved: readonly string[];
-  readonly notPayable: readonly { readonly here: { readonly person: ListPayee; readonly handedOver?: boolean }; readonly why: string }[];
+  readonly notPayable: readonly {
+    readonly here: { readonly person: ListPayee; readonly handedOver?: boolean };
+    readonly why: string;
+  }[];
 }
 
 /**
  * **THE LIST `list` AS THIS DEVICE READS IT**: the employees from `records.people`, the vendors from `records.vendors`.
  * Refused when the page cannot read the company's vendors, so a vendor run is never checked against the employees.
  */
-export async function payeesHere(records: Pick<CompanyRecordsHere, 'people' | 'vendors'>, list: RunList): Promise<PayeesHere> {
+export async function payeesHere(
+  records: Pick<CompanyRecordsHere, 'people' | 'vendors'>,
+  list: RunList
+): Promise<PayeesHere> {
   if (list === 'employees') return { list, ...(await records.people()) };
   if (records.vendors === undefined) {
-    throw new RunNotReadHere('This page cannot read the company\'s vendors, so it cannot check a run that pays them. Reload the page to '
-      + 'get the current version.');
+    throw new RunNotReadHere(
+      "This page cannot read the company's vendors, so it cannot check a run that pays them. Reload the page to " +
+        'get the current version.'
+    );
   }
   const read = await records.vendors();
   return {
     list,
     people: read.vendors.map((v) => ({ person: v.vendor, handedOver: v.handedOver === true })),
     notBelieved: read.notBelieved,
-    notPayable: read.notPayable.map((n) => ({ here: { person: n.here.vendor, handedOver: n.here.handedOver === true }, why: n.why })),
+    notPayable: read.notPayable.map((n) => ({
+      here: { person: n.here.vendor, handedOver: n.here.handedOver === true },
+      why: n.why
+    }))
   };
 }
 
@@ -434,9 +565,20 @@ export async function payeesHere(records: Pick<CompanyRecordsHere, 'people' | 'v
  * is refused with `whyNot`.
  */
 export async function payableFactsHere(
-  records: CompanyRecordsHere, run: Pick<PayrollRun, 'period' | 'list'>, paid: readonly Employee[], whatToDo: string, whyNot: string,
+  records: CompanyRecordsHere,
+  run: Pick<PayrollRun, 'period' | 'list'>,
+  paid: readonly Employee[],
+  whatToDo: string,
+  whyNot: string
 ): Promise<PaymentFacts[]> {
-  return payableFactsOf(await payeesHere(records, listOfRun(run)), paid, whatToDo, whyNot, records.registry, run.period);
+  return payableFactsOf(
+    await payeesHere(records, listOfRun(run)),
+    paid,
+    whatToDo,
+    whyNot,
+    records.registry,
+    run.period
+  );
 }
 
 /**
@@ -448,8 +590,13 @@ export async function payableFactsHere(
  * one of these months pays is refused (`personChanged` for the employees, `changeVendorHere` for the vendors).
  */
 export async function periodsPastDraftHere(
-  records: Pick<CompanyRecordsHere, 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & { readonly proposals: () => Promise<readonly SealedProposal[]> },
-  accountId: string, viewingKey: KeysHeld, now: Date = new Date(), list: RunList = 'employees',
+  records: Pick<CompanyRecordsHere, 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & {
+    readonly proposals: () => Promise<readonly SealedProposal[]>;
+  },
+  accountId: string,
+  viewingKey: KeysHeld,
+  now: Date = new Date(),
+  list: RunList = 'employees'
 ): Promise<string[]> {
   const believed: SealedRun[] = [];
   for (const sealed of await runsListedHere(records)) {
@@ -461,26 +608,37 @@ export async function periodsPastDraftHere(
       continue;
     }
     let paysIt = true;
-    try { paysIt = listOfRun(openSealedRun(sealed, keysByPurpose(viewingKey).at(sealed.keyEpoch))) === list; } catch { /* unread: counted */ }
+    try {
+      paysIt = listOfRun(openSealedRun(sealed, keysByPurpose(viewingKey).at(sealed.keyEpoch))) === list;
+    } catch {
+      /* unread: counted */
+    }
     if (paysIt) believed.push(sealed);
   }
   const rounds = payrollRoundsHere(await proposalsListedHere(records), accountId, viewingKey, {
-    identity: records.roundIdentity, nowInSeconds: BigInt(Math.floor(now.getTime() / 1000)),
+    identity: records.roundIdentity,
+    nowInSeconds: BigInt(Math.floor(now.getTime() / 1000))
   });
-  return periodsPastDraft([...believed, ...runsWithALiveRound(believed, rounds).map((r) => ({ ...r, status: 'proposed' as const }))]);
+  return periodsPastDraft([
+    ...believed,
+    ...runsWithALiveRound(believed, rounds).map((r) => ({ ...r, status: 'proposed' as const }))
+  ]);
 }
 
 /**
  * Why two of `vendors` are one payee, or null: two vendor entries paid at one address are one vendor entered twice,
  * and a run over both would pay that address twice. Names both.
  */
-export const twoEntriesAtOneAddress = (vendors: readonly Pick<VendorRecord, 'id' | 'name' | 'address'>[]): string | null => {
+export const twoEntriesAtOneAddress = (
+  vendors: readonly Pick<VendorRecord, 'id' | 'name' | 'address'>[]
+): string | null => {
   const seen = new Map<string, Pick<VendorRecord, 'name'>>();
   for (const v of vendors) {
     if (v.address === null) continue;
     const at = v.address.bech32.toLowerCase();
     const first = seen.get(at);
-    if (first !== undefined) return `${first.name} and ${v.name} are two vendor entries paid at one address, so a run over both pays it twice`;
+    if (first !== undefined)
+      return `${first.name} and ${v.name} are two vendor entries paid at one address, so a run over both pays it twice`;
     seen.set(at, v);
   }
   return null;
@@ -488,50 +646,86 @@ export const twoEntriesAtOneAddress = (vendors: readonly Pick<VendorRecord, 'id'
 
 /** `payableFactsHere`, over the list this device has already read. */
 export function payableFactsOf(
-  people: PayeesHere, paid: readonly Employee[], whatToDo: string, whyNot: string, registry: AssetRegistry | undefined, period: string,
+  people: PayeesHere,
+  paid: readonly Employee[],
+  whatToDo: string,
+  whyNot: string,
+  registry: AssetRegistry | undefined,
+  period: string
 ): PaymentFacts[] {
   const payable = new Map<string, ListPayee>(people.people.map((p) => [p.person.id, p.person]));
   const refusedHere = new Set([...people.notBelieved, ...people.notPayable.map((n) => n.here.person.id)]);
   const notHere = paid.find((e) => refusedHere.has(e.id));
   if (notHere !== undefined) {
-    throw new RunNotReadHere(`${notHere.name} is on this run, and this device does not believe their record or would not `
-      + `pay them at the address it holds. ${whatToDo}`);
+    throw new RunNotReadHere(
+      `${notHere.name} is on this run, and this device does not believe their record or would not ` +
+        `pay them at the address it holds. ${whatToDo}`
+    );
   }
   for (const e of paid) {
     const person = payable.get(e.id);
     if (person !== undefined && person.status === 'leaver' && earliestStopOf(person) === null) {
-      throw new RunNotReadHere(`${e.name} is on this run for ${period}, and was made a leaver with no leaving date or end date, so the days they worked are not known. ${whatToDo}`);
+      throw new RunNotReadHere(
+        `${e.name} is on this run for ${period}, and was made a leaver with no leaving date or end date, so the days they worked are not known. ${whatToDo}`
+      );
     }
     const outside = person === undefined ? null : outsideTheirDates(person, period);
-    if (outside !== null) throw new RunNotReadHere(`${e.name} is on this run for ${period}, and is not payable for any day of it: ${outside}. ${whatToDo}`);
+    if (outside !== null)
+      throw new RunNotReadHere(
+        `${e.name} is on this run for ${period}, and is not payable for any day of it: ${outside}. ${whatToDo}`
+      );
     if (person === undefined) continue;
     if (isVendor(person)) {
       let amount: bigint;
-      try { amount = vendorAmountOnTheRun(person, period); } catch (err) {
-        throw new RunNotReadHere(`${e.name} is on this run for ${period}, and ${(err as Error).message}. ${whatToDo}`, { cause: err });
+      try {
+        amount = vendorAmountOnTheRun(person, period);
+      } catch (err) {
+        throw new RunNotReadHere(`${e.name} is on this run for ${period}, and ${(err as Error).message}. ${whatToDo}`, {
+          cause: err
+        });
       }
       const terms = person.terms as Extract<VendorRecord['terms'], { kind: 'monthly' }>;
       if (e.asset.toLowerCase() !== terms.asset.toLowerCase()) {
-        throw new RunNotReadHere(`${e.name} is on this run for ${period} in another token than their terms name. ${whatToDo}`);
+        throw new RunNotReadHere(
+          `${e.name} is on this run for ${period} in another token than their terms name. ${whatToDo}`
+        );
       }
       if (e.amount !== amount) {
-        throw new RunNotReadHere(`${e.name} is on this run for ${period} at ${e.amount}, and their terms are ${amount} a month. ${whatToDo}`);
+        throw new RunNotReadHere(
+          `${e.name} is on this run for ${period} at ${e.amount}, and their terms are ${amount} a month. ${whatToDo}`
+        );
       }
       continue;
     }
     let line: bigint;
-    try { line = amountOnTheRun(person, period); } catch (err) {
-      throw new RunNotReadHere(`${e.name} is on this run for ${period}, and ${(err as Error).message}. ${whatToDo}`, { cause: err });
+    try {
+      line = amountOnTheRun(person, period);
+    } catch (err) {
+      throw new RunNotReadHere(`${e.name} is on this run for ${period}, and ${(err as Error).message}. ${whatToDo}`, {
+        cause: err
+      });
     }
     if (e.amount !== line) {
-      throw new RunNotReadHere(`${e.name} is on this run for ${period} at ${e.amount}, and the salary their record holds for it is ${line}. ${whatToDo}`);
+      throw new RunNotReadHere(
+        `${e.name} is on this run for ${period} at ${e.amount}, and the salary their record holds for it is ${line}. ${whatToDo}`
+      );
     }
   }
-  const twice = twoEntriesAtOneAddress(paid.map((e) => payable.get(e.id)).filter((p): p is VendorRecord => p !== undefined && isVendor(p)));
-  if (twice !== null) throw new RunNotReadHere(`${twice}. Mark one of them a leaver, and draw the run again. ${whatToDo}`);
+  const twice = twoEntriesAtOneAddress(
+    paid.map((e) => payable.get(e.id)).filter((p): p is VendorRecord => p !== undefined && isVendor(p))
+  );
+  if (twice !== null)
+    throw new RunNotReadHere(`${twice}. Mark one of them a leaver, and draw the run again. ${whatToDo}`);
   try {
     /* A leaver within their dates is paid for the days before they left, as anybody active is: the dates were checked above. */
-    return factsOfThePaid(paid, (id) => { const p = payable.get(id); return p?.status === 'leaver' ? { ...p, status: 'active' as const } : p; }, registry);
+    return factsOfThePaid(
+      paid,
+      (id) => {
+        const p = payable.get(id);
+        return p?.status === 'leaver' ? { ...p, status: 'active' as const } : p;
+      },
+      registry
+    );
   } catch (e) {
     throw new RunNotReadHere(`${(e as Error).message.replace(/\.?\s*$/u, '.')} ${whyNot}`, { cause: e });
   }
@@ -547,7 +741,10 @@ export function payableFactsOf(
  * one this device believes.
  */
 export async function runRebuiltHere(
-  records: CompanyRecordsHere, accountId: string, proposalId: string, viewingKey: KeysHeld,
+  records: CompanyRecordsHere,
+  accountId: string,
+  proposalId: string,
+  viewingKey: KeysHeld
 ): Promise<{ readonly run: PayrollRun; readonly leg: RunLeg; readonly made: RunMadeHere }> {
   const listed = await runsListedHere(records);
   const raisedIt = (r: SealedRun) => r.accountId === accountId && (r.proposalIds ?? []).includes(proposalId);
@@ -555,27 +752,42 @@ export async function runRebuiltHere(
   const aside = sealed === undefined ? listed.setAside.find(raisedIt) : undefined;
   if (aside !== undefined) refusedForItsKey(listed, aside.id, 'payroll run');
   if (sealed === undefined) {
-    throw new RunNotReadHere('No payroll run of this company raised this proposal, so this device has nothing to check it '
-      + `against. ${IF_AGAIN}`);
+    throw new RunNotReadHere(
+      'No payroll run of this company raised this proposal, so this device has nothing to check it ' +
+        `against. ${IF_AGAIN}`
+    );
   }
   await refuseARunNoSeatFiled(records, accountId, sealed);
   const run = openedHere(sealed, viewingKey, 'the payroll run this proposal raised');
   let leg = legsOfRun(run).find((l) => run.proposalIds[l] === proposalId);
-  let retry: {
-    readonly originalIndices: readonly number[]; readonly opensAt: bigint; readonly closesAt: bigint; readonly required?: bigint;
-  } | undefined;
+  let retry:
+    | {
+        readonly originalIndices: readonly number[];
+        readonly opensAt: bigint;
+        readonly closesAt: bigint;
+        readonly required?: bigint;
+      }
+    | undefined;
   if (leg === undefined) {
     for (const l of legsOfRun(run)) {
       const found = run.payout?.[l]?.retries?.find((r) => r.proposalId === proposalId);
-      if (found !== undefined) { leg = l; retry = found; break; }
+      if (found !== undefined) {
+        leg = l;
+        retry = found;
+        break;
+      }
     }
   }
   const payout = leg === undefined ? undefined : run.payout?.[leg];
   if (leg === undefined || payout === undefined) {
-    throw new RunNotReadHere(`The payroll run this proposal names does not say which of its payments it raised. ${IF_AGAIN}`);
+    throw new RunNotReadHere(
+      `The payroll run this proposal names does not say which of its payments it raised. ${IF_AGAIN}`
+    );
   }
   if (payout.runId !== runIdForLeg(run, leg) || run.accountId !== accountId) {
-    throw new RunNotReadHere(`The payroll run this proposal names was built for another run or another company. ${IF_AGAIN}`);
+    throw new RunNotReadHere(
+      `The payroll run this proposal names was built for another run or another company. ${IF_AGAIN}`
+    );
   }
   const state = await signedStateHere(records, accountId, viewingKey);
   const paid = legEmployees(run, leg);
@@ -591,7 +803,7 @@ export async function runRebuiltHere(
     opensAt: String(window.opensAt),
     closesAt: String(window.closesAt),
     required: String(window.required ?? 0n),
-    ...(retry === undefined ? {} : { retry: [...retry.originalIndices] }),
+    ...(retry === undefined ? {} : { retry: [...retry.originalIndices] })
   };
   return { run, leg, made: await checkedAgainstTheRecordsAndTheWallet(records, accountId, run, viewingKey, made) };
 }
@@ -604,10 +816,17 @@ export async function runRebuiltHere(
  * against.
  */
 export async function checkedAgainstTheRecordsAndTheWallet(
-  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: KeysHeld, made: Omit<RunMadeHere, 'raising' | 'wallet'>,
-  proposals?: readonly SealedProposal[],
+  records: CompanyRecordsHere,
+  accountId: string,
+  run: PayrollRun,
+  viewingKey: KeysHeld,
+  made: Omit<RunMadeHere, 'raising' | 'wallet'>,
+  proposals?: readonly SealedProposal[]
 ): Promise<RunMadeHere> {
-  return withWhatTheWalletRead(records, { ...made, raising: await whatTheRecordsAccountFor(records, accountId, run, viewingKey, proposals) });
+  return withWhatTheWalletRead(records, {
+    ...made,
+    raising: await whatTheRecordsAccountFor(records, accountId, run, viewingKey, proposals)
+  });
 }
 
 /**
@@ -629,22 +848,34 @@ export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: R
   const asked = [...new Set([...own, ...known])];
   const reads: AccountPaymentFacts[] = [];
   try {
-    for (let at = 0; at < asked.length; at += MOST_ENTRIES_ASKED) reads.push(await records.payments.read(asked.slice(at, at + MOST_ENTRIES_ASKED)));
+    for (let at = 0; at < asked.length; at += MOST_ENTRIES_ASKED)
+      reads.push(await records.payments.read(asked.slice(at, at + MOST_ENTRIES_ASKED)));
   } catch (e) {
-    throw new RunNotReadHere(`Your wallet could not read from the network whether the people on this run were already paid `
-      + `(${(e as Error)?.message ?? String(e)}). Try again in a minute.`, { cause: e });
+    throw new RunNotReadHere(
+      `Your wallet could not read from the network whether the people on this run were already paid ` +
+        `(${(e as Error)?.message ?? String(e)}). Try again in a minute.`,
+      { cause: e }
+    );
   }
   const first = reads[0];
   if (first === undefined) return made;
-  const same = (r: AccountPaymentFacts): boolean => r.payKeyCommitment === first.payKeyCommitment && r.entries === first.entries
-    && r.openRounds.length === first.openRounds.length && r.openRounds.every((x, i) => x === first.openRounds[i]);
+  const same = (r: AccountPaymentFacts): boolean =>
+    r.payKeyCommitment === first.payKeyCommitment &&
+    r.entries === first.entries &&
+    r.openRounds.length === first.openRounds.length &&
+    r.openRounds.every((x, i) => x === first.openRounds[i]);
   if (!reads.every(same)) {
-    throw new RunNotReadHere('The chain changed while your wallet was reading it, so what it read cannot be taken as one '
-      + 'reading. Try again in a minute.');
+    throw new RunNotReadHere(
+      'The chain changed while your wallet was reading it, so what it read cannot be taken as one ' +
+        'reading. Try again in a minute.'
+    );
   }
   const wallet: WalletReadFacts = {
-    payKeyCommitment: first.payKeyCommitment, asked, held: reads.flatMap((r) => [...r.held]),
-    openRounds: [...first.openRounds], entries: first.entries,
+    payKeyCommitment: first.payKeyCommitment,
+    asked,
+    held: reads.flatMap((r) => [...r.held]),
+    openRounds: [...first.openRounds],
+    entries: first.entries
   };
   return { ...made, wallet };
 }
@@ -660,32 +891,52 @@ export async function withWhatTheWalletRead(records: CompanyRecordsHere, made: R
  * from an answer the service made.
  */
 async function whatTheRecordsAccountFor(
-  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: KeysHeld, read?: readonly SealedProposal[],
+  records: CompanyRecordsHere,
+  accountId: string,
+  run: PayrollRun,
+  viewingKey: KeysHeld,
+  read?: readonly SealedProposal[]
 ): Promise<RaisingHere> {
   const readProposals = records.proposals;
   if (readProposals === undefined) {
-    throw new RunNotReadHere('This page cannot read the company\'s proposals, so it cannot raise a run. Reload the page to get '
-      + 'the current version.');
+    throw new RunNotReadHere(
+      "This page cannot read the company's proposals, so it cannot raise a run. Reload the page to get " +
+        'the current version.'
+    );
   }
   const [proposals, runs, state, oneOffs] = await Promise.all([
-    proposalsListedHere({ ...records, proposals: readProposals }, read), runsListedHere(records), signedStateHere(records, accountId, viewingKey),
-    oneOffsHere(records, accountId)]);
-  const opened = runs.filter((r) => r.accountId === accountId).map((r) => openedHere(r, viewingKey, 'one of the company\'s payroll runs'));
+    proposalsListedHere({ ...records, proposals: readProposals }, read),
+    runsListedHere(records),
+    signedStateHere(records, accountId, viewingKey),
+    oneOffsHere(records, accountId)
+  ]);
+  const opened = runs
+    .filter((r) => r.accountId === accountId)
+    .map((r) => openedHere(r, viewingKey, "one of the company's payroll runs"));
   const legs = opened.flatMap((r) => Object.values(r.payout ?? {}));
   return {
     period: run.period,
     knownRounds: proposals.filter((p: SealedProposal) => p.accountId === accountId).map((p) => p.chainId.toLowerCase()),
     knownLeaves: legs.flatMap((l) => l.leaves.map((x) => x.toLowerCase())),
-    knownNonces: legs.flatMap((l) => (l.records ?? []).map((rec) => payRecordNonceOf(state.payKey as Hex, rec).toLowerCase())),
-    ...(oneOffs.believed.length === 0 ? {} : {
-      oneOffs: {
-        leaves: oneOffs.believed.map((o) => o.tree.tree.leaves[0]!.toLowerCase()),
-        nonces: oneOffs.believed.map((o) => o.secrets.nonce.toLowerCase()),
-      },
-    }),
-    ...(run.repeats === undefined ? {} : {
-      confirmed: { of: [...run.repeats.of], ...(run.repeats.chainPayments === undefined ? {} : { chainPayments: run.repeats.chainPayments }) },
-    }),
+    knownNonces: legs.flatMap((l) =>
+      (l.records ?? []).map((rec) => payRecordNonceOf(state.payKey as Hex, rec).toLowerCase())
+    ),
+    ...(oneOffs.believed.length === 0
+      ? {}
+      : {
+          oneOffs: {
+            leaves: oneOffs.believed.map((o) => o.tree.tree.leaves[0]!.toLowerCase()),
+            nonces: oneOffs.believed.map((o) => o.secrets.nonce.toLowerCase())
+          }
+        }),
+    ...(run.repeats === undefined
+      ? {}
+      : {
+          confirmed: {
+            of: [...run.repeats.of],
+            ...(run.repeats.chainPayments === undefined ? {} : { chainPayments: run.repeats.chainPayments })
+          }
+        })
   };
 }
 
@@ -696,7 +947,13 @@ async function whatTheRecordsAccountFor(
  * salt. Handed in by whoever holds the contract, because the page loads none.
  */
 export interface RoundIdentity {
-  readonly runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint) => Uint8Array;
+  readonly runPayload: (
+    root: Uint8Array,
+    payees: bigint,
+    opensAt: bigint,
+    closesAt: bigint,
+    required: bigint
+  ) => Uint8Array;
   readonly proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => Uint8Array;
 }
 
@@ -712,12 +969,25 @@ const WHOLE = /^(0|[1-9][0-9]*)$/u;
  * none of it. What each value is believed for is its reader's to say.
  */
 interface RunSealedHere {
-  readonly root: Hex; readonly payees: bigint; readonly opensAt: bigint; readonly closesAt: bigint; readonly required: bigint;
-  readonly vault: Hex; readonly salt: Hex; readonly vouched?: Vouched;
+  readonly root: Hex;
+  readonly payees: bigint;
+  readonly opensAt: bigint;
+  readonly closesAt: bigint;
+  readonly required: bigint;
+  readonly vault: Hex;
+  readonly salt: Hex;
+  readonly vouched?: Vouched;
 }
 
-const runSealedOf = (inside: { readonly vault?: unknown; readonly sealedPayload: Sealed }, viewingKey: Hex): RunSealedHere | undefined => {
-  let payload: { window?: Record<string, unknown> | null; __required?: unknown; __change?: { salt?: unknown; vouched?: unknown } };
+const runSealedOf = (
+  inside: { readonly vault?: unknown; readonly sealedPayload: Sealed },
+  viewingKey: Hex
+): RunSealedHere | undefined => {
+  let payload: {
+    window?: Record<string, unknown> | null;
+    __required?: unknown;
+    __change?: { salt?: unknown; vouched?: unknown };
+  };
   try {
     payload = parseCanonical(unseal(inside.sealedPayload, viewingKey));
   } catch {
@@ -726,8 +996,9 @@ const runSealedOf = (inside: { readonly vault?: unknown; readonly sealedPayload:
   const w = payload.window;
   if (w === undefined || w === null || typeof w !== 'object') return undefined;
   const whole = (v: unknown): bigint | null =>
-    (typeof v === 'bigint' && v >= 0n ? v : typeof v === 'string' && WHOLE.test(v) ? BigInt(v) : null);
-  const hex = (v: unknown): Hex | null => (typeof v === 'string' && HEX64_LOWER.test(v.toLowerCase()) ? v.toLowerCase() as Hex : null);
+    typeof v === 'bigint' && v >= 0n ? v : typeof v === 'string' && WHOLE.test(v) ? BigInt(v) : null;
+  const hex = (v: unknown): Hex | null =>
+    typeof v === 'string' && HEX64_LOWER.test(v.toLowerCase()) ? (v.toLowerCase() as Hex) : null;
   const root = hex(w.root);
   const payees = whole(w.payees);
   const opensAt = whole(w.opensAt);
@@ -736,11 +1007,20 @@ const runSealedOf = (inside: { readonly vault?: unknown; readonly sealedPayload:
   const required = payload.__required === undefined ? 0n : whole(payload.__required);
   const vault = hex(inside.vault);
   const salt = hex(payload.__change?.salt);
-  if (root === null || payees === null || opensAt === null || closesAt === null || required === null || vault === null || salt === null) {
+  if (
+    root === null ||
+    payees === null ||
+    opensAt === null ||
+    closesAt === null ||
+    required === null ||
+    vault === null ||
+    salt === null
+  ) {
     return undefined;
   }
   const v = payload.__change?.vouched as Partial<Vouched> | undefined;
-  const vouched = vouchedRefusal(v) === null ? { head: v!.head!.toLowerCase() as Hex, r: v!.r!.toLowerCase() as Hex } : undefined;
+  const vouched =
+    vouchedRefusal(v) === null ? { head: v!.head!.toLowerCase() as Hex, r: v!.r!.toLowerCase() as Hex } : undefined;
   return { root, payees, opensAt, closesAt, required, vault, salt, ...(vouched === undefined ? {} : { vouched }) };
 };
 
@@ -755,8 +1035,10 @@ const runSealedOf = (inside: { readonly vault?: unknown; readonly sealedPayload:
  * leg, which names only the leg's latest round.
  */
 export const roundClosesAtHere = (
-  rec: Pick<SealedProposal, 'digest' | 'chainId'>, inside: { readonly vault?: unknown; readonly sealedPayload: Sealed },
-  viewingKey: Hex, identity: RoundIdentity,
+  rec: Pick<SealedProposal, 'digest' | 'chainId'>,
+  inside: { readonly vault?: unknown; readonly sealedPayload: Sealed },
+  viewingKey: Hex,
+  identity: RoundIdentity
 ): bigint | undefined => {
   const r = runSealedOf(inside, viewingKey);
   if (r === undefined) return undefined;
@@ -789,7 +1071,10 @@ export interface VouchedRunHere {
  * vault set up by a run that pays nothing.
  */
 export const vouchedRunsHere = (
-  proposals: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld, chainIds: readonly string[],
+  proposals: readonly SealedProposal[],
+  accountId: string,
+  viewingKey: KeysHeld,
+  chainIds: readonly string[]
 ): VouchedRunHere[] => {
   const asked = new Set(chainIds.map((c) => c.toLowerCase()));
   const out: VouchedRunHere[] = [];
@@ -808,9 +1093,18 @@ export const vouchedRunsHere = (
     const run = runSealedOf(envelope, key);
     if (run?.vouched === undefined) continue;
     let retry: unknown;
-    try { retry = (parseCanonical(unseal(envelope.sealedPayload, key)) as { retry?: unknown }).retry; } catch { continue; }
+    try {
+      retry = (parseCanonical(unseal(envelope.sealedPayload, key)) as { retry?: unknown }).retry;
+    } catch {
+      continue;
+    }
     if (retry !== undefined) continue;
-    out.push({ chainId: chainId as Hex, proposal: rec.id, entryDigest: proposalEntry(accountId, rec as never).digest, run: run as VouchedRunHere['run'] });
+    out.push({
+      chainId: chainId as Hex,
+      proposal: rec.id,
+      entryDigest: proposalEntry(accountId, rec as never).digest,
+      run: run as VouchedRunHere['run']
+    });
   }
   return out;
 };
@@ -823,11 +1117,15 @@ export const vouchedRunsHere = (
  * held to stays live.
  */
 export const unheldPastItsWindow = (
-  round: Pick<PayrollRound, 'raisedAt'> & { readonly closesAt?: bigint }, nowInSeconds: bigint,
+  round: Pick<PayrollRound, 'raisedAt'> & { readonly closesAt?: bigint },
+  nowInSeconds: bigint
 ): boolean => round.raisedAt === undefined && round.closesAt !== undefined && nowInSeconds >= round.closesAt;
 
 /** What a round's liveness is judged at: the account's own functions its identity is made with, and this device's clock in seconds. */
-interface RoundsAt { readonly identity: RoundIdentity; readonly nowInSeconds: bigint }
+interface RoundsAt {
+  readonly identity: RoundIdentity;
+  readonly nowInSeconds: bigint;
+}
 
 /**
  * The company's payroll rounds, each opened from its sealed record with the
@@ -836,17 +1134,31 @@ interface RoundsAt { readonly identity: RoundIdentity; readonly nowInSeconds: bi
  * this device's clock) is withdrawn, since nothing can pay against it any more.
  */
 export const payrollRoundsHere = (
-  proposals: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld,
-  at: RoundsAt,
+  proposals: readonly SealedProposal[],
+  accountId: string,
+  viewingKey: KeysHeld,
+  at: RoundsAt
 ): PayrollRound[] =>
   proposals.flatMap((rec) => {
     if (rec.accountId !== accountId) return [];
     const key = keyOf(viewingKey, rec.keyEpoch);
-    const inside = openRecord<{ kind: string; vault?: unknown; sealedPayload: Sealed }>('proposals', rec.accountId, rec.sealed, key);
-    const round = payrollRoundOf({
-      id: rec.id, kind: inside.kind, status: rec.status, chainId: rec.chainId, sealedPayload: inside.sealedPayload,
-      ...(rec.raisedAt === undefined ? {} : { raisedAt: rec.raisedAt }),
-    }, key);
+    const inside = openRecord<{ kind: string; vault?: unknown; sealedPayload: Sealed }>(
+      'proposals',
+      rec.accountId,
+      rec.sealed,
+      key
+    );
+    const round = payrollRoundOf(
+      {
+        id: rec.id,
+        kind: inside.kind,
+        status: rec.status,
+        chainId: rec.chainId,
+        sealedPayload: inside.sealedPayload,
+        ...(rec.raisedAt === undefined ? {} : { raisedAt: rec.raisedAt })
+      },
+      key
+    );
     if (round === null) return [];
     /*
      * A payroll round leaves the account's open proposals only by being
@@ -857,6 +1169,9 @@ export const payrollRoundsHere = (
      */
     if (round.status === 'executed') return [{ ...round, status: 'cancelled' as const }];
     const closesAt = roundClosesAtHere(rec, inside, key, at.identity);
-    return [unheldPastItsWindow({ ...round, ...(closesAt === undefined ? {} : { closesAt }) }, at.nowInSeconds)
-      ? { ...round, status: 'cancelled' as const } : round];
+    return [
+      unheldPastItsWindow({ ...round, ...(closesAt === undefined ? {} : { closesAt }) }, at.nowInSeconds)
+        ? { ...round, status: 'cancelled' as const }
+        : round
+    ];
   });

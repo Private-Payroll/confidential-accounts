@@ -34,8 +34,15 @@ import type { PayrollRun, RunList, RunRepeatRecord, RunSkip, SealedProposal } fr
 import { datesOfTheRecordRefusal, earliestStopOf, outsideTheirDates } from '../../../src/core/payable-days.js';
 import { canonicalPeriod, listOfRun, openSealedRun, runsOfList, sealedRunOf } from '../../../src/core/run-legs.js';
 import {
-  amountOnTheRun, assembledRun, peopleDrawn, peopleOnTheRun, recordSkipsEach, refuseAPayrollThatMayBeOnChain,
-  refuseAPeriodAlreadyRaised, samePeriod, withNumberedExtras,
+  amountOnTheRun,
+  assembledRun,
+  peopleDrawn,
+  peopleOnTheRun,
+  recordSkipsEach,
+  refuseAPayrollThatMayBeOnChain,
+  refuseAPeriodAlreadyRaised,
+  samePeriod,
+  withNumberedExtras
 } from '../../../src/core/run-drawing.js';
 import { vendorAmountOnTheRun, type VendorRecord } from '../../../src/core/vendor-record.js';
 import { signRunFiling } from '../../../src/core/run-filing.js';
@@ -43,7 +50,14 @@ import type { RecordsEntered } from './record-entered-here.js';
 import type { CompanyView, RecordReadAt } from './company-view.js';
 import type { CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
-  payeesHere, payrollRoundsHere, proposalsListedHere, runsListedHere, twoEntriesAtOneAddress, type CompanyRecordsHere, type ListPayee, type PayeesHere,
+  payeesHere,
+  payrollRoundsHere,
+  proposalsListedHere,
+  runsListedHere,
+  twoEntriesAtOneAddress,
+  type CompanyRecordsHere,
+  type ListPayee,
+  type PayeesHere
 } from './run-rebuilt-here.js';
 
 /** What drawing a run on this device needs. */
@@ -59,7 +73,10 @@ export interface RunDrawDoors {
   /** The company's account on the chain and its label, as its record names them: what each payslip names. */
   readonly company: { readonly account: string | null; readonly label: CompanyLabel | null };
   /** The company's records, read afresh: its people and its vendors as this device believes them, its runs and its proposals. */
-  readonly records: Pick<CompanyRecordsHere, 'people' | 'vendors' | 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'> & { readonly proposals: () => Promise<readonly SealedProposal[]> };
+  readonly records: Pick<
+    CompanyRecordsHere,
+    'people' | 'vendors' | 'runs' | 'directory' | 'roundsOnChain' | 'roundIdentity'
+  > & { readonly proposals: () => Promise<readonly SealedProposal[]> };
   /** Who is confirming what the run leaves out or repeats: the signed-in person's name. */
   readonly by: string;
   readonly registry?: AssetRegistry;
@@ -78,7 +95,11 @@ interface RunAsked {
   /** Everybody the run would leave out, named, and why. */
   readonly skipPending?: { readonly employeeIds: readonly string[]; readonly reason: string };
   /** Every run for the month already raised, named, and why this one pays again; who it pays as a numbered extra. */
-  readonly repeats?: { readonly runIds: readonly string[]; readonly reason: string; readonly extra?: readonly string[] };
+  readonly repeats?: {
+    readonly runIds: readonly string[];
+    readonly reason: string;
+    readonly extra?: readonly string[];
+  };
 }
 
 /** Why a run was not drawn on this device. Nothing was filed. */
@@ -103,13 +124,19 @@ const newRunId = (random: (n: number) => Uint8Array = randomBytes): string =>
  * holds nothing beyond them, and the raise says so when it does.
  */
 const confirmedRepeatHere = (
-  period: string, runs: readonly PayrollRun[], rounds: readonly PayrollRound[],
-  ack: NonNullable<RunAsked['repeats']>, by: string, at: string,
+  period: string,
+  runs: readonly PayrollRun[],
+  rounds: readonly PayrollRound[],
+  ack: NonNullable<RunAsked['repeats']>,
+  by: string,
+  at: string
 ): RunRepeatRecord | undefined => {
   const live = rounds.filter(isLiveRound);
-  const expected = new Set(runs
-    .filter((r) => samePeriod(r.period, period) && (r.status !== 'draft' || live.some((x) => x.runId === r.id)))
-    .map((r) => r.id));
+  const expected = new Set(
+    runs
+      .filter((r) => samePeriod(r.period, period) && (r.status !== 'draft' || live.some((x) => x.runId === r.id)))
+      .map((r) => r.id)
+  );
   const named = new Set(ack.runIds);
   const unnamed = [...expected].filter((id) => !named.has(id));
   if (unnamed.length) {
@@ -117,18 +144,23 @@ const confirmedRepeatHere = (
       const r = runs.find((x) => x.id === id)!;
       return `the ${r.status === 'draft' ? 'draft' : 'raised'} run for ${r.period} (${r.employees.length} ${r.employees.length === 1 ? 'person' : 'people'})`;
     };
-    throw new RunNotDrawnHere(`this confirmation leaves out ${unnamed.map(describe).join(', ')}. A repeat is confirmed by naming every run `
-      + `for ${period} that has been raised. Name all of them and confirm again.`);
+    throw new RunNotDrawnHere(
+      `this confirmation leaves out ${unnamed.map(describe).join(', ')}. A repeat is confirmed by naming every run ` +
+        `for ${period} that has been raised. Name all of them and confirm again.`
+    );
   }
   const extra = [...named].filter((id) => !expected.has(id));
   if (extra.length) {
-    throw new RunNotDrawnHere(`${extra.join(', ')} ${extra.length === 1 ? 'was' : 'were'} confirmed as repeated and this run `
-      + `does not repeat ${extra.length === 1 ? 'it' : 'them'}, so the list that was read is not the list this run would act `
-      + 'on. Take the confirmation again against what this run actually repeats.');
+    throw new RunNotDrawnHere(
+      `${extra.join(', ')} ${extra.length === 1 ? 'was' : 'were'} confirmed as repeated and this run ` +
+        `does not repeat ${extra.length === 1 ? 'it' : 'them'}, so the list that was read is not the list this run would act ` +
+        'on. Take the confirmation again against what this run actually repeats.'
+    );
   }
   if (expected.size === 0) return undefined;
   if (!by.trim()) throw new RunNotDrawnHere('a repeated payroll has to be attributable to somebody.');
-  if (!ack.reason.trim()) throw new RunNotDrawnHere('say why this run repeats another; a blank reason is not a record.');
+  if (!ack.reason.trim())
+    throw new RunNotDrawnHere('say why this run repeats another; a blank reason is not a record.');
   return { of: [...expected].sort(), reason: ack.reason, by, at };
 };
 
@@ -153,7 +185,9 @@ const drawn = <T>(make: () => T): T => {
  * never had an address was never paid and is not named.
  */
 const peopleToDrawOver = (
-  here: PayeesHere & { readonly refused?: readonly { readonly id: string; readonly why: string }[] }, asked: RunAsked, period: string,
+  here: PayeesHere & { readonly refused?: readonly { readonly id: string; readonly why: string }[] },
+  asked: RunAsked,
+  period: string
 ): { all: ListPayee[]; handedOver: Set<string>; datedOut: { person: RunSkip; reason: string }[] } => {
   const chosen = (id: string) => asked.employeeIds === undefined || asked.employeeIds.includes(id);
   const broken = [...here.people, ...here.notPayable.map((p) => p.here)]
@@ -161,20 +195,29 @@ const peopleToDrawOver = (
     .map((p) => ({ name: p.person.name, why: datesOfTheRecordRefusal(p.person) }))
     .filter((p) => p.why !== null);
   if (broken.length > 0) {
-    throw new RunNotDrawnHere(`${broken.map((p) => `${p.name}: ${p.why}`).join('; ')}. A run is drawn only over records whose dates `
-      + 'are calendar dates, in order, so whether they are paid for the month cannot be said. Put their record right, or mark '
-      + 'them a leaver, and draw the run again.');
+    throw new RunNotDrawnHere(
+      `${broken.map((p) => `${p.name}: ${p.why}`).join('; ')}. A run is drawn only over records whose dates ` +
+        'are calendar dates, in order, so whether they are paid for the month cannot be said. Put their record right, or mark ' +
+        'them a leaver, and draw the run again.'
+    );
   }
   const datedOut: { person: RunSkip; reason: string }[] = [];
   const setAside = (p: PayeesHere['people'][number], why: string): false => {
-    datedOut.push({ person: { employeeId: p.person.id, name: p.person.name, waiting: 'outside their dates' }, reason: `${p.person.name} is not paid for ${period}: ${why}` });
+    datedOut.push({
+      person: { employeeId: p.person.id, name: p.person.name, waiting: 'outside their dates' },
+      reason: `${p.person.name} is not paid for ${period}: ${why}`
+    });
     return false;
   };
   const inTheirDates = (p: PayeesHere['people'][number]): boolean => {
     if (p.person.status === 'leaver') {
       /* A leaver who never had an address was never paid: an invitation withdrawn, drawn over by no run and named by none. */
       if (!p.person.address) return false;
-      if (earliestStopOf(p.person) === null) return setAside(p, 'they were made a leaver with no leaving date or end date, so the days they worked are not known');
+      if (earliestStopOf(p.person) === null)
+        return setAside(
+          p,
+          'they were made a leaver with no leaving date or end date, so the days they worked are not known'
+        );
     }
     const why = outsideTheirDates(p.person, period);
     return why === null ? true : setAside(p, why);
@@ -183,21 +226,27 @@ const peopleToDrawOver = (
   const notPayableInDates = here.notPayable.filter((p) => inTheirDates(p.here));
   const notPayable = notPayableInDates.filter((p) => chosen(p.here.person.id));
   if (notPayable.length > 0) {
-    throw new RunNotDrawnHere(`${notPayable.map((p) => `${p.here.person.name} cannot be paid: ${p.why}`).join('; ')}. A run pays `
-      + 'each person only at the address and payslip key their own wallet signed. Ask them to give their code again, or mark '
-      + 'them a leaver, and draw the run again.');
+    throw new RunNotDrawnHere(
+      `${notPayable.map((p) => `${p.here.person.name} cannot be paid: ${p.why}`).join('; ')}. A run pays ` +
+        'each person only at the address and payslip key their own wallet signed. Ask them to give their code again, or mark ' +
+        'them a leaver, and draw the run again.'
+    );
   }
   const unread = here.notBelieved.filter(chosen);
   const unreadable = (here.refused ?? []).filter((r) => chosen(r.id));
   if (unreadable.length > 0) {
-    throw new RunNotDrawnHere(`${unreadable.length} of the company's people ${unreadable.length === 1 ? 'has a record' : 'have records'} `
-      + `this device cannot read as a person's record (${unreadable.map((r) => r.why).join('; ')}), so it cannot say whether they should be paid. `
-      + 'A record that does not open here is read on a seat\'s device that holds the key it was sealed under: draw the run there.');
+    throw new RunNotDrawnHere(
+      `${unreadable.length} of the company's people ${unreadable.length === 1 ? 'has a record' : 'have records'} ` +
+        `this device cannot read as a person's record (${unreadable.map((r) => r.why).join('; ')}), so it cannot say whether they should be paid. ` +
+        "A record that does not open here is read on a seat's device that holds the key it was sealed under: draw the run there."
+    );
   }
   if (unread.length > 0) {
-    throw new RunNotDrawnHere(`${unread.length} of the company's people ${unread.length === 1 ? 'has a record' : 'have records'} `
-      + 'filed by a seat this device does not believe, so this device cannot say whether they should be paid. Ask a signer of '
-      + 'the company to file their record again, or reload the page.');
+    throw new RunNotDrawnHere(
+      `${unread.length} of the company's people ${unread.length === 1 ? 'has a record' : 'have records'} ` +
+        'filed by a seat this device does not believe, so this device cannot say whether they should be paid. Ask a signer of ' +
+        'the company to file their record again, or reload the page.'
+    );
   }
   /* Somebody not payable and not chosen is still on the roster: leaving them out is named like leaving anybody out. */
   const everybody = [...people, ...notPayableInDates.map((p) => p.here)];
@@ -205,7 +254,7 @@ const peopleToDrawOver = (
   return {
     all: everybody.map((p) => (p.person.status === 'leaver' ? { ...p.person, status: 'active' as const } : p.person)),
     handedOver: new Set(everybody.filter((p) => p.handedOver).map((p) => p.person.id)),
-    datedOut,
+    datedOut
   };
 };
 
@@ -219,16 +268,30 @@ const paidMonthly = (here: PayeesHere): PayeesHere => {
 };
 
 /** What one payee is paid on a run for `period`: an employee their salary line in force, a vendor their monthly terms. */
-const specOf = (p: ListPayee, period: string) => ('terms' in p
-  ? { name: p.name, asset: p.terms.kind === 'monthly' ? p.terms.asset : '', amount: vendorAmountOnTheRun(p, period) }
-  : { name: p.name, asset: p.asset, amount: amountOnTheRun(p, period) });
+const specOf = (p: ListPayee, period: string) =>
+  'terms' in p
+    ? { name: p.name, asset: p.terms.kind === 'monthly' ? p.terms.asset : '', amount: vendorAmountOnTheRun(p, period) }
+    : { name: p.name, asset: p.asset, amount: amountOnTheRun(p, period) };
 
 /** The list's runs this device can open, and the payroll rounds the company wrote down, as read at `at`. */
-const runsAndRoundsHere = async (doors: RunDrawDoors, list: RunList, at: string): Promise<{ runs: PayrollRun[]; rounds: PayrollRound[] }> => {
-  const [sealedRuns, proposals] = await Promise.all([runsListedHere(doors.records), proposalsListedHere(doors.records)]);
-  const runs = runsOfList(sealedRuns.filter((r) => r.accountId === doors.accountId).map((r) => openSealedRun(r, keysByPurpose(doors.viewingKey).at(r.keyEpoch))), list);
+const runsAndRoundsHere = async (
+  doors: RunDrawDoors,
+  list: RunList,
+  at: string
+): Promise<{ runs: PayrollRun[]; rounds: PayrollRound[] }> => {
+  const [sealedRuns, proposals] = await Promise.all([
+    runsListedHere(doors.records),
+    proposalsListedHere(doors.records)
+  ]);
+  const runs = runsOfList(
+    sealedRuns
+      .filter((r) => r.accountId === doors.accountId)
+      .map((r) => openSealedRun(r, keysByPurpose(doors.viewingKey).at(r.keyEpoch))),
+    list
+  );
   const rounds = payrollRoundsHere(proposals, doors.accountId, doors.viewingKey, {
-    identity: doors.records.roundIdentity, nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000)),
+    identity: doors.records.roundIdentity,
+    nowInSeconds: BigInt(Math.floor(Date.parse(at) / 1000))
   });
   return { runs, rounds };
 };
@@ -249,19 +312,24 @@ export async function runDrawnHere(doors: RunDrawDoors, asked: RunAsked): Promis
   const assets = doors.registry ?? theAssets;
   const list: RunList = asked.list ?? 'employees';
   const [read, { runs, rounds }] = await Promise.all([
-    payeesHere(doors.records, list).catch((e: unknown) => { throw new RunNotDrawnHere(String((e as Error)?.message ?? e).replace(/\s*Nothing was built or sent\.\s*$/u, '')); }),
-    runsAndRoundsHere(doors, list, at)]);
+    payeesHere(doors.records, list).catch((e: unknown) => {
+      throw new RunNotDrawnHere(String((e as Error)?.message ?? e).replace(/\s*Nothing was built or sent\.\s*$/u, ''));
+    }),
+    runsAndRoundsHere(doors, list, at)
+  ]);
   const here = list === 'vendors' ? paidMonthly(read) : read;
   const { all, handedOver, datedOut } = peopleToDrawOver(here, asked, period);
-  const skip = asked.skipPending === undefined ? undefined
-    : { employeeIds: [...asked.skipPending.employeeIds], reason: asked.skipPending.reason, by: doors.by };
+  const skip =
+    asked.skipPending === undefined
+      ? undefined
+      : { employeeIds: [...asked.skipPending.employeeIds], reason: asked.skipPending.reason, by: doors.by };
   const { roster, leftOut } = drawn(() => peopleDrawn(all, asked.employeeIds, skip, (e) => handedOver.has(e.id)));
   if (list === 'vendors') {
     const twice = twoEntriesAtOneAddress(roster as VendorRecord[]);
     if (twice !== null) throw new RunNotDrawnHere(`${twice}. Mark one of them a leaver, and draw the run again.`);
   }
-  const repeated = asked.repeats === undefined ? undefined
-    : confirmedRepeatHere(period, runs, rounds, asked.repeats, doors.by, at);
+  const repeated =
+    asked.repeats === undefined ? undefined : confirmedRepeatHere(period, runs, rounds, asked.repeats, doors.by, at);
   if (repeated === undefined) {
     drawn(() => refuseAPeriodAlreadyRaised(period, runs));
     drawn(() => refuseAPayrollThatMayBeOnChain(period, runs, rounds));
@@ -269,18 +337,38 @@ export async function runDrawnHere(doors: RunDrawDoors, asked: RunAsked): Promis
   const runId = newRunId();
   const left = [
     ...(leftOut && skip ? leftOut.map((person) => ({ person, by: skip.by, reason: skip.reason })) : []),
-    ...datedOut.map((d) => ({ ...d, by: doors.by })),
+    ...datedOut.map((d) => ({ ...d, by: doors.by }))
   ];
   const skips = left.length > 0 ? drawn(() => recordSkipsEach(runId, left, at)) : undefined;
-  const { employees, payslips } = drawn(() => peopleOnTheRun({
-    runId, period, specs: roster.map((e) => specOf(e, period)), roster, assets,
-    company: doors.company,
-  }));
-  const repeats = drawn(() => withNumberedExtras(period, employees, repeated, [...(asked.repeats?.extra ?? [])], runs,
-    (id) => all.find((p) => p.id === id)?.name ?? null));
+  const { employees, payslips } = drawn(() =>
+    peopleOnTheRun({
+      runId,
+      period,
+      specs: roster.map((e) => specOf(e, period)),
+      roster,
+      assets,
+      company: doors.company
+    })
+  );
+  const repeats = drawn(() =>
+    withNumberedExtras(
+      period,
+      employees,
+      repeated,
+      [...(asked.repeats?.extra ?? [])],
+      runs,
+      (id) => all.find((p) => p.id === id)?.name ?? null
+    )
+  );
   return assembledRun({
-    runId, accountId: doors.accountId, period, employees, payslips,
-    ...(skips ? { skips } : {}), ...(repeats ? { repeats } : {}), list,
+    runId,
+    accountId: doors.accountId,
+    period,
+    employees,
+    payslips,
+    ...(skips ? { skips } : {}),
+    ...(repeats ? { repeats } : {}),
+    list
   });
 }
 
@@ -293,7 +381,11 @@ export async function runDrawnHere(doors: RunDrawDoors, asked: RunAsked): Promis
  * at the versions it read them (`drawnFromIn`): the check before the filing stops it when any has changed since.
  * Returns the run as filed; filed by `drawRunHere`.
  */
-export async function fileRunDrawnHere(doors: RunDrawDoors, run: PayrollRun, drawnFrom: readonly RecordReadAt[]): Promise<PayrollRun> {
+export async function fileRunDrawnHere(
+  doors: RunDrawDoors,
+  run: PayrollRun,
+  drawnFrom: readonly RecordReadAt[]
+): Promise<PayrollRun> {
   return drawRunHere(doors, { period: run.period, list: listOfRun(run) }, run, drawnFrom);
 }
 
@@ -301,7 +393,10 @@ export async function fileRunDrawnHere(doors: RunDrawDoors, run: PayrollRun, dra
 export const drawnFromIn = (view: Pick<CompanyView<unknown>, 'carried'>, list: RunList): readonly RecordReadAt[] => {
   const read = view.carried();
   const kind = list === 'vendors' ? 'vendor' : 'person';
-  return read.names().filter((n) => n.store === 'company' && n.kind === kind).map((name) => ({ name, version: read.versionOf(name)! }));
+  return read
+    .names()
+    .filter((n) => n.store === 'company' && n.kind === kind)
+    .map((name) => ({ name, version: read.versionOf(name)! }));
 };
 
 /** The run drawn earlier, once its month is read again and is still open for it; refused, with nothing filed, otherwise. */
@@ -322,7 +417,12 @@ const stillOpenFor = async (doors: RunDrawDoors, run: PayrollRun): Promise<Payro
  * company's key in force, signed with this seat's filing key, filed through the step's view and entered.
  * Returns the run as filed.
  */
-export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked, confirmed?: PayrollRun, drawnFrom: readonly RecordReadAt[] = []): Promise<PayrollRun> {
+export async function drawRunHere(
+  doors: RunDrawDoors,
+  asked: RunAsked,
+  confirmed?: PayrollRun,
+  drawnFrom: readonly RecordReadAt[] = []
+): Promise<PayrollRun> {
   const run = confirmed === undefined ? await runDrawnHere(doors, asked) : await stillOpenFor(doors, confirmed);
   const sealing = sealingWith(doors.viewingKey, doors.keyEpoch);
   const filing = signRunFiling(doors.accountId, sealedRunOf(run, sealing.key, sealing.epoch), doors.signingSecret);
@@ -334,12 +434,23 @@ export async function drawRunHere(doors: RunDrawDoors, asked: RunAsked, confirme
 }
 
 /** What a run pays and to whom, in order: each person's id, name, payslip key, slip, currency, amount, form and where they are paid. */
-const peopleOf = (run: PayrollRun): string => JSON.stringify(run.employees.map((e) => [
-  e.id, e.name, e.wrappingPublicKey ?? null, e.slip ?? null, e.asset, e.amount.toString(), e.form ?? null, e.paidTo ?? null,
-]));
+const peopleOf = (run: PayrollRun): string =>
+  JSON.stringify(
+    run.employees.map((e) => [
+      e.id,
+      e.name,
+      e.wrappingPublicKey ?? null,
+      e.slip ?? null,
+      e.asset,
+      e.amount.toString(),
+      e.form ?? null,
+      e.paidTo ?? null
+    ])
+  );
 
 /** Who a run sets aside, in order, and why. */
-const setAsideOf = (run: PayrollRun): string => JSON.stringify((run.skips?.people ?? []).map((p) => [p.employeeId, p.name, p.waiting]));
+const setAsideOf = (run: PayrollRun): string =>
+  JSON.stringify((run.skips?.people ?? []).map((p) => [p.employeeId, p.name, p.waiting]));
 
 /**
  * Whether `kept`, a run read back from the company's records, pays the same people as `drawn`, the run a person
@@ -347,5 +458,8 @@ const setAsideOf = (run: PayrollRun): string => JSON.stringify((run.skips?.peopl
  * same people set aside.
  */
 export const samePeopleAsDrawn = (kept: PayrollRun, drawn: PayrollRun): boolean =>
-  kept.id === drawn.id && kept.period === drawn.period && listOfRun(kept) === listOfRun(drawn) && peopleOf(kept) === peopleOf(drawn)
-  && setAsideOf(kept) === setAsideOf(drawn);
+  kept.id === drawn.id &&
+  kept.period === drawn.period &&
+  listOfRun(kept) === listOfRun(drawn) &&
+  peopleOf(kept) === peopleOf(drawn) &&
+  setAsideOf(kept) === setAsideOf(drawn);

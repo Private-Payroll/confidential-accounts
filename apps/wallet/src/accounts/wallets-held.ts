@@ -62,17 +62,17 @@ export const ORIGINAL_SLOT = '';
  * this wallet has opened or had kept, so it can refuse an older copy.
  */
 export type RecordKind =
-  | 'keyring'
-  | 'passkeys'
-  | 'secured'
-  | 'arrived'
-  | 'created'
-  | 'subwallets'
-  | 'wallet-name'
-  | 'keyring-marks';
+  'keyring' | 'passkeys' | 'secured' | 'arrived' | 'created' | 'subwallets' | 'wallet-name' | 'keyring-marks';
 
 export const RECORD_KINDS: readonly RecordKind[] = Object.freeze([
-  'keyring', 'passkeys', 'secured', 'arrived', 'created', 'subwallets', 'wallet-name', 'keyring-marks',
+  'keyring',
+  'passkeys',
+  'secured',
+  'arrived',
+  'created',
+  'subwallets',
+  'wallet-name',
+  'keyring-marks'
 ]);
 
 const PREFIX = 'midnight-identity';
@@ -83,9 +83,7 @@ const DIRECTORY = `${PREFIX}:wallets`;
 
 /** Where one wallet's record of a kind lives. The only key builder. */
 export function keyFor(walletId: string, kind: RecordKind): string {
-  return walletId === ORIGINAL_SLOT
-    ? `${PREFIX}:${kind}`
-    : `${PREFIX}:${SLOT_INFIX}:${walletId}:${kind}`;
+  return walletId === ORIGINAL_SLOT ? `${PREFIX}:${kind}` : `${PREFIX}:${SLOT_INFIX}:${walletId}:${kind}`;
 }
 
 /**
@@ -111,9 +109,7 @@ export function sealKeyFor(walletId: string): string {
  * turns destroying is a cold sync on every switch.
  */
 export function checkpointKeyFor(walletId: string): string {
-  return walletId === ORIGINAL_SLOT
-    ? 'balance-checkpoints'
-    : `balance-checkpoints:${walletId}`;
+  return walletId === ORIGINAL_SLOT ? 'balance-checkpoints' : `balance-checkpoints:${walletId}`;
 }
 
 /** What this browser knows about one wallet WITHOUT opening it. */
@@ -138,8 +134,7 @@ interface Directory {
   readonly openId: string | null;
 }
 
-const isNamed = (value: unknown): boolean =>
-  typeof value === 'string' && value.trim() !== '';
+const isNamed = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '';
 
 function parseDirectory(raw: string): Directory | null {
   let parsed: Directory;
@@ -195,7 +190,8 @@ function discoverSlots(): readonly string[] {
     }
   }
   const store = localStorage as unknown as {
-    length?: number; key?: (index: number) => string | null;
+    length?: number;
+    key?: (index: number) => string | null;
   };
   if (typeof store.length !== 'number' || typeof store.key !== 'function') {
     return [...found];
@@ -249,8 +245,7 @@ export function allocateWalletId(): string {
   if (!held.some((wallet) => wallet.id === ORIGINAL_SLOT)) return ORIGINAL_SLOT;
   let id = '';
   do {
-    id = [...crypto.getRandomValues(new Uint8Array(8))]
-      .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    id = [...crypto.getRandomValues(new Uint8Array(8))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   } while (held.some((wallet) => wallet.id === id));
   return id;
 }
@@ -265,9 +260,9 @@ export function allocateWalletId(): string {
 export function rememberWallet(id: string, fingerprint: string | null, now: number): void {
   const directory = readDirectory();
   const existing = heldWallets();
-  const wallets = existing.map((wallet) => (wallet.id === id
-    ? { ...wallet, fingerprint: fingerprint ?? wallet.fingerprint }
-    : wallet));
+  const wallets = existing.map((wallet) =>
+    wallet.id === id ? { ...wallet, fingerprint: fingerprint ?? wallet.fingerprint } : wallet
+  );
   if (!wallets.some((wallet) => wallet.id === id)) {
     wallets.push({ id, fingerprint, addedAt: now });
   }
@@ -294,9 +289,7 @@ export function claimFingerprint(id: string, fingerprint: string): void {
   if (wallet === null) return;
   if (wallet.fingerprint !== null) return;
   const directory = readDirectory();
-  const wallets = heldWallets().map((held) => (held.id === id
-    ? { ...held, fingerprint }
-    : held));
+  const wallets = heldWallets().map((held) => (held.id === id ? { ...held, fingerprint } : held));
   writeDirectory({ version: 1, wallets, openId: directory?.openId ?? null });
 }
 
@@ -306,7 +299,7 @@ export function claimFingerprint(id: string, fingerprint: string): void {
 export function forgetWallet(id: string): void {
   const directory = readDirectory();
   const wallets = heldWallets().filter((wallet) => wallet.id !== id);
-  const stillOpen = directory?.openId === id ? null : directory?.openId ?? null;
+  const stillOpen = directory?.openId === id ? null : (directory?.openId ?? null);
   writeDirectory({ version: 1, wallets, openId: stillOpen });
   /* AND THIS WINDOW STOPS POINTING AT IT. A window whose choice has just been
    * destroyed would otherwise go on reading and WRITING through a compartment

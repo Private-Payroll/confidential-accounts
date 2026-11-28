@@ -4,7 +4,12 @@ import { useText } from 'vaults-ui';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import { INDEXER_HTTP_URL, NETWORK } from '../config.js';
 import { accountBuilding } from '../chain/account-builder-client.js';
-import { liveRegistryReads, registryEntriesFound, type RegistryFind, type RegistryFinder } from '../chain/private-registry-on-chain.js';
+import {
+  liveRegistryReads,
+  registryEntriesFound,
+  type RegistryFind,
+  type RegistryFinder
+} from '../chain/private-registry-on-chain.js';
 
 /**
  * **THE COMPANIES A RECOVERED WALLET FINDS AGAIN IN ITS OWN REGISTRY ENTRIES**, listed once the recovery has opened the
@@ -26,26 +31,60 @@ function useFound(identity: Identity, find: RegistryFinder): Finding {
   useEffect(() => {
     let live = true;
     setFound({ of: 'reading' });
-    find(identity).then((f) => { if (live) setFound(f); }, () => { if (live) setFound({ of: 'failed' }); });
-    return () => { live = false; };
+    find(identity).then(
+      (f) => {
+        if (live) setFound(f);
+      },
+      () => {
+        if (live) setFound({ of: 'failed' });
+      }
+    );
+    return () => {
+      live = false;
+    };
   }, [identity, find]);
   return found;
 }
 
 /** What the recovered wallet found in its registry entries, as the person reads it. */
-export function CompaniesFoundAgain({ identity, find }: { readonly identity: Identity; readonly find: RegistryFinder }): ReactNode {
+export function CompaniesFoundAgain({
+  identity,
+  find
+}: {
+  readonly identity: Identity;
+  readonly find: RegistryFinder;
+}): ReactNode {
   const t = useText();
   const found = useFound(identity, find);
-  if (found.of === 'reading') return <p className="muted small" data-found-again="reading">{t('recover.found.reading')}</p>;
-  if (found.of === 'failed') return <p className="muted small" data-found-again="failed">{t('recover.found.failed')}</p>;
-  if (found.of === 'no-registries') return <p className="muted small" data-found-again="no-registries">{t('recover.found.no-registries', { network: found.network })}</p>;
+  if (found.of === 'reading')
+    return (
+      <p className="muted small" data-found-again="reading">
+        {t('recover.found.reading')}
+      </p>
+    );
+  if (found.of === 'failed')
+    return (
+      <p className="muted small" data-found-again="failed">
+        {t('recover.found.failed')}
+      </p>
+    );
+  if (found.of === 'no-registries')
+    return (
+      <p className="muted small" data-found-again="no-registries">
+        {t('recover.found.no-registries', { network: found.network })}
+      </p>
+    );
   return (
     <section className="card" aria-label={t('recover.found.title')} data-found-again="read">
       <h2>{t('recover.found.title')}</h2>
-      {found.companies.length === 0 && found.clashes.length === 0 && <p className="muted small">{t('recover.found.none')}</p>}
+      {found.companies.length === 0 && found.clashes.length === 0 && (
+        <p className="muted small">{t('recover.found.none')}</p>
+      )}
       {found.companies.map((c) => (
         <div key={`${c.label}|${c.account}`} data-found-company={c.fingerprint}>
-          <p><strong>{c.fingerprint}</strong></p>
+          <p>
+            <strong>{c.fingerprint}</strong>
+          </p>
           <p className="small">{t('recover.found.checked', { version: c.version })}</p>
         </div>
       ))}
@@ -53,10 +92,16 @@ export function CompaniesFoundAgain({ identity, find }: { readonly identity: Ide
       {found.clashes.map((c) => (
         <div key={c.label} data-found-clash={c.label}>
           <p className="warn-text small">{t('recover.found.clash')}</p>
-          {c.accounts.map((a) => <p key={a.account}><strong>{a.fingerprint}</strong></p>)}
+          {c.accounts.map((a) => (
+            <p key={a.account}>
+              <strong>{a.fingerprint}</strong>
+            </p>
+          ))}
         </div>
       ))}
-      {found.passedOver.length > 0 && <p className="faint small">{t('recover.found.passed-over', { count: found.passedOver.length })}</p>}
+      {found.passedOver.length > 0 && (
+        <p className="faint small">{t('recover.found.passed-over', { count: found.passedOver.length })}</p>
+      )}
     </section>
   );
 }

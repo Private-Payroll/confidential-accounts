@@ -23,7 +23,11 @@ const enc = new TextEncoder();
 const HEADER = { v2: 'midnight:verifier-key[v6]:', v3: 'midnight:verifier-key[v7]:' } as const;
 /** A made-up key behind a real key-file header for slot `slot`. */
 export const keyFile = (slot: keyof typeof HEADER, seed: number): Uint8Array =>
-  Uint8Array.from([...enc.encode(HEADER[slot]), 48 << 2, ...Array.from({ length: 48 }, (_, i) => (i * seed + 11) & 255)]);
+  Uint8Array.from([
+    ...enc.encode(HEADER[slot]),
+    48 << 2,
+    ...Array.from({ length: 48 }, (_, i) => (i * seed + 11) & 255)
+  ]);
 
 export const PUT = keyFile('v3', 3);
 export const ADOPT_V2 = keyFile('v2', 5);
@@ -33,14 +37,19 @@ export const STRANGER_V3 = keyFile('v3', 17);
 
 const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 /** The one released version these keys are. */
-export const VERSIONS: readonly ReleasedVersion[] = [{
-  version: 4, reachedFrom: [], openRunsFinishFirst: false, withdrawn: false,
-  keys: {
-    account: { adopt: { v2: hexOf(sha256(ADOPT_V2)), v3: hexOf(sha256(ADOPT_V3)) } },
-    vault: {},
-    registry: { put: { v3: hexOf(sha256(PUT)) } },
-  },
-}];
+export const VERSIONS: readonly ReleasedVersion[] = [
+  {
+    version: 4,
+    reachedFrom: [],
+    openRunsFinishFirst: false,
+    withdrawn: false,
+    keys: {
+      account: { adopt: { v2: hexOf(sha256(ADOPT_V2)), v3: hexOf(sha256(ADOPT_V3)) } },
+      vault: {},
+      registry: { put: { v3: hexOf(sha256(PUT)) } }
+    }
+  }
+];
 
 /**
  * A contract's state holding `ops` (each circuit's keys) and held by `owners` keys at `threshold`, as the indexer
@@ -64,29 +73,48 @@ export const SECOND_REGISTRY_STATE = stateHex({ put: [PUT] }, 0, 1, 1n);
 export const ACCOUNT_STATE = stateHex({ adopt: [ADOPT_V2, ADOPT_V3] });
 
 /** The leaves the words make for seat `n` of `label`, at the every-vault scope. */
-export const leafOf = (identity: Identity, label: CompanyLabel, n: number): string => seatAt(identity, label, n, ALL, MidnightCommitments).leaf;
+export const leafOf = (identity: Identity, label: CompanyLabel, n: number): string =>
+  seatAt(identity, label, n, ALL, MidnightCommitments).leaf;
 
 /** Seat `n` of `label` at `account`, as the person's entry names it. */
-export const entryFor = (label: CompanyLabel, account: string, n = 0): RegistryEntry => ({ label, account, n, scope: ALL });
+export const entryFor = (label: CompanyLabel, account: string, n = 0): RegistryEntry => ({
+  label,
+  account,
+  n,
+  scope: ALL
+});
 
 /** Who holds an account with `seats`, as the chain answers it. */
 export const holding = (seats: readonly string[]): HoldersOnChain => ({
   of: 'read',
   holders: {
-    committee: [], threshold: 1, seats, approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [],
-    founding: seats[0] ?? '00'.repeat(32), foundingCommittee: [],
-  },
+    committee: [],
+    threshold: 1,
+    seats,
+    approvals: 1,
+    vaultThresholds: [],
+    policyBar: null,
+    seatBar: 1,
+    adoptedVaults: [],
+    founding: seats[0] ?? '00'.repeat(32),
+    foundingCommittee: []
+  }
 });
 
 /** One registry: what it holds at each index of the person's tags. */
 export type Held = Readonly<Record<number, RegistryEntry | Uint8Array>>;
 
 /** The world one find reads: each registry and its entries, each account's state and seats, and what was asked. */
-export function registryWorld(identity: Identity, o: {
-  readonly registries: Readonly<Record<string, { readonly state: string; readonly held: Held }>>;
-  readonly accounts: Readonly<Record<string, { readonly label: CompanyLabel; readonly state: string; readonly seats: readonly string[] }>>;
-  readonly unread?: readonly string[];
-}) {
+export function registryWorld(
+  identity: Identity,
+  o: {
+    readonly registries: Readonly<Record<string, { readonly state: string; readonly held: Held }>>;
+    readonly accounts: Readonly<
+      Record<string, { readonly label: CompanyLabel; readonly state: string; readonly seats: readonly string[] }>
+    >;
+    readonly unread?: readonly string[];
+  }
+) {
   const asked = { states: [] as string[], tags: [] as number[] };
   const byState = new Map(Object.values(o.registries).map((r) => [r.state, r.held] as const));
   const indexOf = new Map(Array.from({ length: 200 }, (_, k) => [tagAt(identity, NETWORK, k), k] as const));
@@ -113,7 +141,7 @@ export function registryWorld(identity: Identity, o: {
         return at instanceof Uint8Array ? at : sealEntry(identity, NETWORK, i, at);
       });
     },
-    scheme: async () => MidnightCommitments,
+    scheme: async () => MidnightCommitments
   };
   return { reads, asked };
 }

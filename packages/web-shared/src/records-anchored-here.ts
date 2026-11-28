@@ -51,8 +51,17 @@ import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../.
 import { foundingRosterRefusal, ROSTER_ID } from '../../../src/core/roster-record.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import {
-  companyRecordEntry, directoryEntry, EMPTY_HEAD, ENTRIES_AT_ONCE, entryIdOf, proposalEntry, recordKeyOf, signManifestEntry,
-  supersededSaid, type BatchHolders, type ManifestEntry,
+  companyRecordEntry,
+  directoryEntry,
+  EMPTY_HEAD,
+  ENTRIES_AT_ONCE,
+  entryIdOf,
+  proposalEntry,
+  recordKeyOf,
+  signManifestEntry,
+  supersededSaid,
+  type BatchHolders,
+  type ManifestEntry
 } from '../../../src/midnight/record-manifest.js';
 import type { DirectoryFiling } from '../../../src/midnight/seat-directory.js';
 import type { DirectoryBelieved, LeavingBoundaries } from './vault-page-doors.js';
@@ -61,11 +70,29 @@ import { enteredOnThisPage, letGoOfEntered, type ManifestService, type TreeServi
 import { inParts } from './company-view-batch.js';
 import type { AccountCallChainOnTheWire, VaultBuilderClient } from './vault-worker-client.js';
 import type { SignerMaterial } from './private-state.js';
-import { keptWith, type CheckedHeadsStore, type DirectoryChangesKeptStore, type HeadersKeptStore } from './tree-kept-here.js';
+import {
+  keptWith,
+  type CheckedHeadsStore,
+  type DirectoryChangesKeptStore,
+  type HeadersKeptStore
+} from './tree-kept-here.js';
 import type { VouchedRunHere } from './run-rebuilt-here.js';
 import {
-  checkForward, GENESIS, headStepOf, leafHashOf, nextTreeHeader, provenRefusal, transitionStopSaid, treeBatchOf, treeKeyOf, type CheckedHead,
-  type HeadStep, type TransitionInput, type TransitionStop, type TreeHeader, type TreeLeaf,
+  checkForward,
+  GENESIS,
+  headStepOf,
+  leafHashOf,
+  nextTreeHeader,
+  provenRefusal,
+  transitionStopSaid,
+  treeBatchOf,
+  treeKeyOf,
+  type CheckedHead,
+  type HeadStep,
+  type TransitionInput,
+  type TransitionStop,
+  type TreeHeader,
+  type TreeLeaf
 } from '../../../src/midnight/record-tree.js';
 import { DIRECTORY, newestAnchored } from '../../../src/midnight/records-held.js';
 import { chainAfterARace, chainNowOf, freshViewAfter, heldHere, throughTheView } from './anchored-through-the-view.js';
@@ -137,7 +164,9 @@ export interface AnchorDoors {
     /** The company's proposals, as the service keeps them. */
     sealedProposals(accountId: string): Promise<readonly SealedProposal[]>;
     /** The first version of the company's state and of its roster, as the service keeps them; null for one it keeps none of. */
-    foundingRecords(accountId: string): Promise<{ readonly state: SealedCompanyRecord | null; readonly roster: SealedCompanyRecord | null }>;
+    foundingRecords(
+      accountId: string
+    ): Promise<{ readonly state: SealedCompanyRecord | null; readonly roster: SealedCompanyRecord | null }>;
   };
   readonly builder: Pick<VaultBuilderClient, 'anchorHeads' | 'anchor' | 'anchorTag'>;
   /** Where the proven anchor goes: through the service (the default), or straight to the chain from the person's wallet. */
@@ -181,10 +210,18 @@ const ANCHOR_SEND_WATCH_MS = 5_000;
  * on. `settled` stops the reads.
  */
 export const whereTheSendWent = (
-  doors: Pick<AnchorDoors, 'onChain' | 'watch'>, from: string, to: string, settled: { done: boolean },
+  doors: Pick<AnchorDoors, 'onChain' | 'watch'>,
+  from: string,
+  to: string,
+  settled: { done: boolean }
 ): Promise<'landed' | 'superseded'> => {
   const everyMs = doors.watch?.everyMs ?? ANCHOR_SEND_WATCH_MS;
-  const sleep = doors.watch?.sleep ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
+  const sleep =
+    doors.watch?.sleep ??
+    ((ms: number) =>
+      new Promise<void>((r) => {
+        setTimeout(r, ms);
+      }));
   return (async () => {
     for (;;) {
       await sleep(everyMs);
@@ -202,12 +239,15 @@ export const whereTheSendWent = (
  * saying what resolves it, when the wallet named none.
  */
 export const anchorsOnChainAt = async (
-  builder: Pick<VaultBuilderClient, 'anchorsOnChain'>, account: string,
-  indexer: { readonly indexerUri: string; readonly indexerWsUri: string } | null,
+  builder: Pick<VaultBuilderClient, 'anchorsOnChain'>,
+  account: string,
+  indexer: { readonly indexerUri: string; readonly indexerWsUri: string } | null
 ): Promise<AnchorsOnChain> => {
   if (indexer === null) {
-    throw new Error('your wallet did not name the indexer it reads the chain through, so the company\'s anchor on chain was not read. '
-      + 'Open your wallet, check its network, and reload the page');
+    throw new Error(
+      "your wallet did not name the indexer it reads the chain through, so the company's anchor on chain was not read. " +
+        'Open your wallet, check its network, and reload the page'
+    );
   }
   return builder.anchorsOnChain({ account, indexer });
 };
@@ -227,10 +267,16 @@ const ANCHOR_ATTEMPTS = 3;
 
 /** Every directory version the manifest does not name yet, entered by this seat as their witness. */
 async function directoryWitnessed(doors: AnchorDoors): Promise<void> {
-  const [filings, [named]] = await Promise.all([doors.directoryFilings(), doors.manifest.newest(doors.accountId, [DIRECTORY])]);
-  const owed = filings.filter((f) => f.version > (named ?? 0)).sort((a, b) => a.version - b.version)
+  const [filings, [named]] = await Promise.all([
+    doors.directoryFilings(),
+    doors.manifest.newest(doors.accountId, [DIRECTORY])
+  ]);
+  const owed = filings
+    .filter((f) => f.version > (named ?? 0))
+    .sort((a, b) => a.version - b.version)
     .map((f) => signManifestEntry(doors.accountId, directoryEntry(f), doors.material.signingSecret as Hex));
-  for (let i = 0; i < owed.length; i += ENTRIES_AT_ONCE) await doors.manifest.enter(doors.accountId, owed.slice(i, i + ENTRIES_AT_ONCE));
+  for (let i = 0; i < owed.length; i += ENTRIES_AT_ONCE)
+    await doors.manifest.enter(doors.accountId, owed.slice(i, i + ENTRIES_AT_ONCE));
 }
 
 /**
@@ -247,10 +293,17 @@ async function ownProposalsEntered(doors: AnchorDoors): Promise<void> {
   const owed: ManifestEntry[] = [];
   for (let i = 0; i < proposals.length; i += ENTRIES_AT_ONCE * 4) {
     const some = proposals.slice(i, i + ENTRIES_AT_ONCE * 4);
-    const versions = await doors.manifest.newest(doors.accountId, some.map((p) => ({ store: 'proposal' as const, kind: 'proposal', id: p.id })));
-    some.forEach((p, j) => { if ((versions[j] ?? 0) === 0) owed.push(signManifestEntry(doors.accountId, proposalEntry(doors.accountId, p), secret)); });
+    const versions = await doors.manifest.newest(
+      doors.accountId,
+      some.map((p) => ({ store: 'proposal' as const, kind: 'proposal', id: p.id }))
+    );
+    some.forEach((p, j) => {
+      if ((versions[j] ?? 0) === 0)
+        owed.push(signManifestEntry(doors.accountId, proposalEntry(doors.accountId, p), secret));
+    });
   }
-  for (let i = 0; i < owed.length; i += ENTRIES_AT_ONCE) await doors.manifest.enter(doors.accountId, owed.slice(i, i + ENTRIES_AT_ONCE));
+  for (let i = 0; i < owed.length; i += ENTRIES_AT_ONCE)
+    await doors.manifest.enter(doors.accountId, owed.slice(i, i + ENTRIES_AT_ONCE));
 }
 
 /**
@@ -268,8 +321,9 @@ async function foundingRecordsEntered(doors: AnchorDoors): Promise<void> {
   const founding = await doors.service.foundingRecords(company);
   const owed = [
     founding.state !== null && foundingStateRefusal(founding.state, company, mine) === null ? founding.state : null,
-    founding.roster !== null && foundingRosterRefusal(founding.roster, company, mine) === null ? founding.roster : null,
-  ].filter((r): r is SealedCompanyRecord => r !== null)
+    founding.roster !== null && foundingRosterRefusal(founding.roster, company, mine) === null ? founding.roster : null
+  ]
+    .filter((r): r is SealedCompanyRecord => r !== null)
     .map((r) => signManifestEntry(company, companyRecordEntry(r), secret));
   if (owed.length > 0) await doors.manifest.enter(company, owed);
 }
@@ -282,17 +336,29 @@ async function foundingRecordsEntered(doors: AnchorDoors): Promise<void> {
  * Null when they hold both, or when something is anchored already.
  */
 const firstAnchorRefusal = (
-  doors: AnchorDoors, head: Hex,
-  records: ReadonlyArray<{ readonly store: string; readonly kind: string; readonly id: string; readonly version: number; readonly filer: string }>,
+  doors: AnchorDoors,
+  head: Hex,
+  records: ReadonlyArray<{
+    readonly store: string;
+    readonly kind: string;
+    readonly id: string;
+    readonly version: number;
+    readonly filer: string;
+  }>
 ): string | null => {
   if (head !== EMPTY_HEAD) return null;
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
-  const held = (kind: 'state' | 'roster', id: string) => records.some((e) => e.store === 'company' && e.kind === kind
-    && e.id === id && e.version === 1 && e.filer.toLowerCase() === mine);
+  const held = (kind: 'state' | 'roster', id: string) =>
+    records.some(
+      (e) =>
+        e.store === 'company' && e.kind === kind && e.id === id && e.version === 1 && e.filer.toLowerCase() === mine
+    );
   if (held('state', stateRecordId(FOUNDING_KEY_EPOCH)) && held('roster', ROSTER_ID)) return null;
-  return 'the company\'s first anchor holds the records it was founded with - its first state and its first roster - entered by '
-    + 'its founding signer\'s device, and this device did not enter them. Nothing was sent. The company\'s founding signer\'s '
-    + 'next action in their wallet anchors them';
+  return (
+    "the company's first anchor holds the records it was founded with - its first state and its first roster - entered by " +
+    "its founding signer's device, and this device did not enter them. Nothing was sent. The company's founding signer's " +
+    'next action in their wallet anchors them'
+  );
 };
 
 /**
@@ -302,11 +368,18 @@ const firstAnchorRefusal = (
  * entries were entered before them, and its header names the directory version
  * the seat anchoring it is read from.
  */
-const foundingFirstWhileNothingIsAnchored = (doors: AnchorDoors, head: Hex, entries: readonly ManifestEntry[]): readonly ManifestEntry[] => {
+const foundingFirstWhileNothingIsAnchored = (
+  doors: AnchorDoors,
+  head: Hex,
+  entries: readonly ManifestEntry[]
+): readonly ManifestEntry[] => {
   if (head !== EMPTY_HEAD) return entries;
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
-  const founding = (e: ManifestEntry) => e.store === 'company' && e.version === 1 && e.filedBy.publicKey.toLowerCase() === mine
-    && ((e.kind === 'state' && e.id === stateRecordId(FOUNDING_KEY_EPOCH)) || (e.kind === 'roster' && e.id === ROSTER_ID));
+  const founding = (e: ManifestEntry) =>
+    e.store === 'company' &&
+    e.version === 1 &&
+    e.filedBy.publicKey.toLowerCase() === mine &&
+    ((e.kind === 'state' && e.id === stateRecordId(FOUNDING_KEY_EPOCH)) || (e.kind === 'roster' && e.id === ROSTER_ID));
   const first = (e: ManifestEntry) => e.store === 'directory' || founding(e);
   return [...entries.filter(first), ...entries.filter((e) => !first(e))];
 };
@@ -345,16 +418,21 @@ async function ownFilingsEntered(doors: AnchorDoors): Promise<string[]> {
   const names = [...new Map(own.map((e) => [recordKeyOf(e), { store: e.store, kind: e.kind, id: e.id }])).values()];
   const versions = await inParts(names, (part) => doors.manifest.newest(company, part));
   const newest = new Map(names.map((r, i) => [recordKeyOf(r), versions[i] ?? 0] as const));
-  const superseded = own.filter((e) => (newest.get(recordKeyOf(e)) ?? 0) > e.version)
+  const superseded = own
+    .filter((e) => (newest.get(recordKeyOf(e)) ?? 0) > e.version)
     .map((e) => supersededSaid(e, newest.get(recordKeyOf(e))!));
   letGoOfEntered(company, (e) => (newest.get(recordKeyOf(e)) ?? 0) > e.version);
   const missing = own.filter((e) => (newest.get(recordKeyOf(e)) ?? 0) < e.version);
   if (missing.length === 0) return superseded;
   try {
-    for (let i = 0; i < missing.length; i += ENTRIES_AT_ONCE) await doors.manifest.enter(company, missing.slice(i, i + ENTRIES_AT_ONCE));
+    for (let i = 0; i < missing.length; i += ENTRIES_AT_ONCE)
+      await doors.manifest.enter(company, missing.slice(i, i + ENTRIES_AT_ONCE));
   } catch (e) {
-    throw new AnchorNotMade(`${missing.length} filing(s) this device made were not in the company's records and could not be entered `
-      + `again (${(e as Error)?.message ?? String(e)}). Reload the page and anchor again`, { cause: e });
+    throw new AnchorNotMade(
+      `${missing.length} filing(s) this device made were not in the company's records and could not be entered ` +
+        `again (${(e as Error)?.message ?? String(e)}). Reload the page and anchor again`,
+      { cause: e }
+    );
   }
   return superseded;
 }
@@ -366,13 +444,19 @@ async function ownFilingsEntered(doors: AnchorDoors): Promise<string[]> {
  */
 const ownFilingsLeftOut = (doors: AnchorDoors, read: ReadHere): string | null => {
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
-  const still = enteredOnThisPage(doors.accountId).filter((e) => e.filedBy.publicKey.toLowerCase() === mine
-    && !read.pending.has(entryIdOf(e)) && newestAnchored(read.records, e) < e.version);
+  const still = enteredOnThisPage(doors.accountId).filter(
+    (e) =>
+      e.filedBy.publicKey.toLowerCase() === mine &&
+      !read.pending.has(entryIdOf(e)) &&
+      newestAnchored(read.records, e) < e.version
+  );
   if (still.length === 0) return null;
   const e = still[0]!;
-  return `the service keeps leaving version ${e.version} of ${e.store} record ${e.id}, which this device filed and entered, out of `
-    + `the company's records${still.length > 1 ? `, and ${still.length - 1} more` : ''}, so it would never be anchored. Nothing was `
-    + 'sent. Reload the page; if it happens again, the service is withholding it';
+  return (
+    `the service keeps leaving version ${e.version} of ${e.store} record ${e.id}, which this device filed and entered, out of ` +
+    `the company's records${still.length > 1 ? `, and ${still.length - 1} more` : ''}, so it would never be anchored. Nothing was ` +
+    'sent. Reload the page; if it happens again, the service is withholding it'
+  );
 };
 
 /** What one attempt came to: what it anchored, nothing to anchor, or raced - another device anchored first or the holders moved. */
@@ -389,8 +473,10 @@ export async function anchorTheRecordsHere(doors: AnchorDoors): Promise<Anchored
     const done = await anchorAttempt(throughTheView(doors), attempt + 1 < ANCHOR_ATTEMPTS);
     if (done !== 'raced') return done;
   }
-  throw new AnchorNotMade(`other devices anchored the company's records first, or who holds the company's account changed, ${ANCHOR_ATTEMPTS} times running. `
-    + 'What was anchored is believed; reload the page to anchor what is left');
+  throw new AnchorNotMade(
+    `other devices anchored the company's records first, or who holds the company's account changed, ${ANCHOR_ATTEMPTS} times running. ` +
+      'What was anchored is believed; reload the page to anchor what is left'
+  );
 }
 
 /** One attempt: what this device owes entered, the records read, and the batch made, kept, filed and sent. `mayRetry` while attempts are left. */
@@ -410,16 +496,28 @@ async function anchorAttempt(doors: AnchorDoors, mayRetry: boolean): Promise<Att
   const leftOut = ownFilingsLeftOut(doors, read);
   if (leftOut !== null) throw new AnchorNotMade(leftOut);
   if (records.notYetAnchored.length === 0) return { anchored: 0, head: records.head, ...told };
-  const first = firstAnchorRefusal(doors, records.head, records.notYetAnchored.map((e) => ({ ...e, filer: e.filedBy.publicKey })));
+  const first = firstAnchorRefusal(
+    doors,
+    records.head,
+    records.notYetAnchored.map((e) => ({ ...e, filer: e.filedBy.publicKey }))
+  );
   if (first !== null) throw new AnchorNotMade(first);
   /* Who holds the account as this device judges the batch: what the history shows now, which must be what the wallet read. */
   const judged = read.now.now;
   const wallet = new Set(read.here.holders.seats.map((x) => x.toLowerCase()));
-  if (judged.approvals !== read.here.holders.approvals || read.now.seatsNow.length !== wallet.size
-    || read.now.seatsNow.some((x) => !wallet.has(x.toLowerCase()))) {
-    if (mayRetry) { freshViewAfter(doors, 'who holds the company was read otherwise by the wallet and the account\'s history'); return 'raced'; }
-    throw new AnchorNotMade('who holds the company\'s account, as your wallet read it, is not what the account\'s history at its '
-      + 'indexer shows yet. Nothing was sent. Wait for your wallet to catch up, then reload the page and anchor again');
+  if (
+    judged.approvals !== read.here.holders.approvals ||
+    read.now.seatsNow.length !== wallet.size ||
+    read.now.seatsNow.some((x) => !wallet.has(x.toLowerCase()))
+  ) {
+    if (mayRetry) {
+      freshViewAfter(doors, "who holds the company was read otherwise by the wallet and the account's history");
+      return 'raced';
+    }
+    throw new AnchorNotMade(
+      "who holds the company's account, as your wallet read it, is not what the account's history at its " +
+        'indexer shows yet. Nothing was sent. Wait for your wallet to catch up, then reload the page and anchor again'
+    );
   }
   const made = await batchMadeHere(doors, read, judged);
   if (made === null) return { anchored: 0, head: records.head, ...told };
@@ -428,24 +526,52 @@ async function anchorAttempt(doors: AnchorDoors, mayRetry: boolean): Promise<Att
 
 /** **THE BATCH THIS ATTEMPT ANCHORS**: its header made from the read, kept on this device and filed before anything is sent. */
 async function batchMadeHere(
-  doors: AnchorDoors, read: ReadHere, judged: BatchHolders,
+  doors: AnchorDoors,
+  read: ReadHere,
+  judged: BatchHolders
 ): Promise<{ readonly header: TreeHeader; readonly batch: ReturnType<typeof treeBatchOf> } | null> {
   const company = doors.accountId;
   const secret = doors.material.signingSecret as Hex;
   const { records } = read;
   /* The tag this seat anchors under, as the account's call will work it out: the header names it, and the head binds it. */
-  const tag = await doors.builder.anchorTag({ account: String(read.here.holders.account), material: doors.material }) as Hex;
-  const made = await treeHeaderHere({
-    accountId: company, tree: doors.tree, signingSecret: secret, held: judged, tag, at: (doors.now ?? (() => new Date()))(),
-  }, records.reached, foundingFirstWhileNothingIsAnchored(doors, records.head, eachRecordInVersionOrder(records.notYetAnchored)).slice(0, ENTRIES_AT_ONCE));
+  const tag = (await doors.builder.anchorTag({
+    account: String(read.here.holders.account),
+    material: doors.material
+  })) as Hex;
+  const made = await treeHeaderHere(
+    {
+      accountId: company,
+      tree: doors.tree,
+      signingSecret: secret,
+      held: judged,
+      tag,
+      at: (doors.now ?? (() => new Date()))()
+    },
+    records.reached,
+    foundingFirstWhileNothingIsAnchored(doors, records.head, eachRecordInVersionOrder(records.notYetAnchored)).slice(
+      0,
+      ENTRIES_AT_ONCE
+    )
+  );
   if (made === null) return null;
   const { header } = made;
-  const firstBatch = firstAnchorRefusal(doors, records.head, header.changes.map((c) => ({ ...c.leaf, filer: c.leaf.filedBy })));
+  const firstBatch = firstAnchorRefusal(
+    doors,
+    records.head,
+    header.changes.map((c) => ({ ...c.leaf, filer: c.leaf.filedBy }))
+  );
   if (firstBatch !== null) throw new AnchorNotMade(firstBatch);
   const batch = treeBatchOf(header);
   /* Kept on this device first, with what checking it needs, so a header the service loses is filed again from here. */
   const olderGiven = new Map(made.older.map((l) => [leafHashOf(l), l] as const));
-  await doors.headers?.signed(company, keptWith(header, (id) => records.notYetAnchored.find((e) => entryIdOf(e) === id), (h) => olderGiven.get(h)));
+  await doors.headers?.signed(
+    company,
+    keptWith(
+      header,
+      (id) => records.notYetAnchored.find((e) => entryIdOf(e) === id),
+      (h) => olderGiven.get(h)
+    )
+  );
   /* Kept before the call is sent, so a header the chain takes is never one no device was given. */
   await doors.tree.fileHeader(company, header);
   return { header, batch };
@@ -453,26 +579,44 @@ async function batchMadeHere(
 
 /** **THE ANCHOR CALL PROVEN AND SENT** from the head read, and where the head went: anchored, or raced when the head or the holders moved. */
 async function anchorSent(
-  doors: AnchorDoors, head: Hex, header: TreeHeader, batch: ReturnType<typeof treeBatchOf>, judged: BatchHolders, told: Pick<Anchored, 'superseded'>,
+  doors: AnchorDoors,
+  head: Hex,
+  header: TreeHeader,
+  batch: ReturnType<typeof treeBatchOf>,
+  judged: BatchHolders,
+  told: Pick<Anchored, 'superseded'>
 ): Promise<Attempted> {
   const company = doors.accountId;
   const held = { approvals: header.held.approvals, signerRoot: header.held.signerRoot };
   try {
     const chain = await doors.service.callState(company);
-    const { tx } = await doors.builder.anchor({ account: chain.account, material: doors.material, chain, previous: head, batch, held });
+    const { tx } = await doors.builder.anchor({
+      account: chain.account,
+      material: doors.material,
+      chain,
+      previous: head,
+      batch,
+      held
+    });
     const after = await doors.builder.anchorHeads({ after: [headStepOf(header)] });
     const ours = after.after[0]! as Hex;
     /* The send's answer, or where the head went while it gave none: a call the head moved past is not waited on. */
     const settled = { done: false };
     const went = await Promise.race([
       handedOver(doors.handOver, {
-        tx, call: { kind: 'account-call', contract: chain.account, circuit: 'anchor' },
+        tx,
+        call: { kind: 'account-call', contract: chain.account, circuit: 'anchor' },
         viaService: () => doors.service.sendProven(company, tx),
-        after: async () => undefined,
+        after: async () => undefined
       }).then(() => 'answered' as const),
-      whereTheSendWent({ ...doors, onChain: chainNowOf(doors) }, head, ours, settled),
-    ]).finally(() => { settled.done = true; });
-    if (went === 'superseded') throw new Error('the head moved on while this anchor was being sent: another anchor of its head landed, or this one did and another after it');
+      whereTheSendWent({ ...doors, onChain: chainNowOf(doors) }, head, ours, settled)
+    ]).finally(() => {
+      settled.done = true;
+    });
+    if (went === 'superseded')
+      throw new Error(
+        'the head moved on while this anchor was being sent: another anchor of its head landed, or this one did and another after it'
+      );
     const sent = new Set(header.changes.map((c) => c.leaf.entryId));
     letGoOfEntered(company, (e) => sent.has(entryIdOf(e)));
     return { anchored: header.changes.length, head: ours, ...told };
@@ -482,10 +626,19 @@ async function anchorSent(
      * device judged the batch - either way the account refused the call with no change, and this device reads again
      * and anchors again. Neither moved: the refusal is something else, and it is said.
      */
-    const again = await chainAfterARace(doors, 'the anchor was not sent as it was made, so it is judged again from a fresh read');
-    const moved = headOn(again.landed) !== head || again.now.approvals !== judged.approvals
-      || again.now.signerRoot !== judged.signerRoot;
-    if (!moved) throw new AnchorNotMade(`the anchor was not sent (${(e as Error)?.message ?? String(e)}). Reload the page and anchor again`, { cause: e });
+    const again = await chainAfterARace(
+      doors,
+      'the anchor was not sent as it was made, so it is judged again from a fresh read'
+    );
+    const moved =
+      headOn(again.landed) !== head ||
+      again.now.approvals !== judged.approvals ||
+      again.now.signerRoot !== judged.signerRoot;
+    if (!moved)
+      throw new AnchorNotMade(
+        `the anchor was not sent (${(e as Error)?.message ?? String(e)}). Reload the page and anchor again`,
+        { cause: e }
+      );
     return 'raced';
   }
 }
@@ -515,7 +668,9 @@ export interface FullCheckDoors {
  * service withholds what the chain holds, and `dishonest` at a header given
  * whole that fails, naming the key that signed it.
  */
-export async function fullCheckHere(doors: FullCheckDoors): Promise<{ readonly reached: CheckedHead; readonly stop: TransitionStop | null }> {
+export async function fullCheckHere(
+  doors: FullCheckDoors
+): Promise<{ readonly reached: CheckedHead; readonly stop: TransitionStop | null }> {
   const company = doors.accountId;
   const { landed } = await doors.onChain();
   const kept = await doors.checked.read(company);
@@ -530,15 +685,21 @@ export async function fullCheckHere(doors: FullCheckDoors): Promise<{ readonly r
   let progress = own ? kept : await doors.checked.read(where);
   const chainHead = landed.length === 0 ? GENESIS.head : landed[landed.length - 1]!.head.toLowerCase();
   const r = await checkForward({
-    company, from: progress?.fromZero ?? GENESIS, landed: new Set(landed.map((l) => l.head.toLowerCase())), chainHead,
+    company,
+    from: progress?.fromZero ?? GENESIS,
+    landed: new Set(landed.map((l) => l.head.toLowerCase())),
+    chainHead,
     headersAfter: (seq, limit) => doors.tree.headersAfter(company, seq, limit),
-    headsOf: doors.headsOf, seatOf: doors.seatOf, pageSize: doors.pageSize,
+    headsOf: doors.headsOf,
+    seatOf: doors.seatOf,
+    pageSize: doors.pageSize,
     keep: async (c) => {
       progress = keptAfter(progress, c, true);
       await doors.checked.write(where, progress);
-    },
+    }
   });
-  if (!own && r.stop === null && r.reached.head === chainHead && progress !== null) await doors.checked.write(company, progress);
+  if (!own && r.stop === null && r.reached.head === chainHead && progress !== null)
+    await doors.checked.write(company, progress);
   return r;
 }
 
@@ -556,28 +717,52 @@ const FULL_CHECK_APART = '#checked-from-the-first';
  */
 export async function treeHeaderHere(
   doors: {
-    readonly accountId: string; readonly tree: TreeService; readonly signingSecret: Hex; readonly held: BatchHolders; readonly at: Date;
+    readonly accountId: string;
+    readonly tree: TreeService;
+    readonly signingSecret: Hex;
+    readonly held: BatchHolders;
+    readonly at: Date;
     /** The tag this seat anchors under (`anchorTagOf`): the header names it, and the head the call makes binds it. */
     readonly tag: Hex;
     /** For a recovery: the head the chain holds now and the salt its proposal was raised with; `before` is where it resumes. */
     readonly recovery?: { readonly previous: Hex; readonly salt: Hex };
   },
-  before: CheckedHead, entries: readonly ManifestEntry[],
-): Promise<{ readonly header: TreeHeader; readonly leftOut: readonly ManifestEntry[]; readonly older: readonly TreeLeaf[] } | null> {
+  before: CheckedHead,
+  entries: readonly ManifestEntry[]
+): Promise<{
+  readonly header: TreeHeader;
+  readonly leftOut: readonly ManifestEntry[];
+  readonly older: readonly TreeLeaf[];
+} | null> {
   const records = [...new Map(entries.map((e) => [treeKeyOf(e), { store: e.store, kind: e.kind, id: e.id }])).values()];
   const given = await doors.tree.proofs(doors.accountId, { root: before.root, records, kinds: [] });
   if (given === null) {
-    throw new AnchorNotMade('the service keeps no header that makes the root this device checked last. Nothing was sent. Reload the page; '
-      + 'if it happens again, the service is withholding the company\'s records');
+    throw new AnchorNotMade(
+      'the service keeps no header that makes the root this device checked last. Nothing was sent. Reload the page; ' +
+        "if it happens again, the service is withholding the company's records"
+    );
   }
   const leaves = records.map((r, i) => ({ name: r, leaf: given.records[i] ?? null }));
   const why = provenRefusal(before.root, { records: leaves }, given.proof);
-  if (why !== null) throw new AnchorNotMade(`${why}. Nothing was sent. Reload the page; if it happens again, the service is changing the company's records`);
+  if (why !== null)
+    throw new AnchorNotMade(
+      `${why}. Nothing was sent. Reload the page; if it happens again, the service is changing the company's records`
+    );
   const older = new Map(given.older.map((l) => [leafHashOf(l), l] as const));
-  const made = nextTreeHeader({
-    company: doors.accountId, before, entries, current: new Map(leaves.map((l) => [treeKeyOf(l.name), l.leaf])), proof: given.proof,
-    priorChain: (h) => older.get(h), held: doors.held, at: doors.at.toISOString(), tag: doors.tag,
-    ...(doors.recovery === undefined ? {} : { recovery: doors.recovery }),
-  }, doors.signingSecret);
+  const made = nextTreeHeader(
+    {
+      company: doors.accountId,
+      before,
+      entries,
+      current: new Map(leaves.map((l) => [treeKeyOf(l.name), l.leaf])),
+      proof: given.proof,
+      priorChain: (h) => older.get(h),
+      held: doors.held,
+      at: doors.at.toISOString(),
+      tag: doors.tag,
+      ...(doors.recovery === undefined ? {} : { recovery: doors.recovery })
+    },
+    doors.signingSecret
+  );
   return made === null ? null : { ...made, older: [...older.values()] };
 }

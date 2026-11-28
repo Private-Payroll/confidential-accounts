@@ -13,28 +13,49 @@ import type { CompanyChain } from '../actions/company-reach.js';
  * account's record of payments and of its roles that a payment out of a vault
  * is checked against.
  */
-export function liveCompanyChain(indexer: { readonly indexerUri: string; readonly indexerWsUri: string }): CompanyChain {
+export function liveCompanyChain(indexer: {
+  readonly indexerUri: string;
+  readonly indexerWsUri: string;
+}): CompanyChain {
   let reader: ReturnType<typeof publicDataProviderFor> | null = null;
   return Object.freeze({
     indexer,
     holders: async (account: AccountAddress, label: CompanyLabel) => {
-      const read = await holdersOnChain(account, label, fromIndexerAt(indexer.indexerUri), deployFromIndexerAt(indexer.indexerUri));
+      const read = await holdersOnChain(
+        account,
+        label,
+        fromIndexerAt(indexer.indexerUri),
+        deployFromIndexerAt(indexer.indexerUri)
+      );
       if (read.of === 'read') return { ...read.holders, account } as AccountHoldersRead;
       return { key: `act.company.why.${read.of}` };
     },
     payments: async (account: AccountAddress, label: CompanyLabel, entries: readonly string[]) => {
-      const read = await holdersOnChain(account, label, fromIndexerAt(indexer.indexerUri), deployFromIndexerAt(indexer.indexerUri), entries);
+      const read = await holdersOnChain(
+        account,
+        label,
+        fromIndexerAt(indexer.indexerUri),
+        deployFromIndexerAt(indexer.indexerUri),
+        entries
+      );
       if (read.of === 'read' && read.payments !== undefined) return read.payments;
       return { key: `act.company.why.${read.of === 'read' ? 'unreadable' : read.of}` };
     },
     roles: async (account: AccountAddress, label: CompanyLabel, keys: readonly string[]) => {
-      const read = await holdersOnChain(account, label, fromIndexerAt(indexer.indexerUri), deployFromIndexerAt(indexer.indexerUri), undefined, keys);
+      const read = await holdersOnChain(
+        account,
+        label,
+        fromIndexerAt(indexer.indexerUri),
+        deployFromIndexerAt(indexer.indexerUri),
+        undefined,
+        keys
+      );
       if (read.of === 'read' && read.roles !== undefined) return read.roles;
       return { key: `act.company.why.${read.of === 'read' ? 'unreadable' : read.of}` };
     },
     callState: async (account: AccountAddress) => {
       reader ??= publicDataProviderFor(indexer);
       return accountCallChainOf(await accountAtOneBlockOver(await reader, account));
-    },
+    }
   });
 }

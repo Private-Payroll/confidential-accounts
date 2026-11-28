@@ -1,8 +1,6 @@
 import type { WalletFacade } from '@midnightntwrk/wallet-sdk';
 import type { BalancingRecipe, CombinedTokenTransfer } from '@midnightntwrk/wallet-sdk-facade';
-import {
-  MidnightBech32m, ShieldedAddress, UnshieldedAddress,
-} from '@midnightntwrk/wallet-sdk-address-format';
+import { MidnightBech32m, ShieldedAddress, UnshieldedAddress } from '@midnightntwrk/wallet-sdk-address-format';
 import { nativeToken, shieldedToken } from '@midnightntwrk/ledger-v9';
 import { TTL_SETTLE_MARGIN_MS, outcomeOfAnswer } from './pending.js';
 import type { ChainAnswer, PendingOutcome } from './pending.js';
@@ -49,14 +47,21 @@ export function sendRun(onState: (state: SendState) => void): SendRun {
    * record in storage keeps the question alive either way — the home screen
    * and every future start resolve it without being asked). */
   let watcher: ReturnType<typeof setInterval> | null = null;
-  const stopWatching = (): void => { if (watcher) { clearInterval(watcher); watcher = null; } };
+  const stopWatching = (): void => {
+    if (watcher) {
+      clearInterval(watcher);
+      watcher = null;
+    }
+  };
 
   /* THE ENGINE'S OWN CLOCK. Every working stage re-announces itself
    * every second with its elapsed time, from here, not from the SDK: the
    * lesson taught is that the SDK does not always report its own
    * silence, so the wallet must. */
   let ticker: ReturnType<typeof setInterval> | null = null;
-  const tell = (state: SendState): void => { if (!detached) onState(state); };
+  const tell = (state: SendState): void => {
+    if (!detached) onState(state);
+  };
   const enterStage = (stage: SendStage): void => {
     if (ticker) clearInterval(ticker);
     const startedAt = Date.now();
@@ -65,18 +70,38 @@ export function sendRun(onState: (state: SendState) => void): SendRun {
       tell({ name: 'working', stage, forMs: Date.now() - startedAt });
     }, 1_000);
   };
-  const leaveStages = (): void => { if (ticker) { clearInterval(ticker); ticker = null; } };
+  const leaveStages = (): void => {
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+  };
 
   return {
-    tell, enterStage, leaveStages, stopWatching,
-    choice: () => (decided !== null ? Promise.resolve(decided) : new Promise<'confirm' | 'cancel'>((resolve) => {
-      decide = resolve;
-    })),
-    decideAs: (choice) => { decided = choice; decide?.(choice); },
-    detach: () => { detached = true; leaveStages(); stopWatching(); },
+    tell,
+    enterStage,
+    leaveStages,
+    stopWatching,
+    choice: () =>
+      decided !== null
+        ? Promise.resolve(decided)
+        : new Promise<'confirm' | 'cancel'>((resolve) => {
+            decide = resolve;
+          }),
+    decideAs: (choice) => {
+      decided = choice;
+      decide?.(choice);
+    },
+    detach: () => {
+      detached = true;
+      leaveStages();
+      stopWatching();
+    },
     detached: () => detached,
     watching: () => watcher !== null,
-    watchEvery: (ask, everyMs) => { watcher = setInterval(ask, everyMs); },
+    watchEvery: (ask, everyMs) => {
+      watcher = setInterval(ask, everyMs);
+    }
   };
 }
 
@@ -95,12 +120,16 @@ export interface Confirmed {
  * transaction's time-to-live for a send that never happened.
  */
 const readOrRelease = async <T>(
-  facade: WalletFacade, booked: Parameters<WalletFacade['revert']>[0], read: () => T,
+  facade: WalletFacade,
+  booked: Parameters<WalletFacade['revert']>[0],
+  read: () => T
 ): Promise<T> => {
   try {
     return read();
   } catch (e) {
-    await facade.revert(booked).catch(() => { /* release is best effort; the refusal still tells */ });
+    await facade.revert(booked).catch(() => {
+      /* release is best effort; the refusal still tells */
+    });
     throw e;
   }
 };
@@ -108,30 +137,36 @@ const readOrRelease = async <T>(
 const outputOf = (plan: SendPlan): CombinedTokenTransfer => {
   return plan.recipient.kind === 'unshielded'
     ? {
-      type: 'unshielded' as const,
-      outputs: [{
-        type: nativeToken().raw,
-        receiverAddress: MidnightBech32m.parse(plan.recipient.bech32)
-          .decode(UnshieldedAddress, String(MidnightBech32m.parse(plan.recipient.bech32).network)),
-        amount: plan.stars,
-      }],
-    }
+        type: 'unshielded' as const,
+        outputs: [
+          {
+            type: nativeToken().raw,
+            receiverAddress: MidnightBech32m.parse(plan.recipient.bech32).decode(
+              UnshieldedAddress,
+              String(MidnightBech32m.parse(plan.recipient.bech32).network)
+            ),
+            amount: plan.stars
+          }
+        ]
+      }
     : {
-      type: 'shielded' as const,
-      outputs: [{
-        type: shieldedToken().raw,
-        receiverAddress: MidnightBech32m.parse(plan.recipient.address.bech32)
-          .decode(ShieldedAddress, plan.recipient.address.network),
-        amount: plan.stars,
-      }],
-    };
+        type: 'shielded' as const,
+        outputs: [
+          {
+            type: shieldedToken().raw,
+            receiverAddress: MidnightBech32m.parse(plan.recipient.address.bech32).decode(
+              ShieldedAddress,
+              plan.recipient.address.network
+            ),
+            amount: plan.stars
+          }
+        ]
+      };
 };
 
 /** Balances the payment, reads back what it will do and asks the person;
  * null when it was refused or cancelled. */
-export async function balancedAndConfirmed(
-  run: SendRun, doors: SendDoors, plan: SendPlan,
-): Promise<Confirmed | null> {
+export async function balancedAndConfirmed(run: SendRun, doors: SendDoors, plan: SendPlan): Promise<Confirmed | null> {
   const { tell, enterStage, leaveStages } = run;
   /* THE DOUBLE-SEND GUARD — the oldest money-loss shape in
    * this product: a person who believes a payment failed sends
@@ -141,11 +176,12 @@ export async function balancedAndConfirmed(
   if (doors.pending?.duplicateUnresolved(recipientBech32(plan.recipient), plan.stars)) {
     tell({
       name: 'refused',
-      message: 'this exact payment — the same recipient, the same amount — was '
-        + 'already handed to the network and its outcome is not known yet. '
-        + 'Sending it again now is how money gets sent twice. This wallet is '
-        + 'watching the first attempt (the home screen carries it); when it '
-        + 'settles as sent or failed, this payment can be made again.',
+      message:
+        'this exact payment — the same recipient, the same amount — was ' +
+        'already handed to the network and its outcome is not known yet. ' +
+        'Sending it again now is how money gets sent twice. This wallet is ' +
+        'watching the first attempt (the home screen carries it); when it ' +
+        'settles as sent or failed, this payment can be made again.'
     });
     return null;
   }
@@ -155,9 +191,10 @@ export async function balancedAndConfirmed(
   const facade = await doors.facade();
   const before = await facade.waitForSyncedState();
   const now = facade.clock.now();
-  const nightBefore = plan.recipient.kind === 'unshielded'
-    ? before.unshielded.balances[nativeToken().raw] ?? 0n
-    : before.shielded.balances[shieldedToken().raw] ?? 0n;
+  const nightBefore =
+    plan.recipient.kind === 'unshielded'
+      ? (before.unshielded.balances[nativeToken().raw] ?? 0n)
+      : (before.shielded.balances[shieldedToken().raw] ?? 0n);
   const dustBefore = before.dust.balance(now);
 
   /* BALANCING — the facade builds and balances in one call
@@ -186,12 +223,15 @@ export async function balancedAndConfirmed(
      * defect in this wallet, and no person should be asked to approve
      * a defect. The booked coins are released before refusing. */
     if (stars !== plan.stars) {
-      await facade.revert(recipe).catch(() => { /* release is best effort */ });
+      await facade.revert(recipe).catch(() => {
+        /* release is best effort */
+      });
       tell({
         name: 'refused',
-        message: 'the transaction this wallet built does not pay what was asked: '
-          + `the form said ${plan.stars} STARs and the transaction says ${stars}. `
-          + 'That is a defect in this wallet, nothing was sent, and no money moved.',
+        message:
+          'the transaction this wallet built does not pay what was asked: ' +
+          `the form said ${plan.stars} STARs and the transaction says ${stars}. ` +
+          'That is a defect in this wallet, nothing was sent, and no money moved.'
       });
       return null;
     }
@@ -207,7 +247,7 @@ export async function balancedAndConfirmed(
     nightBefore,
     nightAfter: nightBefore - stars,
     dustBefore,
-    dustAfter: dustBefore - feeSpecks,
+    dustAfter: dustBefore - feeSpecks
   };
 
   /* CONFIRM — a person decides. Nothing is signed, proved or sent yet,
@@ -217,7 +257,9 @@ export async function balancedAndConfirmed(
   tell({ name: 'confirm', facts });
   const choice = await run.choice();
   if (choice === 'cancel') {
-    await facade.revert(recipe).catch(() => { /* release is best effort */ });
+    await facade.revert(recipe).catch(() => {
+      /* release is best effort */
+    });
     tell({ name: 'cancelled' });
     return null;
   }
@@ -233,7 +275,9 @@ export interface Proven {
 /** Signs, counts the signatures, proves and checks the payment; null when it
  * stopped, with the coins released. */
 export async function authorisedAndProven(
-  run: SendRun, doors: SendDoors, { facade, recipe }: Confirmed,
+  run: SendRun,
+  doors: SendDoors,
+  { facade, recipe }: Confirmed
 ): Promise<Proven | null> {
   const { tell, enterStage, leaveStages } = run;
   /* SIGNING, and the reason this stage exists at all.
@@ -261,11 +305,14 @@ export async function authorisedAndProven(
     signed = await facade.signRecipe(recipe, doors.signSegment());
   } catch (e) {
     leaveStages();
-    await facade.revert(recipe).catch(() => { /* release is best effort */ });
+    await facade.revert(recipe).catch(() => {
+      /* release is best effort */
+    });
     tell({
       name: 'refused',
-      message: `this payment could not be authorised: ${describeFailure(e)}. `
-        + 'Nothing was sent and no money moved; the coins are released.',
+      message:
+        `this payment could not be authorised: ${describeFailure(e)}. ` +
+        'Nothing was sent and no money moved; the coins are released.'
     });
     return null;
   }
@@ -280,13 +327,16 @@ export async function authorisedAndProven(
   const unsigned = unsignedUnshieldedInputs(signed);
   if (unsigned > 0) {
     leaveStages();
-    await facade.revert(recipe).catch(() => { /* release is best effort */ });
+    await facade.revert(recipe).catch(() => {
+      /* release is best effort */
+    });
     tell({
       name: 'refused',
-      message: `this wallet built a payment with ${unsigned} unshielded `
-        + `${unsigned === 1 ? 'input that carries' : 'inputs that carry'} no `
-        + 'signature, and the chain refuses such a transaction. That is a defect '
-        + 'in this wallet. Nothing was sent and no money moved.',
+      message:
+        `this wallet built a payment with ${unsigned} unshielded ` +
+        `${unsigned === 1 ? 'input that carries' : 'inputs that carry'} no ` +
+        'signature, and the chain refuses such a transaction. That is a defect ' +
+        'in this wallet. Nothing was sent and no money moved.'
     });
     return null;
   }
@@ -305,8 +355,9 @@ export async function authorisedAndProven(
     leaveStages();
     tell({
       name: 'refused',
-      message: `the proof could not be built: ${describeFailure(e)}. Nothing was `
-        + 'sent and no money moved; the coins are released.',
+      message:
+        `the proof could not be built: ${describeFailure(e)}. Nothing was ` +
+        'sent and no money moved; the coins are released.'
     });
     return null;
   }
@@ -318,15 +369,18 @@ export async function authorisedAndProven(
   try {
     await facade.validateTransaction(finalized, {
       flags: { enforceBalancing: true, verifySignatures: true, enforceLimits: true },
-      blockData: signed.blockData ?? recipe.blockData,
+      blockData: signed.blockData ?? recipe.blockData
     });
   } catch (e) {
     leaveStages();
-    await facade.revert(finalized).catch(() => { /* release is best effort */ });
+    await facade.revert(finalized).catch(() => {
+      /* release is best effort */
+    });
     tell({
       name: 'refused',
-      message: `the finished transaction failed its own pre-flight check: `
-        + `${describeFailure(e)}. It was NOT submitted; nothing moved.`,
+      message:
+        `the finished transaction failed its own pre-flight check: ` +
+        `${describeFailure(e)}. It was NOT submitted; nothing moved.`
     });
     return null;
   }
@@ -336,8 +390,13 @@ export async function authorisedAndProven(
 /** Writes the payment down before the network is touched; false, with the
  * coins released and the screen told, when it could not be written. */
 async function writtenDownFirst(
-  run: SendRun, doors: SendDoors, plan: SendPlan, { facade, facts }: Pick<Confirmed, 'facade' | 'facts'>,
-  finalized: Proven['finalized'], identifiers: string[], ttlAt: number,
+  run: SendRun,
+  doors: SendDoors,
+  plan: SendPlan,
+  { facade, facts }: Pick<Confirmed, 'facade' | 'facts'>,
+  finalized: Proven['finalized'],
+  identifiers: string[],
+  ttlAt: number
 ): Promise<boolean> {
   const { tell, leaveStages } = run;
   /* WRITTEN DOWN FIRST — synchronously, before the network is touched.
@@ -352,17 +411,20 @@ async function writtenDownFirst(
         recipientBech32: recipientBech32(plan.recipient),
         stars: facts.stars,
         feeSpecks: facts.feeSpecks,
-        ttlAt,
+        ttlAt
       });
     } catch (e) {
       leaveStages();
-      await facade.revert(finalized).catch(() => { /* release is best effort */ });
+      await facade.revert(finalized).catch(() => {
+        /* release is best effort */
+      });
       tell({
         name: 'refused',
-        message: 'this payment could not be written down before submission '
-          + `(${describeFailure(e)}), and a payment this wallet cannot remember is one `
-          + 'it must not make: if the tab died mid-send, nobody would ever know '
-          + 'to ask whether the money moved. It was NOT submitted; nothing moved.',
+        message:
+          'this payment could not be written down before submission ' +
+          `(${describeFailure(e)}), and a payment this wallet cannot remember is one ` +
+          'it must not make: if the tab died mid-send, nobody would ever know ' +
+          'to ask whether the money moved. It was NOT submitted; nothing moved.'
       });
       return false;
     }
@@ -372,7 +434,11 @@ async function writtenDownFirst(
 
 /** Writes the payment down, submits it and watches the chain until it has an answer. */
 export async function submittedAndWatched(
-  run: SendRun, doors: SendDoors, plan: SendPlan, { facade, facts, ttl }: Confirmed, { finalized }: Proven,
+  run: SendRun,
+  doors: SendDoors,
+  plan: SendPlan,
+  { facade, facts, ttl }: Confirmed,
+  { finalized }: Proven
 ): Promise<void> {
   const { tell, enterStage, leaveStages, stopWatching } = run;
   /* SUBMITTING — and the middle. From here on "nothing moved" can stop
@@ -392,7 +458,7 @@ export async function submittedAndWatched(
   const identifiers = await readOrRelease(facade, finalized, () => identifiersOf(finalized));
   const ttlAt = ttl.getTime();
   const pendingKey = identifiers[0] ?? '';
-  if (!await writtenDownFirst(run, doors, plan, { facade, facts }, finalized, identifiers, ttlAt)) return;
+  if (!(await writtenDownFirst(run, doors, plan, { facade, facts }, finalized, identifiers, ttlAt))) return;
 
   /* THE WATCH: once the outcome is in doubt, the engine asks
    * the chain by identifier until an answer exists, on its own clock,
@@ -405,13 +471,19 @@ export async function submittedAndWatched(
   const settleAs = (outcome: PendingOutcome): void => {
     stopWatching();
     leaveStages();
-    try { doors.pending?.settle(pendingKey, outcome); } catch { /* the state below still tells */ }
+    try {
+      doors.pending?.settle(pendingKey, outcome);
+    } catch {
+      /* the state below still tells */
+    }
     if (outcome.name === 'sent') {
       tell({ name: 'sent', txId: pendingKey, facts: sendFacts });
     } else {
       tell({
-        name: 'failed', identifiers, facts: sendFacts,
-        message: `this payment did not go through: ${outcome.reason}`,
+        name: 'failed',
+        identifiers,
+        facts: sendFacts,
+        message: `this payment did not go through: ${outcome.reason}`
       });
     }
   };
@@ -426,15 +498,22 @@ export async function submittedAndWatched(
         for (const identifier of identifiers) {
           try {
             const found = await doors.transactionStatus!(identifier);
-            if (found.found) { answer = found; break; }
+            if (found.found) {
+              answer = found;
+              break;
+            }
             answer ??= found;
-          } catch { /* silence is not an answer; ask again next round */ }
+          } catch {
+            /* silence is not an answer; ask again next round */
+          }
         }
         if (answer !== null && run.watching()) {
           const outcome = outcomeOfAnswer({ ttlAt }, answer, Date.now(), settleMargin);
           if (outcome) settleAs(outcome);
         }
-      })().finally(() => { asking = false; });
+      })().finally(() => {
+        asking = false;
+      });
     }, doors.watchEveryMs ?? 15_000);
   };
 
@@ -445,14 +524,15 @@ export async function submittedAndWatched(
       identifiers,
       facts: sendFacts,
       stillWaiting: true,
-      message: `the network has not answered in ${Math.round(quietMs / 1000)} `
-        + 'seconds. The transaction was signed, proved and handed over, so it may '
-        + 'be on its way, already accepted, or lost — this wallet does not know '
-        + 'YET, and it keeps asking the chain by identifier until it does; the '
-        + 'payment is also written down and carried on the home screen, so the '
-        + 'answer arrives even if this screen is closed. Do not send this '
-        + 'payment again — the wallet will refuse it while this one is '
-        + 'unresolved.',
+      message:
+        `the network has not answered in ${Math.round(quietMs / 1000)} ` +
+        'seconds. The transaction was signed, proved and handed over, so it may ' +
+        'be on its way, already accepted, or lost — this wallet does not know ' +
+        'YET, and it keeps asking the chain by identifier until it does; the ' +
+        'payment is also written down and carried on the home screen, so the ' +
+        'answer arrives even if this screen is closed. Do not send this ' +
+        'payment again — the wallet will refuse it while this one is ' +
+        'unresolved.'
     });
     startWatching();
   }, quietMs);
@@ -461,7 +541,11 @@ export async function submittedAndWatched(
     clearTimeout(quiet);
     stopWatching();
     leaveStages();
-    try { doors.pending?.settle(pendingKey, { name: 'sent', at: Date.now() }); } catch { /* told below */ }
+    try {
+      doors.pending?.settle(pendingKey, { name: 'sent', at: Date.now() });
+    } catch {
+      /* told below */
+    }
     tell({ name: 'sent', txId, facts: sendFacts });
   } catch (e) {
     clearTimeout(quiet);
@@ -470,15 +554,16 @@ export async function submittedAndWatched(
       identifiers,
       facts: sendFacts,
       stillWaiting: true,
-      message: `the submission failed after the proof succeeded: ${describeFailure(e)}. `
-        + 'Whether the money moved is NOT KNOWN from here YET: a transaction can '
-        + 'reach the network and the answer be lost. The balances on the home '
-        + 'screen may show the money still here — that is this wallet’s own '
-        + 'bookkeeping being reset, not the chain’s answer. This wallet keeps '
-        + 'asking the chain by identifier until the answer exists — sent, or '
-        + 'failed with nothing moved — and the payment is written down and '
-        + 'carried on the home screen either way. Do not send this payment '
-        + 'again; the wallet will refuse it while this one is unresolved.',
+      message:
+        `the submission failed after the proof succeeded: ${describeFailure(e)}. ` +
+        'Whether the money moved is NOT KNOWN from here YET: a transaction can ' +
+        'reach the network and the answer be lost. The balances on the home ' +
+        'screen may show the money still here — that is this wallet’s own ' +
+        'bookkeeping being reset, not the chain’s answer. This wallet keeps ' +
+        'asking the chain by identifier until the answer exists — sent, or ' +
+        'failed with nothing moved — and the payment is written down and ' +
+        'carried on the home screen either way. Do not send this payment ' +
+        'again; the wallet will refuse it while this one is unresolved.'
     });
     startWatching();
   }

@@ -16,7 +16,11 @@ import { heldStateFromTheStart, type HeldStateDeps } from '../src/midnight/held-
 import type { AuthorityRead, OnChainAuthority } from '../src/midnight/contract-authority-read.js';
 import { authorityShapeOf } from '../src/midnight/contract-authority-read.js';
 import {
-  NO_OWNER, REGISTRY_CIRCUITS, afterSendingRefusal, registryAuthorityRefusal, registryDeployMissing,
+  NO_OWNER,
+  REGISTRY_CIRCUITS,
+  afterSendingRefusal,
+  registryAuthorityRefusal,
+  registryDeployMissing
 } from './deploy-registry-rules.js';
 import { blank } from './contract-sources.mjs';
 
@@ -26,20 +30,29 @@ const KEY = { tag: 'schnorr', value: 'cd'.repeat(32) };
 
 /** A deploy builder whose constructor made nothing but its state, so the assembly can be read without keys. */
 const deps: HeldStateDeps = {
-  ledger: L, runtimeState: runtime.ContractState, network: 'undeployed',
+  ledger: L,
+  runtimeState: runtime.ContractState,
+  network: 'undeployed',
   contracts: {
     buildDeploy: async () => ({
       public: { contractAddress: ADDRESS, initialContractState: new runtime.ContractState() },
-      private: { unprovenTx: { protocolVersion: 0n, stage: 'Unproven' } as never, transaction: {}, newCoins: [] },
-    }),
-  },
+      private: { unprovenTx: { protocolVersion: 0n, stage: 'Unproven' } as never, transaction: {}, newCoins: [] }
+    })
+  }
 };
 const assembled = (holders: Parameters<typeof heldStateFromTheStart>[1]['holders']) =>
   heldStateFromTheStart(deps, { compiled: null, zkConfig: null, args: [], circuits: [], holders });
 
 const read = (committee: OnChainAuthority['committee'], threshold: number): AuthorityRead => ({
-  state: 'read', address: ADDRESS,
-  authority: { committee, threshold, counter: 0n, shape: authorityShapeOf(committee, threshold), hasDuplicateMembers: false },
+  state: 'read',
+  address: ADDRESS,
+  authority: {
+    committee,
+    threshold,
+    counter: 0n,
+    shape: authorityShapeOf(committee, threshold),
+    hasDuplicateMembers: false
+  }
 });
 
 describe('the holders the registry is deployed under', () => {
@@ -58,34 +71,48 @@ describe('the holders the registry is deployed under', () => {
 
   it('are the only holders with no keys the assembly builds: a copy made anywhere else is refused', async () => {
     /* RED WHEN: the assembly accepts no keys from any holders that look like the no-owner value, rather than from that value alone. */
-    await expect(assembled({ committee: [], threshold: 1, emptyCommitteeIsDeliberate: true } as never))
-      .rejects.toThrow(/this maintenance authority will not be built/u);
+    await expect(assembled({ committee: [], threshold: 1, emptyCommitteeIsDeliberate: true } as never)).rejects.toThrow(
+      /this maintenance authority will not be built/u
+    );
     await expect(assembled({ ...NO_OWNER } as never)).rejects.toThrow(/this maintenance authority will not be built/u);
-    await expect(assembled({ ...NO_OWNER, threshold: 2 } as never)).rejects.toThrow(/this maintenance authority will not be built/u);
+    await expect(assembled({ ...NO_OWNER, threshold: 2 } as never)).rejects.toThrow(
+      /this maintenance authority will not be built/u
+    );
   });
 });
 
 describe('every other contract born held keeps its keys', () => {
-  it('refuses no keys from holders that do not say it is meant, as an account\'s and a vault\'s never do', async () => {
+  it("refuses no keys from holders that do not say it is meant, as an account's and a vault's never do", async () => {
     /* RED WHEN: the assembly treats every empty committee as meant, so an account or a vault could be born held by no one. */
-    await expect(assembled({ committee: [], threshold: 1 })).rejects.toThrow(/this maintenance authority will not be built/u);
+    await expect(assembled({ committee: [], threshold: 1 })).rejects.toThrow(
+      /this maintenance authority will not be built/u
+    );
   });
 
-  it('names the no-owner holders in the code of no product file but where they are made, the registry\'s rules and its door', () => {
+  it("names the no-owner holders in the code of no product file but where they are made, the registry's rules and its door", () => {
     const SKIP = new Set(['node_modules', 'dist', 'lib', 'build', 'public', 'coverage']);
-    const product = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((n) => {
-      const rel = join(dir, n);
-      if (SKIP.has(n) || n.startsWith('.') || n.startsWith('managed') || n.startsWith('probe')) return [];
-      if (statSync(join(ROOT, rel)).isDirectory()) return product(rel);
-      return /\.(ts|tsx|mjs|cjs|js)$/u.test(n) && !/\.test\.|test-support|\.d\.ts$/u.test(n) ? [rel] : [];
-    });
+    const product = (dir: string): string[] =>
+      readdirSync(join(ROOT, dir)).flatMap((n) => {
+        const rel = join(dir, n);
+        if (SKIP.has(n) || n.startsWith('.') || n.startsWith('managed') || n.startsWith('probe')) return [];
+        if (statSync(join(ROOT, rel)).isDirectory()) return product(rel);
+        return /\.(ts|tsx|mjs|cjs|js)$/u.test(n) && !/\.test\.|test-support|\.d\.ts$/u.test(n) ? [rel] : [];
+      });
     const files = ['src', 'scripts', 'apps', 'packages', 'contracts'].flatMap(product);
     const code = (f: string) => blank(readFileSync(join(ROOT, f), 'utf8'), false);
     /* RED WHEN: an account's or a vault's deploy passes holders that say no keys is meant, with the key quoted or not. */
     expect(files.filter((f) => /['"]?emptyCommitteeIsDeliberate['"]?\s*:\s*true\b/u.test(code(f)))).toEqual([]);
     /* RED WHEN: anything but the registry's rules and its door reaches the no-owner holders. */
-    expect(files.filter((f) => /\bNO_OWNER\b/u.test(code(f))).map((f) => relative('.', f)).sort())
-      .toEqual(['scripts/deploy-registry-rules.ts', 'scripts/deploy-registry.ts', 'src/midnight/held-from-the-start.ts']);
+    expect(
+      files
+        .filter((f) => /\bNO_OWNER\b/u.test(code(f)))
+        .map((f) => relative('.', f))
+        .sort()
+    ).toEqual([
+      'scripts/deploy-registry-rules.ts',
+      'scripts/deploy-registry.ts',
+      'src/midnight/held-from-the-start.ts'
+    ]);
   });
 });
 
@@ -102,8 +129,12 @@ describe('the authority read back from the chain after the deploy', () => {
 
   it('is refused when it could not be read at all', () => {
     /* RED WHEN: a read-back that found nothing, or could not ask, is taken as a pass. */
-    expect(registryAuthorityRefusal({ state: 'absent', address: ADDRESS, why: 'not yet indexed' })).toMatch(/could not be read back/u);
-    expect(registryAuthorityRefusal({ state: 'unreachable', address: ADDRESS, why: 'no answer' })).toMatch(/could not be read back/u);
+    expect(registryAuthorityRefusal({ state: 'absent', address: ADDRESS, why: 'not yet indexed' })).toMatch(
+      /could not be read back/u
+    );
+    expect(registryAuthorityRefusal({ state: 'unreachable', address: ADDRESS, why: 'no answer' })).toMatch(
+      /could not be read back/u
+    );
   });
 });
 
@@ -112,7 +143,11 @@ describe('what the door needs before it spends anything', () => {
     expect(registryDeployMissing({ fundedSeed: true, keys: true, proofServer: true })).toBeNull();
     const all = registryDeployMissing({ fundedSeed: false, keys: false, proofServer: false }) ?? '';
     /* RED WHEN: a missing seed, missing keys or a silent proof server is not named before the fee is spent. */
-    expect([/funded wallet seed/u, /proving and verifier keys/u, /no proof server/u].map((r) => r.test(all))).toEqual([true, true, true]);
+    expect([/funded wallet seed/u, /proving and verifier keys/u, /no proof server/u].map((r) => r.test(all))).toEqual([
+      true,
+      true,
+      true
+    ]);
   });
 });
 
@@ -145,7 +180,7 @@ describe('a failure after the deploy is sent', () => {
 });
 
 describe('the door deploys only keys built from this code in the default format', () => {
-  it('asks the version fingerprint whether the registry\'s keys are current, not only whether they exist', () => {
+  it("asks the version fingerprint whether the registry's keys are current, not only whether they exist", () => {
     const door = blank(readFileSync(join(ROOT, 'scripts/deploy-registry.ts'), 'utf8'), false);
     /* RED WHEN: the door counts key files on disk as enough, so keys from older code or another format are deployed. */
     expect(door).toMatch(/keys: current\(ROOT, CONTRACT_TABLE\.registry\.compiled, '\.keys-version'\) === 0/u);

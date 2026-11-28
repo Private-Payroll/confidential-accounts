@@ -11,8 +11,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  runKeyOf, payeeBlindingOf, payRecordNonceOf, runSecrets, currentPayoutSeed, payoutSeedAt,
-  type PayoutSeed, type RunIdentity,
+  runKeyOf,
+  payeeBlindingOf,
+  payRecordNonceOf,
+  runSecrets,
+  currentPayoutSeed,
+  payoutSeedAt,
+  type PayoutSeed,
+  type RunIdentity
 } from '../../src/midnight/run-keys.js';
 import { payFor, TEST_PAY_KEY } from '../../src/testing/payees.js';
 import { buildRun, buildRetryRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
@@ -22,7 +28,7 @@ import { toHex } from '../../src/core/crypto.js';
 
 const seeds: PayoutSeed[] = [
   { epoch: 0, seed: 'a'.repeat(64) },
-  { epoch: 1, seed: 'b'.repeat(64) },
+  { epoch: 1, seed: 'b'.repeat(64) }
 ];
 
 const ID: RunIdentity = { accountId: 'acct-1', runId: 'payroll-2026-09', epoch: 0 };
@@ -34,7 +40,7 @@ const staff = (n: number): PaymentFacts[] =>
   Array.from({ length: n }, (_, i) => ({
     payee: payeeFor(new Uint8Array(32).fill(i + 1), 'undeployed'),
     token: TOKEN,
-    amount: BigInt(1_000 + i),
+    amount: BigInt(1_000 + i)
   }));
 
 /*
@@ -113,11 +119,13 @@ describe('a run is derived, not generated', () => {
   });
 
   it('refuses a run whose records do not name every payment', () => {
-    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(2)), TOKEN))
-      .toThrow(/3 payments and says what 2 of them are for/);
+    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(2)), TOKEN)).toThrow(
+      /3 payments and says what 2 of them are for/
+    );
     /* And one record too many: a record that names nobody's payment is a record nobody checked. */
-    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(4)), TOKEN))
-      .toThrow(/3 payments and says what 4 of them are for/);
+    expect(() => buildRun(seeds, ID, staff(3), detailsOf, payFor(staff(4)), TOKEN)).toThrow(
+      /3 payments and says what 4 of them are for/
+    );
   });
 
   it('a run raised BEFORE a rotation is still rebuildable AFTER it', () => {
@@ -132,14 +140,15 @@ describe('a run is derived, not generated', () => {
     expect(rebuilt.tree.root).toBe(before.tree.root);
   });
 
-  it('refuses to guess when the run\'s epoch is not in the account\'s seeds', () => {
+  it("refuses to guess when the run's epoch is not in the account's seeds", () => {
     /*
      * Falling back to the current seed would derive different leaves for a run
      * that already has approvals against the old ones — every payment refused,
      * with nothing to say why.
      */
-    expect(() => buildRun(seeds, { ...ID, epoch: 7 }, staff(2), detailsOf, payFor(staff(2)), TOKEN))
-      .toThrow(/no payout seed for epoch 7/i);
+    expect(() => buildRun(seeds, { ...ID, epoch: 7 }, staff(2), detailsOf, payFor(staff(2)), TOKEN)).toThrow(
+      /no payout seed for epoch 7/i
+    );
   });
 
   it('every payee gets a different nonce, and a nonce is never a blinding', () => {
@@ -153,7 +162,7 @@ describe('a run is derived, not generated', () => {
     expect(all.size).toBe(40);
   });
 
-  it('KNOWING PAID PAYEES\' NONCES GIVES NOTHING AWAY, which is what stops a watcher claiming the next payee', () => {
+  it("KNOWING PAID PAYEES' NONCES GIVES NOTHING AWAY, which is what stops a watcher claiming the next payee", () => {
     /*
      * A payment publishes its payee's nonce. If the schedule leaked, one paid
      * employee would hand a watcher the rest of the payroll's secrets — and a
@@ -243,13 +252,14 @@ describe('a run is derived, not generated', () => {
      */
     const payKey = '11'.repeat(32);
     const record = { person: 'emp_vector', month: '2026-09', kind: 'salary', occurrence: 0 };
-    expect(payRecordNonceOf(payKey, record))
-      .toBe('686847efc17a04ee4227fec5dee53433f5fc355bd5bc728c3718b09d496028d4');
-    expect(payRecordNonceOf(payKey, { ...record, occurrence: 1 }))
-      .toBe('61762ebda1b077598fe0be4dc06703a118e806cbab6bc7394fabdd15c7dea677');
+    expect(payRecordNonceOf(payKey, record)).toBe('686847efc17a04ee4227fec5dee53433f5fc355bd5bc728c3718b09d496028d4');
+    expect(payRecordNonceOf(payKey, { ...record, occurrence: 1 })).toBe(
+      '61762ebda1b077598fe0be4dc06703a118e806cbab6bc7394fabdd15c7dea677'
+    );
     /* Two digits, so an occurrence is not being truncated or read as one character. */
-    expect(payRecordNonceOf(payKey, { ...record, month: '2026-10', occurrence: 12 }))
-      .toBe('94313ee91c2b6c4d65e6d68f813c3316ce485a7f305d6d8cf6bb78e83d8da67a');
+    expect(payRecordNonceOf(payKey, { ...record, month: '2026-10', occurrence: 12 })).toBe(
+      '94313ee91c2b6c4d65e6d68f813c3316ce485a7f305d6d8cf6bb78e83d8da67a'
+    );
   });
 
   it('refuses a run with nobody in it, and a negative payee index', () => {

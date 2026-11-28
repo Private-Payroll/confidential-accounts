@@ -36,13 +36,20 @@ import { companyLabelBytes, readCompanyLabel } from 'midnight-identity/profile/c
 import type { Hex } from '../../../src/core/crypto.js';
 import { type EventOnTheWire, indexForSpend } from '../../../src/midnight/note-index.js';
 import {
-  type Note, type PaymentsFitAnswer, paymentsFitAnswer, type VaultNotes, withIndexRead, witnessesOver,
+  type Note,
+  type PaymentsFitAnswer,
+  paymentsFitAnswer,
+  type VaultNotes,
+  withIndexRead,
+  witnessesOver
 } from '../../../src/midnight/vault-notes.js';
 import { changeCoinOf } from '../../../src/midnight/vault-coins.js';
 import { payeeAddress, unshieldedPayeeAddress } from '../../../src/midnight/payee-address.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
 import {
-  pathFromWire, type PrivatePaymentOnTheWire, type PrivatePaymentOrderOnTheWire,
+  pathFromWire,
+  type PrivatePaymentOnTheWire,
+  type PrivatePaymentOrderOnTheWire
 } from '../../../src/midnight/private-payment-wire.js';
 import { notePlaces } from '../../../src/midnight/vault-step-notes.js';
 import { STEP_LIMITS } from '../../../src/midnight/payment-plan.js';
@@ -53,11 +60,19 @@ import { PUBLIC_DEPOSIT_ENTRY, type PublicDepositCallRefusal, readPublicDepositC
 import { DIGITS, noteFromWire, type NoteOnTheWire, servedFromWire } from './vault-notes-wire.js';
 export { newestTimeToLive, readTransaction, type TransactionRead } from './transaction-read-here.js';
 export {
-  confirmPayment, DIGITS, type NoteOnTheWire, notesForPayment, noteToWire, type PaymentConfirmation,
-  poolAfterPayment,
+  confirmPayment,
+  DIGITS,
+  type NoteOnTheWire,
+  notesForPayment,
+  noteToWire,
+  type PaymentConfirmation,
+  poolAfterPayment
 } from './vault-notes-wire.js';
 
-export interface SigningKeyLike { readonly tag: string; readonly value: string }
+export interface SigningKeyLike {
+  readonly tag: string;
+  readonly value: string;
+}
 
 export interface VaultBuilderDeps {
   /** `@midnightntwrk/ledger-v9`. */
@@ -93,7 +108,11 @@ export const throwawayKeys = (deps: Pick<VaultBuilderDeps, 'ledger' | 'random'>)
   const keys = deps.ledger.ZswapSecretKeys.fromSeed(seed);
   const out = { coinPublicKey: keys.coinPublicKey, encryptionPublicKey: keys.encryptionPublicKey };
   seed.fill(0);
-  try { keys.clear?.(); } catch { /* nothing to clear */ }
+  try {
+    keys.clear?.();
+  } catch {
+    /* nothing to clear */
+  }
   return out;
 };
 
@@ -102,19 +121,23 @@ export const throwawayKeys = (deps: Pick<VaultBuilderDeps, 'ledger' | 'random'>)
  * the handover, and the page is given it for exactly that.
  */
 export async function buildVaultDeploy(
-  deps: VaultBuilderDeps, input: { readonly account: string },
+  deps: VaultBuilderDeps,
+  input: { readonly account: string }
 ): Promise<{ vault: string; temporaryKey: SigningKeyLike; proven: Uint8Array }> {
   const account = input.account.toLowerCase();
-  if (!HEX64.test(account)) throw new Error('a vault is pinned to its company\'s account address, and this is not one.');
+  if (!HEX64.test(account)) throw new Error("a vault is pinned to its company's account address, and this is not one.");
   const random = deps.random ?? ((n: number) => crypto.getRandomValues(new Uint8Array(n)));
   const secret = random(32);
   const temporaryKey = deps.ledger.signingKeyFromBip340(secret) as SigningKeyLike;
   secret.fill(0);
   const keys = throwawayKeys(deps);
   const built = await deps.contracts.buildDeploy(
-    deps.zkConfig, keys.coinPublicKey,
+    deps.zkConfig,
+    keys.coinPublicKey,
     { compiledContract: deps.compiled, args: [{ bytes: fromHex(account) }], signingKey: temporaryKey },
-    keys.encryptionPublicKey, deps.network);
+    keys.encryptionPublicKey,
+    deps.network
+  );
   const vault = String(built.public.contractAddress).toLowerCase();
   const proven = await deps.prove(built.private.unprovenTx);
   return { vault, temporaryKey: { tag: temporaryKey.tag, value: temporaryKey.value }, proven: proven.serialize() };
@@ -126,13 +149,23 @@ export async function buildVaultDeploy(
  */
 export async function buildCommitteeHandover(
   deps: VaultBuilderDeps,
-  input: { readonly vault: string; readonly counter: bigint; readonly temporaryKey: SigningKeyLike; readonly to: Committee },
+  input: {
+    readonly vault: string;
+    readonly counter: bigint;
+    readonly temporaryKey: SigningKeyLike;
+    readonly to: Committee;
+  }
 ): Promise<{ proven: Uint8Array }> {
   const L = deps.ledger;
   let update = committeeReplacement(L, { vault: input.vault, counter: input.counter, to: input.to }) as any;
   update = update.addSignature(0n, L.signData(input.temporaryKey, update.dataToSign));
   const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
-  const unproven = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update));
+  const unproven = L.Transaction.fromParts(
+    deps.network,
+    undefined,
+    undefined,
+    L.Intent.new(ttl).addMaintenanceUpdate(update)
+  );
   const proven = await deps.prove(unproven);
   return { proven: proven.serialize() };
 }
@@ -155,7 +188,7 @@ interface HeldDeploy {
  */
 async function deployHeldFromTheStart(
   deps: Pick<VaultBuilderDeps, 'ledger' | 'runtimeState' | 'contracts' | 'random' | 'prove' | 'network' | 'now'>,
-  input: Parameters<typeof heldStateFromTheStart>[1],
+  input: Parameters<typeof heldStateFromTheStart>[1]
 ): Promise<HeldDeploy> {
   const L = deps.ledger;
   const deploy = new L.ContractDeploy(await heldStateFromTheStart(deps, input));
@@ -175,15 +208,22 @@ async function deployHeldFromTheStart(
  * asks for every contract born held.
  */
 export async function buildVaultBornHeld(
-  deps: VaultBuilderDeps, input: { readonly account: string; readonly holders: Committee },
+  deps: VaultBuilderDeps,
+  input: { readonly account: string; readonly holders: Committee }
 ): Promise<HeldDeploy> {
   const account = input.account.toLowerCase();
-  if (!HEX64.test(account)) throw new Error('a vault is pinned to its company\'s account address, and this is not one.');
+  if (!HEX64.test(account)) throw new Error("a vault is pinned to its company's account address, and this is not one.");
   const built = await deployHeldFromTheStart(deps, {
-    compiled: deps.compiled, zkConfig: deps.zkConfig, args: [{ bytes: fromHex(account) }], circuits: VAULT_CIRCUITS,
-    holders: { committee: input.holders.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })), threshold: input.holders.threshold },
+    compiled: deps.compiled,
+    zkConfig: deps.zkConfig,
+    args: [{ bytes: fromHex(account) }],
+    circuits: VAULT_CIRCUITS,
+    holders: {
+      committee: input.holders.committee.map((k) => ({ tag: k.tag, value: k.value.toLowerCase() })),
+      threshold: input.holders.threshold
+    }
   });
-  const tooBig = overTheCeiling(built.bytesWritten, 'the vault\'s deploy');
+  const tooBig = overTheCeiling(built.bytesWritten, "the vault's deploy");
   if (tooBig !== null) throw new Error(tooBig);
   return built;
 }
@@ -196,20 +236,24 @@ export async function buildVaultBornHeld(
  * signs (`finishedCreation`).
  */
 export async function buildAccountDeploy(
-  deps: Parameters<typeof deployHeldFromTheStart>[0] & { readonly accountCompiled: unknown; readonly accountKeys: unknown },
-  input: { readonly foundingLeaf: string; readonly label: string; readonly foundingKey: SigningKeyLike },
+  deps: Parameters<typeof deployHeldFromTheStart>[0] & {
+    readonly accountCompiled: unknown;
+    readonly accountKeys: unknown;
+  },
+  input: { readonly foundingLeaf: string; readonly label: string; readonly foundingKey: SigningKeyLike }
 ): Promise<HeldDeploy> {
   const leaf = input.foundingLeaf.toLowerCase();
-  if (!HEX64.test(leaf)) throw new Error('the founding signer\'s seat is not one, so no account was built.');
+  if (!HEX64.test(leaf)) throw new Error("the founding signer's seat is not one, so no account was built.");
   const label = readCompanyLabel(input.label);
-  if (label === null) throw new Error('that is not a company\'s label, so no account was built.');
+  if (label === null) throw new Error("that is not a company's label, so no account was built.");
   const built = await deployHeldFromTheStart(deps, {
-    compiled: deps.accountCompiled, zkConfig: deps.accountKeys,
+    compiled: deps.accountCompiled,
+    zkConfig: deps.accountKeys,
     args: [fromHex(leaf), companyLabelBytes(label)],
     circuits: CREATION_STEPS.first,
-    holders: { committee: [{ tag: input.foundingKey.tag, value: input.foundingKey.value.toLowerCase() }], threshold: 1 },
+    holders: { committee: [{ tag: input.foundingKey.tag, value: input.foundingKey.value.toLowerCase() }], threshold: 1 }
   });
-  const tooBig = overTheCeiling(built.bytesWritten, 'the account\'s deploy');
+  const tooBig = overTheCeiling(built.bytesWritten, "the account's deploy");
   if (tooBig !== null) throw new Error(tooBig);
   return built;
 }
@@ -221,17 +265,30 @@ export async function buildAccountDeploy(
  */
 export async function finishedCreation(
   deps: Pick<VaultBuilderDeps, 'ledger' | 'prove' | 'network' | 'now'>,
-  input: { readonly account: string; readonly keys: ReadonlyMap<string, Uint8Array>; readonly signature: SigningKeyLike },
+  input: {
+    readonly account: string;
+    readonly keys: ReadonlyMap<string, Uint8Array>;
+    readonly signature: SigningKeyLike;
+  }
 ): Promise<{ proven: Uint8Array; bytesWritten: number }> {
   const L = deps.ledger;
   const { update } = buildCreationInsert(L, {
-    address: input.account.toLowerCase(), counter: 0n, onChain: CREATION_STEPS.first, keys: input.keys, steps: CREATION_STEPS,
+    address: input.account.toLowerCase(),
+    counter: 0n,
+    onChain: CREATION_STEPS.first,
+    keys: input.keys,
+    steps: CREATION_STEPS
   });
   const signed = (update as any).addSignature(0n, { tag: input.signature.tag, value: input.signature.value });
   const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
-  const tx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(signed));
+  const tx = L.Transaction.fromParts(
+    deps.network,
+    undefined,
+    undefined,
+    L.Intent.new(ttl).addMaintenanceUpdate(signed)
+  );
   const bytesWritten = Number(tx.cost(L.LedgerParameters.initialParameters()).bytesWritten);
-  const tooBig = overTheCeiling(bytesWritten, 'the second step of the account\'s creation');
+  const tooBig = overTheCeiling(bytesWritten, "the second step of the account's creation");
   if (tooBig !== null) throw new Error(tooBig);
   const proven = await deps.prove(tx);
   return { proven: proven.serialize(), bytesWritten };
@@ -249,7 +306,7 @@ export async function finishedCreation(
  */
 export async function creationCarriedAgain(
   deps: Pick<VaultBuilderDeps, 'ledger' | 'prove' | 'network' | 'now'>,
-  input: { readonly deploy: Uint8Array; readonly insert: Uint8Array },
+  input: { readonly deploy: Uint8Array; readonly insert: Uint8Array }
 ): Promise<{ account: string; deploy: Uint8Array; insert: Uint8Array }> {
   const L = deps.ledger;
   const onlyAction = (bytes: Uint8Array, what: string): any => {
@@ -280,11 +337,16 @@ export async function creationCarriedAgain(
   }
   const ttl = new Date((deps.now ?? Date.now)() + INTENT_LIFETIME_MS);
   const deployTx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addDeploy(deploy));
-  const insertTx = L.Transaction.fromParts(deps.network, undefined, undefined, L.Intent.new(ttl).addMaintenanceUpdate(update));
+  const insertTx = L.Transaction.fromParts(
+    deps.network,
+    undefined,
+    undefined,
+    L.Intent.new(ttl).addMaintenanceUpdate(update)
+  );
   return {
     account,
     deploy: (await deps.prove(deployTx)).serialize(),
-    insert: (await deps.prove(insertTx)).serialize(),
+    insert: (await deps.prove(insertTx)).serialize()
   };
 }
 
@@ -301,30 +363,36 @@ export async function buildDeposit(
     readonly coin: { readonly nonce: string; readonly token: string; readonly value: bigint };
     readonly state: Uint8Array;
     readonly parameters: Uint8Array;
-  },
+  }
 ): Promise<{ proven: Uint8Array }> {
   const { nonce, token, value } = input.coin;
   if (!HEX64.test(nonce) || !HEX64.test(token) || value <= 0n) {
     throw new Error('this is not a coin a deposit can be made with, so nothing was built.');
   }
   if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
-    throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent. '
-      + 'Read them from the vault\'s payout state and pass them as the deposit\'s parameters.');
+    throw new Error(
+      "the chain's current ledger parameters were not handed over, so nothing was built or sent. " +
+        "Read them from the vault's payout state and pass them as the deposit's parameters."
+    );
   }
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: deps.compiled,
-    circuitId: 'deposit',
-    contractAddress: input.vault.toLowerCase(),
-    coinPublicKey: keys.coinPublicKey,
-    /*
-     * A deposit spends nothing of the chain's, so the builder is given no commitment tree to read, and the parameters
-     * the chain holds now, read by the page; never the ledger's starting ones.
-     */
-    network: deps.network,
-    read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
-    args: [{ nonce: fromHex(nonce), color: fromHex(token), value }],
-  }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: deps.compiled,
+      circuitId: 'deposit',
+      contractAddress: input.vault.toLowerCase(),
+      coinPublicKey: keys.coinPublicKey,
+      /*
+       * A deposit spends nothing of the chain's, so the builder is given no commitment tree to read, and the parameters
+       * the chain holds now, read by the page; never the ledger's starting ones.
+       */
+      network: deps.network,
+      read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
+      args: [{ nonce: fromHex(nonce), color: fromHex(token), value }]
+    },
+    keys.encryptionPublicKey
+  );
   const proven = await deps.prove(built.private.unprovenTx, 'deposit');
   return { proven: proven.serialize() };
 }
@@ -349,41 +417,62 @@ export async function buildPublicDeposit(
     readonly amount: bigint;
     readonly state: Uint8Array;
     readonly parameters: Uint8Array;
-  },
+  }
 ): Promise<{ proven: Uint8Array }> {
   const vault = String(input.vault).toLowerCase();
-  if (!HEX64.test(vault) || !HEX64.test(input.token) || typeof input.amount !== 'bigint' || input.amount <= 0n
-    || input.amount >= (1n << 128n)) {
-    throw new Error('this is not a public deposit a vault can take, so nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+  if (
+    !HEX64.test(vault) ||
+    !HEX64.test(input.token) ||
+    typeof input.amount !== 'bigint' ||
+    input.amount <= 0n ||
+    input.amount >= 1n << 128n
+  ) {
+    throw new Error(
+      'this is not a public deposit a vault can take, so nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.'
+    );
   }
   if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
-    throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+    throw new Error(
+      "the chain's current ledger parameters were not handed over, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention."
+    );
   }
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: deps.compiled,
-    circuitId: PUBLIC_DEPOSIT_ENTRY,
-    contractAddress: vault,
-    coinPublicKey: keys.coinPublicKey,
-    /* A public deposit touches no private coin, so the builder is given no commitment tree to read. */
-    network: deps.network,
-    read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
-    args: [fromHex(input.token), input.amount],
-  }, keys.encryptionPublicKey);
-  const refused = whyNotOnlyThisPublicDeposit(built.private.transaction, { vault, token: input.token, amount: input.amount });
-  if (refused !== null) throw new Error(`${refused} Nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.`);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: deps.compiled,
+      circuitId: PUBLIC_DEPOSIT_ENTRY,
+      contractAddress: vault,
+      coinPublicKey: keys.coinPublicKey,
+      /* A public deposit touches no private coin, so the builder is given no commitment tree to read. */
+      network: deps.network,
+      read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
+      args: [fromHex(input.token), input.amount]
+    },
+    keys.encryptionPublicKey
+  );
+  const refused = whyNotOnlyThisPublicDeposit(built.private.transaction, {
+    vault,
+    token: input.token,
+    amount: input.amount
+  });
+  if (refused !== null)
+    throw new Error(
+      `${refused} Nothing was built. No money moved. Reload the page and try again; if it happens again, the service needs attention.`
+    );
   const proven = await deps.prove(built.private.unprovenTx, PUBLIC_DEPOSIT_ENTRY);
   return { proven: proven.serialize() };
 }
 
 /** What the page says of a call that is not a public deposit into the vault, for each reason `readPublicDepositCall` gives. */
 const WHY_NOT_A_PUBLIC_DEPOSIT: Readonly<Record<PublicDepositCallRefusal, string>> = {
-  'not-the-call': 'this does not call this vault\'s public deposit.',
-  split: 'this call is split across two parts of the transaction, so the chain could apply one part and refuse the other.',
+  'not-the-call': "this does not call this vault's public deposit.",
+  split:
+    'this call is split across two parts of the transaction, so the chain could apply one part and refuse the other.',
   unread: 'what this call asks for could not be read.',
   'more-than-public': 'this call asks for more than public money.',
   'not-public': 'this call asks for money that is not a public token.',
-  'not-one-token': 'this call does not ask for exactly the token and amount of this deposit.',
+  'not-one-token': 'this call does not ask for exactly the token and amount of this deposit.'
 };
 
 /**
@@ -393,19 +482,29 @@ const WHY_NOT_A_PUBLIC_DEPOSIT: Readonly<Record<PublicDepositCallRefusal, string
  * Exported so the check can be driven without building anything.
  */
 export function whyNotOnlyThisPublicDeposit(
-  tx: unknown, expect: { readonly vault: string; readonly token: string; readonly amount: bigint },
+  tx: unknown,
+  expect: { readonly vault: string; readonly token: string; readonly amount: bigint }
 ): string | null {
   const t = tx as {
-    intents?: unknown; guaranteedOffer?: unknown; fallibleOffer?: unknown;
+    intents?: unknown;
+    guaranteedOffer?: unknown;
+    fallibleOffer?: unknown;
   } | null;
   if (!(t?.intents instanceof Map) || t.intents.size !== 1) return 'this is not one call to the vault.';
   if (t.guaranteedOffer !== undefined && t.guaranteedOffer !== null) return 'this would move private money as well.';
-  if (t.fallibleOffer !== undefined && t.fallibleOffer !== null
-    && !(t.fallibleOffer instanceof Map && t.fallibleOffer.size === 0)) return 'this would move private money as well.';
+  if (
+    t.fallibleOffer !== undefined &&
+    t.fallibleOffer !== null &&
+    !(t.fallibleOffer instanceof Map && t.fallibleOffer.size === 0)
+  )
+    return 'this would move private money as well.';
   const intent = [...t.intents.values()][0] as {
-    actions?: unknown; guaranteedUnshieldedOffer?: unknown; fallibleUnshieldedOffer?: unknown;
+    actions?: unknown;
+    guaranteedUnshieldedOffer?: unknown;
+    fallibleUnshieldedOffer?: unknown;
   } | null;
-  if (!intent || !Array.isArray(intent.actions) || intent.actions.length !== 1) return 'this is not one call to the vault.';
+  if (!intent || !Array.isArray(intent.actions) || intent.actions.length !== 1)
+    return 'this is not one call to the vault.';
   if ((intent.guaranteedUnshieldedOffer ?? null) !== null || (intent.fallibleUnshieldedOffer ?? null) !== null) {
     return 'this already moves public money of its own.';
   }
@@ -428,16 +527,20 @@ export { PUBLIC_DEPOSIT_ENTRY };
  * actually sends, so the run's asset is that token here. A round that carries
  * no bar of its own needs none beyond its vault's.
  */
-const runOf = (
-  order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>, payment: PrivatePaymentOnTheWire,
-) => {
+const runOf = (order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>, payment: PrivatePaymentOnTheWire) => {
   const { required } = order;
   return {
-    proposal: fromHex(order.proposal), runVault: fromHex(order.vault.toLowerCase()), root: fromHex(order.root),
-    payees: BigInt(order.payees), opensAt: BigInt(order.opensAt), closesAt: BigInt(order.closesAt),
+    proposal: fromHex(order.proposal),
+    runVault: fromHex(order.vault.toLowerCase()),
+    root: fromHex(order.root),
+    payees: BigInt(order.payees),
+    opensAt: BigInt(order.opensAt),
+    closesAt: BigInt(order.closesAt),
     required: typeof required === 'string' && DIGITS.test(required) ? BigInt(required) : 0n,
-    salt: fromHex(order.salt), nonce: fromHex(payment.nonce), asset: fromHex(payment.token),
-    path: pathFromWire(payment.path),
+    salt: fromHex(order.salt),
+    nonce: fromHex(payment.nonce),
+    asset: fromHex(payment.token),
+    path: pathFromWire(payment.path)
   };
 };
 
@@ -458,7 +561,7 @@ export interface PayoutChain {
  */
 const atTheBlock = (chain: PayoutChain, account: string) => ({
   read: { contract: chain.vaultState, zswap: chain.zswapState, parameters: chain.parameters },
-  account: { address: account, state: chain.accountState, blockHash: chain.blockHash },
+  account: { address: account, state: chain.accountState, blockHash: chain.blockHash }
 });
 
 /**
@@ -503,19 +606,19 @@ export async function buildPublicPayout(
     readonly order: Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
     readonly payment: PrivatePaymentOnTheWire;
     readonly chain: PayoutChain;
-  },
+  }
 ): Promise<{ proven: Uint8Array }> {
   const vault = input.vault.toLowerCase();
   const account = input.account.toLowerCase();
   const { order, payment } = input;
   if (!HEX64.test(vault) || !HEX64.test(account) || order.vault.toLowerCase() !== vault) {
-    throw new Error('this payment is not for this vault and this company\'s account, so nothing was built.');
+    throw new Error("this payment is not for this vault and this company's account, so nothing was built.");
   }
   for (const h of [order.proposal, order.salt, order.root, payment.token, payment.blinding, payment.nonce]) {
-    if (!HEX64.test(h)) throw new Error('this payment\'s round is not described in full, so nothing was built.');
+    if (!HEX64.test(h)) throw new Error("this payment's round is not described in full, so nothing was built.");
   }
   for (const d of [order.payees, order.opensAt, order.closesAt, payment.amount]) {
-    if (!DIGITS.test(d)) throw new Error('this payment\'s round is not described in full, so nothing was built.');
+    if (!DIGITS.test(d)) throw new Error("this payment's round is not described in full, so nothing was built.");
   }
   if (deps.compiledWith === undefined) {
     throw new Error('this device was not given the vault in the form a payment is built with, so nothing was built.');
@@ -531,19 +634,26 @@ export async function buildPublicPayout(
   const pending: { spending?: Hex } = {};
   const compiled = deps.compiledWith(witnessesOver(() => ({ notes: [] }), pending));
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: compiled,
-    circuitId: 'payoutUnshielded',
-    contractAddress: vault,
-    coinPublicKey: keys.coinPublicKey,
-    network: deps.network,
-    ...atTheBlock(input.chain, account),
-    args: [
-      runOf(order, payment),
-      /* The payee's public address in the recipient position, and nothing that could be a coin key. */
-      fromHex(payee.userAddress), fromHex(payment.token), amount, fromHex(payment.blinding),
-    ],
-  }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: compiled,
+      circuitId: 'payoutUnshielded',
+      contractAddress: vault,
+      coinPublicKey: keys.coinPublicKey,
+      network: deps.network,
+      ...atTheBlock(input.chain, account),
+      args: [
+        runOf(order, payment),
+        /* The payee's public address in the recipient position, and nothing that could be a coin key. */
+        fromHex(payee.userAddress),
+        fromHex(payment.token),
+        amount,
+        fromHex(payment.blinding)
+      ]
+    },
+    keys.encryptionPublicKey
+  );
   if (pending.spending !== undefined) {
     throw new Error('the vault asked to spend a note for a public payment, so it was not sent. Nothing was sent.');
   }
@@ -559,7 +669,8 @@ export async function buildPublicPayout(
  * pool with each index read, and each note at the place the chain filed it.
  */
 const indexesReadFromTheChain = async (
-  vault: Hex, all: ReadonlyArray<{ readonly note: Note; readonly events: readonly EventOnTheWire[] }>,
+  vault: Hex,
+  all: ReadonlyArray<{ readonly note: Note; readonly events: readonly EventOnTheWire[] }>
 ) => {
   let notes: VaultNotes = { notes: all.map((n) => n.note) };
   const places = [];
@@ -568,10 +679,10 @@ const indexesReadFromTheChain = async (
     const index = await indexForSpend(vault, note, {
       eventsOf: async (tx) => {
         if (!('hash' in tx) || tx.hash !== note.createdIn) {
-          throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
+          throw new Error("the chain's events handed over are not for the transaction that created this note.");
         }
         return served;
-      },
+      }
     });
     notes = withIndexRead(notes, note.nonce, index);
     places.push({ nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index });
@@ -617,19 +728,19 @@ export async function buildPayout(
      * with it, and checks it against the commitment it holds.
      */
     readonly secret: string;
-  },
+  }
 ): Promise<{ proven: Uint8Array; spent: string; change: NoteOnTheWire | null }> {
   const vault = input.vault.toLowerCase();
   const account = input.account.toLowerCase();
   const { order, payment } = input;
   if (!HEX64.test(vault) || !HEX64.test(account) || order.vault.toLowerCase() !== vault) {
-    throw new Error('this payment is not for this vault and this company\'s account, so nothing was built.');
+    throw new Error("this payment is not for this vault and this company's account, so nothing was built.");
   }
   for (const h of [order.proposal, order.salt, order.root, payment.token, payment.blinding, payment.nonce]) {
-    if (!HEX64.test(h)) throw new Error('this payment\'s round is not described in full, so nothing was built.');
+    if (!HEX64.test(h)) throw new Error("this payment's round is not described in full, so nothing was built.");
   }
   for (const d of [order.payees, order.opensAt, order.closesAt, payment.amount]) {
-    if (!DIGITS.test(d)) throw new Error('this payment\'s round is not described in full, so nothing was built.');
+    if (!DIGITS.test(d)) throw new Error("this payment's round is not described in full, so nothing was built.");
   }
   if (deps.compiledWith === undefined) {
     throw new Error('this device was not given the vault in the form a payment is built with, so nothing was built.');
@@ -639,8 +750,10 @@ export async function buildPayout(
     throw new Error('this payment is not a private one, so it is not built as one. Nothing was built.');
   }
   if (typeof input.secret !== 'string' || !HEX64.test(input.secret)) {
-    throw new Error('this device has not opened the vault\'s nonce secret, which a private payment out is made with, '
-      + 'so nothing was built.');
+    throw new Error(
+      "this device has not opened the vault's nonce secret, which a private payment out is made with, " +
+        'so nothing was built.'
+    );
   }
   const payee = payeeAddress(payment.payee, deps.network as NetworkName);
   const amount = BigInt(payment.amount);
@@ -651,8 +764,7 @@ export async function buildPayout(
   if (all.length > STEP_LIMITS.paymentNotes || new Set(all.map((n) => n.note.nonce)).size !== all.length) {
     throw new Error(`a payment draws on one to ${STEP_LIMITS.paymentNotes} different notes, so nothing was built.`);
   }
-  if (all.some((n) => n.note.token !== payment.token)
-    || all.reduce((t, n) => t + n.note.value, 0n) < amount) {
+  if (all.some((n) => n.note.token !== payment.token) || all.reduce((t, n) => t + n.note.value, 0n) < amount) {
     throw new Error('the notes chosen do not cover this payment, so nothing was built.');
   }
   const { notes, places } = await indexesReadFromTheChain(vault as Hex, all);
@@ -662,36 +774,45 @@ export async function buildPayout(
   const compiled = deps.compiledWith({
     ...witnessesOver(() => notes, pending, chosen.nonce),
     /* The vault's secret, for this one call; the vault refuses one that is not the secret it holds. */
-    nonceSecret: (ctx: unknown) => [ctx, secret],
+    nonceSecret: (ctx: unknown) => [ctx, secret]
   } as ReturnType<typeof witnessesOver>);
 
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: compiled,
-    circuitId: 'payout',
-    contractAddress: vault,
-    coinPublicKey: keys.coinPublicKey,
-    network: deps.network,
-    /* The account's state as the same block saw it, and nothing else: no other contract is asked. */
-    ...atTheBlock(input.chain, account),
-    args: [
-      runOf(order, payment),
-      fromHex(payee.coinPublicKey), fromHex(payment.token), amount, fromHex(payment.blinding),
-      /* The further notes chosen above, at the places the chain filed them; an unused place when there are none. */
-      notePlaces(places.slice(1), STEP_LIMITS.paymentNotes - 1),
-    ],
-    /* The payee's wallet reads the payment with this key; it came out of the same decode as the coin key. */
-    additionalCoinEncPublicKeyMappings: new Map([[payee.coinPublicKey, payee.encryptionPublicKey]]),
-  }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: compiled,
+      circuitId: 'payout',
+      contractAddress: vault,
+      coinPublicKey: keys.coinPublicKey,
+      network: deps.network,
+      /* The account's state as the same block saw it, and nothing else: no other contract is asked. */
+      ...atTheBlock(input.chain, account),
+      args: [
+        runOf(order, payment),
+        fromHex(payee.coinPublicKey),
+        fromHex(payment.token),
+        amount,
+        fromHex(payment.blinding),
+        /* The further notes chosen above, at the places the chain filed them; an unused place when there are none. */
+        notePlaces(places.slice(1), STEP_LIMITS.paymentNotes - 1)
+      ],
+      /* The payee's wallet reads the payment with this key; it came out of the same decode as the coin key. */
+      additionalCoinEncPublicKeyMappings: new Map([[payee.coinPublicKey, payee.encryptionPublicKey]])
+    },
+    keys.encryptionPublicKey
+  );
   if (pending.spending !== chosen.nonce) {
-    throw new Error('the vault did not spend the note this device chose, so nothing was sent and the pool is unchanged.');
+    throw new Error(
+      'the vault did not spend the note this device chose, so nothing was sent and the pool is unchanged.'
+    );
   }
   const kept = changeCoinOf(built.private.nextZswapLocalState, vault as Hex);
   const proven = await deps.prove(built.private.unprovenTx, 'payout');
   return {
     proven: proven.serialize(),
     spent: chosen.nonce,
-    change: kept === undefined ? null : { nonce: kept.nonce, token: kept.token, value: kept.value.toString() },
+    change: kept === undefined ? null : { nonce: kept.nonce, token: kept.token, value: kept.value.toString() }
   };
 }
 
@@ -718,18 +839,24 @@ export async function buildMerge(
     readonly chain: PayoutChain;
     /** The vault's current nonce secret, opened on this device from the company's record of it. */
     readonly secret: string;
-  },
+  }
 ): Promise<{ proven: Uint8Array; spent: string[]; kept: NoteOnTheWire }> {
   const vault = input.vault.toLowerCase();
-  if (!HEX64.test(vault)) throw new Error('this is not a vault\'s address, so nothing was built.');
+  if (!HEX64.test(vault)) throw new Error("this is not a vault's address, so nothing was built.");
   if (deps.compiledWith === undefined) {
     throw new Error('this device was not given the vault in the form a merge is built with, so nothing was built.');
   }
   if (typeof input.secret !== 'string' || !HEX64.test(input.secret)) {
-    throw new Error('this device has not opened the vault\'s nonce secret, which a merge is made with, so nothing was built.');
+    throw new Error(
+      "this device has not opened the vault's nonce secret, which a merge is made with, so nothing was built."
+    );
   }
   const all = input.notes.map((n) => ({ note: noteFromWire(n.note), events: n.events }));
-  if (all.length < 2 || all.length > STEP_LIMITS.mergeNotes || new Set(all.map((n) => n.note.nonce)).size !== all.length) {
+  if (
+    all.length < 2 ||
+    all.length > STEP_LIMITS.mergeNotes ||
+    new Set(all.map((n) => n.note.nonce)).size !== all.length
+  ) {
     throw new Error(`a merge combines two to ${STEP_LIMITS.mergeNotes} different notes, so nothing was built.`);
   }
   const token = all[0]!.note.token;
@@ -745,10 +872,10 @@ export async function buildMerge(
     const index = await indexForSpend(vault as Hex, note, {
       eventsOf: async (tx) => {
         if (!('hash' in tx) || tx.hash !== note.createdIn) {
-          throw new Error('the chain\'s events handed over are not for the transaction that created this note.');
+          throw new Error("the chain's events handed over are not for the transaction that created this note.");
         }
         return served;
-      },
+      }
     });
     notes = withIndexRead(notes, note.nonce, index);
     places.push({ nonce: fromHex(note.nonce), color: fromHex(note.token), value: note.value, mt_index: index });
@@ -758,28 +885,34 @@ export async function buildMerge(
   const compiled = deps.compiledWith({
     ...witnessesOver(() => notes, pending, all[0]!.note.nonce),
     /* The vault's secret, for this one call; the vault refuses one that is not the secret it holds. */
-    nonceSecret: (ctx: unknown) => [ctx, secret],
+    nonceSecret: (ctx: unknown) => [ctx, secret]
   } as ReturnType<typeof witnessesOver>);
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: compiled,
-    circuitId: 'mergeNotes',
-    contractAddress: vault,
-    coinPublicKey: keys.coinPublicKey,
-    network: deps.network,
-    read: { contract: input.chain.vaultState, zswap: input.chain.zswapState, parameters: input.chain.parameters },
-    /* Every note at the place the chain filed it; the places past the last are unused. */
-    args: [fromHex(token), notePlaces(places, STEP_LIMITS.mergeNotes)],
-  }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: compiled,
+      circuitId: 'mergeNotes',
+      contractAddress: vault,
+      coinPublicKey: keys.coinPublicKey,
+      network: deps.network,
+      read: { contract: input.chain.vaultState, zswap: input.chain.zswapState, parameters: input.chain.parameters },
+      /* Every note at the place the chain filed it; the places past the last are unused. */
+      args: [fromHex(token), notePlaces(places, STEP_LIMITS.mergeNotes)]
+    },
+    keys.encryptionPublicKey
+  );
   const kept = changeCoinOf(built.private.nextZswapLocalState, vault as Hex);
   if (kept === undefined || kept.token !== token || kept.value !== holds) {
-    throw new Error('the merge built does not keep one coin worth every note it spends, so it was not sent and the pool is unchanged.');
+    throw new Error(
+      'the merge built does not keep one coin worth every note it spends, so it was not sent and the pool is unchanged.'
+    );
   }
   const proven = await deps.prove(built.private.unprovenTx, 'mergeNotes');
   return {
     proven: proven.serialize(),
     spent: all.map((n) => n.note.nonce),
-    kept: { nonce: kept.nonce, token: kept.token, value: kept.value.toString() },
+    kept: { nonce: kept.nonce, token: kept.token, value: kept.value.toString() }
   };
 }
 
@@ -791,18 +924,28 @@ export async function buildMerge(
  */
 export async function vaultCallWithTheAccount(
   deps: VaultBuilderDeps,
-  call: { readonly vault: string; readonly account: string; readonly circuitId: string; readonly args: unknown[]; readonly chain: PayoutChain },
+  call: {
+    readonly vault: string;
+    readonly account: string;
+    readonly circuitId: string;
+    readonly args: unknown[];
+    readonly chain: PayoutChain;
+  }
 ): Promise<{ proven: Uint8Array }> {
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: deps.compiled,
-    circuitId: call.circuitId,
-    contractAddress: call.vault,
-    coinPublicKey: keys.coinPublicKey,
-    network: deps.network,
-    ...atTheBlock(call.chain, call.account),
-    args: call.args,
-  }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: deps.compiled,
+      circuitId: call.circuitId,
+      contractAddress: call.vault,
+      coinPublicKey: keys.coinPublicKey,
+      network: deps.network,
+      ...atTheBlock(call.chain, call.account),
+      args: call.args
+    },
+    keys.encryptionPublicKey
+  );
   const proven = await deps.prove(built.private.unprovenTx, call.circuitId);
   return { proven: proven.serialize() };
 }

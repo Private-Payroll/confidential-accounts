@@ -11,7 +11,12 @@ import type { Openable } from './wallet-sign-in.js';
 import type { ActOutcome } from './wallet-act.js';
 
 /** The invitation joined by, as the page opened it: the company's record, label and account, and the link's token. */
-interface JoinAsk { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress; readonly token: string }
+interface JoinAsk {
+  readonly record: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly token: string;
+}
 
 /**
  * **JOINS A COMPANY AS A PAYEE FROM THE PERSON'S WALLET**: the join-by-code action, run over one window. The wallet
@@ -20,9 +25,21 @@ interface JoinAsk { readonly record: string; readonly company: CompanyLabel; rea
  * shown in the wallet's window, not given to this page. Resolves with how the action ended.
  */
 export function joinByCodeInTheWallet(
-  ask: JoinAsk, walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+  ask: JoinAsk,
+  walletOrigin: string,
+  opts: { readonly onStep?: (at: StepAt) => void } = {},
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
-  return actOnACompanyInTheWallet({
-    name: 'join-by-code', record: ask.record, company: ask.company, account: ask.account, token: ask.token.toLowerCase(),
-  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+  return actOnACompanyInTheWallet(
+    {
+      name: 'join-by-code',
+      record: ask.record,
+      company: ask.company,
+      account: ask.account,
+      token: ask.token.toLowerCase()
+    },
+    walletOrigin,
+    { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) },
+    view
+  );
 }

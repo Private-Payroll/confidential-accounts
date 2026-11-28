@@ -34,17 +34,65 @@ import { keysByPurpose } from './keys-by-purpose.js';
 import { canonical, randomBytes, signingPublicKeyOf, toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
 import { inboxPublicKey as inboxOf } from '../../../src/core/sealed-records.js';
 import { sealPerson } from '../../../src/core/person-record.js';
-import { openVendor, sealVendor, vendorTermsRefusal, type VendorRecord, type VendorTerms } from '../../../src/core/vendor-record.js';
+import {
+  openVendor,
+  sealVendor,
+  vendorTermsRefusal,
+  type VendorRecord,
+  type VendorTerms
+} from '../../../src/core/vendor-record.js';
 import { assets as defaultAssets, whyTheMoneyCannotReach, type AssetId } from '../../../src/core/assets.js';
 import { invitationSecret, newSeatInvitation, type SeatInvitation } from '../../../src/core/seat-invite-proof.js';
-import { acceptanceHashOf, acceptanceProofOf, INVITATION_LIFETIME_MS, invitationIdOf, invitationLink, invitationProposalSalt, invitationThresholdRefusal, newInvitationToken, offerExpiredRefusal, openOffer, seatByAddressChangeOf, type ProposalIdentityOf, sealOffer, seatInvitationRefusal, signInvitationFiling, signOffer, signSeatInvitation, SUPER_ADMIN_INVITED_BY_THE_COMMITTEE, utcMomentOf, whyThisOfferCannotBeMade, type EmployeeClassification, type EmployeeOffer, type InvitationFiling, type InvitationKind, type InvitationOffer, type Inviter, type SignedOffer, type SeatInvitationAddress, type SignedSeatInvitation, type VendorOffer } from '../../../src/core/invitation.js';
+import {
+  acceptanceHashOf,
+  acceptanceProofOf,
+  INVITATION_LIFETIME_MS,
+  invitationIdOf,
+  invitationLink,
+  invitationProposalSalt,
+  invitationThresholdRefusal,
+  newInvitationToken,
+  offerExpiredRefusal,
+  openOffer,
+  seatByAddressChangeOf,
+  type ProposalIdentityOf,
+  sealOffer,
+  seatInvitationRefusal,
+  signInvitationFiling,
+  signOffer,
+  signSeatInvitation,
+  SUPER_ADMIN_INVITED_BY_THE_COMMITTEE,
+  utcMomentOf,
+  whyThisOfferCannotBeMade,
+  type EmployeeClassification,
+  type EmployeeOffer,
+  type InvitationFiling,
+  type InvitationKind,
+  type InvitationOffer,
+  type Inviter,
+  type SignedOffer,
+  type SeatInvitationAddress,
+  type SignedSeatInvitation,
+  type VendorOffer
+} from '../../../src/core/invitation.js';
 import type { Role, RosterEmployee, SealedProposal } from '../../../src/core/types.js';
 import { seatInvitationIn } from '../../../src/core/proposal-filing.js';
 import { mayInvite } from '../../../src/midnight/seat-directory.js';
 import { isSignerRole } from '../../../src/core/roles.js';
-import { NO_VAULT_COUNTED, scopeOfRole, seatScopeRefusal, vaultsOfferedRefusal, vaultsRefusal } from '../../../src/core/seat-rights.js';
+import {
+  NO_VAULT_COUNTED,
+  scopeOfRole,
+  seatScopeRefusal,
+  vaultsOfferedRefusal,
+  vaultsRefusal
+} from '../../../src/core/seat-rights.js';
 import type { SeatRights } from '../../../src/core/vault-approvers.js';
-import { fromCompanyWire, toCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  toCompanyWire,
+  verifiedCompanyFiler,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordEntry, signedWithItsEntry } from '../../../src/midnight/record-manifest.js';
 import type { CompanyWrites, RecordWrite } from './records-source.js';
 import { FiledNotEntered, type RecordsEntered } from './record-entered-here.js';
@@ -55,7 +103,8 @@ import type { VendorsHere } from './vendors-on-device.js';
 
 /** How this device reaches the service: a path and a JSON body, an answer with its status. */
 export type InvitationSend = (
-  path: string, init: { readonly method: 'GET' | 'POST' | 'PUT'; readonly body?: string },
+  path: string,
+  init: { readonly method: 'GET' | 'POST' | 'PUT'; readonly body?: string }
 ) => Promise<{ readonly status: number; readonly body: unknown }>;
 
 /** The company an invitation is made for, as this device opened it. */
@@ -95,7 +144,11 @@ interface MadeInvitation {
 
 /** Thrown when the service refused to keep what this device made; its words are in the message. */
 export class InvitationRefused extends Error {
-  constructor(readonly status: number, readonly refused: string | null, said: string) {
+  constructor(
+    readonly status: number,
+    readonly refused: string | null,
+    said: string
+  ) {
     super(said);
     this.name = 'InvitationRefused';
   }
@@ -104,8 +157,13 @@ export class InvitationRefused extends Error {
 export const answered = (r: { status: number; body: unknown }, ok: number): Record<string, unknown> => {
   const b = (r.body ?? {}) as Record<string, unknown>;
   if (r.status !== ok) {
-    throw new InvitationRefused(r.status, typeof b.refused === 'string' ? b.refused : null,
-      typeof b.error === 'string' ? b.error : `the service answered ${r.status} and said nothing, so nothing is known to have been kept.`);
+    throw new InvitationRefused(
+      r.status,
+      typeof b.refused === 'string' ? b.refused : null,
+      typeof b.error === 'string'
+        ? b.error
+        : `the service answered ${r.status} and said nothing, so nothing is known to have been kept.`
+    );
   }
   return b;
 };
@@ -120,8 +178,13 @@ export const writtenOrRefused = async (writes: CompanyWrites, company: string, w
   } catch (e) {
     const told = e as { readonly status?: unknown; readonly refused?: unknown; readonly error?: unknown } | null;
     if (told === null || typeof told !== 'object' || typeof told.status !== 'number') throw e;
-    throw new InvitationRefused(told.status, typeof told.refused === 'string' ? told.refused : null,
-      typeof told.error === 'string' ? told.error : `the service answered ${told.status} and said nothing, so nothing is known to have been kept.`);
+    throw new InvitationRefused(
+      told.status,
+      typeof told.refused === 'string' ? told.refused : null,
+      typeof told.error === 'string'
+        ? told.error
+        : `the service answered ${told.status} and said nothing, so nothing is known to have been kept.`
+    );
   }
 };
 
@@ -134,7 +197,11 @@ export class SeatMayNotInvite extends Error {
 }
 
 /** Refused, with nothing signed, when this seat would offer vaults beyond its own (`vaultsOfferedRefusal`); `instead` says what else clears it. */
-export const refuseVaultsBeyondTheSeat = (seat: Pick<InvitingSeat, 'held'>, vaults: readonly Hex[] | undefined, instead = ''): void => {
+export const refuseVaultsBeyondTheSeat = (
+  seat: Pick<InvitingSeat, 'held'>,
+  vaults: readonly Hex[] | undefined,
+  instead = ''
+): void => {
   const why = vaultsOfferedRefusal(seat.held?.rights ?? NO_VAULT_COUNTED, vaults);
   if (why !== null) throw new SeatMayNotInvite(`This invitation was not made: ${why}${instead}.`);
 };
@@ -142,11 +209,16 @@ export const refuseVaultsBeyondTheSeat = (seat: Pick<InvitingSeat, 'held'>, vaul
 /** Refuses unless this device's seat is one not retired whose role may file a proposal: the one rule every member's device holds it to. */
 export const refuseASeatThatMayNotInvite = (seat: Pick<InvitingSeat, 'held'>): void => {
   if (seat.held === undefined) {
-    throw new SeatMayNotInvite('This device has not read your seat\'s role from the company\'s directory, so it invites and withdraws nobody. Reload the page.');
+    throw new SeatMayNotInvite(
+      "This device has not read your seat's role from the company's directory, so it invites and withdraws nobody. Reload the page."
+    );
   }
-  if (seat.held.retired) throw new SeatMayNotInvite('Your seat has been retired from this company, so it invites and withdraws nobody.');
+  if (seat.held.retired)
+    throw new SeatMayNotInvite('Your seat has been retired from this company, so it invites and withdraws nobody.');
   if (!mayInvite({ role: seat.held.role })) {
-    throw new SeatMayNotInvite('Your role on this company may not file a proposal, so it invites and withdraws nobody. Ask a signer whose role may.');
+    throw new SeatMayNotInvite(
+      'Your role on this company may not file a proposal, so it invites and withdraws nobody. Ask a signer whose role may.'
+    );
   }
 };
 
@@ -157,11 +229,22 @@ type Sealing = { readonly key: Hex; readonly epoch: number };
  * The offer an invitation carries. Its inbox is worked out here from the key in force, never copied from the service,
  * and it says when it was made and when it stops being answered, signed with the rest of the offer.
  */
-const offered = (company: InvitingCompany, seat: InvitingSeat, forWhom: InvitationOffer['for'], sealing: Sealing): InvitationOffer => ({
-  company: company.id, companyName: company.name, label: company.label, account: company.account,
-  inboxPublicKey: inboxOf(sealing.key, company.id), expiresAt: Date.now() + INVITATION_LIFETIME_MS, madeAt: utcMomentOf(Date.now()), for: forWhom,
+const offered = (
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  forWhom: InvitationOffer['for'],
+  sealing: Sealing
+): InvitationOffer => ({
+  company: company.id,
+  companyName: company.name,
+  label: company.label,
+  account: company.account,
+  inboxPublicKey: inboxOf(sealing.key, company.id),
+  expiresAt: Date.now() + INVITATION_LIFETIME_MS,
+  madeAt: utcMomentOf(Date.now()),
+  for: forWhom,
   /* The inviter's own seat's opening, so the invitee's wallet can tell the seat was made for its key; nothing of any other seat. */
-  inviter: { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening },
+  inviter: { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening }
 });
 
 /** Thrown before anything is signed or sent, when what was entered is not an invitation this device may make; its words say what to change. */
@@ -178,17 +261,36 @@ export class InvitationNotMade extends Error {
  * first company record filed with it, for the kinds that file one.
  */
 async function filed(
-  company: InvitingCompany, seat: InvitingSeat, kind: InvitationKind, forWhom: InvitationOffer['for'], sealing: Sealing,
-  token: Hex, writes: CompanyWrites, person?: string, record?: ReturnType<typeof toCompanyWire>, signed?: SignedOffer,
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  kind: InvitationKind,
+  forWhom: InvitationOffer['for'],
+  sealing: Sealing,
+  token: Hex,
+  writes: CompanyWrites,
+  person?: string,
+  record?: ReturnType<typeof toCompanyWire>,
+  signed?: SignedOffer
 ): Promise<InvitationFiling> {
   const offer = signed?.offer ?? offered(company, seat, forWhom, sealing);
   const why = whyThisOfferCannotBeMade(offer);
   if (why !== null) throw new InvitationNotMade(why);
-  const invitation = signInvitationFiling({
-    company: company.id, kind, id: invitationIdOf(token), acceptanceHash: acceptanceHashOf(acceptanceProofOf(token)),
-    offer: sealOffer(signed ?? signOffer(offer, seat.signingSecret), token), keyEpoch: sealing.epoch, ...(person === undefined ? {} : { person }),
-  }, seat.signingSecret);
-  await writtenOrRefused(writes, company.id, { to: 'invitation', body: record === undefined ? { invitation } : { person: record, invitation } });
+  const invitation = signInvitationFiling(
+    {
+      company: company.id,
+      kind,
+      id: invitationIdOf(token),
+      acceptanceHash: acceptanceHashOf(acceptanceProofOf(token)),
+      offer: sealOffer(signed ?? signOffer(offer, seat.signingSecret), token),
+      keyEpoch: sealing.epoch,
+      ...(person === undefined ? {} : { person })
+    },
+    seat.signingSecret
+  );
+  await writtenOrRefused(writes, company.id, {
+    to: 'invitation',
+    body: record === undefined ? { invitation } : { person: record, invitation }
+  });
   return invitation;
 }
 
@@ -267,7 +369,11 @@ export interface SignerByAddressDoors {
   readonly held: (coinPublicKey: Hex, except?: string) => Promise<string | null>;
   readonly identity: ProposalIdentityOf;
   readonly raise: (input: {
-    readonly invited: SignedSeatInvitation; readonly proposalSalt: string; readonly name: string; readonly inviter: Inviter; readonly coinPublicKey: Hex;
+    readonly invited: SignedSeatInvitation;
+    readonly proposalSalt: string;
+    readonly name: string;
+    readonly inviter: Inviter;
+    readonly coinPublicKey: Hex;
   }) => Promise<unknown>;
 }
 
@@ -301,8 +407,13 @@ export interface VendorByAddressDoors {
 
 /** A seat offered by address whose proposal was raised and whose offer could not be filed: the link still reaches the person. */
 export class InvitationRaisedNotFiled extends Error {
-  constructor(readonly link: string, why: string) {
-    super(`the proposal to seat this address was raised, and the invitation was not filed: ${why}. Give the person this link yourself: it is the only copy.`);
+  constructor(
+    readonly link: string,
+    why: string
+  ) {
+    super(
+      `the proposal to seat this address was raised, and the invitation was not filed: ${why}. Give the person this link yourself: it is the only copy.`
+    );
     this.name = 'InvitationRaisedNotFiled';
   }
 }
@@ -323,30 +434,65 @@ export interface InviteSpecs {
 
 /** An employee's invitation and first person record, made here and filed together; the token stays on this device. */
 export async function filePayeeInvitation(
-  company: InvitingCompany, seat: InvitingSeat, spec: EmployeeSpec, writes: CompanyWrites, given?: Hex,
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  spec: EmployeeSpec,
+  writes: CompanyWrites,
+  given?: Hex
 ): Promise<{ token: Hex; id: Hex; person: string; sealing: Sealing }> {
   refuseASeatThatMayNotInvite(seat);
-  if (typeof spec.baseAmount !== 'bigint' || spec.baseAmount <= 0n) throw new InvitationNotMade('an employee is invited with a pay above nothing, in the token\'s smallest unit');
+  if (typeof spec.baseAmount !== 'bigint' || spec.baseAmount <= 0n)
+    throw new InvitationNotMade("an employee is invited with a pay above nothing, in the token's smallest unit");
   const made = { madeBy: signingPublicKeyOf(seat.signingSecret), madeAt: utcMomentOf(Date.now()) };
   const person: RosterEmployee = {
-    id: `emp_${toHex(randomBytes(10))}`, accountId: company.id, name: spec.name, email: spec.email, title: spec.title,
-    asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate, status: 'pending', wrappingPublicKey: null,
-    handedOverBy: null, admittedBy: null, admittedAt: null, selfRaised: false, address: null,
+    id: `emp_${toHex(randomBytes(10))}`,
+    accountId: company.id,
+    name: spec.name,
+    email: spec.email,
+    title: spec.title,
+    asset: spec.asset,
+    baseAmount: spec.baseAmount,
+    startDate: spec.startDate,
+    status: 'pending',
+    wrappingPublicKey: null,
+    handedOverBy: null,
+    admittedBy: null,
+    admittedAt: null,
+    selfRaised: false,
+    address: null,
     ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }),
     pay: [{ amount: spec.baseAmount, from: spec.startDate, ...made }],
     classifications: [{ classification: spec.classification, from: spec.startDate, ...made }],
     ...(spec.address === undefined ? {} : { invitedAddress: spec.address }),
-    ...made,
+    ...made
   };
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const offer: EmployeeOffer = {
-    kind: 'employee', person: person.id, name: spec.name, title: spec.title, email: spec.email,
-    asset: spec.asset, baseAmount: spec.baseAmount, startDate: spec.startDate, classification: spec.classification,
-    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), ...(spec.address === undefined ? {} : { address: spec.address }),
+    kind: 'employee',
+    person: person.id,
+    name: spec.name,
+    title: spec.title,
+    email: spec.email,
+    asset: spec.asset,
+    baseAmount: spec.baseAmount,
+    startDate: spec.startDate,
+    classification: spec.classification,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }),
+    ...(spec.address === undefined ? {} : { address: spec.address })
   };
   const token = tokenFor(given);
   const signed = signedWithItsEntry(sealPerson(person, 1, sealing.epoch, sealing.key), seat.signingSecret);
-  const invitation = await filed(company, seat, 'employee', offer, sealing, token, writes, person.id, toCompanyWire(signed));
+  const invitation = await filed(
+    company,
+    seat,
+    'employee',
+    offer,
+    sealing,
+    token,
+    writes,
+    person.id,
+    toCompanyWire(signed)
+  );
   await seat.entered.enter([companyRecordEntry(signed)]);
   return { token, id: invitation.id, person: person.id, sealing };
 }
@@ -359,22 +505,45 @@ export async function filePayeeInvitation(
  * one no active vendor entry of the company is already paid at (`doors.vendors`).
  */
 async function fileVendorInvitation(
-  company: InvitingCompany, seat: InvitingSeat, spec: VendorSpec, writes: CompanyWrites, doors?: VendorByAddressDoors, given?: Hex,
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  spec: VendorSpec,
+  writes: CompanyWrites,
+  doors?: VendorByAddressDoors,
+  given?: Hex
 ): Promise<{ token: Hex; id: Hex; person: string }> {
   refuseASeatThatMayNotInvite(seat);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const { terms: _terms, network: _network, ...forTheOffer } = spec;
   const offer: VendorOffer = {
-    kind: 'vendor', person: `ven_${toHex(randomBytes(10))}`, name: spec.name, email: spec.email, startDate: spec.startDate,
-    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), ...(spec.address === undefined ? {} : { address: spec.address }),
+    kind: 'vendor',
+    person: `ven_${toHex(randomBytes(10))}`,
+    name: spec.name,
+    email: spec.email,
+    startDate: spec.startDate,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }),
+    ...(spec.address === undefined ? {} : { address: spec.address })
   };
   /* What the screen passed is the offer's, field for field, so a salary or a classification it carried is refused, not dropped. */
   const asOffered = { ...(forTheOffer as object), ...offer } as VendorOffer;
-  const vendor = vendorAddedHere(company, spec, offer.person, { madeBy: signingPublicKeyOf(seat.signingSecret), madeAt: utcMomentOf(Date.now()) });
+  const vendor = vendorAddedHere(company, spec, offer.person, {
+    madeBy: signingPublicKeyOf(seat.signingSecret),
+    madeAt: utcMomentOf(Date.now())
+  });
   if (vendor.address !== null) await refuseAnAddressAVendorHolds(vendor.address.bech32, doors);
   const token = tokenFor(given);
   const signed = signedWithItsEntry(sealVendor(vendor, 1, sealing.epoch, sealing.key), seat.signingSecret);
-  const invitation = await filed(company, seat, 'vendor', asOffered, sealing, token, writes, offer.person, toCompanyWire(signed));
+  const invitation = await filed(
+    company,
+    seat,
+    'vendor',
+    asOffered,
+    sealing,
+    token,
+    writes,
+    offer.person,
+    toCompanyWire(signed)
+  );
   await seat.entered.enter([companyRecordEntry(signed)]);
   return { token, id: invitation.id, person: offer.person };
 }
@@ -386,39 +555,66 @@ import { payeeAt } from '../../../src/core/payee-keys.js';
 /** Refuses `address` when an active vendor entry this device believes is already paid there: one vendor gets one entry. */
 const refuseAnAddressAVendorHolds = async (address: string, doors: VendorByAddressDoors | undefined): Promise<void> => {
   if (doors === undefined) {
-    throw new InvitationNotMade('this page cannot read the company\'s vendors, so it cannot say no vendor is already paid at this address, and adds nobody by address: reload the page');
+    throw new InvitationNotMade(
+      "this page cannot read the company's vendors, so it cannot say no vendor is already paid at this address, and adds nobody by address: reload the page"
+    );
   }
   const read = await doors.vendors();
-  const holder = [...read.vendors.map((v) => v.vendor), ...read.notPayable.map((n) => n.here.vendor)]
-    .find((v) => v.status === 'active' && v.address !== null && v.address.bech32.toLowerCase() === address.toLowerCase());
+  const holder = [...read.vendors.map((v) => v.vendor), ...read.notPayable.map((n) => n.here.vendor)].find(
+    (v) => v.status === 'active' && v.address !== null && v.address.bech32.toLowerCase() === address.toLowerCase()
+  );
   if (holder !== undefined) {
-    throw new InvitationNotMade(`${holder.name} is already a vendor of this company paid at this address, and one vendor gets one entry, or they `
-      + 'are paid twice. Change their entry, or mark it a leaver first');
+    throw new InvitationNotMade(
+      `${holder.name} is already a vendor of this company paid at this address, and one vendor gets one entry, or they ` +
+        'are paid twice. Change their entry, or mark it a leaver first'
+    );
   }
 };
 
 /** A vendor's first entry, or a refusal saying what to put right. Added by address, it pays the typed address at once. */
-const vendorAddedHere = (company: InvitingCompany, spec: VendorSpec, id: string, made: { readonly madeBy: Hex; readonly madeAt: string }): VendorRecord => {
+const vendorAddedHere = (
+  company: InvitingCompany,
+  spec: VendorSpec,
+  id: string,
+  made: { readonly madeBy: Hex; readonly madeAt: string }
+): VendorRecord => {
   let address: VendorRecord['address'] = null;
   if (spec.address !== undefined) {
     try {
       address = payeeAt(spec.address, spec.network);
     } catch (e) {
-      throw new InvitationNotMade(`the address typed is not one money can be sent to on this network (${(e as Error).message})`);
+      throw new InvitationNotMade(
+        `the address typed is not one money can be sent to on this network (${(e as Error).message})`
+      );
     }
     if (spec.terms?.kind === 'monthly') {
       let unreachable: string | null;
-      try { unreachable = whyTheMoneyCannotReach(defaultAssets.require(spec.terms.asset), address.kind); } catch (e) { unreachable = (e as Error).message; }
-      if (unreachable !== null) throw new InvitationNotMade(`their monthly payments could not reach the address typed: ${unreachable}`);
+      try {
+        unreachable = whyTheMoneyCannotReach(defaultAssets.require(spec.terms.asset), address.kind);
+      } catch (e) {
+        unreachable = (e as Error).message;
+      }
+      if (unreachable !== null)
+        throw new InvitationNotMade(`their monthly payments could not reach the address typed: ${unreachable}`);
     }
   }
   const vendor: VendorRecord = {
-    id, accountId: company.id, name: spec.name, email: spec.email, network: spec.network, startDate: spec.startDate,
-    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }), terms: spec.terms,
-    status: address === null ? 'pending' : 'active', address, wrappingPublicKey: null,
-    handedOverBy: null, admittedBy: null, admittedAt: null,
+    id,
+    accountId: company.id,
+    name: spec.name,
+    email: spec.email,
+    network: spec.network,
+    startDate: spec.startDate,
+    ...(spec.endDate === undefined ? {} : { endDate: spec.endDate }),
+    terms: spec.terms,
+    status: address === null ? 'pending' : 'active',
+    address,
+    wrappingPublicKey: null,
+    handedOverBy: null,
+    admittedBy: null,
+    admittedAt: null,
     ...(spec.address === undefined ? {} : { invitedAddress: spec.address }),
-    ...made,
+    ...made
   };
   const why = vendorTermsRefusal(spec.terms);
   if (why !== null) throw new InvitationNotMade(`a vendor is added with how they are paid, and ${why}`);
@@ -432,20 +628,45 @@ const vendorAddedHere = (company: InvitingCompany, spec: VendorSpec, id: string,
  * from a code it also names the leaf the code carries (`leaf`).
  */
 export async function fileSignerInvitation(
-  company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec, writes: CompanyWrites, leaf?: Hex, given?: Hex,
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  signer: SignerSpec,
+  writes: CompanyWrites,
+  leaf?: Hex,
+  given?: Hex
 ): Promise<{ token: Hex; id: Hex; proved: SeatInvitation; invited: SignedSeatInvitation; sealing: Sealing }> {
   refuseASeatThatMayNotInvite(seat);
   refuseVaultsBeyondTheSeat(seat, signer.vaults);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const token = tokenFor(given);
   const proved = newSeatInvitation(sealing.key, company.id, signer.name, signer.role, invitationIdOf(token));
-  const invited = signSeatInvitation({
-    company: company.id, invitation: invitationIdOf(token), person: signer.person, name: signer.name, role: signer.role,
-    ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }), ...(leaf === undefined ? {} : { leaf }),
-  }, seat.signingSecret);
-  const invitation = await filed(company, seat, 'signer', {
-    kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
-  }, sealing, token, writes);
+  const invited = signSeatInvitation(
+    {
+      company: company.id,
+      invitation: invitationIdOf(token),
+      person: signer.person,
+      name: signer.name,
+      role: signer.role,
+      ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }),
+      ...(leaf === undefined ? {} : { leaf })
+    },
+    seat.signingSecret
+  );
+  const invitation = await filed(
+    company,
+    seat,
+    'signer',
+    {
+      kind: 'signer',
+      name: signer.name,
+      role: signer.role,
+      seat: { nonce: proved.nonce, secret: proved.secret },
+      invited
+    },
+    sealing,
+    token,
+    writes
+  );
   return { token, id: invitation.id, proved, invited, sealing };
 }
 
@@ -465,40 +686,58 @@ export async function fileSignerInvitation(
  */
 /** The scope a seat offered at `signer.role` on `signer.vaults` commits to; refused for a role no signer holds. */
 const rightsScopeOffered = (signer: Pick<SignerSpec, 'role' | 'vaults'>): Hex => {
-  if (!isSignerRole(signer.role)) throw new InvitationNotMade(seatScopeRefusal(signer.role, signer.vaults, '') ?? 'that role holds no seat');
+  if (!isSignerRole(signer.role))
+    throw new InvitationNotMade(seatScopeRefusal(signer.role, signer.vaults, '') ?? 'that role holds no seat');
   const why = vaultsRefusal(signer.vaults);
   if (why !== null) throw new InvitationNotMade(why);
   return scopeOfRole(signer.role, signer.vaults);
 };
 
 async function fileSignerByAddress(
-  company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec & { readonly address: string }, origin: string, writes: CompanyWrites,
-  doors: SignerByAddressDoors, opts: InviteOptions = {},
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  signer: SignerSpec & { readonly address: string },
+  origin: string,
+  writes: CompanyWrites,
+  doors: SignerByAddressDoors,
+  opts: InviteOptions = {}
 ): Promise<MadeInvitation> {
   refuseASeatThatMayNotInvite(seat);
   let coinPublicKey: Hex;
   try {
-    coinPublicKey = String(checkShieldedAddress(signer.address, doors.network as never).coinPublicKey).toLowerCase() as Hex;
+    coinPublicKey = String(
+      checkShieldedAddress(signer.address, doors.network as never).coinPublicKey
+    ).toLowerCase() as Hex;
   } catch (e) {
     throw new InvitationNotMade(`the address is not a private address on this network (${(e as Error).message})`);
   }
-  if (opts.resume !== undefined) return resumeSignerByAddress(company, seat, signer, coinPublicKey, writes, doors, opts);
+  if (opts.resume !== undefined)
+    return resumeSignerByAddress(company, seat, signer, coinPublicKey, writes, doors, opts);
   const held = await doors.held(coinPublicKey);
   if (held !== null) throw new InvitationNotMade(held);
   const addressSalt = toHex(randomBytes(32));
   const scope = rightsScopeOffered(signer);
   const threshold = signer.threshold;
   if (threshold !== undefined && invitationThresholdRefusal(threshold) !== null) {
-    throw new InvitationNotMade('the approvals needed once the seat is taken must be a whole number of at least one: leave it out to keep the number in force');
+    throw new InvitationNotMade(
+      'the approvals needed once the seat is taken must be a whole number of at least one: leave it out to keep the number in force'
+    );
   }
   const invite: SeatInvitationAddress = {
-    address: doors.commitments.inviteAddressOf(coinPublicKey, addressSalt).toLowerCase() as Hex, salt: addressSalt, scope,
-    ...(threshold === undefined ? {} : { threshold }),
+    address: doors.commitments.inviteAddressOf(coinPublicKey, addressSalt).toLowerCase() as Hex,
+    salt: addressSalt,
+    scope,
+    ...(threshold === undefined ? {} : { threshold })
   };
   const token = tokenFor(opts.token);
   const terms = {
-    company: company.id, invitation: invitationIdOf(token), person: `adr_${toHex(randomBytes(10))}`, name: signer.name, role: signer.role,
-    ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }), invite,
+    company: company.id,
+    invitation: invitationIdOf(token),
+    person: `adr_${toHex(randomBytes(10))}`,
+    name: signer.name,
+    role: signer.role,
+    ...(signer.vaults === undefined ? {} : { vaults: signer.vaults }),
+    invite
   };
   const proposalSalt = invitationProposalSalt({ terms, signedBy: signingPublicKeyOf(seat.signingSecret) });
   const { chainId } = await doors.identity(seatByAddressChangeOf(invite), proposalSalt);
@@ -507,8 +746,12 @@ async function fileSignerByAddress(
   const invited = signSeatInvitation({ ...terms, proposal: chainId.toLowerCase() as Hex }, seat.signingSecret);
   const inviter: Inviter = { committeeKey: seat.committeeKey, statement: seat.statement, opening: seat.opening };
   const forWhom: InvitationOffer['for'] = {
-    kind: 'signer', name: signer.name, role: signer.role, seat: { nonce: proved.nonce, secret: proved.secret }, invited,
-    byAddress: { address: signer.address, proposalSalt },
+    kind: 'signer',
+    name: signer.name,
+    role: signer.role,
+    seat: { nonce: proved.nonce, secret: proved.secret },
+    invited,
+    byAddress: { address: signer.address, proposalSalt }
   };
   const unsigned = offered(company, seat, forWhom, sealing);
   const why = whyThisOfferCannotBeMade(unsigned);
@@ -518,7 +761,18 @@ async function fileSignerByAddress(
   await doors.keep({ company: company.id, id: invitationIdOf(token), token, link, offer });
   await doors.raise({ invited, proposalSalt, name: signer.name, inviter, coinPublicKey });
   try {
-    const invitation = await filed(company, seat, 'signer', forWhom, sealing, token, writes, undefined, undefined, offer);
+    const invitation = await filed(
+      company,
+      seat,
+      'signer',
+      forWhom,
+      sealing,
+      token,
+      writes,
+      undefined,
+      undefined,
+      offer
+    );
     return { link, id: invitation.id };
   } catch (e) {
     throw new InvitationRaisedNotFiled(link, (e as Error).message);
@@ -526,7 +780,11 @@ async function fileSignerByAddress(
 }
 
 const KIND_SAID: Readonly<Record<string, string>> = {
-  employee: 'an employee', vendor: 'a vendor', signer: 'a signer', 'super-admin': 'a super admin', reissue: 'a re-issued seat invitation',
+  employee: 'an employee',
+  vendor: 'a vendor',
+  signer: 'a signer',
+  'super-admin': 'a super admin',
+  reissue: 'a re-issued seat invitation'
 };
 const SAME_ASK = 'press again with the same details as the first time, or start a new invitation, which has a new link';
 const lower = (x: unknown): unknown => (typeof x === 'string' ? x.toLowerCase() : x);
@@ -542,7 +800,9 @@ const lower = (x: unknown): unknown => (typeof x === 'string' ? x.toLowerCase() 
  * vault) and the threshold it sets once taken (none on both sides keeps the one in force). Returns null for the same ask, or why it is not, naming what resolves it; no value is repeated.
  */
 export function firstAskRefusal<K extends InvitationKind>(
-  first: InvitationOffer['for'], kind: K, spec: InviteSpecs[K],
+  first: InvitationOffer['for'],
+  kind: K,
+  spec: InviteSpecs[K]
 ): string | null {
   if (first.kind !== kind) {
     return `the invitation already made under this link is for ${KIND_SAID[first.kind] ?? 'another kind'}, not ${KIND_SAID[kind] ?? 'this kind'}: ${SAME_ASK}`;
@@ -551,18 +811,36 @@ export function firstAskRefusal<K extends InvitationKind>(
   const f = first as unknown as Record<string, unknown>;
   let pairs: readonly (readonly [string, unknown, unknown])[];
   if (first.kind === 'employee') {
-    pairs = [['name', f.name, s.name], ['title', f.title, s.title], ['email', f.email ?? null, s.email ?? null], ['currency', f.asset, s.asset],
-      ['pay', f.baseAmount, s.baseAmount], ['start date', f.startDate, s.startDate], ['end date', f.endDate, s.endDate],
-      ['classification', f.classification, s.classification], ['address', f.address, s.address]];
+    pairs = [
+      ['name', f.name, s.name],
+      ['title', f.title, s.title],
+      ['email', f.email ?? null, s.email ?? null],
+      ['currency', f.asset, s.asset],
+      ['pay', f.baseAmount, s.baseAmount],
+      ['start date', f.startDate, s.startDate],
+      ['end date', f.endDate, s.endDate],
+      ['classification', f.classification, s.classification],
+      ['address', f.address, s.address]
+    ];
   } else if (first.kind === 'vendor') {
-    pairs = [['name', f.name, s.name], ['email', f.email ?? null, s.email ?? null], ['start date', f.startDate, s.startDate],
-      ['end date', f.endDate, s.endDate], ['address', f.address, s.address]];
+    pairs = [
+      ['name', f.name, s.name],
+      ['email', f.email ?? null, s.email ?? null],
+      ['start date', f.startDate, s.startDate],
+      ['end date', f.endDate, s.endDate],
+      ['address', f.address, s.address]
+    ];
   } else if (first.kind === 'signer') {
     const t = first.invited.terms;
-    pairs = [['name', first.name, s.name], ['name', t.name, s.name], ['role', first.role, s.role], ['role', t.role, s.role],
+    pairs = [
+      ['name', first.name, s.name],
+      ['name', t.name, s.name],
+      ['role', first.role, s.role],
+      ['role', t.role, s.role],
       ['address', lower(first.byAddress?.address), lower(s.address)],
       ['rights', t.vaults ?? null, (s.vaults as readonly Hex[] | undefined)?.map((v) => v.toLowerCase()) ?? null],
-      ['threshold', t.invite?.threshold, s.threshold]];
+      ['threshold', t.invite?.threshold, s.threshold]
+    ];
   } else {
     return `the invitation already made under this link is ${KIND_SAID[first.kind] ?? 'of another kind'}, not ${KIND_SAID[kind] ?? 'this kind'}: ${SAME_ASK}`;
   }
@@ -580,21 +858,33 @@ export function firstAskRefusal<K extends InvitationKind>(
  * resolves it. An employee's or a vendor's record filed with it is checked and entered by `filedRecordEnteredHere`.
  */
 export function openTheFiledOffer<K extends InvitationKind>(
-  sealed: unknown, token: Hex, company: string, kind: K, spec: InviteSpecs[K],
-  o: { readonly kept?: KeptSeatInvitation } = {},
+  sealed: unknown,
+  token: Hex,
+  company: string,
+  kind: K,
+  spec: InviteSpecs[K],
+  o: { readonly kept?: KeptSeatInvitation } = {}
 ): { readonly refused: string } | { readonly filed: SignedOffer } {
   let signed: SignedOffer;
   try {
     signed = openOffer(sealed as Sealed, token);
   } catch (e) {
-    return { refused: `the invitation filed under this link does not open with it (${(e as Error).message}), so it is not taken as this one: start a new invitation, which has a new link` };
+    return {
+      refused: `the invitation filed under this link does not open with it (${(e as Error).message}), so it is not taken as this one: start a new invitation, which has a new link`
+    };
   }
   if (signed.offer.company !== company) {
-    return { refused: 'the invitation filed under this link is another company\'s, so it is not taken as this one: start a new invitation, which has a new link' };
+    return {
+      refused:
+        "the invitation filed under this link is another company's, so it is not taken as this one: start a new invitation, which has a new link"
+    };
   }
   if (o.kept !== undefined && signed.signature !== o.kept.offer.signature) {
-    return { refused: 'the invitation filed under this link is not the one this wallet kept for it, so it is not taken as this one: start a new '
-      + 'invitation, which has a new link, and withdraw the proposal raised for the kept one if it is still open' };
+    return {
+      refused:
+        'the invitation filed under this link is not the one this wallet kept for it, so it is not taken as this one: start a new ' +
+        'invitation, which has a new link, and withdraw the proposal raised for the kept one if it is still open'
+    };
   }
   const differs = firstAskRefusal(signed.offer.for, kind, spec);
   return differs === null ? { filed: signed } : { refused: differs };
@@ -602,8 +892,12 @@ export function openTheFiledOffer<K extends InvitationKind>(
 
 /** What `filedRecordEnteredHere` reads: every version filed of each company record asked, and the newest version its records hold of each record named. */
 interface FiledRecordReads {
-  readonly records: (asked: readonly { readonly kind: 'person' | 'vendor'; readonly id: string; readonly every: true }[]) => Promise<readonly unknown[]>;
-  readonly newest: (records: readonly { readonly store: 'company'; readonly kind: string; readonly id: string }[]) => Promise<readonly number[]>;
+  readonly records: (
+    asked: readonly { readonly kind: 'person' | 'vendor'; readonly id: string; readonly every: true }[]
+  ) => Promise<readonly unknown[]>;
+  readonly newest: (
+    records: readonly { readonly store: 'company'; readonly kind: string; readonly id: string }[]
+  ) => Promise<readonly number[]>;
 }
 
 /**
@@ -618,43 +912,56 @@ interface FiledRecordReads {
  * `FiledNotEntered` when what the records hold cannot be read or the entry cannot be kept, so the press is made again.
  */
 export async function filedRecordEnteredHere<K extends 'employee' | 'vendor'>(
-  company: Pick<InvitingCompany, 'id' | 'viewingKey'>, kind: K, filed: SignedOffer, spec: InviteSpecs[K],
-  seat: Pick<InvitingSeat, 'signingSecret' | 'entered'>, reads: FiledRecordReads,
+  company: Pick<InvitingCompany, 'id' | 'viewingKey'>,
+  kind: K,
+  filed: SignedOffer,
+  spec: InviteSpecs[K],
+  seat: Pick<InvitingSeat, 'signingSecret' | 'entered'>,
+  reads: FiledRecordReads
 ): Promise<string | null> {
   const recordKind = kind === 'employee' ? 'person' : 'vendor';
   const id = (filed.offer.for as EmployeeOffer | VendorOffer).person;
   const read = await reads.records([{ kind: recordKind, id, every: true }]).then(
-    ([answer]) => ({ listed: (answer as { versions?: unknown } | null)?.versions, why: 'the service holds no version of it' }),
+    ([answer]) => ({
+      listed: (answer as { versions?: unknown } | null)?.versions,
+      why: 'the service holds no version of it'
+    }),
     (e: unknown) => {
       const status = (e as { status?: unknown } | null)?.status;
       if (typeof status !== 'number') throw e;
       return { listed: undefined, why: `the service answered ${status}` };
-    },
+    }
   );
   const listed = read.listed;
   if (!Array.isArray(listed)) {
     throw new FiledNotEntered(`the record filed with the invitation under this link could not be read (${read.why})`, {
-      again: 'Press again to carry on with this same invitation.',
+      again: 'Press again to carry on with this same invitation.'
     });
   }
   let first: SealedCompanyRecord | undefined;
   try {
-    first = listed.map((w) => fromCompanyWire(w, { company: company.id, kind: recordKind, id }).sealed).find((r) => r.version === 1);
+    first = listed
+      .map((w) => fromCompanyWire(w, { company: company.id, kind: recordKind, id }).sealed)
+      .find((r) => r.version === 1);
   } catch {
     first = undefined;
   }
   const mine = signingPublicKeyOf(seat.signingSecret).toLowerCase();
   if (first === undefined || verifiedCompanyFiler(first)?.toLowerCase() !== mine) {
-    return 'the record filed with the invitation under this link is not one this seat filed, so it is not entered or taken as this '
-      + 'one: start a new invitation, which has a new link';
+    return (
+      'the record filed with the invitation under this link is not one this seat filed, so it is not entered or taken as this ' +
+      'one: start a new invitation, which has a new link'
+    );
   }
   if (kind === 'vendor') {
     let terms: VendorTerms;
     try {
       terms = openVendor(first, keysByPurpose(company.viewingKey).at(first.keyEpoch)).terms;
     } catch {
-      return 'the vendor entry filed with the invitation under this link does not open with the company\'s key, so it cannot be said '
-        + 'to be on these terms: start a new invitation, which has a new link';
+      return (
+        "the vendor entry filed with the invitation under this link does not open with the company's key, so it cannot be said " +
+        'to be on these terms: start a new invitation, which has a new link'
+      );
     }
     if (canonical(terms) !== canonical((spec as unknown as VendorSpec).terms)) {
       return `the invitation already made under this link was made with other terms: ${SAME_ASK}`;
@@ -664,17 +971,22 @@ export async function filedRecordEnteredHere<K extends 'employee' | 'vendor'>(
   try {
     held = await reads.newest([{ store: 'company', kind: recordKind, id }]);
   } catch (e) {
-    throw new FiledNotEntered(`what the company's records hold of it could not be read: ${(e as Error)?.message ?? String(e)}`, {
-      cause: e, again: 'Press again to carry on with this same invitation.',
-    });
+    throw new FiledNotEntered(
+      `what the company's records hold of it could not be read: ${(e as Error)?.message ?? String(e)}`,
+      {
+        cause: e,
+        again: 'Press again to carry on with this same invitation.'
+      }
+    );
   }
   if ((held[0] ?? 0) < 1) await seat.entered.enter([companyRecordEntry(first)]);
   return null;
 }
 
 /** What a press again is told when the invitation filed under its token is closed: it can never be filed again. */
-export const INVITATION_UNDER_THIS_LINK_CLOSED = 'the invitation already filed under this link has been used, has expired or was withdrawn, '
-  + 'so nothing is made or raised under it again: start a new invitation, which has a new link, and withdraw any proposal still open for it';
+export const INVITATION_UNDER_THIS_LINK_CLOSED =
+  'the invitation already filed under this link has been used, has expired or was withdrawn, ' +
+  'so nothing is made or raised under it again: start a new invitation, which has a new link, and withdraw any proposal still open for it';
 
 /**
  * **THE SEAT OFFERED BY ADDRESS THIS DEVICE KEPT, TAKEN UP AGAIN.** The kept invitation must be this company's, for
@@ -689,39 +1001,87 @@ export const INVITATION_UNDER_THIS_LINK_CLOSED = 'the invitation already filed u
  * sealed to a key a removed seat may hold, and is checked by the devices that hold the key in force.
  */
 async function resumeSignerByAddress(
-  company: InvitingCompany, seat: InvitingSeat, signer: SignerSpec & { readonly address: string }, coinPublicKey: Hex,
-  writes: CompanyWrites, doors: SignerByAddressDoors, opts: InviteOptions,
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  signer: SignerSpec & { readonly address: string },
+  coinPublicKey: Hex,
+  writes: CompanyWrites,
+  doors: SignerByAddressDoors,
+  opts: InviteOptions
 ): Promise<MadeInvitation> {
   const kept = opts.resume!;
   const offer = kept.offer.offer;
   const forWhom = offer.for;
-  if (kept.company !== company.id || offer.company !== company.id || kept.id !== invitationIdOf(kept.token)
-    || (opts.token !== undefined && opts.token !== kept.token)) {
+  if (
+    kept.company !== company.id ||
+    offer.company !== company.id ||
+    kept.id !== invitationIdOf(kept.token) ||
+    (opts.token !== undefined && opts.token !== kept.token)
+  ) {
     throw new InvitationNotMade('the invitation kept on this device to take up again is not this one');
   }
-  if (forWhom.kind !== 'signer' || forWhom.byAddress === undefined || forWhom.invited.terms.invite === undefined
-    || forWhom.invited.terms.proposal === undefined || forWhom.byAddress.address.toLowerCase() !== signer.address.toLowerCase()) {
-    throw new InvitationNotMade('the invitation kept on this device to take up again is not a seat offered at this address');
+  if (
+    forWhom.kind !== 'signer' ||
+    forWhom.byAddress === undefined ||
+    forWhom.invited.terms.invite === undefined ||
+    forWhom.invited.terms.proposal === undefined ||
+    forWhom.byAddress.address.toLowerCase() !== signer.address.toLowerCase()
+  ) {
+    throw new InvitationNotMade(
+      'the invitation kept on this device to take up again is not a seat offered at this address'
+    );
   }
   const differs = firstAskRefusal(forWhom, 'signer', signer);
   if (differs !== null) throw new InvitationNotMade(differs);
   if (offerExpiredRefusal(offer, Date.now()) !== null) {
-    throw new InvitationNotMade('the invitation kept on this device has expired, so its proposal is not raised again: withdraw it if '
-      + 'its proposal is still open, and invite the person again');
+    throw new InvitationNotMade(
+      'the invitation kept on this device has expired, so its proposal is not raised again: withdraw it if ' +
+        'its proposal is still open, and invite the person again'
+    );
   }
   const held = await doors.held(coinPublicKey, forWhom.invited.terms.proposal);
   if (held !== null) throw new InvitationNotMade(held);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
   const inbox = inboxOf(sealing.key, company.id);
-  const secret = invitationSecret(sealing.key, company.id, forWhom.seat.nonce, forWhom.name, forWhom.role, invitationIdOf(kept.token));
+  const secret = invitationSecret(
+    sealing.key,
+    company.id,
+    forWhom.seat.nonce,
+    forWhom.name,
+    forWhom.role,
+    invitationIdOf(kept.token)
+  );
   let resumed = kept;
   if (offer.inboxPublicKey !== inbox || forWhom.seat.secret !== secret) {
-    resumed = { ...kept, offer: signOffer({ ...offer, inboxPublicKey: inbox, for: { ...forWhom, seat: { nonce: forWhom.seat.nonce, secret } } }, seat.signingSecret) };
+    resumed = {
+      ...kept,
+      offer: signOffer(
+        { ...offer, inboxPublicKey: inbox, for: { ...forWhom, seat: { nonce: forWhom.seat.nonce, secret } } },
+        seat.signingSecret
+      )
+    };
     await doors.keep(resumed);
   }
-  await doors.raise({ invited: forWhom.invited, proposalSalt: forWhom.byAddress.proposalSalt, name: forWhom.name, inviter: offer.inviter, coinPublicKey });
+  await doors.raise({
+    invited: forWhom.invited,
+    proposalSalt: forWhom.byAddress.proposalSalt,
+    name: forWhom.name,
+    inviter: offer.inviter,
+    coinPublicKey
+  });
   try {
-    const invitation = await filed(company, seat, 'signer', forWhom, sealing, kept.token, writes, undefined, undefined, resumed.offer);
+    const invitation = await filed(
+      company,
+      seat,
+      'signer',
+      forWhom,
+      sealing,
+      kept.token,
+      writes,
+      undefined,
+      undefined,
+      resumed.offer
+    );
     return { link: kept.link, id: invitation.id };
   } catch (e) {
     throw new InvitationRaisedNotFiled(kept.link, (e as Error).message);
@@ -746,11 +1106,19 @@ async function resumeSignerByAddress(
  * date, a date that is not a calendar date.
  */
 export async function inviteHere<K extends InvitationKind>(
-  company: InvitingCompany, seat: InvitingSeat, kind: K, spec: InviteSpecs[K], origin: string, writes: CompanyWrites,
-  byAddress?: K extends 'vendor' ? VendorByAddressDoors : SignerByAddressDoors, opts: InviteOptions = {},
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  kind: K,
+  spec: InviteSpecs[K],
+  origin: string,
+  writes: CompanyWrites,
+  byAddress?: K extends 'vendor' ? VendorByAddressDoors : SignerByAddressDoors,
+  opts: InviteOptions = {}
 ): Promise<MadeInvitation> {
   if (opts.resume !== undefined && (kind !== 'signer' || (spec as SignerSpec).address === undefined)) {
-    throw new InvitationNotMade('only a seat offered by address is taken up again from the invitation this device kept');
+    throw new InvitationNotMade(
+      'only a seat offered by address is taken up again from the invitation this device kept'
+    );
   }
   switch (kind) {
     case 'employee': {
@@ -758,14 +1126,30 @@ export async function inviteHere<K extends InvitationKind>(
       return { link: invitationLink(origin, made.token), id: made.id, person: made.person };
     }
     case 'vendor': {
-      const made = await fileVendorInvitation(company, seat, spec as VendorSpec, writes, byAddress as VendorByAddressDoors | undefined, opts.token);
+      const made = await fileVendorInvitation(
+        company,
+        seat,
+        spec as VendorSpec,
+        writes,
+        byAddress as VendorByAddressDoors | undefined,
+        opts.token
+      );
       return { link: invitationLink(origin, made.token), id: made.id, person: made.person };
     }
     case 'signer': {
       const signer = spec as SignerSpec;
       if (signer.address !== undefined) {
-        if (byAddress === undefined) throw new InvitationNotMade('this page cannot raise a seat offered by address: reload the page');
-        return fileSignerByAddress(company, seat, signer as SignerSpec & { address: string }, origin, writes, byAddress as SignerByAddressDoors, opts);
+        if (byAddress === undefined)
+          throw new InvitationNotMade('this page cannot raise a seat offered by address: reload the page');
+        return fileSignerByAddress(
+          company,
+          seat,
+          signer as SignerSpec & { address: string },
+          origin,
+          writes,
+          byAddress as SignerByAddressDoors,
+          opts
+        );
       }
       const made = await fileSignerInvitation(company, seat, signer, writes, undefined, opts.token);
       return { link: invitationLink(origin, made.token), id: made.id };
@@ -773,7 +1157,9 @@ export async function inviteHere<K extends InvitationKind>(
     case 'super-admin':
       throw new InvitationNotMade(SUPER_ADMIN_INVITED_BY_THE_COMMITTEE);
     default:
-      throw new InvitationNotMade('it is none of the four kinds of invitation (an employee, a vendor, a signer or a super admin): choose one');
+      throw new InvitationNotMade(
+        'it is none of the four kinds of invitation (an employee, a vendor, a signer or a super admin): choose one'
+      );
   }
 }
 
@@ -782,13 +1168,19 @@ export interface Reissued {
   /** The seat the chain holds that the invitation is re-issued for. */
   readonly leaf: Hex;
   /** The company's proposals: the one that seated the leaf carries the invitation it replaces, read by that leaf. */
-  readonly proposals: readonly (Pick<SealedProposal, 'accountId' | 'sealed'> & Partial<Pick<SealedProposal, 'keyEpoch'>>)[];
+  readonly proposals: readonly (Pick<SealedProposal, 'accountId' | 'sealed'> &
+    Partial<Pick<SealedProposal, 'keyEpoch'>>)[];
   /** Every seat the company's account holds now, as this person's own wallet read it. */
   readonly onTheChain: readonly string[];
 }
 
 /** The invitation the proposal seating `leaf` carried - one, read by the leaf - unless it is itself a re-issue. */
-export const replacedFor = (proposals: Reissued['proposals'], accountId: string, viewingKey: KeysHeld, leaf: string): SignedSeatInvitation | null => {
+export const replacedFor = (
+  proposals: Reissued['proposals'],
+  accountId: string,
+  viewingKey: KeysHeld,
+  leaf: string
+): SignedSeatInvitation | null => {
   const original = seatInvitationIn(proposals, accountId, viewingKey, leaf);
   return original === null || original.terms.replaces !== undefined ? null : original;
 };
@@ -811,22 +1203,39 @@ export const replacedFor = (proposals: Reissued['proposals'], accountId: string,
  * name to show beside the link, never the one a page asked under.
  */
 export async function reissueInvitationHere(
-  company: InvitingCompany, seat: InvitingSeat, reissued: Reissued, origin: string, writes: CompanyWrites, own: { readonly token?: Hex } = {},
+  company: InvitingCompany,
+  seat: InvitingSeat,
+  reissued: Reissued,
+  origin: string,
+  writes: CompanyWrites,
+  own: { readonly token?: Hex } = {}
 ): Promise<MadeInvitation & { readonly name: string }> {
   refuseASeatThatMayNotInvite(seat);
   if (!reissued.onTheChain.some((x) => x.toLowerCase() === seat.statement.seat.toLowerCase())) {
-    throw new SeatMayNotInvite('Your seat is not one the company\'s account holds now, so the person\'s wallet would not take you as '
-      + 'their inviter. Send it again from the device of a signer whose seat the account holds.');
+    throw new SeatMayNotInvite(
+      "Your seat is not one the company's account holds now, so the person's wallet would not take you as " +
+        'their inviter. Send it again from the device of a signer whose seat the account holds.'
+    );
   }
   const original = replacedFor(reissued.proposals, company.id, company.viewingKey, reissued.leaf);
   const t = original?.terms;
-  if (original === null || t === undefined || seatInvitationRefusal(original) !== null || t.company !== company.id || t.leaf?.toLowerCase() !== reissued.leaf.toLowerCase()) {
-    throw new SeatMayNotInvite('The proposal that seated this person does not carry an invitation a signer made for them, so it cannot be sent again. Invite them again.');
+  if (
+    original === null ||
+    t === undefined ||
+    seatInvitationRefusal(original) !== null ||
+    t.company !== company.id ||
+    t.leaf?.toLowerCase() !== reissued.leaf.toLowerCase()
+  ) {
+    throw new SeatMayNotInvite(
+      'The proposal that seated this person does not carry an invitation a signer made for them, so it cannot be sent again. Invite them again.'
+    );
   }
   const leaf = t.leaf;
   if (!reissued.onTheChain.some((x) => x.toLowerCase() === leaf.toLowerCase())) {
-    throw new SeatMayNotInvite('The seat that invitation names is not one the company\'s account holds now, so it is not re-issued: '
-      + 'somebody waiting for a seat is withdrawn and invited again instead.');
+    throw new SeatMayNotInvite(
+      "The seat that invitation names is not one the company's account holds now, so it is not re-issued: " +
+        'somebody waiting for a seat is withdrawn and invited again instead.'
+    );
   }
   refuseVaultsBeyondTheSeat(seat, t.vaults);
   const sealing = sealingWith(company.viewingKey, company.keyEpoch);
@@ -836,10 +1245,23 @@ export async function reissueInvitationHere(
    * it replaces, for every member's device to hold it to: only the invitation's id is new.
    */
   const { replaces: _none, ...approved } = t;
-  const invited = signSeatInvitation({
-    ...approved, invitation: invitationIdOf(token), replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature },
-  }, seat.signingSecret);
-  const invitation = await filed(company, seat, 'signer', { kind: 'reissue', name: t.name, role: t.role, invited }, sealing, token, writes);
+  const invited = signSeatInvitation(
+    {
+      ...approved,
+      invitation: invitationIdOf(token),
+      replaces: { invitation: t.invitation, signedBy: original.signedBy, signature: original.signature }
+    },
+    seat.signingSecret
+  );
+  const invitation = await filed(
+    company,
+    seat,
+    'signer',
+    { kind: 'reissue', name: t.name, role: t.role, invited },
+    sealing,
+    token,
+    writes
+  );
   return { link: invitationLink(origin, token), id: invitation.id, name: t.name };
 }
 

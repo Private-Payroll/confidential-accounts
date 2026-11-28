@@ -1,9 +1,19 @@
-import { GRANT_STATE, grantOutcomeOf, grantReadInTheWallet, type GrantAsked } from 'vaults-web-shared/proposal-in-the-wallet.js';
+import {
+  GRANT_STATE,
+  grantOutcomeOf,
+  grantReadInTheWallet,
+  type GrantAsked
+} from 'vaults-web-shared/proposal-in-the-wallet.js';
 import { grantsHere, grantsReadWith } from 'vaults-web-shared/purpose-wraps.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import { canonical } from '../../../../src/core/crypto.js';
 import { isReaderRole, READER_ROLES, type ReaderRole } from '../../../../src/core/roles.js';
-import { grantsChangeCounted, grantsMessage, narrowsOnly, type GrantEntry } from '../../../../src/midnight/grants-record.js';
+import {
+  grantsChangeCounted,
+  grantsMessage,
+  narrowsOnly,
+  type GrantEntry
+} from '../../../../src/midnight/grants-record.js';
 import { readThroughAViewOf, type PageView } from './filing-judge.js';
 import { namedBefore } from './named-before.js';
 import { refusalOf, SEAT_REFUSALS, type ActRefusal } from './refusals.js';
@@ -42,7 +52,11 @@ export interface ChangeWaiting {
 }
 
 export type GrantsRead =
-  | { readonly of: typeof GRANTS_READ.read; readonly readers: readonly ReaderHeld[]; readonly waiting: ChangeWaiting | null }
+  | {
+      readonly of: typeof GRANTS_READ.read;
+      readonly readers: readonly ReaderHeld[];
+      readonly waiting: ChangeWaiting | null;
+    }
   | { readonly of: typeof GRANTS_READ.refused; readonly why: ActRefusal };
 
 type Grants = Awaited<ReturnType<typeof grantsHere>>;
@@ -56,7 +70,11 @@ function waitingOf(g: Grants, accountId: string, ownSeat: string): ChangeWaiting
   if (change === undefined || needed === undefined) return null;
   const base = g.inForce?.grants.entries ?? [];
   const counted = grantsChangeCounted(
-    g.here.dir.seats, grantsMessage(accountId, change), change.signatures, (seat) => g.here.holders.seats.includes(seat.seat), narrowsOnly(base, change.entries),
+    g.here.dir.seats,
+    grantsMessage(accountId, change),
+    change.signatures,
+    (seat) => g.here.holders.seats.includes(seat.seat),
+    narrowsOnly(base, change.entries)
   );
   const own = g.here.dir.seats.find((s) => s.seat === ownSeat)?.signingKey.toLowerCase();
   return {
@@ -64,7 +82,7 @@ function waitingOf(g: Grants, accountId: string, ownSeat: string): ChangeWaiting
     takesAway: base.filter((b) => !change.entries.some((e) => e.recipient === b.recipient)).map(heldOf),
     signed: typeof counted === 'string' ? null : counted,
     needed,
-    mine: own !== undefined && change.signatures.some((s) => s.publicKey.toLowerCase() === own),
+    mine: own !== undefined && change.signatures.some((s) => s.publicKey.toLowerCase() === own)
   };
 }
 
@@ -78,25 +96,47 @@ export async function readGrants(personId: string, view: PageView): Promise<Gran
   try {
     const here = await seatAndRecordsHere(personId, view);
     if (typeof here === 'string') return { of: GRANTS_READ.refused, why: here };
-    const g = await grantsHere({ accountId: companyId, versions: grantsReadWith((asked) => view.records(asked), companyId), directory: here.directory, me: here.mine });
-    return { of: GRANTS_READ.read, readers: (g.inForce?.grants.entries ?? []).map(heldOf), waiting: waitingOf(g, companyId, here.leaf) };
+    const g = await grantsHere({
+      accountId: companyId,
+      versions: grantsReadWith((asked) => view.records(asked), companyId),
+      directory: here.directory,
+      me: here.mine
+    });
+    return {
+      of: GRANTS_READ.read,
+      readers: (g.inForce?.grants.entries ?? []).map(heldOf),
+      waiting: waitingOf(g, companyId, here.leaf)
+    };
   } catch (e) {
     return { of: GRANTS_READ.refused, why: refusalOf(e) };
   }
 }
 
 export const GRANT_WHY = {
-  seat: 'seat', notACode: 'not-a-code', codeNotSigned: 'code-not-signed', codeAnotherCompany: 'code-another-company', notAsAsked: 'not-as-asked',
-  filedMeanwhile: 'filed-meanwhile', notFiled: 'not-filed', stopped: 'stopped', other: 'other',
+  seat: 'seat',
+  notACode: 'not-a-code',
+  codeNotSigned: 'code-not-signed',
+  codeAnotherCompany: 'code-another-company',
+  notAsAsked: 'not-as-asked',
+  filedMeanwhile: 'filed-meanwhile',
+  notFiled: 'not-filed',
+  stopped: 'stopped',
+  other: 'other'
 } as const;
 export type GrantWhy = (typeof GRANT_WHY)[keyof typeof GRANT_WHY];
 
 const WHY_OF_CODE: Readonly<Record<string, GrantWhy>> = {
   ...Object.fromEntries(SEAT_REFUSALS.map((c) => [c, GRANT_WHY.seat] as const)),
-  'not-a-code': GRANT_WHY.notACode, 'not-a-reader-code': GRANT_WHY.notACode, 'key-from-the-code': GRANT_WHY.notACode,
-  'code-not-signed': GRANT_WHY.codeNotSigned, 'code-another-company': GRANT_WHY.codeAnotherCompany,
-  'not-a-key': GRANT_WHY.notAsAsked, 'not-a-choice': GRANT_WHY.notAsAsked, 'not-a-reader-role': GRANT_WHY.notAsAsked,
-  'filed-meanwhile': GRANT_WHY.filedMeanwhile, 'not-filed': GRANT_WHY.notFiled,
+  'not-a-code': GRANT_WHY.notACode,
+  'not-a-reader-code': GRANT_WHY.notACode,
+  'key-from-the-code': GRANT_WHY.notACode,
+  'code-not-signed': GRANT_WHY.codeNotSigned,
+  'code-another-company': GRANT_WHY.codeAnotherCompany,
+  'not-a-key': GRANT_WHY.notAsAsked,
+  'not-a-choice': GRANT_WHY.notAsAsked,
+  'not-a-reader-role': GRANT_WHY.notAsAsked,
+  'filed-meanwhile': GRANT_WHY.filedMeanwhile,
+  'not-filed': GRANT_WHY.notFiled
 };
 
 /** A stop after which the change may be part filed, so the page reads the grants again before it asks twice. */
@@ -107,7 +147,9 @@ const CODE = /^act\.grant-read\.why\.([a-z-]+)$/u;
 function grantWhyOf(refused: string | undefined): GrantWhy {
   if (refused === undefined) return GRANT_WHY.stopped;
   const code = CODE.exec(refused)?.[1];
-  return code !== undefined && Object.prototype.hasOwnProperty.call(WHY_OF_CODE, code) ? WHY_OF_CODE[code]! : GRANT_WHY.other;
+  return code !== undefined && Object.prototype.hasOwnProperty.call(WHY_OF_CODE, code)
+    ? WHY_OF_CODE[code]!
+    : GRANT_WHY.other;
 }
 
 export const GRANT_ACTED = { done: 'done', stopped: 'stopped', refused: 'refused', problem: 'problem' } as const;
@@ -117,8 +159,18 @@ export const GRANT_PROBLEM = { noCode: 'no-code', noRole: 'no-role' } as const;
 type GrantProblem = (typeof GRANT_PROBLEM)[keyof typeof GRANT_PROBLEM];
 
 export type GrantActed =
-  | { readonly of: typeof GRANT_ACTED.done; readonly state: string | null; readonly signed: number | null; readonly needed: number | null }
-  | { readonly of: typeof GRANT_ACTED.stopped; readonly why: GrantWhy; readonly partial: boolean; readonly handedOver: boolean }
+  | {
+      readonly of: typeof GRANT_ACTED.done;
+      readonly state: string | null;
+      readonly signed: number | null;
+      readonly needed: number | null;
+    }
+  | {
+      readonly of: typeof GRANT_ACTED.stopped;
+      readonly why: GrantWhy;
+      readonly partial: boolean;
+      readonly handedOver: boolean;
+    }
   | { readonly of: typeof GRANT_ACTED.refused; readonly why: ActRefusal }
   | { readonly of: typeof GRANT_ACTED.problem; readonly problem: GrantProblem };
 
@@ -126,13 +178,23 @@ export type GrantActed =
 function actedOf(ended: ActOutcome): GrantActed {
   if (ended.of === GRANT_ACTED.done) return { of: GRANT_ACTED.done, ...grantOutcomeOf(ended) };
   const why = grantWhyOf(ended.refused);
-  return { of: GRANT_ACTED.stopped, why, partial: PARTLY.has(why), handedOver: ended.relayed > 0 || ended.unconfirmed > 0 };
+  return {
+    of: GRANT_ACTED.stopped,
+    why,
+    partial: PARTLY.has(why),
+    handedOver: ended.relayed > 0 || ended.unconfirmed > 0
+  };
 }
 
+export const onStepOf = (onStep?: (step: number, steps: number) => void) =>
+  onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) };
 
-export const onStepOf = (onStep?: (step: number, steps: number) => void) => (onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) });
-
-async function askWallet(personId: string, view: PageView, asked: GrantAsked, onStep?: (step: number, steps: number) => void): Promise<GrantActed> {
+async function askWallet(
+  personId: string,
+  view: PageView,
+  asked: GrantAsked,
+  onStep?: (step: number, steps: number) => void
+): Promise<GrantActed> {
   try {
     const named = await namedBefore(personId, view);
     if (typeof named === 'string') return { of: GRANT_ACTED.refused, why: named };
@@ -144,7 +206,10 @@ async function askWallet(personId: string, view: PageView, asked: GrantAsked, on
 
 /** Gives a reader access from the code their own wallet made for this company; the wallet checks the code and shows who it is for before it signs. */
 export async function giveReadAccess(
-  personId: string, view: PageView, asked: { readonly code: string; readonly role: string }, onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  asked: { readonly code: string; readonly role: string },
+  onStep?: (step: number, steps: number) => void
 ): Promise<GrantActed> {
   const code = asked.code.trim();
   if (code === '') return { of: GRANT_ACTED.problem, problem: GRANT_PROBLEM.noCode };
@@ -153,23 +218,37 @@ export async function giveReadAccess(
 }
 
 /** Takes a reader's access away, naming their key as the grants in force hold it. */
-export const takeAwayReadAccess = (personId: string, view: PageView, recipient: string, onStep?: (step: number, steps: number) => void): Promise<GrantActed> =>
-  askWallet(personId, view, { takeAway: recipient.toLowerCase() }, onStep);
+export const takeAwayReadAccess = (
+  personId: string,
+  view: PageView,
+  recipient: string,
+  onStep?: (step: number, steps: number) => void
+): Promise<GrantActed> => askWallet(personId, view, { takeAway: recipient.toLowerCase() }, onStep);
 
 /** What the grants show after this seat signed a waiting change: in force, this seat's signature on that change, another change, or unread. */
-export const CARRIES = { inForce: 'in-force', signed: 'signed', notTheWaitingChange: 'not-the-waiting-change', unread: 'unread' } as const;
+export const CARRIES = {
+  inForce: 'in-force',
+  signed: 'signed',
+  notTheWaitingChange: 'not-the-waiting-change',
+  unread: 'unread'
+} as const;
 export type Carries = (typeof CARRIES)[keyof typeof CARRIES];
 
 /** Whether an ask takes a reader's access away, rather than giving it from a code. */
-const takesAway = (asked: GrantAsked): asked is Extract<GrantAsked, { readonly takeAway: string }> => (asked as { readonly takeAway?: string }).takeAway !== undefined;
+const takesAway = (asked: GrantAsked): asked is Extract<GrantAsked, { readonly takeAway: string }> =>
+  (asked as { readonly takeAway?: string }).takeAway !== undefined;
 
 /** Whether two waiting changes give the same roles to the same readers and take the same readers away, in any order. */
-const sameChange = (a: Pick<ChangeWaiting, 'gives' | 'takesAway'>, b: Pick<ChangeWaiting, 'gives' | 'takesAway'>): boolean =>
-  a.gives.length === b.gives.length && a.takesAway.length === b.takesAway.length
-  && a.gives.every((g) => b.gives.some((h) => h.recipient === g.recipient && h.role === g.role))
-  && b.gives.every((g) => a.gives.some((h) => h.recipient === g.recipient && h.role === g.role))
-  && a.takesAway.every((r) => b.takesAway.some((h) => h.recipient === r.recipient))
-  && b.takesAway.every((r) => a.takesAway.some((h) => h.recipient === r.recipient));
+const sameChange = (
+  a: Pick<ChangeWaiting, 'gives' | 'takesAway'>,
+  b: Pick<ChangeWaiting, 'gives' | 'takesAway'>
+): boolean =>
+  a.gives.length === b.gives.length &&
+  a.takesAway.length === b.takesAway.length &&
+  a.gives.every((g) => b.gives.some((h) => h.recipient === g.recipient && h.role === g.role)) &&
+  b.gives.every((g) => a.gives.some((h) => h.recipient === g.recipient && h.role === g.role)) &&
+  a.takesAway.every((r) => b.takesAway.some((h) => h.recipient === r.recipient)) &&
+  b.takesAway.every((r) => a.takesAway.some((h) => h.recipient === r.recipient));
 
 /**
  * Signs the change that waits, with the same ask that made it (a give with the reader's code again, a take-away by the reader's key),
@@ -177,14 +256,26 @@ const sameChange = (a: Pick<ChangeWaiting, 'gives' | 'takesAway'>, b: Pick<Chang
  * different change does not sign this one, and is told as not the waiting change.
  */
 export async function approveWaitingChange(
-  personId: string, view: PageView, asked: GrantAsked, waiting: ChangeWaiting, onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  asked: GrantAsked,
+  waiting: ChangeWaiting,
+  onStep?: (step: number, steps: number) => void
 ): Promise<{ readonly acted: GrantActed; readonly carries: Carries | null }> {
-  const acted = await askWallet(personId, view, takesAway(asked) ? { takeAway: asked.takeAway.toLowerCase() } : { code: asked.code.trim(), role: asked.role }, onStep);
+  const acted = await askWallet(
+    personId,
+    view,
+    takesAway(asked) ? { takeAway: asked.takeAway.toLowerCase() } : { code: asked.code.trim(), role: asked.role },
+    onStep
+  );
   if (acted.of !== GRANT_ACTED.done) return { acted, carries: null };
   if (acted.state === GRANT_STATE.inForce) return { acted, carries: CARRIES.inForce };
   /* The action ended the screen's view of the company, so what it left is read through a view of its own. */
   const now = await readThroughAViewOf(view.company, (after) => readGrants(personId, after));
   const w = now.of === GRANTS_READ.read ? now.waiting : null;
   if (now.of !== GRANTS_READ.read) return { acted, carries: CARRIES.unread };
-  return { acted, carries: w !== null && w.mine && sameChange(w, waiting) ? CARRIES.signed : CARRIES.notTheWaitingChange };
+  return {
+    acted,
+    carries: w !== null && w.mine && sameChange(w, waiting) ? CARRIES.signed : CARRIES.notTheWaitingChange
+  };
 }

@@ -12,11 +12,13 @@ import { NETWORK } from 'midnight-identity/network';
 const SEED = new Uint8Array(32).fill(7);
 const toHex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
-export function snapshotForTest(options: {
-  readonly coinPublicKey?: string;
-  readonly networkId?: string;
-  readonly inFlight?: 'spend' | 'output' | null;
-} = {}): string {
+export function snapshotForTest(
+  options: {
+    readonly coinPublicKey?: string;
+    readonly networkId?: string;
+    readonly inFlight?: 'spend' | 'output' | null;
+  } = {}
+): string {
   const keys = ZswapSecretKeys.fromSeed(SEED);
   const coin = { type: shieldedToken().raw, nonce: '11'.repeat(32), value: 5n };
   let local = new ZswapLocalState();
@@ -26,11 +28,14 @@ export function snapshotForTest(options: {
     [local] = holding.spend(keys, [...holding.coins][0]!, 0);
   }
   return JSON.stringify({
-    publicKeys: { coinPublicKey: options.coinPublicKey ?? keys.coinPublicKey, encryptionPublicKey: keys.encryptionPublicKey },
+    publicKeys: {
+      coinPublicKey: options.coinPublicKey ?? keys.coinPublicKey,
+      encryptionPublicKey: keys.encryptionPublicKey
+    },
     state: toHex(local.serialize()),
     protocolVersion: '1',
     networkId: options.networkId ?? NETWORK,
-    coinHashes: {},
+    coinHashes: {}
   });
 }
 

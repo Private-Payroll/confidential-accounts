@@ -30,8 +30,12 @@ const SECRET = secretFromWords(TEST_MNEMONIC);
 const ORIGIN = 'https://payroll-a.example';
 
 let port: WatchedPort;
-beforeEach(() => { port = watchedStore(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  port = watchedStore();
+});
+afterEach(() => {
+  cleanup();
+});
 
 const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   schema: 'midnight-identity/disclosure-request/v1',
@@ -39,11 +43,11 @@ const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   purpose: 'To pay you, we need to know who you are.',
   wants: [
     { attribute: GIVEN_NAME, required: true },
-    { attribute: EMAIL, required: false, reason: 'For your payslip.' },
+    { attribute: EMAIL, required: false, reason: 'For your payslip.' }
   ],
   nonce: 'n1',
   expiresAt: NOW + 600_000,
-  ...over,
+  ...over
 });
 
 const open = (data: unknown = wire(), origin = ORIGIN) => {
@@ -52,11 +56,14 @@ const open = (data: unknown = wire(), origin = ORIGIN) => {
   const handlers: ((event: MessageEvent) => void)[] = [];
   const view: ChannelWindow = {
     opener: opener as ChannelWindow['opener'],
-    addEventListener: (_t, h) => { handlers.push(h); },
-    removeEventListener: () => { /* torn down by cleanup */ },
+    addEventListener: (_t, h) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {
+      /* torn down by cleanup */
+    }
   };
-  render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
+  render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
   const deliver = (payload: unknown): void => {
     for (const h of handlers) {
       h({ source: opener, origin, data: payload } as unknown as MessageEvent);
@@ -93,12 +100,11 @@ const sendTo = (origin = ORIGIN): string => `Send these to ${origin}`;
  */
 const optionFor = async (attribute: string): Promise<HTMLInputElement> => {
   await settled();
-  const found = document.querySelector<HTMLInputElement>(
-    `[data-row="${attribute}"] [data-option] input`);
+  const found = document.querySelector<HTMLInputElement>(`[data-row="${attribute}"] [data-option] input`);
   if (!found) {
     throw new Error(
-      `the screen never showed an option row for ${attribute}. That is the defect, not a `
-      + 'wait that needed longer.');
+      `the screen never showed an option row for ${attribute}. That is the defect, not a ` + 'wait that needed longer.'
+    );
   }
   return found;
 };
@@ -124,27 +130,26 @@ describe('§5.3 — the person is told where the page ACTUALLY came from', () =>
     expect(document.body.textContent).toContain('Your browser told this wallet that');
   });
 
-  it('THE BUTTON AND THE WARNING ARE THE OBSERVED ORIGIN, AND THE NAME IS NOT IN THEM',
-    async () => {
-      /*
-       * **THIS IS THE TEST THAT CLOSES IT FOR DISCLOSURE.** The change did
-       * this to the unlock screen; this kind was still writing the button a
-       * person presses, and the sentence about what they cannot take back, in
-       * the one field on the whole ask that the ASKER chose.
-       */
-      await someone();
-      open();
-      await settled();
-      screen.getByText('Who is asking');
-      const button = document.querySelector('[data-approve]')?.textContent ?? '';
-      expect(button).toContain(ORIGIN);
-      expect(button).not.toContain('Payroll A');
-      const kept = document.body.textContent ?? '';
-      expect(kept).toContain(`${ORIGIN} will keep their own copy`);
-      expect(kept).not.toContain('Payroll A will keep their own copy');
-      /* The name is still shown, in the card, labelled as a claim. */
-      expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
-    });
+  it('THE BUTTON AND THE WARNING ARE THE OBSERVED ORIGIN, AND THE NAME IS NOT IN THEM', async () => {
+    /*
+     * **THIS IS THE TEST THAT CLOSES IT FOR DISCLOSURE.** The change did
+     * this to the unlock screen; this kind was still writing the button a
+     * person presses, and the sentence about what they cannot take back, in
+     * the one field on the whole ask that the ASKER chose.
+     */
+    await someone();
+    open();
+    await settled();
+    screen.getByText('Who is asking');
+    const button = document.querySelector('[data-approve]')?.textContent ?? '';
+    expect(button).toContain(ORIGIN);
+    expect(button).not.toContain('Payroll A');
+    const kept = document.body.textContent ?? '';
+    expect(kept).toContain(`${ORIGIN} will keep their own copy`);
+    expect(kept).not.toContain('Payroll A will keep their own copy');
+    /* The name is still shown, in the card, labelled as a claim. */
+    expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
+  });
 
   it('A PAGE CALLING ITSELF SOMEBODY ELSE IS DESCRIBED BY WHERE IT CAME FROM', async () => {
     const OTHER = 'https://payroll-b.example';
@@ -157,28 +162,28 @@ describe('§5.3 — the person is told where the page ACTUALLY came from', () =>
     expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
   });
 
-  it('the requester\'s own words are rendered as TEXT and never as markup', async () => {
+  it("the requester's own words are rendered as TEXT and never as markup", async () => {
     await someone();
-    open(wire({
-      requester: { name: '<img src=x onerror="alert(1)">', rdns: 'a' },
-      purpose: '<script>alert(2)</script>',
-    }));
+    open(
+      wire({
+        requester: { name: '<img src=x onerror="alert(1)">', rdns: 'a' },
+        purpose: '<script>alert(2)</script>'
+      })
+    );
     await settled();
     screen.getByText('Who is asking');
     expect(document.querySelector('[data-requester-name] img')).toBeNull();
     expect(document.querySelector('script')).toBeNull();
-    expect(document.querySelector('[data-requester-name]')?.textContent)
-      .toBe('<img src=x onerror="alert(1)">');
+    expect(document.querySelector('[data-requester-name]')?.textContent).toBe('<img src=x onerror="alert(1)">');
   });
 
-  it('a request that names its own origin never reaches the approval rows at all',
-    async () => {
-      await someone();
-      open(wire({ requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } }));
-      await settled();
-      screen.getByText('This request was refused before you saw it');
-      expect(document.querySelector('[data-approve]')).toBeNull();
-    });
+  it('a request that names its own origin never reaches the approval rows at all', async () => {
+    await someone();
+    open(wire({ requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } }));
+    await settled();
+    screen.getByText('This request was refused before you saw it');
+    expect(document.querySelector('[data-approve]')).toBeNull();
+  });
 });
 
 describe('§6 — no silent disclosure, and a remembered grant only pre-ticks', () => {
@@ -186,10 +191,11 @@ describe('§6 — no silent disclosure, and a remembered grant only pre-ticks', 
     const ids = await someone();
     const opened = await load(port, identity);
     if (opened.of !== 'profile') throw new Error('unreachable');
-    await save(port, identity, grantTo(
-      opened.profile,
-      { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
-      0, ids, NOW));
+    await save(
+      port,
+      identity,
+      grantTo(opened.profile, { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, 0, ids, NOW)
+    );
 
     const { sent } = open();
     expect((await optionFor(GIVEN_NAME)).checked).toBe(true);
@@ -220,13 +226,15 @@ describe('approving, per value', () => {
     const answer = sent[sent.length - 1]!;
     expect(answer.target).toBe(ORIGIN);
     const response = responseFrom(sent);
-    expect(verify(response, {
-      atOrigin: ORIGIN,
-      expectingNonce: 'n1',
-      payingAddress: response.payload.address,
-      networkId: NETWORK,
-      now: NOW,
-    })).toEqual({ ok: true });
+    expect(
+      verify(response, {
+        atOrigin: ORIGIN,
+        expectingNonce: 'n1',
+        payingAddress: response.payload.address,
+        networkId: NETWORK,
+        now: NOW
+      })
+    ).toEqual({ ok: true });
   });
 
   it('DECLINING AN OPTIONAL ONE IS A NORMAL OUTCOME and the response says which', async () => {
@@ -241,37 +249,34 @@ describe('approving, per value', () => {
     expect(response.payload.declined).toEqual([EMAIL]);
   });
 
-  it('a required one can still be declined, and the screen says so before the button',
-    async () => {
-      await someone();
-      const { sent, answered } = open();
-      await settled();
-      screen.getByText('Who is asking');
-      expect(document.querySelector('[data-missing-required]')?.textContent)
-        .toContain('First name');
-      fireEvent.click(screen.getByText(sendTo()));
-      await answered();
-      const response = responseFrom(sent);
-      expect(response.payload.disclosed).toHaveLength(0);
-      expect(response.payload.declined).toEqual([GIVEN_NAME, EMAIL]);
-    });
+  it('a required one can still be declined, and the screen says so before the button', async () => {
+    await someone();
+    const { sent, answered } = open();
+    await settled();
+    screen.getByText('Who is asking');
+    expect(document.querySelector('[data-missing-required]')?.textContent).toContain('First name');
+    fireEvent.click(screen.getByText(sendTo()));
+    await answered();
+    const response = responseFrom(sent);
+    expect(response.payload.disclosed).toHaveLength(0);
+    expect(response.payload.declined).toEqual([GIVEN_NAME, EMAIL]);
+  });
 
-  it('SAYS ONCE, BEFORE, that what is sent is sent — and again after, without a leash',
-    async () => {
-      await someone();
-      const { answered } = open();
-      await settled();
-      screen.getByText('Who is asking');
-      expect(screen.getAllByText('What is sent, is sent')).toHaveLength(1);
-      fireEvent.click(screen.getByText(sendTo()));
-      await answered();
-      expect(screen.getByText('Sent')).toBeTruthy();
-      expect(document.body.textContent).toContain('Nothing can take back what has gone');
-      const controls = [...document.querySelectorAll('button, a')];
-      for (const control of controls) {
-        expect((control.textContent ?? '').toLowerCase()).not.toContain('revoke');
-      }
-    });
+  it('SAYS ONCE, BEFORE, that what is sent is sent — and again after, without a leash', async () => {
+    await someone();
+    const { answered } = open();
+    await settled();
+    screen.getByText('Who is asking');
+    expect(screen.getAllByText('What is sent, is sent')).toHaveLength(1);
+    fireEvent.click(screen.getByText(sendTo()));
+    await answered();
+    expect(screen.getByText('Sent')).toBeTruthy();
+    expect(document.body.textContent).toContain('Nothing can take back what has gone');
+    const controls = [...document.querySelectorAll('button, a')];
+    for (const control of controls) {
+      expect((control.textContent ?? '').toLowerCase()).not.toContain('revoke');
+    }
+  });
 
   it('sending nothing tells them so, and sends no payload at all', async () => {
     await someone();
@@ -281,66 +286,64 @@ describe('approving, per value', () => {
     fireEvent.click(screen.getByText('Send nothing'));
     const answer = sent[sent.length - 1]!;
     expect(answer.message).toEqual({
-      schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined',
+      schema: 'midnight-identity/disclosure-refused/v1',
+      reason: 'declined'
     });
     expect(answer.target).toBe(ORIGIN);
   });
 
-  it('the disclosure is written into the history as CONTENT, and the grant remembers it',
-    async () => {
-      await someone();
-      const { answered } = open();
-      const option = await optionFor(GIVEN_NAME);
-      fireEvent.click(option);
-      /* Declared BEFORE the press and awaited after it. The history
-       * entry is written with `void save(...)`, which is correct and is not
-       * awaited, so `afterWrites` is what waits for the write itself rather
-       * than polling the store for what the write said. */
-      const written = afterWrites(port);
-      fireEvent.click(screen.getByText(sendTo()));
-      await answered();
-      await written();
-      const opened = await load(port, identity);
-      if (opened.of !== 'profile') throw new Error('the profile could not be opened');
-      expect(opened.profile.grants[0]!.disclosures[0]!.sent[0]!.says)
-        .toEqual({ of: 'value', value: 'Sarah' });
-      expect(opened.profile.grants[0]!.recipient.origin).toBe(ORIGIN);
-    });
+  it('the disclosure is written into the history as CONTENT, and the grant remembers it', async () => {
+    await someone();
+    const { answered } = open();
+    const option = await optionFor(GIVEN_NAME);
+    fireEvent.click(option);
+    /* Declared BEFORE the press and awaited after it. The history
+     * entry is written with `void save(...)`, which is correct and is not
+     * awaited, so `afterWrites` is what waits for the write itself rather
+     * than polling the store for what the write said. */
+    const written = afterWrites(port);
+    fireEvent.click(screen.getByText(sendTo()));
+    await answered();
+    await written();
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('the profile could not be opened');
+    expect(opened.profile.grants[0]!.disclosures[0]!.sent[0]!.says).toEqual({ of: 'value', value: 'Sarah' });
+    expect(opened.profile.grants[0]!.recipient.origin).toBe(ORIGIN);
+  });
 });
 
 describe('what the screen says once it is done', () => {
-  it('THE SENTENCE AFTERWARDS IS THE OBSERVED ORIGIN TOO, AND THE NAME IS NOT IN IT',
-    async () => {
-      /*
-       * **THE RULE REACHES PAST THE PRESS**, and this half was unpinned: nothing in this file looked at `[data-details-sent]`, so the
-       * sentence could be rebuilt from `requester.name` with every test green.
-       *
-       * *"On 23 Aug you sent details to Payroll A"* is the wallet's own account
-       * of what a person did, written in the one field the asker chose — and
-       * unlike the button, it is what they would read coming back to check.
-       */
-      await someone();
-      const { sent, answered } = open();
-      await settled();
-      screen.getByText('Who is asking');
-      const written = afterWrites(port);
-      fireEvent.click(screen.getByText(sendTo()));
-      /* `findByText('Sent')` is a poll with a deadline, and what it
-       * was really waiting for was the signature. The answer is awaited
-       * instead; by the time it has crossed, the word is on the screen. */
-      await answered();
-      expect(screen.getByText('Sent')).toBeTruthy();
-      await written();
+  it('THE SENTENCE AFTERWARDS IS THE OBSERVED ORIGIN TOO, AND THE NAME IS NOT IN IT', async () => {
+    /*
+     * **THE RULE REACHES PAST THE PRESS**, and this half was unpinned: nothing in this file looked at `[data-details-sent]`, so the
+     * sentence could be rebuilt from `requester.name` with every test green.
+     *
+     * *"On 23 Aug you sent details to Payroll A"* is the wallet's own account
+     * of what a person did, written in the one field the asker chose — and
+     * unlike the button, it is what they would read coming back to check.
+     */
+    await someone();
+    const { sent, answered } = open();
+    await settled();
+    screen.getByText('Who is asking');
+    const written = afterWrites(port);
+    fireEvent.click(screen.getByText(sendTo()));
+    /* `findByText('Sent')` is a poll with a deadline, and what it
+     * was really waiting for was the signature. The answer is awaited
+     * instead; by the time it has crossed, the word is on the screen. */
+    await answered();
+    expect(screen.getByText('Sent')).toBeTruthy();
+    await written();
 
-      const said = document.querySelector('[data-details-sent]')?.textContent ?? '';
-      expect(said).toContain(ORIGIN);
-      expect(said).not.toContain('Payroll A');
-      /* And the paragraph under it, which says what they keep. */
-      const keeps = document.body.textContent ?? '';
-      expect(keeps).toContain(`${ORIGIN} keeps their own copy`);
-      expect(keeps).not.toContain('Payroll A keeps their own copy');
-      expect(sent.length).toBeGreaterThan(1);
-    });
+    const said = document.querySelector('[data-details-sent]')?.textContent ?? '';
+    expect(said).toContain(ORIGIN);
+    expect(said).not.toContain('Payroll A');
+    /* And the paragraph under it, which says what they keep. */
+    const keeps = document.body.textContent ?? '';
+    expect(keeps).toContain(`${ORIGIN} keeps their own copy`);
+    expect(keeps).not.toContain('Payroll A keeps their own copy');
+    expect(sent.length).toBeGreaterThan(1);
+  });
 });
 
 describe('the subwallet the disclosure is about', () => {
@@ -352,13 +355,15 @@ describe('the subwallet the disclosure is about', () => {
     await answered();
     const response = responseFrom(sent);
     expect(response.payload.address).toBe(shown);
-    expect(verify(response, {
-      atOrigin: ORIGIN,
-      expectingNonce: 'n1',
-      payingAddress: shown,
-      networkId: NETWORK,
-      now: NOW,
-    })).toEqual({ ok: true });
+    expect(
+      verify(response, {
+        atOrigin: ORIGIN,
+        expectingNonce: 'n1',
+        payingAddress: shown,
+        networkId: NETWORK,
+        now: NOW
+      })
+    ).toEqual({ ok: true });
   });
 
   it('AND THE SAME DISCLOSURE IS REFUSED AT A SECOND RECIPIENT', async () => {
@@ -369,13 +374,15 @@ describe('the subwallet the disclosure is about', () => {
     fireEvent.click(screen.getByText(sendTo()));
     await answered();
     const response = responseFrom(sent);
-    expect(verify(response, {
-      atOrigin: 'https://payroll-b.example',
-      expectingNonce: 'n1',
-      payingAddress: response.payload.address,
-      networkId: NETWORK,
-      now: NOW,
-    })).toMatchObject({ ok: false, code: 'origin-mismatch' });
+    expect(
+      verify(response, {
+        atOrigin: 'https://payroll-b.example',
+        expectingNonce: 'n1',
+        payingAddress: response.payload.address,
+        networkId: NETWORK,
+        now: NOW
+      })
+    ).toMatchObject({ ok: false, code: 'origin-mismatch' });
   });
 });
 
@@ -399,32 +406,33 @@ describe('a window that was opened FOR an ask, before the ask arrives', () => {
   const renderWith = (opener: ChannelWindow['opener']): void => {
     const view: ChannelWindow = {
       opener,
-      addEventListener: () => { /* nothing is delivered: that is the state */ },
-      removeEventListener: () => { /* torn down by cleanup */ },
+      addEventListener: () => {
+        /* nothing is delivered: that is the state */
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
     };
-    render(
-      <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={ORIGIN} />);
+    render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={ORIGIN} />);
   };
 
-  it('WATCHED FAILING: IT SAYS IT IS WAITING FOR THE REQUEST, not that nothing is asking',
-    async () => {
-      await someone();
-      const opener = watchedOpener();
-      renderWith(opener as unknown as ChannelWindow['opener']);
-      await settled();
+  it('WATCHED FAILING: IT SAYS IT IS WAITING FOR THE REQUEST, not that nothing is asking', async () => {
+    await someone();
+    const opener = watchedOpener();
+    renderWith(opener as unknown as ChannelWindow['opener']);
+    await settled();
 
-      expect(document.querySelector('[data-waiting-for-ask]')).not.toBeNull();
-      expect(document.body.textContent).not.toContain('Nothing is asking');
-      /* **AND IT NAMES NOBODY.** At this moment this wallet does not know who
-       * is asking: the origin is observed on the first message and not before,
-       * so a screen naming the requester here would be naming a guess. */
-      expect(document.body.textContent).not.toContain(ORIGIN);
-      expect(document.body.textContent).not.toContain('Payroll A');
-      /* Nothing has gone back but the ready ping. */
-      expect(opener.sent).toHaveLength(1);
-      expect(opener.sent[0]!.message)
-        .toMatchObject({ schema: 'midnight-identity/wallet-ready/v1' });
-    });
+    expect(document.querySelector('[data-waiting-for-ask]')).not.toBeNull();
+    expect(document.body.textContent).not.toContain('Nothing is asking');
+    /* **AND IT NAMES NOBODY.** At this moment this wallet does not know who
+     * is asking: the origin is observed on the first message and not before,
+     * so a screen naming the requester here would be naming a guess. */
+    expect(document.body.textContent).not.toContain(ORIGIN);
+    expect(document.body.textContent).not.toContain('Payroll A');
+    /* Nothing has gone back but the ready ping. */
+    expect(opener.sent).toHaveLength(1);
+    expect(opener.sent[0]!.message).toMatchObject({ schema: 'midnight-identity/wallet-ready/v1' });
+  });
 
   it('and a window nobody opened still says nothing is asking', async () => {
     /* Somebody who reached `#/approve` by typing it. There is no press behind

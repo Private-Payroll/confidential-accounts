@@ -12,7 +12,11 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { deviceSignerFrom, directoryHere, readersIn } from './vault-page-doors.js';
 import { anchoredEntering } from '../../../src/testing/record-tree-double.js';
 import { leavesOfTheContract, seatOpenedFor } from '../../../src/testing/directory-seats.js';
-import { invitedAsRaised, proposalIdentityOfTheContract, invitedSeatsOfTheTestChain } from '../../../src/testing/invitation-approved.js';
+import {
+  invitedAsRaised,
+  proposalIdentityOfTheContract,
+  invitedSeatsOfTheTestChain
+} from '../../../src/testing/invitation-approved.js';
 
 /*
  * A VAULT'S POOL AND JOURNALS ARE WRAPPED TO THE RECORDS KEY IN EACH SIGNER'S
@@ -37,47 +41,87 @@ const signer = (n: number, invitedBy?: { readonly filingSecret: Hex }) => {
   const filing = newSigningKeypair();
   const statement = signDirectoryEntry(identity, LABEL, ACCOUNT, companyKey, filing.publicKey, seat);
   const entry = directoryEntryMade({
-    company: CO, person: `p${n}`, committeeKey, signed: statement, opening, signingSecret: filing.secret, viewingKey: VIEWING,
-    ...(invitedBy === undefined ? {} : { invited: invitedAsRaised({
-      company: CO, invitation: invitationIdOf(newInvitationToken()), person: `p${n}`, name: `p${n}`, role: 'admin', leaf: seat as Hex,
-    }, invitedBy.filingSecret) }),
+    company: CO,
+    person: `p${n}`,
+    committeeKey,
+    signed: statement,
+    opening,
+    signingSecret: filing.secret,
+    viewingKey: VIEWING,
+    ...(invitedBy === undefined
+      ? {}
+      : {
+          invited: invitedAsRaised(
+            {
+              company: CO,
+              invitation: invitationIdOf(newInvitationToken()),
+              person: `p${n}`,
+              name: `p${n}`,
+              role: 'admin',
+              leaf: seat as Hex
+            },
+            invitedBy.filingSecret
+          )
+        })
   });
   return {
     filingSecret: filing.secret,
-    seat, committeeKey, statement,
+    seat,
+    committeeKey,
+    statement,
     claim: (version: number): DirectoryFiling => ({ company: CO, version, change: { kind: 'claim', entry } }),
     attested: { committeeKey, statement: signRecordsKey(identity, LABEL, ACCOUNT, companyKey, seat) },
-    device: deviceSignerFrom(seat, toHex(companyKey)),
+    device: deviceSignerFrom(seat, toHex(companyKey))
   };
 };
 const ADA = signer(1);
 const BO = signer(2, ADA);
 const CY = signer(3, ADA);
 
-const directory = (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[]; attested?: (typeof ADA.attested)[] } = {}) => () => directoryHere({
-  accountId: CO, label: LABEL, viewingKey: VIEWING,
-  filings: async () => [ADA.claim(1), BO.claim(2), CY.claim(3)],
-  holders: async () => ({
-    account: ACCOUNT, approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), threshold: 1, adoptedVaults: [VAULT], founding: ADA.seat, foundingCommittee: [ADA.committeeKey],
-    seats: o.seats ?? [ADA.seat, BO.seat, CY.seat], committee: o.committee ?? [ADA.committeeKey, BO.committeeKey, CY.committeeKey],
-  }),
-  attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],
-  /* Who records are wrapped to reads no record: the company's records hold no entry. */
-  anchored: anchoredEntering(CO),
-  leaves: leavesOfTheContract, proposalIdentity: proposalIdentityOfTheContract, invitedSeats: invitedSeatsOfTheTestChain,
-});
+const directory =
+  (o: { seats?: string[]; committee?: (typeof ADA.committeeKey)[]; attested?: (typeof ADA.attested)[] } = {}) =>
+  () =>
+    directoryHere({
+      accountId: CO,
+      label: LABEL,
+      viewingKey: VIEWING,
+      filings: async () => [ADA.claim(1), BO.claim(2), CY.claim(3)],
+      holders: async () => ({
+        account: ACCOUNT,
+        approvals: 1,
+        vaultThresholds: [],
+        policyBar: null,
+        seatBar: seatBarOf(1, null),
+        threshold: 1,
+        adoptedVaults: [VAULT],
+        founding: ADA.seat,
+        foundingCommittee: [ADA.committeeKey],
+        seats: o.seats ?? [ADA.seat, BO.seat, CY.seat],
+        committee: o.committee ?? [ADA.committeeKey, BO.committeeKey, CY.committeeKey]
+      }),
+      attested: async () => o.attested ?? [ADA.attested, BO.attested, CY.attested],
+      /* Who records are wrapped to reads no record: the company's records hold no entry. */
+      anchored: anchoredEntering(CO),
+      leaves: leavesOfTheContract,
+      proposalIdentity: proposalIdentityOfTheContract,
+      invitedSeats: invitedSeatsOfTheTestChain
+    });
 
-describe('who a vault\'s records are wrapped to', () => {
+describe("who a vault's records are wrapped to", () => {
   /* RED WHEN: a reader is named by the roster's id or wrapping key rather than the seat and records key the signer's own wallet signed into their entry. */
   it('every seat this device believes, under its seat, to the records key its entry names', async () => {
-    expect(await readersIn(directory()).signers()).toEqual([ADA, BO, CY].map((s) => ({ id: s.seat, wrappingPublicKey: s.statement.wrappingKey })));
+    expect(await readersIn(directory()).signers()).toEqual(
+      [ADA, BO, CY].map((s) => ({ id: s.seat, wrappingPublicKey: s.statement.wrappingKey }))
+    );
     /* The records key an entry names is the one the signer's released company key gives: the key their device opens with. */
-    for (const s of [ADA, BO, CY]) expect(s.statement.wrappingKey).toBe(recordsKeypairFrom(s.device.companyKey).publicKey);
+    for (const s of [ADA, BO, CY])
+      expect(s.statement.wrappingKey).toBe(recordsKeypairFrom(s.device.companyKey).publicKey);
   });
 
   /* RED WHEN: a copy is wrapped to a seat the account no longer holds, or whose entry names a records key its own wallet did not attest. */
   it('leaves out a seat not held now and one whose records key is not attested; a seat whose wallet is on no committee is wrapped to', async () => {
-    const without = async (o: Parameters<typeof directory>[0]) => (await readersIn(directory(o)).signers()).map((r) => r.id);
+    const without = async (o: Parameters<typeof directory>[0]) =>
+      (await readersIn(directory(o)).signers()).map((r) => r.id);
     expect(await without({ seats: [ADA.seat, BO.seat] })).toEqual([ADA.seat, BO.seat]);
     /* RED WHEN: a signer whose wallet key is not on the committee is left out of the vault's records. */
     expect(await without({ committee: [ADA.committeeKey, CY.committeeKey] })).toEqual([ADA.seat, BO.seat, CY.seat]);
@@ -85,12 +129,18 @@ describe('who a vault\'s records are wrapped to', () => {
   });
 
   /* RED WHEN: a pool one signer's device writes cannot be opened by another signer's device with the records key its wallet released, or opens with a roster wrapping secret. */
-  it('a pool written on one signer\'s device opens on another\'s with its own records key, and with no roster key', async () => {
+  it("a pool written on one signer's device opens on another's with its own records key, and with no roster key", async () => {
     const store = new MemorySealedPoolStore();
     const notes = [{ nonce: '01'.repeat(32), token: 'c1'.repeat(32), value: 5n }] as never;
     const readers = readersIn(directory());
     await new SealedNotePool(store, ADA.device, readers.signers).create(VAULT, { notes });
     expect((await new SealedNotePool(store, BO.device, readers.signers).load(VAULT)).notes).toEqual(notes);
-    await expect(new SealedNotePool(store, { signerId: BO.seat, wrappingSecret: newWrappingKeypair().secret }, readers.signers).load(VAULT)).rejects.toThrow();
+    await expect(
+      new SealedNotePool(
+        store,
+        { signerId: BO.seat, wrappingSecret: newWrappingKeypair().secret },
+        readers.signers
+      ).load(VAULT)
+    ).rejects.toThrow();
   });
 });

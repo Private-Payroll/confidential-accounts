@@ -27,8 +27,10 @@ export interface CheckedVerifierKeys {
   getVerifierKeys(cs: readonly string[]): Promise<Array<[string, Uint8Array]>>;
 }
 
-export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accountLedger: (data: unknown) => unknown }
-  & Omit<GovernedCallDeps, 'random' | 'network'> & {
+export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & {
+  vault: any;
+  accountLedger: (data: unknown) => unknown;
+} & Omit<GovernedCallDeps, 'random' | 'network'> & {
     /**
      * Every one of the company account's verifying keys, fetched from this
      * application's own origin and each checked against the digest the account's
@@ -49,11 +51,20 @@ export type WorkerDeps = Omit<VaultBuilderDeps, 'network'> & { vault: any; accou
     /** Fetches and checks the public parameters every circuit this app proves needs, and a deposit's keys, ahead of any proof. */
     provingWarmed: () => Promise<void>;
     /** Where a vault is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
-    chainSourceAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('./vault-on-chain-here.js').VaultChainSource;
+    chainSourceAt?: (indexer: {
+      indexerUri: string;
+      indexerWsUri: string;
+    }) => import('./vault-on-chain-here.js').VaultChainSource;
     /** Where an account's history is read from, at the indexer the wallet names; absent, the indexer itself. A test hands its own. */
-    historyAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => import('../../../src/midnight/contract-history.js').ContractHistory;
+    historyAt?: (indexer: {
+      indexerUri: string;
+      indexerWsUri: string;
+    }) => import('../../../src/midnight/contract-history.js').ContractHistory;
     /** Where transactions are looked up by identifier: the indexer the wallet names, unless a test stands one in. */
-    transactionsAt?: (indexer: { indexerUri: string; indexerWsUri: string }) => ReturnType<typeof indexerTransactionsByIdentifier>;
+    transactionsAt?: (indexer: {
+      indexerUri: string;
+      indexerWsUri: string;
+    }) => ReturnType<typeof indexerTransactionsByIdentifier>;
   };
 
 /**
@@ -72,8 +83,20 @@ export const loadDeps = (scope: any) => {
   return (): Promise<WorkerDeps> => {
     loaded ??= (async () => {
       const [
-        ledger, runtime, contracts, compactJs, vault, proving, account, accountWitnesses, vaultManifest, accountManifest, networkKeys,
-        types, providers, modules,
+        ledger,
+        runtime,
+        contracts,
+        compactJs,
+        vault,
+        proving,
+        account,
+        accountWitnesses,
+        vaultManifest,
+        accountManifest,
+        networkKeys,
+        types,
+        providers,
+        modules
       ] = await Promise.all([
         import('@midnightntwrk/ledger-v9'),
         import('@midnight-ntwrk/compact-runtime'),
@@ -88,19 +111,19 @@ export const loadDeps = (scope: any) => {
         import('../../../apps/wallet/public/keys/manifest.json'),
         import('@midnight-ntwrk/midnight-js-types'),
         import('../../../src/midnight/providers.js'),
-        import('../../../src/midnight/contract-modules.js'),
+        import('../../../src/midnight/contract-modules.js')
       ]);
       const options = {
         /* A store that will not keep a file costs a download; it is said in this thread's console. */
         cache: new IndexedDbArtefactCache(scope.indexedDB, undefined, (why: string) => scope.console?.warn?.(why)),
-        fetchImpl: scope.fetch.bind(scope),
+        fetchImpl: scope.fetch.bind(scope)
       };
       const vaultCompiled = (vaultManifest as any).default ?? vaultManifest;
       const accountCompiled = (accountManifest as any).default ?? accountManifest;
       const built = thisBuildsSources(options, {
         vault: { expectedVk: (vault as any).expectedVk, manifest: vaultCompiled },
         account: { expectedVk: (account as any).expectedVk, manifest: accountCompiled },
-        network: (networkKeys as any).default ?? networkKeys,
+        network: (networkKeys as any).default ?? networkKeys
       });
       /* Every fetch of proving material is told to the page as it starts and ends, so a long download is not taken for a worker gone quiet. */
       const busy = () => toldThePage(scope, { kind: 'vault-worker-busy' });
@@ -115,9 +138,13 @@ export const loadDeps = (scope: any) => {
       const compiled = CompiledContract.make('Vault', (vault as any).Contract).pipe(
         CompiledContract.withWitnesses({
           /* No transaction built here spends a note, so nothing may ask for one. */
-          noteToSpend: () => { throw new Error('a vault transaction built on this device spends no note.'); },
-          nonceSecret: () => { throw new Error('a vault transaction built on this device reads no nonce secret.'); },
-        }),
+          noteToSpend: () => {
+            throw new Error('a vault transaction built on this device spends no note.');
+          },
+          nonceSecret: () => {
+            throw new Error('a vault transaction built on this device reads no nonce secret.');
+          }
+        })
       );
       return {
         ledger,
@@ -127,16 +154,20 @@ export const loadDeps = (scope: any) => {
         accountTree: {
           StateBoundedMerkleTree: (runtime as any).StateBoundedMerkleTree,
           CompactTypeBytes: (runtime as any).CompactTypeBytes,
-          CompactTypeMerkleTreeDigest: (runtime as any).CompactTypeMerkleTreeDigest,
+          CompactTypeMerkleTreeDigest: (runtime as any).CompactTypeMerkleTreeDigest
         },
         contracts: contractCallsOf({
-          contracts, types, ledger, ContractState: runtime.ContractState, settingsFor: providers.transactionSettingsFor,
-          accountModuleFor: modules.accountModuleFor,
+          contracts,
+          types,
+          ledger,
+          ContractState: runtime.ContractState,
+          settingsFor: providers.transactionSettingsFor,
+          accountModuleFor: modules.accountModuleFor
         }),
         compiled,
         /* A payment out is the one transaction built here that spends a note, and it hands in the one it chose. */
-        compiledWith: (witnesses: unknown) => CompiledContract.make('Vault', (vault as any).Contract).pipe(
-          CompiledContract.withWitnesses(witnesses)),
+        compiledWith: (witnesses: unknown) =>
+          CompiledContract.make('Vault', (vault as any).Contract).pipe(CompiledContract.withWitnesses(witnesses)),
         zkConfig,
         /*
          * **THE COMPANY ACCOUNT, WITH ITS OWN WITNESSES.** A raise and an approval
@@ -144,25 +175,32 @@ export const loadDeps = (scope: any) => {
          * is given no store to read a record from.
          */
         accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
-          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
+          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)
+        ),
         accountZkConfig: zkConfigOver(source, byCircuitName, accountRuntime),
         accountPure: (account as any).pureCircuits,
         accountKeys: {
           ...checkedAccountKeys((c) => accountFolder.artefact('verifier', c), (account as any).expectedVk, sha256),
-          getArtifactRuntimeVersion: async () => accountRuntime,
+          getArtifactRuntimeVersion: async () => accountRuntime
         },
         accountExpectedVk: (account as any).expectedVk,
         provingWarmed: () => provingWarmed(source, sizeOfCircuit),
         vaultKeys: checkedAccountKeys(
-          (c) => vaultFolder.artefact('verifier', c), (vault as any).expectedVk, sha256, 'the vault'),
+          (c) => vaultFolder.artefact('verifier', c),
+          (vault as any).expectedVk,
+          sha256,
+          'the vault'
+        ),
         accountLedger: (account as any).ledger,
         /* The vault's two details circuits, paired once: what a payee's leaf is made with when a run is rebuilt here. */
         vaultDetails: detailsOfKind((vault as any).pureCircuits),
         vaultPure: (vault as any).pureCircuits,
-        prove: async (unproven: unknown) => provedTransaction(prover, unproven),
+        prove: async (unproven: unknown) => provedTransaction(prover, unproven)
       };
     })();
-    loaded.catch(() => { loaded = null; });
+    loaded.catch(() => {
+      loaded = null;
+    });
     return loaded;
   };
 };

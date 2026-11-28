@@ -5,10 +5,19 @@ import { DEFAULT_PREFERENCES, keepPreferences, readPreferences, showAppearance, 
 /** A browser's storage, kept in a map. */
 const storage = () => {
   const m = new Map<string, string>();
-  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); }, removeItem: (k: string) => { m.delete(k); }, m };
+  return {
+    getItem: (k: string) => m.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      m.set(k, v);
+    },
+    removeItem: (k: string) => {
+      m.delete(k);
+    },
+    m
+  };
 };
 
-describe('the person\'s choices', () => {
+describe("the person's choices", () => {
   /* RED WHEN: a choice kept is not read back as it was, or "follow my browser" is kept as a language. */
   it('are read back as they were kept', () => {
     const s = storage();
@@ -25,7 +34,15 @@ describe('the person\'s choices', () => {
     s.m.set('private-vaults.mode', 'sepia');
     s.m.set('private-vaults.base', 'slate');
     expect(readPreferences(s)).toEqual(DEFAULT_PREFERENCES);
-    const refusing = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => {} };
+    const refusing = {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+      removeItem: () => {}
+    };
     expect(readPreferences(refusing)).toEqual(DEFAULT_PREFERENCES);
     expect(() => keepPreferences(refusing, DEFAULT_PREFERENCES)).not.toThrow();
     expect(DEFAULT_PREFERENCES.base).toBe(DEFAULT_BASE_COLOR);
@@ -33,7 +50,12 @@ describe('the person\'s choices', () => {
 
   /* RED WHEN: "same as my computer" does not follow the computer, or a mode chosen does not win over it; or the theme and colour are not put where the kit's stylesheet reads them. */
   it('are shown on the root element, following the computer only when asked to', () => {
-    expect([themeFor('system', true), themeFor('system', false), themeFor('light', true), themeFor('dark', false)]).toEqual(['dark', 'light', 'light', 'dark']);
+    expect([
+      themeFor('system', true),
+      themeFor('system', false),
+      themeFor('light', true),
+      themeFor('dark', false)
+    ]).toEqual(['dark', 'light', 'light', 'dark']);
     const root = { dataset: {} as Record<string, string> } as unknown as HTMLElement;
     showAppearance(root, 'dark', 'mauve');
     expect(root.dataset).toEqual({ theme: 'dark', base: 'mauve' });

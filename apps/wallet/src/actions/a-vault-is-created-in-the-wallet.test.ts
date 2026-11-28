@@ -20,32 +20,47 @@ const t = vi.hoisted(() => ({
   refusalSeats: [] as unknown[],
   refusal: null as null | { code: string; says: string },
   order: [] as string[],
-  filed: 'filed' as unknown,
+  filed: 'filed' as unknown
 }));
 vi.mock('../../../../src/midnight/secret-readers.js', async (real) => ({
   ...(await real<typeof import('../../../../src/midnight/secret-readers.js')>()),
-  rosterRefusalOf: (input: { seats: unknown }) => { t.refusalSeats.push(input.seats); return t.refusal; },
+  rosterRefusalOf: (input: { seats: unknown }) => {
+    t.refusalSeats.push(input.seats);
+    return t.refusal;
+  }
 }));
 vi.mock('../../../../src/core/vault-keys.js', async (real) => ({
   ...(await real<typeof import('../../../../src/core/vault-keys.js')>()),
   rosterVaultKeys: (account: { signers: Array<{ id: string; vaultKeys?: { recordsKey: string } }> }) =>
-    account.signers.map((x) => ({ signerId: x.id, userId: null, name: x.id, filingKey: '00', keys: x.vaultKeys === undefined ? null : { recordsKey: x.vaultKeys.recordsKey } })),
+    account.signers.map((x) => ({
+      signerId: x.id,
+      userId: null,
+      name: x.id,
+      filingKey: '00',
+      keys: x.vaultKeys === undefined ? null : { recordsKey: x.vaultKeys.recordsKey }
+    }))
 }));
 vi.mock('../../../../packages/web-shared/src/directory-filed-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/directory-filed-here.js')>()),
   fileTheOwedDirectoryEntry: async (_id: string, owed: { read(): unknown }) => {
     t.order.push(owed.read() === null ? 'filed with nothing owed' : 'filed what was kept');
     return t.filed;
-  },
+  }
 }));
 vi.mock('../../../../packages/web-shared/src/roster-filed-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/roster-filed-here.js')>()),
-  offerVaultKeysHere: async () => { t.order.push('offered'); },
-  foldOffersHere: async () => { t.order.push('folded'); return { folded: [], refused: [] }; },
+  offerVaultKeysHere: async () => {
+    t.order.push('offered');
+  },
+  foldOffersHere: async () => {
+    t.order.push('folded');
+    return { folded: [], refused: [] };
+  }
 }));
 
 const { companyReachFor } = await import('./company-reach.js');
-const { createVaultAction, namedCode, readersFrom, startRefusalOf, recordsKeepingTheSecret, vaultDoorsFor } = await import('./create-vault.js');
+const { createVaultAction, namedCode, readersFrom, startRefusalOf, recordsKeepingTheSecret, vaultDoorsFor } =
+  await import('./create-vault.js');
 
 const secret = newSecret();
 const identity = identityFromSecret(secret);
@@ -54,9 +69,16 @@ const ACCOUNT = 'c0'.repeat(32);
 const LEAF = 'aa'.repeat(32);
 /* The founding seat this wallet's words make for the company. */
 const SEAT = {
-  signerId: 's1', signingSecret: Buffer.from(seatKeysFor(identity, LABEL, 0).signingSecret).toString('hex'), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32),
+  signerId: 's1',
+  signingSecret: Buffer.from(seatKeysFor(identity, LABEL, 0).signingSecret).toString('hex'),
+  wrappingSecret: '02'.repeat(32),
+  blinding: '03'.repeat(32),
+  scope: '04'.repeat(32)
 };
-const why = (key: string, values?: Readonly<Record<string, string | number>>) => ({ key, ...(values === undefined ? {} : { values }) });
+const why = (key: string, values?: Readonly<Record<string, string | number>>) => ({
+  key,
+  ...(values === undefined ? {} : { values })
+});
 const intent = (fields: Record<string, string> = {}): ActIntent =>
   ({ name: 'create-vault', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, ...fields } }) as ActIntent;
 
@@ -69,47 +91,79 @@ const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, unknown
     return a === undefined ? { status: 404, body: { error: 'none' } } : { status: 200, body: a };
   };
   const ctx = stepOverItsCall({
-    intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
+    intent: intent(),
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'usr_a',
     held: { identity, secret, wallet: { drewTheLabel: () => true } },
-    at: { step: 1, steps: 3 }, signal: new AbortController().signal,
-    relay: async () => { throw new Error('a vault is created through calls, never a bare relay'); },
+    at: { step: 1, steps: 3 },
+    signal: new AbortController().signal,
+    relay: async () => {
+      throw new Error('a vault is created through calls, never a bare relay');
+    },
     call: firstReadsAnswered(call),
     tell: () => {},
     keyring: {
-      open: () => ({ read: () => structuredClone(keys), metadata: () => ({}), seal: () => { throw new Error('not here'); }, letGo: () => {} }),
-      keep: async (change: (k: never) => never) => { keys = change(structuredClone(keys) as never); t.order.push('kept'); },
+      open: () => ({
+        read: () => structuredClone(keys),
+        metadata: () => ({}),
+        seal: () => {
+          throw new Error('not here');
+        },
+        letGo: () => {}
+      }),
+      keep: async (change: (k: never) => never) => {
+        keys = change(structuredClone(keys) as never);
+        t.order.push('kept');
+      }
     },
-    ...over,
+    ...over
   }) as unknown as StepContext;
   return { ctx, calls, keysNow: () => keys };
 };
 const chainWith = (seats: string[] | { key: string }) => ({
   indexer: { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' },
-  holders: async () => (Array.isArray(seats)
-    ? { seats, committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT, founding: LEAF }
-    : seats) as never,
-  callState: async () => ({ blockHash: 'b1', accountState: 'AAAA', parameters: 'BBBB' }),
+  holders: async () =>
+    (Array.isArray(seats)
+      ? {
+          seats,
+          committee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
+          threshold: 1,
+          approvals: 1,
+          vaultThresholds: [],
+          adoptedVaults: [],
+          account: ACCOUNT,
+          founding: LEAF
+        }
+      : seats) as never,
+  callState: async () => ({ blockHash: 'b1', accountState: 'AAAA', parameters: 'BBBB' })
 });
 const builder = { ownSeat: async () => LEAF } as never;
 
-beforeEach(() => { t.refusalSeats = []; t.refusal = null; t.order = []; t.filed = 'filed'; });
+beforeEach(() => {
+  t.refusalSeats = [];
+  t.refusal = null;
+  t.order = [];
+  t.filed = 'filed';
+});
 
-describe('the company the page names is believed only as the wallet\'s own chain read shows it', () => {
+describe("the company the page names is believed only as the wallet's own chain read shows it", () => {
   it('refuses an account the chain does not show carrying the label, before anything is asked of the page', async () => {
     // RED WHEN: a forged record naming another company's account is acted on because the page said it was this one
     const { ctx, calls } = ctxWith();
-    await expect(companyReachFor(ctx, chainWith({ key: 'act.company.why.other-label' }) as never, builder, why)).rejects.toThrow(StepRefused);
+    await expect(
+      companyReachFor(ctx, chainWith({ key: 'act.company.why.other-label' }) as never, builder, why)
+    ).rejects.toThrow(StepRefused);
     expect(calls).toEqual([]);
   });
 
-  it('refuses a seat the chain does not hold, whatever the service\'s records say', async () => {
+  it("refuses a seat the chain does not hold, whatever the service's records say", async () => {
     // RED WHEN: the seat the saved keys hold is acted for though the chain no longer seats it
     const { ctx } = ctxWith();
     const e = await companyReachFor(ctx, chainWith(['bb'.repeat(32)]) as never, builder, why).catch((x) => x);
     expect((e as StepRefused).words.key).toBe('seat-not-held');
   });
 
-  it('refuses the company\'s record when the service serves one for another label or account', async () => {
+  it("refuses the company's record when the service serves one for another label or account", async () => {
     // RED WHEN: a forged company record (another label, another account) is taken as the one the chain names
     const forged = { id: 'acc_1', companyLabel: drawCompanyLabel(), contractAddress: ACCOUNT, wrappedKeys: [] };
     const { ctx } = ctxWith({ answers: { 'GET /api/accounts/acc_1': forged } });
@@ -120,25 +174,63 @@ describe('the company the page names is believed only as the wallet\'s own chain
 
 /* The company's directory as the wallet believes it: this seat's entry names the roster's key, Bo's another; the chain holds `held`. */
 const BO_LEAF = 'bb'.repeat(32);
-const believing = (held: readonly string[], keys: Readonly<Record<string, string>> = { [LEAF]: '5a'.repeat(32), [BO_LEAF]: '7c'.repeat(32) }, another: readonly string[] = []) => ({
-  dir: { seats: Object.entries(keys).map(([seat, wrappingKey]) => ({ seat, wrappingKey, retired: null, rights: { every: true } })) },
-  another: new Set(another), holders: { seats: held }, leafOf: () => null,
+const believing = (
+  held: readonly string[],
+  keys: Readonly<Record<string, string>> = { [LEAF]: '5a'.repeat(32), [BO_LEAF]: '7c'.repeat(32) },
+  another: readonly string[] = []
+) => ({
+  dir: {
+    seats: Object.entries(keys).map(([seat, wrappingKey]) => ({
+      seat,
+      wrappingKey,
+      retired: null,
+      rights: { every: true }
+    }))
+  },
+  another: new Set(another),
+  holders: { seats: held },
+  leafOf: () => null
 });
 const reachParts = (over: Record<string, unknown> = {}) => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
-  api: async () => { throw new Error('no call expected'); }, send: async () => ({ status: 404, body: {} }),
-  holders: async () => ({ seats: [LEAF, 'bb'.repeat(32)], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
+  accountId: 'acc_1',
+  label: LABEL,
+  account: ACCOUNT,
+  seat: SEAT,
+  leaf: LEAF,
+  companyKey: '11'.repeat(32),
+  stepView: NO_VIEW_OPENED,
+  api: async () => {
+    throw new Error('no call expected');
+  },
+  send: async () => ({ status: 404, body: {} }),
+  holders: async () => ({
+    seats: [LEAF, 'bb'.repeat(32)],
+    committee: [],
+    threshold: 1,
+    approvals: 1,
+    vaultThresholds: [],
+    adoptedVaults: [],
+    account: ACCOUNT
+  }),
   judges: { directoryHereFor: () => async () => believing([LEAF, BO_LEAF]), filingJudgeFor: () => async () => null },
-  sealed: {}, companyKeys: {} as never,
-  roster: async () => ({ id: 'acc_1', signers: [{ id: 's1', status: 'active', leafCommitment: LEAF, vaultKeys: { recordsKey: '5a'.repeat(32) } }] }),
-  builder: { companyWide: async () => '00'.repeat(32), bornHeldVault: async () => ({ vault: 'DE'.repeat(32), tx: 'AAAA' }), runsOutrun: async () => ({}) },
+  sealed: {},
+  companyKeys: {} as never,
+  roster: async () => ({
+    id: 'acc_1',
+    signers: [{ id: 's1', status: 'active', leafCommitment: LEAF, vaultKeys: { recordsKey: '5a'.repeat(32) } }]
+  }),
+  builder: {
+    companyWide: async () => '00'.repeat(32),
+    bornHeldVault: async () => ({ vault: 'DE'.repeat(32), tx: 'AAAA' }),
+    runsOutrun: async () => ({})
+  },
   chain: chainWith([LEAF]),
-  ...over,
+  ...over
 });
 const reach = (over: Record<string, unknown> = {}): never => reachParts(over) as never;
 
-describe('the vault\'s secret is sealed only to the seats the wallet reads on the chain', () => {
-  it('checks the readers against the chain\'s seats as the wallet read them, and refuses when the check does', async () => {
+describe("the vault's secret is sealed only to the seats the wallet reads on the chain", () => {
+  it("checks the readers against the chain's seats as the wallet read them, and refuses when the check does", async () => {
     // RED WHEN: the readers are checked against seats the page or the service named, so a signer they leave out gets no copy
     await readersFrom(reach()).catch(() => undefined);
     expect(t.refusalSeats).toEqual([{ seats: [LEAF, 'bb'.repeat(32)] }]);
@@ -147,37 +239,70 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
     await expect(readersFrom(reach())).rejects.toThrow(StepRefused);
   });
 
-  it('seals the secret to the seats the wallet\'s directory believes and the chain holds, each under the key its entry names', async () => {
+  it("seals the secret to the seats the wallet's directory believes and the chain holds, each under the key its entry names", async () => {
     const over = (held: readonly string[], keys?: Readonly<Record<string, string>>, another?: readonly string[]) =>
       reach({
-        holders: async () => ({ seats: held, committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
-        judges: { directoryHereFor: () => async () => believing(held, keys, another), filingJudgeFor: () => async () => null },
+        holders: async () => ({
+          seats: held,
+          committee: [],
+          threshold: 1,
+          approvals: 1,
+          vaultThresholds: [],
+          adoptedVaults: [],
+          account: ACCOUNT
+        }),
+        judges: {
+          directoryHereFor: () => async () => believing(held, keys, another),
+          filingJudgeFor: () => async () => null
+        }
       });
     /* RED WHEN: the readers are the roster's keys, so a key no believed directory entry names is sealed to while a seat the chain holds is left out. */
-    expect(await readersFrom(over([LEAF, BO_LEAF], { [LEAF]: '6b'.repeat(32), [BO_LEAF]: '7c'.repeat(32) }))).toEqual(['6b'.repeat(32), '7c'.repeat(32)]);
+    expect(await readersFrom(over([LEAF, BO_LEAF], { [LEAF]: '6b'.repeat(32), [BO_LEAF]: '7c'.repeat(32) }))).toEqual([
+      '6b'.repeat(32),
+      '7c'.repeat(32)
+    ]);
     /* RED WHEN: a seat the chain dropped and the directory has not retired is still a reader. */
     expect(await readersFrom(over([LEAF]))).toEqual(['5a'.repeat(32)]);
     /* RED WHEN: a seat the chain holds whose attested records key is not the one its entry names is left out of the secret in silence, not refused by name. */
     const e = await readersFrom(over([LEAF, BO_LEAF.toUpperCase()], undefined, [BO_LEAF])).catch((x: unknown) => x);
     expect(e).toBeInstanceOf(StepRefused);
     expect((e as StepRefused).words.key).toBe('act.create-vault.why.readers-refused');
-    expect(String((e as StepRefused).words.values?.['says'])).toMatch(new RegExp(`${BO_LEAF}.*has not attested the records key`, 'u'));
+    expect(String((e as StepRefused).words.values?.['says'])).toMatch(
+      new RegExp(`${BO_LEAF}.*has not attested the records key`, 'u')
+    );
     const { ctx } = ctxWith();
-    const doors = vaultDoorsFor(ctx, over([LEAF]), { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    const doors = vaultDoorsFor(ctx, over([LEAF]), {
+      secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }),
+      pause: async () => {},
+      indexerHttp: 'x'
+    } as never);
     /* RED WHEN: an approver checks a run's readers against another list than the one its readers were sealed to. */
     expect((await doors.secretReaders.directory()).readers).toEqual(['5a'.repeat(32)]);
   });
 
-  it('says the adoption\'s send adopts that vault, and says nothing of the approval sent on the same route', async () => {
+  it("says the adoption's send adopts that vault, and says nothing of the approval sent on the same route", async () => {
     const V = 'ab'.repeat(32);
     const moves: Array<{ adoption: boolean; chain: readonly string[]; vaults: readonly string[] }> = [];
     const r = viewOverItsApi(reachParts({ api: async () => ({ txRef: 'r1' }) })) as never;
     const { ctx } = ctxWith({
-      movesWhoHolds: (sends: readonly object[], move: (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] }) => {
-        moves.push({ adoption: sends.some((s) => (s as { start?: string }).start === V), chain: (sends as Array<{ circuit?: string; contract?: string }>).filter((s) => s.circuit !== undefined).map((s) => `${s.circuit} ${s.contract}`), vaults: move({ adoptedVaults: [] }).adoptedVaults });
-      },
+      movesWhoHolds: (
+        sends: readonly object[],
+        move: (h: { adoptedVaults: readonly string[] }) => { adoptedVaults: readonly string[] }
+      ) => {
+        moves.push({
+          adoption: sends.some((s) => (s as { start?: string }).start === V),
+          chain: (sends as Array<{ circuit?: string; contract?: string }>)
+            .filter((s) => s.circuit !== undefined)
+            .map((s) => `${s.circuit} ${s.contract}`),
+          vaults: move({ adoptedVaults: [] }).adoptedVaults
+        });
+      }
     } as never);
-    const doors = vaultDoorsFor(ctx, r, { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    const doors = vaultDoorsFor(ctx, r, {
+      secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }),
+      pause: async () => {},
+      indexerHttp: 'x'
+    } as never);
     await doors.service.startAccountCall!(V as never, { tx: 'AA', step: 'adoption', call: 'approve' });
     await doors.service.startAccountCall!(V as never, { tx: 'BB', step: 'adoption', call: 'adopt' });
     /*
@@ -187,16 +312,32 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
     expect(moves).toEqual([{ adoption: true, chain: [`adopt ${ACCOUNT}`], vaults: [V] }]);
   });
 
-  it('never asks the service for the readers, and builds every call on the wallet\'s own read of the account', async () => {
+  it("never asks the service for the readers, and builds every call on the wallet's own read of the account", async () => {
     const asked: string[] = [];
-    const r = viewOverItsApi(reachParts({ api: async (path: string) => { asked.push(path); return []; } })) as never;
+    const r = viewOverItsApi(
+      reachParts({
+        api: async (path: string) => {
+          asked.push(path);
+          return [];
+        }
+      })
+    ) as never;
     const { ctx } = ctxWith();
-    const doors = vaultDoorsFor(ctx, r, { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'https://indexer.example' } as never);
+    const doors = vaultDoorsFor(ctx, r, {
+      secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }),
+      pause: async () => {},
+      indexerHttp: 'https://indexer.example'
+    } as never);
     // RED WHEN: the readers of the vault's secret are the service's list
     expect((await doors.service.keys()).readers).toEqual(['5a'.repeat(32), '7c'.repeat(32)]);
     expect(asked.filter((p) => p.endsWith('/vault-keys'))).toEqual([]);
     // RED WHEN: a proposal is proved on an account state the page or the service handed over
-    expect(await doors.proposals.service.callState('acc_1')).toEqual({ blockHash: 'b1', accountState: 'AAAA', parameters: 'BBBB', account: ACCOUNT });
+    expect(await doors.proposals.service.callState('acc_1')).toEqual({
+      blockHash: 'b1',
+      accountState: 'AAAA',
+      parameters: 'BBBB',
+      account: ACCOUNT
+    });
     const shape = intentShapeOf('create-vault')!;
     expect(routeOf(shape, 'GET', '/api/accounts/acc_1/call-state')).toBeNull();
     expect(routeOf(shape, 'GET', '/api/accounts/acc_1/vault-keys')).toBeNull();
@@ -205,9 +346,22 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
 
   it('counts who approves each vault only from a roster that names a signer for every seat the chain holds', async () => {
     const { ctx } = ctxWith();
-    const doorsOver = (notBelieved: string[]) => vaultDoorsFor(ctx, reach({
-      roster: async () => ({ id: 'acc_1', signers: [{ id: 's1', status: 'active', leafCommitment: LEAF }], notBelieved }),
-    }), { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    const doorsOver = (notBelieved: string[]) =>
+      vaultDoorsFor(
+        ctx,
+        reach({
+          roster: async () => ({
+            id: 'acc_1',
+            signers: [{ id: 's1', status: 'active', leafCommitment: LEAF }],
+            notBelieved
+          })
+        }),
+        {
+          secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }),
+          pause: async () => {},
+          indexerHttp: 'x'
+        } as never
+      );
     /* RED WHEN: a vault's approvers are counted from a roster that names no signer for a seat the chain holds, such as one waiting for Finish adding. */
     await expect(doorsOver(['bb'.repeat(32)]).approvers()).rejects.toThrow(/names no signer for 1 seat/u);
     expect([...(await doorsOver([]).approvers()).seats.keys()]).toEqual([LEAF.toLowerCase()]);
@@ -218,9 +372,17 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
     const base = reachParts();
     const outrun = reach({
       builder: { ...base.builder, runsOutrun: async () => ({ ['ee'.repeat(32)]: 1 }) },
-      roster: async () => ({ id: 'acc_1', signers: [{ id: 's1', status: 'active', leafCommitment: LEAF }], notBelieved: [] }),
+      roster: async () => ({
+        id: 'acc_1',
+        signers: [{ id: 's1', status: 'active', leafCommitment: LEAF }],
+        notBelieved: []
+      })
     });
-    const doors = vaultDoorsFor(ctx, outrun, { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    const doors = vaultDoorsFor(ctx, outrun, {
+      secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }),
+      pause: async () => {},
+      indexerHttp: 'x'
+    } as never);
     /* RED WHEN: the adoption's approvers are counted as though no signer was removed since an open run was raised, so the wallet passes what the chain refuses. */
     expect((await doors.approvers()).removals).toBe(1);
   });
@@ -228,19 +390,40 @@ describe('the vault\'s secret is sealed only to the seats the wallet reads on th
   it('names the vault to the page as soon as it is built, before it is sent', async () => {
     // RED WHEN: a vault built and then stopped before its answer is named to nobody, so a second one is created
     const told: unknown[] = [];
-    const { ctx } = ctxWith({ tell: (o: unknown) => { told.push(o); } } as never);
-    const doors = vaultDoorsFor(ctx, reach(), { secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }), pause: async () => {}, indexerHttp: 'x' } as never);
+    const { ctx } = ctxWith({
+      tell: (o: unknown) => {
+        told.push(o);
+      }
+    } as never);
+    const doors = vaultDoorsFor(ctx, reach(), {
+      secrets: () => ({ keep: async () => {}, held: async () => null, drop: async () => {} }),
+      pause: async () => {},
+      indexerHttp: 'x'
+    } as never);
     await doors.builder.bornHeldVault!({ account: ACCOUNT, holders: { committee: [], threshold: 1 } });
     expect(told).toEqual([{ vault: 'de'.repeat(32) }]);
   });
 });
 
-describe('the vault\'s secret is kept in the wallet before its filing leaves', () => {
+describe("the vault's secret is kept in the wallet before its filing leaves", () => {
   it('keeps the secret first, and files nothing when it could not be kept', async () => {
     const order: string[] = [];
-    const inner = () => ({ get: async () => null, put: async () => { order.push('filed'); }, versionsAsFiled: async () => [] });
+    const inner = () => ({
+      get: async () => null,
+      put: async () => {
+        order.push('filed');
+      },
+      versionsAsFiled: async () => []
+    });
     let refuse = false;
-    const kept = { keep: async () => { if (refuse) throw new Error('the store is full'); order.push('kept'); }, held: async () => null, drop: async () => {} };
+    const kept = {
+      keep: async () => {
+        if (refuse) throw new Error('the store is full');
+        order.push('kept');
+      },
+      held: async () => null,
+      drop: async () => {}
+    };
     const records = recordsKeepingTheSecret(inner as never, kept as never);
     await records('nonce-secret').put('d1'.repeat(32), {} as never);
     // RED WHEN: the secret's filing leaves before the wallet kept it, so a page that withholds the filing loses it
@@ -254,26 +437,49 @@ describe('the vault\'s secret is kept in the wallet before its filing leaves', (
   });
 });
 
-
-describe('the window lists, before the passkey, how many seats the vault\'s secret is sealed to, as the wallet reads the chain', () => {
-  it('counts the seats from the wallet\'s own read, and marks the names the page gives as the page\'s', async () => {
-    const action = createVaultAction({ chain: () => chainWith([LEAF, 'bb'.repeat(32), 'cc'.repeat(32)]) as never, builder: () => builder, now: () => 1 } as never);
+describe("the window lists, before the passkey, how many seats the vault's secret is sealed to, as the wallet reads the chain", () => {
+  it("counts the seats from the wallet's own read, and marks the names the page gives as the page's", async () => {
+    const action = createVaultAction({
+      chain: () => chainWith([LEAF, 'bb'.repeat(32), 'cc'.repeat(32)]) as never,
+      builder: () => builder,
+      now: () => 1
+    } as never);
     const shown = await action.shown(intent({ readers: 'Ada, Bo' }));
     // RED WHEN: the number of readers before the passkey is the page's word, or the page's names are shown as the wallet's
-    expect(shown.find((l) => l.key === 'act.create-vault.shown.sealed-to')).toEqual({ key: 'act.create-vault.shown.sealed-to', values: { seats: 3 }, from: 'wallet' });
-    expect(shown.find((l) => l.key === 'act.create-vault.shown.readers')).toEqual({ key: 'act.create-vault.shown.readers', values: { names: 'Ada, Bo' }, from: 'page' });
+    expect(shown.find((l) => l.key === 'act.create-vault.shown.sealed-to')).toEqual({
+      key: 'act.create-vault.shown.sealed-to',
+      values: { seats: 3 },
+      from: 'wallet'
+    });
+    expect(shown.find((l) => l.key === 'act.create-vault.shown.readers')).toEqual({
+      key: 'act.create-vault.shown.readers',
+      values: { names: 'Ada, Bo' },
+      from: 'page'
+    });
     const named = await action.shown(intent({ title: 'Payroll', about: 'For the monthly run' }));
     // RED WHEN: the description the wallet signs into the vault's name filing is not shown before the passkey, as the page's
-    expect(named.find((l) => l.key === 'act.create-vault.shown.about')).toEqual({ key: 'act.create-vault.shown.about', values: { about: 'For the monthly run' }, from: 'page' });
+    expect(named.find((l) => l.key === 'act.create-vault.shown.about')).toEqual({
+      key: 'act.create-vault.shown.about',
+      values: { about: 'For the monthly run' },
+      from: 'page'
+    });
     // RED WHEN: the window still says it may keep the page's account as the company's: no action but the seating pins one
     expect(named.some((l) => l.key === 'act.create-vault.shown.pin')).toBe(false);
-    const unread = await createVaultAction({ chain: () => chainWith({ key: 'x' }) as never, builder: () => builder, now: () => 1 } as never).shown(intent());
+    const unread = await createVaultAction({
+      chain: () => chainWith({ key: 'x' }) as never,
+      builder: () => builder,
+      now: () => 1
+    } as never).shown(intent());
     // RED WHEN: the line saying the wallet could not read the account is marked as something the wallet read
     expect(unread.some((l) => l.key === 'act.create-vault.shown.sealed-to-unread' && l.from === 'action')).toBe(true);
   });
 
-  it('marks the company and the vault as the page names them, and what the wallet checks of them as neither the page\'s nor a read', async () => {
-    const action = createVaultAction({ chain: () => chainWith([LEAF]) as never, builder: () => builder, now: () => 1 } as never);
+  it("marks the company and the vault as the page names them, and what the wallet checks of them as neither the page's nor a read", async () => {
+    const action = createVaultAction({
+      chain: () => chainWith([LEAF]) as never,
+      builder: () => builder,
+      now: () => 1
+    } as never);
     const carrying = await action.shown(intent({ vault: 'dd'.repeat(32) }));
     const marks = carrying.map((l) => [l.key, l.from]);
     // RED WHEN: a check the wallet makes after the passkey is shown inside a line marked as only the page's words
@@ -289,32 +495,45 @@ describe('the window lists, before the passkey, how many seats the vault\'s secr
 });
 
 describe('the window promises no more privacy for the vault than the page is given', () => {
-  it('says the page holds the vault\'s secret from the moment this wallet files it, read only', async () => {
+  it("says the page holds the vault's secret from the moment this wallet files it, read only", async () => {
     const { readFileSync } = await import('node:fs');
-    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+      string,
+      string
+    >;
     const said = words['act.create-vault.shown.nothing-else'];
     // RED WHEN: the window names a later moment than when the page can first read the vault
     expect(said).not.toMatch(/once the copies are written/);
     expect(said).toMatch(/The page holds the vault's secret from the moment this wallet files it/);
     // RED WHEN: the window says less than the page can read with the secret, or that it can spend
-    expect(said).toMatch(/every amount paid into and out of the vault and where each payment out goes, and it can never spend from the vault/);
+    expect(said).toMatch(
+      /every amount paid into and out of the vault and where each payment out goes, and it can never spend from the vault/
+    );
   });
 });
 
-describe('a refused start names its kind of stop to the page only from the start\'s own codes', () => {
-  it('takes a retired vault to adopt again only with the vault and the company\'s record of the retire that retired it', async () => {
+describe("a refused start names its kind of stop to the page only from the start's own codes", () => {
+  it("takes a retired vault to adopt again only with the vault and the company's record of the retire that retired it", async () => {
     const def = createVaultAction({} as never);
     const held = { wallet: {} } as never;
     /* RED WHEN: an adoption made again for no vault, or under something that is no record's name, is let through to be built. */
     expect(await def.check(intent({ retired: 'prp_retire1' }), held)).toEqual(why('act.create-vault.why.not-a-retire'));
-    expect(await def.check(intent({ vault: 'ab'.repeat(32), retired: 'not a record' }), held)).toEqual(why('act.create-vault.why.not-a-retire'));
+    expect(await def.check(intent({ vault: 'ab'.repeat(32), retired: 'not a record' }), held)).toEqual(
+      why('act.create-vault.why.not-a-retire')
+    );
     expect(await def.check(intent({ vault: 'ab'.repeat(32), retired: 'prp_retire1' }), held)).toBeNull();
   });
 
-  it('names a start\'s stop, a read that failed and a vault not built, and nothing else', async () => {
-    const { NOT_BUILT, START_READ_STOP, START_STOP } = await import('../../../../packages/web-shared/src/vault-start-stops.js');
+  it("names a start's stop, a read that failed and a vault not built, and nothing else", async () => {
+    const { NOT_BUILT, START_READ_STOP, START_STOP } =
+      await import('../../../../packages/web-shared/src/vault-start-stops.js');
     /* RED WHEN: a kind of stop the start names is not carried, so the page cannot say which read or check stopped it. */
-    for (const code of [START_STOP.readersCannotOpen, START_READ_STOP.chainUnread, START_READ_STOP.standingUnread, NOT_BUILT.committeeUnread]) {
+    for (const code of [
+      START_STOP.readersCannotOpen,
+      START_READ_STOP.chainUnread,
+      START_READ_STOP.standingUnread,
+      NOT_BUILT.committeeUnread
+    ]) {
       expect(namedCode(code)).toBe(code);
     }
     /* RED WHEN: a code the start does not name, or none, is carried as a kind of stop. */
@@ -322,17 +541,31 @@ describe('a refused start names its kind of stop to the page only from the start
   });
 
   it('the start step passes the kind of stop to its refusal, for a start not finished and for a vault not built', async () => {
-    const { NOT_BUILT, START_READ_STOP, VaultStartOwed } = await import('../../../../packages/web-shared/src/vault-start-stops.js');
+    const { NOT_BUILT, START_READ_STOP, VaultStartOwed } =
+      await import('../../../../packages/web-shared/src/vault-start-stops.js');
     const { VaultNotBuilt } = await import('../../../../packages/web-shared/src/vault-created-and-started.js');
     const told: Record<string, unknown>[] = [];
-    const ctx = { tell: (o: Record<string, string | number>) => { told.push(o); } };
-    const owed = startRefusalOf(new VaultStartOwed('ab'.repeat(32) as never, 'the read ran out.', START_READ_STOP.chainUnread), ctx);
+    const ctx = {
+      tell: (o: Record<string, string | number>) => {
+        told.push(o);
+      }
+    };
+    const owed = startRefusalOf(
+      new VaultStartOwed('ab'.repeat(32) as never, 'the read ran out.', START_READ_STOP.chainUnread),
+      ctx
+    );
     /* RED WHEN: a start not finished stops with no kind of stop, so the stop line cannot say which read failed. */
-    expect(owed).toMatchObject({ words: { key: 'act.create-vault.why.start-owed' }, code: START_READ_STOP.chainUnread });
+    expect(owed).toMatchObject({
+      words: { key: 'act.create-vault.why.start-owed' },
+      code: START_READ_STOP.chainUnread
+    });
     expect(told).toEqual([{ vault: 'ab'.repeat(32), stopped: START_READ_STOP.chainUnread }]);
     const notBuilt = startRefusalOf(new VaultNotBuilt(NOT_BUILT.committeeUnread, 'no vault was built.'), ctx);
     /* RED WHEN: a vault not built stops with no kind of stop. */
-    expect(notBuilt).toMatchObject({ words: { key: 'act.create-vault.why.not-built' }, code: NOT_BUILT.committeeUnread });
+    expect(notBuilt).toMatchObject({
+      words: { key: 'act.create-vault.why.not-built' },
+      code: NOT_BUILT.committeeUnread
+    });
     /* RED WHEN: any other error is taken for a refusal of the start. */
     expect(startRefusalOf(new Error('no'), ctx)).toBeNull();
   });

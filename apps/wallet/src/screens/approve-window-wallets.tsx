@@ -39,10 +39,13 @@ export function useWalletThatOpens(request: Ask, port: Port, cannotOpen: string 
   const refused = passkeyRefused !== null || cannotOpen !== null;
   const fixed = request.kind !== 'sign-in' && !refused ? kept : null;
   const offerList = fixed === null && (wallets.length > 1 || remembered.of === 'gone' || refused);
-  const [picked, setPicked] = useState<string>(() => (
-    request.kind === 'sign-in' && remembered.of === 'here' ? remembered.walletId
-      : remembered.of === 'no-place' && remembered.matches !== null ? remembered.matches
-        : kept ?? walletId));
+  const [picked, setPicked] = useState<string>(() =>
+    request.kind === 'sign-in' && remembered.of === 'here'
+      ? remembered.walletId
+      : remembered.of === 'no-place' && remembered.matches !== null
+        ? remembered.matches
+        : (kept ?? walletId)
+  );
   const opens = fixed ?? (offerList ? picked : walletId);
   const nameOf = (id: string): string => {
     const index = wallets.findIndex((wallet) => wallet.id === id);
@@ -59,17 +62,38 @@ export function useWalletThatOpens(request: Ask, port: Port, cannotOpen: string 
     return record !== null && (known === null || known === record.fingerprint) ? record.names : {};
   };
   const payingPick = (): PayingPick => ({ walletId: opens, fingerprint: fingerprintOf(opens), account });
-  const pickToPay = (id: string, picking: number): void => { setPicked(id); setAccount(picking); };
+  const pickToPay = (id: string, picking: number): void => {
+    setPicked(id);
+    setAccount(picking);
+  };
   return {
-    held, remembered, refused, fixed, offerList, picked, setPicked, opens, nameOf,
-    account, payingWallets, accountNamesOf, payingPick, pickToPay,
+    held,
+    remembered,
+    refused,
+    fixed,
+    offerList,
+    picked,
+    setPicked,
+    opens,
+    nameOf,
+    account,
+    payingWallets,
+    accountNamesOf,
+    payingPick,
+    pickToPay
   };
 }
 export type WalletThatOpens = ReturnType<typeof useWalletThatOpens>;
 
 /** The wallet that opens, named, or the list to pick it from; for an ask that pays, the accounts to pick from. */
-export function WhichWalletOpens({ request, which, busy }: {
-  readonly request: Ask; readonly which: WalletThatOpens; readonly busy: string | null;
+export function WhichWalletOpens({
+  request,
+  which,
+  busy
+}: {
+  readonly request: Ask;
+  readonly which: WalletThatOpens;
+  readonly busy: string | null;
 }): ReactNode {
   const t = useText();
   const { wallets } = useSession();
@@ -78,10 +102,17 @@ export function WhichWalletOpens({ request, which, busy }: {
   if (isPayingAsk(request)) return <PayingAccounts request={request} which={which} busy={busy} />;
   return (
     <>
-      {fixed !== null && <p className="m-0 text-sm text-muted-foreground" data-opens-wallet>{t('ask.wallet.opens', { wallet: nameOf(fixed) })}</p>}
+      {fixed !== null && (
+        <p className="m-0 text-sm text-muted-foreground" data-opens-wallet>
+          {t('ask.wallet.opens', { wallet: nameOf(fixed) })}
+        </p>
+      )}
       {offerList && (
         <Section
-          list={false} box={false} aria-label={t('ask.wallet.choose')} title={t('ask.wallet.choose')}
+          list={false}
+          box={false}
+          aria-label={t('ask.wallet.choose')}
+          title={t('ask.wallet.choose')}
           description={t('ask.wallet.choose-why', { count: wallets.length })}
         >
           {remembered.of === 'gone' && <RememberedWalletGone origin={origin} />}
@@ -90,8 +121,13 @@ export function WhichWalletOpens({ request, which, busy }: {
               <li key={wallet.id}>
                 <label className="flex items-baseline gap-2">
                   <input
-                    type="radio" name="answering-wallet" value={wallet.id} checked={picked === wallet.id}
-                    disabled={busy !== null} onChange={() => setPicked(wallet.id)} data-wallet-choice={wallet.id}
+                    type="radio"
+                    name="answering-wallet"
+                    value={wallet.id}
+                    checked={picked === wallet.id}
+                    disabled={busy !== null}
+                    onChange={() => setPicked(wallet.id)}
+                    data-wallet-choice={wallet.id}
                   />
                   <span>{nameOf(wallet.id)}</span>
                 </label>
@@ -109,7 +145,9 @@ function RememberedWalletGone({ origin }: { readonly origin: string }): ReactNod
   const t = useText();
   return (
     <StatusAlert tone="warning" role={null} title={t('ask.wallet.gone-title')}>
-      <p className="m-0" data-remembered-wallet-gone>{t('ask.wallet.gone', { origin })}</p>
+      <p className="m-0" data-remembered-wallet-gone>
+        {t('ask.wallet.gone', { origin })}
+      </p>
     </StatusAlert>
   );
 }
@@ -119,27 +157,49 @@ function RememberedWalletGone({ origin }: { readonly origin: string }): ReactNod
  * open are listed: the one the page's sign-in kept, or every wallet here when the page has none. Balances are not
  * shown: they need the wallet open.
  */
-function PayingAccounts({ request, which, busy }: {
-  readonly request: Ask; readonly which: WalletThatOpens; readonly busy: string | null;
+function PayingAccounts({
+  request,
+  which,
+  busy
+}: {
+  readonly request: Ask;
+  readonly which: WalletThatOpens;
+  readonly busy: string | null;
 }): ReactNode {
   const t = useText();
   const origin = request.requester.origin;
   const { remembered, opens, account, payingWallets, accountNamesOf, pickToPay, nameOf } = which;
   return (
-    <Section list={false} box={false} aria-label={t('ask.pays.choose')} title={t('ask.pays.choose')} description={t(paidWords(request, 'ask.pays.choose-why'))}>
+    <Section
+      list={false}
+      box={false}
+      aria-label={t('ask.pays.choose')}
+      title={t('ask.pays.choose')}
+      description={t(paidWords(request, 'ask.pays.choose-why'))}
+    >
       {remembered.of === 'gone' && <RememberedWalletGone origin={origin} />}
-      {account === OFFERED && <p className="m-0 text-sm" data-pays-from-offered>{t('ask.pays.offered')}</p>}
+      {account === OFFERED && (
+        <p className="m-0 text-sm" data-pays-from-offered>
+          {t('ask.pays.offered')}
+        </p>
+      )}
       <ul className="plain" data-accounts-to-choose>
         {payingWallets.map((id) => {
           const names = accountNamesOf(id);
           return (
             <li key={id}>
-              <p className="m-0 font-medium" data-paying-wallet>{nameOf(id)}</p>
+              <p className="m-0 font-medium" data-paying-wallet>
+                {nameOf(id)}
+              </p>
               <ul className="plain ps-4">
                 <AccountChoices
-                  names={names} group="paying-account" picked={(each) => opens === id && account === each}
-                  disabled={busy !== null} onPick={(each) => pickToPay(id, each)}
-                  valueFor={(each) => `${id}:${each}`} marked={(each) => ({ 'data-pays-from': `${id}:${each}` })}
+                  names={names}
+                  group="paying-account"
+                  picked={(each) => opens === id && account === each}
+                  disabled={busy !== null}
+                  onPick={(each) => pickToPay(id, each)}
+                  valueFor={(each) => `${id}:${each}`}
+                  marked={(each) => ({ 'data-pays-from': `${id}:${each}` })}
                 />
               </ul>
             </li>

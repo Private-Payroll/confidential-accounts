@@ -14,7 +14,10 @@ vi.hoisted(() => {
 });
 
 vi.mock('midnight-identity/browser', () => ({
-  ensureBuffer: (): void => {}, passkeysAvailable: (): boolean => true, createPasskey: vi.fn(), usePasskey: vi.fn(),
+  ensureBuffer: (): void => {},
+  passkeysAvailable: (): boolean => true,
+  createPasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 import { Buffer as PolyfillBuffer } from 'buffer/';
@@ -33,7 +36,11 @@ describe('a wallet inside a page it was not built for', () => {
   for (const hash of ['#/approve', '#/settings', '#/recover', '#/kit']) {
     it(`${hash} renders the refusal and no control but the way out`, () => {
       window.location.hash = hash;
-      const { unmount } = render(<SessionProvider><App /></SessionProvider>);
+      const { unmount } = render(
+        <SessionProvider>
+          <App />
+        </SessionProvider>
+      );
       expect(document.querySelector('[data-framed-refusal]'), hash).not.toBeNull();
       expect(screen.getByText(/was not built to be/)).toBeTruthy();
       expect(document.querySelectorAll('button')).toHaveLength(0);

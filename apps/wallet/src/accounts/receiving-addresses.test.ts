@@ -17,8 +17,9 @@ import { NETWORK } from 'midnight-identity/network';
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
 const other = identityFromWords(
-  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon '
-  + 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art');
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon ' +
+    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art'
+);
 
 const through: number[] = [];
 vi.mock('./owned-address.js', async (original) => {
@@ -28,12 +29,12 @@ vi.mock('./owned-address.js', async (original) => {
     ownedAddressFor: (_identity: unknown, account: number, names: Record<string, string>, network: typeof NETWORK) => {
       through.push(account);
       return real.ownedAddressFor(other, account, names, network);
-    },
+    }
   };
 });
 
 describe('the addresses a release answers for', () => {
-  it('ARE WORKED OUT THROUGH THE WALLET\'S OWN DOOR AND PRODUCER, FOR EVERY ACCOUNT IT OFFERS', async () => {
+  it("ARE WORKED OUT THROUGH THE WALLET'S OWN DOOR AND PRODUCER, FOR EVERY ACCOUNT IT OFFERS", async () => {
     const { receivingAddressesOf, derive } = await import('./derived.js');
     const { ownedAddressFor } = await import('./owned-address.js');
     const { WALLET_ACCOUNTS } = await import('./subwallets.js');

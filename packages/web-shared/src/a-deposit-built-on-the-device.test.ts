@@ -59,7 +59,11 @@ import { inFlightInMemory, sealedOnThisDevice, type InFlightRecords } from './in
 import { refusalForDeposit } from '../../../src/wiring/vault-submission.js';
 import { MemorySealedPoolStore } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
-import { openNonceSecrets, recordsKeypairFrom, currentDepositNonceKey } from '../../../src/midnight/company-nonce-secret.js';
+import {
+  openNonceSecrets,
+  recordsKeypairFrom,
+  currentDepositNonceKey
+} from '../../../src/midnight/company-nonce-secret.js';
 import { toHex, type Hex } from '../../../src/core/crypto.js';
 import { StaticAssetRegistry } from '../../../src/core/assets.js';
 import { depositFromSource, privateTokenFromTheWallet } from './deposit-source.js';
@@ -101,7 +105,9 @@ const LANDED_IN = '7e'.repeat(32);
 const KEYS = keysOnDisk();
 const KEYS_ON_DISK = KEYS.ok;
 if (!KEYS_ON_DISK) {
-  console.log(`  NOT CHECKED HERE: a deposit was not built on the device and searched for what it sends, because ${KEYS.why}`);
+  console.log(
+    `  NOT CHECKED HERE: a deposit was not built on the device and searched for what it sends, because ${KEYS.why}`
+  );
 }
 
 /** Every string and byte array inside a value, however deep, whatever holds it. */
@@ -128,30 +134,38 @@ const leaves = (x: unknown, out: Array<string | Uint8Array> = []): Array<string 
 const WINDOW = 16;
 const runsOf = (secret: Uint8Array): Buffer[] => {
   if (secret.length > 32) return [Buffer.from(secret)];
-  const forwards = Array.from({ length: secret.length - WINDOW + 1 }, (_, i) => Buffer.from(secret.subarray(i, i + WINDOW)));
+  const forwards = Array.from({ length: secret.length - WINDOW + 1 }, (_, i) =>
+    Buffer.from(secret.subarray(i, i + WINDOW))
+  );
   return [...forwards, ...forwards.map((r) => Buffer.from(r).reverse())];
 };
-const decimalsOf = (secret: Uint8Array): string[] => (secret.length > 32 ? [] : [
-  BigInt(`0x${Buffer.from(secret).toString('hex')}`).toString(),
-  BigInt(`0x${Buffer.from(secret).reverse().toString('hex')}`).toString(),
-]);
+const decimalsOf = (secret: Uint8Array): string[] =>
+  secret.length > 32
+    ? []
+    : [
+        BigInt(`0x${Buffer.from(secret).toString('hex')}`).toString(),
+        BigInt(`0x${Buffer.from(secret).reverse().toString('hex')}`).toString()
+      ];
 /** Every stretch of a string that could be base64 or base64url, decoded from each of its four alignments. */
-const decodedRuns = (l: string): Buffer[] => (l.match(/[A-Za-z0-9+/_-]{22,}/gu) ?? []).flatMap((run) => {
-  const std = run.replace(/-/gu, '+').replace(/_/gu, '/');
-  return [0, 1, 2, 3].map((skip) => Buffer.from(std.slice(skip), 'base64'));
-});
+const decodedRuns = (l: string): Buffer[] =>
+  (l.match(/[A-Za-z0-9+/_-]{22,}/gu) ?? []).flatMap((run) => {
+    const std = run.replace(/-/gu, '+').replace(/_/gu, '/');
+    return [0, 1, 2, 3].map((skip) => Buffer.from(std.slice(skip), 'base64'));
+  });
 /** Whether any leaf carries these bytes: raw, as hex in any case, as a number, or inside base64 of anything. */
 const carries = (caught: unknown[], secret: Uint8Array): boolean => {
   const runs = runsOf(secret);
   const hexRuns = runs.map((r) => r.toString('hex'));
   const decimals = decimalsOf(secret);
   const within = (b: Uint8Array) => runs.some((r) => Buffer.from(b).indexOf(r) >= 0);
-  return caught.some((c) => leaves(c).some((l) => {
-    if (l instanceof Uint8Array) return within(l);
-    const lower = l.toLowerCase();
-    if (hexRuns.some((h) => lower.includes(h)) || decimals.some((d) => l.includes(d))) return true;
-    return decodedRuns(l).some(within);
-  }));
+  return caught.some((c) =>
+    leaves(c).some((l) => {
+      if (l instanceof Uint8Array) return within(l);
+      const lower = l.toLowerCase();
+      if (hexRuns.some((h) => lower.includes(h)) || decimals.some((d) => l.includes(d))) return true;
+      return decodedRuns(l).some(within);
+    })
+  );
 };
 
 /*
@@ -166,7 +180,8 @@ const carries = (caught: unknown[], secret: Uint8Array): boolean => {
 const privateRunsOf = (unprovenTx: Uint8Array, publicParts: readonly Uint8Array[]): Set<string> => {
   const inPublic = new Set<string>();
   for (const publicPart of publicParts) {
-    for (let i = 0; i + WINDOW <= publicPart.length; i += 1) inPublic.add(Buffer.from(publicPart.subarray(i, i + WINDOW)).toString('hex'));
+    for (let i = 0; i + WINDOW <= publicPart.length; i += 1)
+      inPublic.add(Buffer.from(publicPart.subarray(i, i + WINDOW)).toString('hex'));
   }
   const out = new Set<string>();
   for (let i = 0; i + WINDOW <= unprovenTx.length; i += 1) {
@@ -180,14 +195,21 @@ const privateRunsOf = (unprovenTx: Uint8Array, publicParts: readonly Uint8Array[
 /** Whether any leaf holds one of these runs: raw, as hex at either nibble, or inside base64 of anything. */
 const carriesAnyRun = (caught: unknown[], runs: ReadonlySet<string>): boolean => {
   const within = (b: Uint8Array) => {
-    for (let i = 0; i + WINDOW <= b.length; i += 1) if (runs.has(Buffer.from(b.subarray(i, i + WINDOW)).toString('hex'))) return true;
+    for (let i = 0; i + WINDOW <= b.length; i += 1)
+      if (runs.has(Buffer.from(b.subarray(i, i + WINDOW)).toString('hex'))) return true;
     return false;
   };
-  const hexRuns = (l: string): Buffer[] => (l.match(/[0-9a-fA-F]{32,}/gu) ?? []).flatMap((h) => [h, h.slice(1)]
-    .map((x) => Buffer.from(x.slice(0, x.length - (x.length % 2)), 'hex')));
-  return caught.some((c) => leaves(c).some((l) => (l instanceof Uint8Array
-    ? within(l)
-    : within(Buffer.from(l, 'latin1')) || hexRuns(l).some(within) || decodedRuns(l).some(within))));
+  const hexRuns = (l: string): Buffer[] =>
+    (l.match(/[0-9a-fA-F]{32,}/gu) ?? []).flatMap((h) =>
+      [h, h.slice(1)].map((x) => Buffer.from(x.slice(0, x.length - (x.length % 2)), 'hex'))
+    );
+  return caught.some((c) =>
+    leaves(c).some((l) =>
+      l instanceof Uint8Array
+        ? within(l)
+        : within(Buffer.from(l, 'latin1')) || hexRuns(l).some(within) || decodedRuns(l).some(within)
+    )
+  );
 };
 /*
  * An amount as the ledger may write it: its significant bytes and nothing
@@ -195,14 +217,16 @@ const carriesAnyRun = (caught: unknown[], runs: ReadonlySet<string>): boolean =>
  * as a decimal number. The amount chosen below has six significant bytes, so
  * a match is the amount and not a coincidence.
  */
-const significantBytesOf = (v: bigint): Buffer => Buffer.from(v.toString(16).padStart(v.toString(16).length + (v.toString(16).length % 2), '0'), 'hex');
-const amountRunsOf = (value: bigint): Buffer[] => [value, (1n << 128n) - value].flatMap((v) => {
-  const low = significantBytesOf(v & ((1n << 48n) - 1n));
-  return [low, Buffer.from(low).reverse()];
-});
+const significantBytesOf = (v: bigint): Buffer =>
+  Buffer.from(v.toString(16).padStart(v.toString(16).length + (v.toString(16).length % 2), '0'), 'hex');
+const amountRunsOf = (value: bigint): Buffer[] =>
+  [value, (1n << 128n) - value].flatMap((v) => {
+    const low = significantBytesOf(v & ((1n << 48n) - 1n));
+    return [low, Buffer.from(low).reverse()];
+  });
 const holdsAmount = (bytes: Uint8Array, value: bigint): boolean =>
-  amountRunsOf(value).some((r) => Buffer.from(bytes).indexOf(r) >= 0)
-  || Buffer.from(bytes).toString('latin1').includes(value.toString());
+  amountRunsOf(value).some((r) => Buffer.from(bytes).indexOf(r) >= 0) ||
+  Buffer.from(bytes).toString('latin1').includes(value.toString());
 
 /**
  * **THE PERSON'S WALLET, AS FAR AS ITS PRIVATE BALANCING GOES.** The wallet SDK's
@@ -214,7 +238,11 @@ const holdsAmount = (bytes: Uint8Array, value: bigint): boolean =>
 const aWalletHolding = (network: string) => {
   const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).map((_, i) => 91 + i));
   let wallet = Shielded.CoreWallet.initEmpty(keys, network);
-  for (const [token, value] of [[TOKEN, (VALUE * 6n) / 10n], [TOKEN, (VALUE * 7n) / 10n], [OTHER_TOKEN, VALUE * 3n]] as const) {
+  for (const [token, value] of [
+    [TOKEN, (VALUE * 6n) / 10n],
+    [TOKEN, (VALUE * 7n) / 10n],
+    [OTHER_TOKEN, VALUE * 3n]
+  ] as const) {
     const coin = L.createShieldedCoinInfo(token, value);
     const output = L.ZswapOutput.new(coin, 0, keys.coinPublicKey, keys.encryptionPublicKey);
     wallet = Shielded.CoreWallet.apply(wallet, keys, L.ZswapOffer.fromOutput(output, token, value));
@@ -222,7 +250,7 @@ const aWalletHolding = (network: string) => {
   const context = {
     coinSelection: chooseCoin,
     coinsAndBalancesCapability: Shielded.CoinsAndBalances.makeDefaultCoinsAndBalancesCapability(),
-    keysCapability: Shielded.Keys.makeDefaultKeysCapability(),
+    keysCapability: Shielded.Keys.makeDefaultKeysCapability()
   };
   const balancing = Shielded.Transacting.makeDefaultTransactingCapability({ networkId: network }, () => context);
   return {
@@ -233,338 +261,595 @@ const aWalletHolding = (network: string) => {
       const [added] = answered.right;
       if (added === undefined) throw new Error('the wallet found nothing to pay for');
       return publicPart.merge(added.eraseProofs());
-    },
+    }
   };
 };
 
-describe.skipIf(!KEYS_ON_DISK)('A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]', () => {
-  const zk = new NodeZkConfigProvider(new URL('../../../contracts/managed-vault', import.meta.url).pathname);
-  const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
-    CompiledContract.withWitnesses({ noteToSpend: () => { throw new Error('a deposit spends no note'); }, nonceSecret: () => { throw new Error('a deposit spends no note'); } } as never));
-  const PROVEN = new Uint8Array(96).map((_, i) => (i * 37 + 11) & 0xff);
-  /* Parameters the chain could hold that are not the ledger's starting ones: one field of them changed. */
-  const STARTING = L.LedgerParameters.initialParameters().serialize();
-  const CHAIN_PARAMETERS = STARTING.slice();
-  CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1] = present(CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1]) ^ 0x01;
-  let unproven: Uint8Array[];
-  let erased: Uint8Array[];
-  let builtWith: Uint8Array[];
-  const deps = (): VaultBuilderDeps & { vault: unknown } => ({
-    ledger: L, vault: vaultModule, runtimeState: (runtime as any).ContractState, compiled, zkConfig: zk, network: NET,
-    contracts: (() => {
-      const real = contractCallsOf({ contracts, types: midnightTypes, ledger: L, ContractState: runtime.ContractState, settingsFor: transactionSettingsFor, accountModuleFor });
-      return {
-        ...real,
-        buildCall: (zkc: unknown, asked: Parameters<typeof real.buildCall>[1], enc: unknown) => {
-          builtWith.push(asked.read.parameters);
-          return real.buildCall(zkc, asked, enc);
+describe.skipIf(!KEYS_ON_DISK)(
+  'A DEPOSIT FROM THE PAGE, BUILT ON THE DEVICE [needs contracts/managed-vault/keys; `npm run compact:vault -- --full` builds them]',
+  () => {
+    const zk = new NodeZkConfigProvider(new URL('../../../contracts/managed-vault', import.meta.url).pathname);
+    const compiled = CompiledContract.make('Vault', (vaultModule as any).Contract).pipe(
+      CompiledContract.withWitnesses({
+        noteToSpend: () => {
+          throw new Error('a deposit spends no note');
         },
-      };
-    })(),
-    prove: async (handed: any) => {
-      /* A call comes as Midnight.js's sealed handle, a deploy as the ledger's own transaction. */
-      const tx = midnightTypes.LedgerTransaction.isLedgerTransaction(handed) ? handed.deserialize({ v9: L.Transaction }) as any : handed;
-      unproven.push(tx.serialize());
-      erased.push(tx.eraseProofs().serialize());
-      return { serialize: () => PROVEN };
-    },
-  });
-  let vault: Hex;
-  let state: string;
-  /* The vault's state with its commitment to `secret`: the vault holds the secret the company's records hold. */
-  let stateHolding: (secret: string) => string;
-
-  beforeAll(async () => {
-    unproven = []; erased = []; builtWith = [];
-    const built = await buildVaultDeploy({ ...deps(), prove: async (tx: any) => tx }, { account: ACCOUNT });
-    vault = built.vault as Hex;
-    const deploy = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', built.proven) as any;
-    /*
-     * The vault as its account leaves it once it has adopted the vault and
-     * approved its first secret, every sealed copy written. A vault fresh from its
-     * deploy takes no money (`src/wiring/vault-submission.test.ts` pins that).
-     */
-    const initial = deploy.intents.values().next().value.actions[0].initialState.serialize();
-    stateHolding = (secret: string): string => {
-      const deployed: any = L.ContractState.deserialize(initial);
-      const fields = deployed.data.state.asArray();
-      const held = (vaultModule as any).pureCircuits.secretCommitmentOf(Buffer.from(vault, 'hex'), Buffer.from(secret, 'hex'));
-      const commitment = (L as any).StateValue.newCell({ value: [held], alignment: fields[5].asCell().alignment });
-      let next = (L as any).StateValue.newArray();
-      /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
-      const bytes32 = new (runtime as any).CompactTypeBytes(32);
-      const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
-      const written = (L as any).StateValue.newMap((fields[7] as any).asMap().insert(
-        aligned((vaultModule as any).pureCircuits.copiesWrittenKey()), (L as any).StateValue.newCell(aligned(held))));
-      fields.forEach((f: unknown, i: number) => { next = next.arrayPush(i === 5 ? commitment : i === 7 ? written : f); });
-      deployed.data = new (L as any).ChargedState(next);
-      return Buffer.from(deployed.serialize()).toString('base64');
-    };
-    state = stateHolding('51'.repeat(31) + '00');
-  });
-
-  it('SENDS THE SERVICE ONLY THE DEPOSIT THE WALLET FINISHED, WHICH SHOWS NO TOKEN OR AMOUNT, AND NOTHING SENT ANYWHERE CARRIES THE NONCE, ITS SECRET OR ANY PART OF THE UNPROVEN TRANSACTION', async () => {
-    unproven = []; erased = []; builtWith = [];
-    const wallet = aWalletHolding(NET);
-    const finished: Uint8Array[] = [];
-    const caught: Array<{ to: string; what: unknown }> = [];
-    const catching = (to: string, what: unknown) => { caught.push({ to, what }); };
-
-    /* The worker's own handler behind the page's own client, on this device. */
-    const listeners: Array<(e: { data: unknown }) => void> = [];
-    const builder = vaultBuilderOver({
-      addEventListener: (_t, l) => { listeners.push(l); },
-      postMessage: (message) => {
-        void answerVaultAsk(async () => deps() as never, message as never).then(
-          (a: VaultAnswer) => listeners.forEach((l) => l({ data: a })),
-          (e: Error) => listeners.forEach((l) => l({ data: { id: (message as { id: number }).id, ok: false, error: e.message } })));
-      },
-    }, NET);
-    let chosen: { nonce: string; token: string; value: string } | null = null;
-    const reads: unknown[] = [];
-    /*
-     * The vault as this device's worker reads it at the wallet's indexer: the state above, held by the keys that hold
-     * the account as the wallet reads it, and the notes the chain shows. The read of a real state is
-     * `vault-on-chain-here.test.ts`'s.
-     */
-    const watched = {
-      ...builder,
-      deposit: async (i: Parameters<typeof builder.deposit>[0]) => { chosen = i.coin; return builder.deposit(i); },
-      /*
-       * Nothing here is proved, and the worker reads only a proved transaction: the product's own reader reads the
-       * deposit as the prover was given it, and what the wallet finished, with their proofs left out. The built one ends
-       * an hour on, as the call is built.
-       */
-      readTransaction: async (i: { transaction: string }) => {
-        const bytes = i.transaction === Buffer.from(PROVEN).toString('base64') ? erased[erased.length - 1]! : Buffer.from(i.transaction, 'base64');
-        const unproved = { Transaction: { deserialize: (s: string, _p: string, _b: string, raw: Uint8Array) => L.Transaction.deserialize(s as never, 'no-proof', 'no-binding', raw) } };
-        const read = readTransaction({ ledger: unproved } as never, bytes);
-        reads.push(read);
-        return read === null ? null : { ...read, timeToLive: Date.now() + 60 * 60_000 };
-      },
-      vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
-        catching('device read', [i.vault, i.indexer]);
-        return { onChain: true as const, state, notes: [...notes], notesFromThisBuild: true, retired: false, everCreated: [], authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true,
-          circuits: null, accountCircuits: null };
-      },
-      /* The block a deposit is built on, read by this device's worker at the wallet's indexer, never asked of the service. */
-      chainAtOneBlock: async (i: { vault: string; account: string; indexer: unknown }) => {
-        catching('device block', [i.vault, i.account, i.indexer]);
-        return { blockHash: 'b1'.repeat(32), vaultState: state, zswapState: '', parameters: Buffer.from(CHAIN_PARAMETERS).toString('base64'), accountState: '' };
-      },
-      eventsOf: async () => { throw new Error('no events'); },
-      /* The account's count of removals, read at the same block: none here. */
-      startStanding: async () => ({ standing: { adopted: true, removals: 0 } }) as never,
-      /* The vault's history, asked by the output the send could not name: one transaction, which made it. */
-      createdBy: async (i: { vault: string; commitment: string; indexer: unknown }) => {
-        catching('device created-by', [i.vault, i.commitment, i.indexer]);
-        return { transactionHash: LANDED_IN, events: [{ transactionHash: LANDED_IN, details: { tag: 'zswapOutput', commitment: i.commitment, contract: vault, mtIndex: '0' } }] };
-      },
-    };
-
-    /* The records route: every record filed or asked for, as the device hands it over. */
-    const kept = new Map<WireRecord, MemorySealedPoolStore>();
-    const records = (r: WireRecord) => {
-      const s = kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
-      return new Proxy(s, {
-        get: (target, p) => {
-          const v = (target as any)[p];
-          return typeof v === 'function' ? (...args: unknown[]) => { catching(`records ${r} ${String(p)}`, args); return v.apply(target, args); } : v;
-        },
-      });
-    };
-
-    /* The product's service, which answers what the chain holds. */
-    const notes: string[] = [];
-    const view = (): TestView => ({
-      vault, onChain: true, committee: null, heldByCommittee: true, started: true, state, notes: [...notes], everCreated: [],
+        nonceSecret: () => {
+          throw new Error('a deposit spends no note');
+        }
+      } as never)
+    );
+    const PROVEN = new Uint8Array(96).map((_, i) => (i * 37 + 11) & 0xff);
+    /* Parameters the chain could hold that are not the ledger's starting ones: one field of them changed. */
+    const STARTING = L.LedgerParameters.initialParameters().serialize();
+    const CHAIN_PARAMETERS = STARTING.slice();
+    CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1] = present(CHAIN_PARAMETERS[CHAIN_PARAMETERS.length - 1]) ^ 0x01;
+    let unproven: Uint8Array[];
+    let erased: Uint8Array[];
+    let builtWith: Uint8Array[];
+    const deps = (): VaultBuilderDeps & { vault: unknown } => ({
+      ledger: L,
+      vault: vaultModule,
+      runtimeState: (runtime as any).ContractState,
+      compiled,
+      zkConfig: zk,
+      network: NET,
+      contracts: (() => {
+        const real = contractCallsOf({
+          contracts,
+          types: midnightTypes,
+          ledger: L,
+          ContractState: runtime.ContractState,
+          settingsFor: transactionSettingsFor,
+          accountModuleFor
+        });
+        return {
+          ...real,
+          buildCall: (zkc: unknown, asked: Parameters<typeof real.buildCall>[1], enc: unknown) => {
+            builtWith.push(asked.read.parameters);
+            return real.buildCall(zkc, asked, enc);
+          }
+        };
+      })(),
+      prove: async (handed: any) => {
+        /* A call comes as Midnight.js's sealed handle, a deploy as the ledger's own transaction. */
+        const tx = midnightTypes.LedgerTransaction.isLedgerTransaction(handed)
+          ? (handed.deserialize({ v9: L.Transaction }) as any)
+          : handed;
+        unproven.push(tx.serialize());
+        erased.push(tx.eraseProofs().serialize());
+        return { serialize: () => PROVEN };
+      }
     });
-    const service: VaultService = {
-      keys: async () => { catching('service keys', []); return { committee: null, why: null, readers: [] }; },
-      deploy: async () => { throw new Error('no deploy'); },
-      handover: async () => { throw new Error('no handover'); },
-      chain: async (v) => { catching('service chain', [v]); return view(); },
-      /* Only a vault's start reads its block through the service; a deposit never does. */
-      payoutState: async (v) => { catching('service payout-state', [v]); throw new Error('a deposit never asks the service for its block'); },
-      deposit: async (v, tx) => {
-        catching('service deposit', [v, tx]);
-        /* The chain shows the note: its held commitment, worked out by the test from what the device chose. */
-        notes.push((await builder.commitments({ vault, coin: chosen! })).held);
-        return { txRef: 'r1', transactionHash: null };
-      },
-      payout: async () => { throw new Error('no payout'); },
-      merge: async () => { throw new Error('no merge'); },
-      payoutPublicly: async () => { throw new Error('no payout'); },
-    };
-    /* What this browser keeps of the deposit on its way, every write watched. */
-    const sealedStore = inFlightInMemory();
-    const inFlightRecords: InFlightRecords = {
-      get: (slot) => sealedStore.get(slot),
-      add: (slot, record) => { catching('browser in-flight', [slot, record]); return sealedStore.add(slot, record); },
-      replace: (slot, claim, record) => { catching('browser in-flight', [slot, claim, record]); return sealedStore.replace(slot, claim, record); },
-      remove: (slot, claim) => sealedStore.remove(slot, claim),
-    };
-    const companyKey = new Uint8Array(32).map((_, i) => 200 - i);
-    const wrapping = recordsKeypairFrom(companyKey);
-    const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey };
-    const doors = {
-      sleep: async () => {}, waitMs: 3, everyMs: 1, service, me, records,
-      /* The wallet's read: the account has adopted this vault. */
-      account: ACCOUNT,
-      onChain: async (v: string) => ({
-        holders: { committee: [], threshold: 1, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
-      }),
-      myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
-      signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
-    };
-    /* The pool is opened from this device's own read of the vault, at the indexer the wallet names, as the deposit is. */
-    await openCompanyVaultPool({ ...doors, builder: watched, indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }) }, vault, async () => {});
-    /* The vault holds the secret the company's records now hold, as a started vault does: the worker checks it. */
-    state = stateHolding(openNonceSecrets((await kept.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(companyKey)).secrets[0]!);
-    /* RED WHEN: the worker's own comparison says yes for a secret the vault's commitment does not name. */
-    expect(await builder.secretIsTheVaults({ vault, state, secret: '52'.repeat(31) + '00' })).toBe(false);
-    /* The page's own source, a private token paid in by the person's wallet, over an asset whose private token is this test's. */
-    const source = privateTokenFromTheWallet(async (ask) => {
-        catching('wallet', ask);
+    let vault: Hex;
+    let state: string;
+    /* The vault's state with its commitment to `secret`: the vault holds the secret the company's records hold. */
+    let stateHolding: (secret: string) => string;
+
+    beforeAll(async () => {
+      unproven = [];
+      erased = [];
+      builtWith = [];
+      const built = await buildVaultDeploy({ ...deps(), prove: async (tx: any) => tx }, { account: ACCOUNT });
+      vault = built.vault as Hex;
+      const deploy = L.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', built.proven) as any;
+      /*
+       * The vault as its account leaves it once it has adopted the vault and
+       * approved its first secret, every sealed copy written. A vault fresh from its
+       * deploy takes no money (`src/wiring/vault-submission.test.ts` pins that).
+       */
+      const initial = deploy.intents.values().next().value.actions[0].initialState.serialize();
+      stateHolding = (secret: string): string => {
+        const deployed: any = L.ContractState.deserialize(initial);
+        const fields = deployed.data.state.asArray();
+        const held = (vaultModule as any).pureCircuits.secretCommitmentOf(
+          Buffer.from(vault, 'hex'),
+          Buffer.from(secret, 'hex')
+        );
+        const commitment = (L as any).StateValue.newCell({ value: [held], alignment: fields[5].asCell().alignment });
+        let next = (L as any).StateValue.newArray();
+        /* And the mark the last sealed copy leaves, without which the vault still takes no money. */
+        const bytes32 = new (runtime as any).CompactTypeBytes(32);
+        const aligned = (b: Uint8Array) => ({ value: bytes32.toValue(b), alignment: bytes32.alignment() });
+        const written = (L as any).StateValue.newMap(
+          (fields[7] as any)
+            .asMap()
+            .insert(
+              aligned((vaultModule as any).pureCircuits.copiesWrittenKey()),
+              (L as any).StateValue.newCell(aligned(held))
+            )
+        );
+        fields.forEach((f: unknown, i: number) => {
+          next = next.arrayPush(i === 5 ? commitment : i === 7 ? written : f);
+        });
+        deployed.data = new (L as any).ChargedState(next);
+        return Buffer.from(deployed.serialize()).toString('base64');
+      };
+      state = stateHolding('51'.repeat(31) + '00');
+    });
+
+    it('SENDS THE SERVICE ONLY THE DEPOSIT THE WALLET FINISHED, WHICH SHOWS NO TOKEN OR AMOUNT, AND NOTHING SENT ANYWHERE CARRIES THE NONCE, ITS SECRET OR ANY PART OF THE UNPROVEN TRANSACTION', async () => {
+      unproven = [];
+      erased = [];
+      builtWith = [];
+      const wallet = aWalletHolding(NET);
+      const finished: Uint8Array[] = [];
+      const caught: Array<{ to: string; what: unknown }> = [];
+      const catching = (to: string, what: unknown) => {
+        caught.push({ to, what });
+      };
+
+      /* The worker's own handler behind the page's own client, on this device. */
+      const listeners: Array<(e: { data: unknown }) => void> = [];
+      const builder = vaultBuilderOver(
+        {
+          addEventListener: (_t, l) => {
+            listeners.push(l);
+          },
+          postMessage: (message) => {
+            void answerVaultAsk(async () => deps() as never, message as never).then(
+              (a: VaultAnswer) => listeners.forEach((l) => l({ data: a })),
+              (e: Error) =>
+                listeners.forEach((l) =>
+                  l({ data: { id: (message as { id: number }).id, ok: false, error: e.message } })
+                )
+            );
+          }
+        },
+        NET
+      );
+      let chosen: { nonce: string; token: string; value: string } | null = null;
+      const reads: unknown[] = [];
+      /*
+       * The vault as this device's worker reads it at the wallet's indexer: the state above, held by the keys that hold
+       * the account as the wallet reads it, and the notes the chain shows. The read of a real state is
+       * `vault-on-chain-here.test.ts`'s.
+       */
+      const watched = {
+        ...builder,
+        deposit: async (i: Parameters<typeof builder.deposit>[0]) => {
+          chosen = i.coin;
+          return builder.deposit(i);
+        },
         /*
-         * The wallet is asked with the proven bytes, and pays for the transaction they stand for: the one the prover
-         * was given, whose public part is what a proof leaves for the chain.
+         * Nothing here is proved, and the worker reads only a proved transaction: the product's own reader reads the
+         * deposit as the prover was given it, and what the wallet finished, with their proofs left out. The built one ends
+         * an hour on, as the call is built.
          */
-        const paid = wallet.payFor(L.Transaction.deserialize('signature', 'no-proof', 'no-binding', erased[erased.length - 1]!));
-        finished.push(paid.serialize());
-        return { transaction: Buffer.from(finished[0]!).toString('base64'), leaves: [] };
-    }, new StaticAssetRegistry([{
-      code: TOKEN, symbol: 'DEP', name: 'DEP', decimals: 0, enabled: true, sortOrder: 1,
-      ledger: { shielded: TOKEN, unshielded: null } as never,
-    }]));
-    const done = await depositFromSource({
-      ...doors, company: LABEL, account: ACCOUNT, builder: watched, inFlight: inFlightOver(inFlightRecords, wrapping.secret),
-      indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
-    }, vault, source, { code: TOKEN, value: VALUE });
+        readTransaction: async (i: { transaction: string }) => {
+          const bytes =
+            i.transaction === Buffer.from(PROVEN).toString('base64')
+              ? erased[erased.length - 1]!
+              : Buffer.from(i.transaction, 'base64');
+          const unproved = {
+            Transaction: {
+              deserialize: (s: string, _p: string, _b: string, raw: Uint8Array) =>
+                L.Transaction.deserialize(s as never, 'no-proof', 'no-binding', raw)
+            }
+          };
+          const read = readTransaction({ ledger: unproved } as never, bytes);
+          reads.push(read);
+          return read === null ? null : { ...read, timeToLive: Date.now() + 60 * 60_000 };
+        },
+        vaultOnChain: async (i: { vault: string; indexer: unknown }) => {
+          catching('device read', [i.vault, i.indexer]);
+          return {
+            onChain: true as const,
+            state,
+            notes: [...notes],
+            notesFromThisBuild: true,
+            retired: false,
+            everCreated: [],
+            authority: { committee: [], threshold: 1 },
+            account: ACCOUNT,
+            started: true,
+            circuits: null,
+            accountCircuits: null
+          };
+        },
+        /* The block a deposit is built on, read by this device's worker at the wallet's indexer, never asked of the service. */
+        chainAtOneBlock: async (i: { vault: string; account: string; indexer: unknown }) => {
+          catching('device block', [i.vault, i.account, i.indexer]);
+          return {
+            blockHash: 'b1'.repeat(32),
+            vaultState: state,
+            zswapState: '',
+            parameters: Buffer.from(CHAIN_PARAMETERS).toString('base64'),
+            accountState: ''
+          };
+        },
+        eventsOf: async () => {
+          throw new Error('no events');
+        },
+        /* The account's count of removals, read at the same block: none here. */
+        startStanding: async () => ({ standing: { adopted: true, removals: 0 } }) as never,
+        /* The vault's history, asked by the output the send could not name: one transaction, which made it. */
+        createdBy: async (i: { vault: string; commitment: string; indexer: unknown }) => {
+          catching('device created-by', [i.vault, i.commitment, i.indexer]);
+          return {
+            transactionHash: LANDED_IN,
+            events: [
+              {
+                transactionHash: LANDED_IN,
+                details: { tag: 'zswapOutput', commitment: i.commitment, contract: vault, mtIndex: '0' }
+              }
+            ]
+          };
+        }
+      };
 
-    /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
-    expect(done.note.value).toBe(VALUE);
-    /* RED WHEN: the ledger's own record of the coin built, read off what the wallet finished, is not the commitment this device worked out for it. */
-    const own = (await builder.commitments({ vault, coin: chosen! })).output;
-    /* Read twice: the deposit as built, and as the wallet handed it back with its own coins and change beside it. */
-    expect(reads.map((r) => (r as { coinsForContracts: unknown } | null)?.coinsForContracts)).toEqual([
-      [{ contract: vault.toLowerCase(), commitment: own.toLowerCase() }], [{ contract: vault.toLowerCase(), commitment: own.toLowerCase() }],
-    ]);
-    /* RED WHEN: a deposit whose send named no transaction is recorded without the one its own output was found in. */
-    expect(done.note.createdIn).toBe(LANDED_IN);
-    expect(unproven, 'the deposit was built once, on this device').toHaveLength(1);
-    const asked = caught.filter((c) => c.to === 'wallet').map((c) => (c.what as { transaction: string }).transaction);
-    /* RED WHEN: the builder hands back the unproven transaction, or the wallet is asked with anything but the proven one. */
-    expect(asked).toEqual([Buffer.from(PROVEN).toString('base64')]);
-    const sent = caught.filter((c) => c.to === 'service deposit').map((c) => (c.what as unknown[])[1]);
-    /* RED WHEN: the page sends the service anything but what the wallet answered. */
-    expect(sent).toEqual([Buffer.from(finished[0]!).toString('base64')]);
-    /* RED WHEN: the deposit is built with the ledger's starting parameters, or with anything but what the chain served. */
-    expect(Buffer.from(CHAIN_PARAMETERS).equals(Buffer.from(STARTING)), 'the parameters served are the starting ones').toBe(false);
-    expect(builtWith.map((b) => Buffer.from(b).toString('hex')), 'the deposit was not built with the chain\'s parameters')
-      .toEqual([Buffer.from(CHAIN_PARAMETERS).toString('hex')]);
-    /* Every door a deposit uses was watched, so a search over them searched something. */
-    expect([...new Set(caught.map((c) => c.to.split(' ').slice(0, 2).join(' ')))].sort(), 'RED WHEN: a door stops being watched').toEqual([
-      'browser in-flight', 'device block', 'device created-by', 'device read', 'records deposit-journal', 'records nonce-secret',
-      'records pool', 'service deposit', 'wallet',
-    ]);
+      /* The records route: every record filed or asked for, as the device hands it over. */
+      const kept = new Map<WireRecord, MemorySealedPoolStore>();
+      const records = (r: WireRecord) => {
+        const s = kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
+        return new Proxy(s, {
+          get: (target, p) => {
+            const v = (target as any)[p];
+            return typeof v === 'function'
+              ? (...args: unknown[]) => {
+                  catching(`records ${r} ${String(p)}`, args);
+                  return v.apply(target, args);
+                }
+              : v;
+          }
+        });
+      };
 
-    /* ---- what the chain is sent states neither the deposit's token nor its amount ---- */
-    const onChain = L.Transaction.deserialize('signature', 'no-proof', 'no-binding', finished[0]!) as any;
-    const before = L.Transaction.deserialize('signature', 'no-proof', 'no-binding', erased[0]!) as any;
-    const deltasOf = (t: any) => [t.guaranteedOffer, ...(t.fallibleOffer?.values() ?? [])]
-      .filter((o: any) => o !== undefined).flatMap((o: any) => [...o.deltas.entries()]);
-    const shieldedImbalancesOf = (t: any) => [0, ...(t.intents?.keys() ?? []), ...(t.fallibleOffer?.keys() ?? [])]
-      .flatMap((segment: number) => [...t.imbalances(segment).entries()].filter(([k]: any) => k.tag === 'shielded'));
-    /* The control: before the wallet pays, the chain would see the token and the amount, and the searches below see them too. */
-    expect(deltasOf(before), 'the deposit before the wallet pays states its token and amount').toEqual([[TOKEN, -VALUE]]);
-    expect(carries([erased[0]!], Buffer.from(TOKEN, 'hex')), 'the search cannot see the token where the chain would').toBe(true);
-    expect(holdsAmount(erased[0]!, VALUE), 'the search cannot see the amount where the chain would').toBe(true);
-    /* RED WHEN: the wallet pays in another section than the deposit's, or short, or not at all - a delta is left. */
-    expect(deltasOf(onChain), 'the finished deposit states a token and amount in public').toEqual([]);
-    expect(shieldedImbalancesOf(onChain), 'the finished deposit leaves a private token unbalanced').toEqual([]);
-    /* RED WHEN: the service's deposit refusal stops reading the private offer - it then sends a deposit that states both. */
-    expect(refusalForDeposit(before, { vault }), 'the service would send a deposit that states its token and amount')
-      .toMatch(/could have seen which token it moves and how much/);
-    /* RED WHEN: the refusal reads the network fee, or a zero entry, as money stated - the finished deposit is then never sent. */
-    expect(refusalForDeposit(onChain, { vault }), 'the service refuses the finished deposit').toBeNull();
-    /* RED WHEN: the token or the amount appears anywhere in what the chain is sent, however it is written. */
-    expect(carries([finished[0]!], Buffer.from(TOKEN, 'hex')), 'the finished deposit names its token').toBe(false);
-    expect(holdsAmount(finished[0]!, VALUE), 'the finished deposit names its amount').toBe(false);
+      /* The product's service, which answers what the chain holds. */
+      const notes: string[] = [];
+      const view = (): TestView => ({
+        vault,
+        onChain: true,
+        committee: null,
+        heldByCommittee: true,
+        started: true,
+        state,
+        notes: [...notes],
+        everCreated: []
+      });
+      const service: VaultService = {
+        keys: async () => {
+          catching('service keys', []);
+          return { committee: null, why: null, readers: [] };
+        },
+        deploy: async () => {
+          throw new Error('no deploy');
+        },
+        handover: async () => {
+          throw new Error('no handover');
+        },
+        chain: async (v) => {
+          catching('service chain', [v]);
+          return view();
+        },
+        /* Only a vault's start reads its block through the service; a deposit never does. */
+        payoutState: async (v) => {
+          catching('service payout-state', [v]);
+          throw new Error('a deposit never asks the service for its block');
+        },
+        deposit: async (v, tx) => {
+          catching('service deposit', [v, tx]);
+          /* The chain shows the note: its held commitment, worked out by the test from what the device chose. */
+          notes.push((await builder.commitments({ vault, coin: chosen! })).held);
+          return { txRef: 'r1', transactionHash: null };
+        },
+        payout: async () => {
+          throw new Error('no payout');
+        },
+        merge: async () => {
+          throw new Error('no merge');
+        },
+        payoutPublicly: async () => {
+          throw new Error('no payout');
+        }
+      };
+      /* What this browser keeps of the deposit on its way, every write watched. */
+      const sealedStore = inFlightInMemory();
+      const inFlightRecords: InFlightRecords = {
+        get: (slot) => sealedStore.get(slot),
+        add: (slot, record) => {
+          catching('browser in-flight', [slot, record]);
+          return sealedStore.add(slot, record);
+        },
+        replace: (slot, claim, record) => {
+          catching('browser in-flight', [slot, claim, record]);
+          return sealedStore.replace(slot, claim, record);
+        },
+        remove: (slot, claim) => sealedStore.remove(slot, claim)
+      };
+      const companyKey = new Uint8Array(32).map((_, i) => 200 - i);
+      const wrapping = recordsKeypairFrom(companyKey);
+      const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey };
+      const doors = {
+        sleep: async () => {},
+        waitMs: 3,
+        everyMs: 1,
+        service,
+        me,
+        records,
+        /* The wallet's read: the account has adopted this vault. */
+        account: ACCOUNT,
+        onChain: async (v: string) => ({
+          holders: {
+            committee: [],
+            threshold: 1,
+            seats: [],
+            approvals: 1,
+            vaultThresholds: [],
+            policyBar: null,
+            seatBar: seatBarOf(1, null),
+            adoptedVaults: [v],
+            founding: '4a'.repeat(32),
+            foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }]
+          }
+        }),
+        myRecordsKey: recordsKeypairFrom(companyKey).publicKey,
+        signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }]
+      };
+      /* The pool is opened from this device's own read of the vault, at the indexer the wallet names, as the deposit is. */
+      await openCompanyVaultPool(
+        {
+          ...doors,
+          builder: watched,
+          indexer: async () => ({
+            indexerUri: 'https://indexer.example/api/v3/graphql',
+            indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws'
+          })
+        },
+        vault,
+        async () => {}
+      );
+      /* The vault holds the secret the company's records now hold, as a started vault does: the worker checks it. */
+      state = stateHolding(
+        openNonceSecrets((await kept.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(companyKey))
+          .secrets[0]!
+      );
+      /* RED WHEN: the worker's own comparison says yes for a secret the vault's commitment does not name. */
+      expect(await builder.secretIsTheVaults({ vault, state, secret: '52'.repeat(31) + '00' })).toBe(false);
+      /* The page's own source, a private token paid in by the person's wallet, over an asset whose private token is this test's. */
+      const source = privateTokenFromTheWallet(
+        async (ask) => {
+          catching('wallet', ask);
+          /*
+           * The wallet is asked with the proven bytes, and pays for the transaction they stand for: the one the prover
+           * was given, whose public part is what a proof leaves for the chain.
+           */
+          const paid = wallet.payFor(
+            L.Transaction.deserialize('signature', 'no-proof', 'no-binding', erased[erased.length - 1]!)
+          );
+          finished.push(paid.serialize());
+          return { transaction: Buffer.from(finished[0]!).toString('base64'), leaves: [] };
+        },
+        new StaticAssetRegistry([
+          {
+            code: TOKEN,
+            symbol: 'DEP',
+            name: 'DEP',
+            decimals: 0,
+            enabled: true,
+            sortOrder: 1,
+            ledger: { shielded: TOKEN, unshielded: null } as never
+          }
+        ])
+      );
+      const done = await depositFromSource(
+        {
+          ...doors,
+          company: LABEL,
+          account: ACCOUNT,
+          builder: watched,
+          inFlight: inFlightOver(inFlightRecords, wrapping.secret),
+          indexer: async () => ({
+            indexerUri: 'https://indexer.example/api/v3/graphql',
+            indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws'
+          })
+        },
+        vault,
+        source,
+        { code: TOKEN, value: VALUE }
+      );
 
-    /* ---- and nothing any of them was sent carries a secret ---- */
-    const inside = (x: string) => `{"note":"${x}"}`;
-    const opened = openNonceSecrets((await kept.get('nonce-secret')!.get(vault))!, vault, recordsKeypairFrom(companyKey));
-    const nonce = Buffer.from(done.note.nonce, 'hex');
-    const secrets: Array<[string, Uint8Array]> = [
-      ['the deposit\'s nonce', nonce],
-      ['the key the nonce is derived from', currentDepositNonceKey(opened)],
-      ...opened.secrets.map((s, i) => [`the vault's nonce secret, epoch ${i + 1}`, Buffer.from(s, 'hex')] as [string, Uint8Array]),
-      ['the key the wallet released for the company', companyKey],
-      ['the signer\'s records key', Buffer.from(recordsKeypairFrom(companyKey).secret, 'hex')],
-      ['the signer\'s wrapping key', Buffer.from(wrapping.secret, 'hex')],
-      ['the unproven transaction', unproven[0]!],
-    ];
-    const leaked = secrets.flatMap(([name, secret]) =>
-      caught.filter((c) => carries([c.what], secret)).map((c) => `${name}, in: ${c.to}`));
-    /* RED WHEN: any request, record or wallet ask carries one of them - in hex, in bytes, or inside base64. */
-    expect(leaked, 'these left the device').toEqual([]);
-    /* ---- and what this browser keeps of the deposit on its way states none of it ---- */
-    const keptHere = caught.filter((c) => c.to === 'browser in-flight');
-    expect(keptHere.length, 'the deposit was kept on its way').toBeGreaterThan(0);
-    /* Searched as it is kept, and with every hex string in it read back as text, since a field could be hex-encoded. */
-    const asText = (what: unknown) => {
-      const json = JSON.stringify(what);
-      return [json, ...(json.match(/[0-9a-f]{16,}/giu) ?? []).map((h) => Buffer.from(h.length % 2 === 0 ? h : h.slice(1), 'hex').toString('latin1'))]
-        .join('\n').toLowerCase();
-    };
-    const inTheClear = keptHere.filter((c) => carries([c.what], nonce) || carries([c.what], Buffer.from(TOKEN, 'hex'))
-      || [nonce.toString('hex'), TOKEN, VALUE.toString(), VALUE.toString(16)].some((x) => asText(c.what).includes(x.toLowerCase())));
-    /* RED WHEN: the note of a deposit on its way is kept unsealed - its nonce, its token or its amount is then in this browser. */
-    expect(inTheClear.map((c) => c.to), 'the deposit on its way is kept in the clear').toEqual([]);
-    /*
-     * RED WHEN: any request, record, wallet ask or wallet answer carries any part of the unproven transaction the
-     * proof does not leave public - the part that carries the nonce, or any other - cut anywhere, not only whole.
-     */
-    const privateRuns = privateRunsOf(unproven[0]!, [
-      erased[0]!, Buffer.from(vault, 'hex'), Buffer.from(vault, 'latin1'), Buffer.from(state, 'base64'), CHAIN_PARAMETERS,
-    ]);
-    expect(privateRuns.size, 'the unproven transaction has no part the proof hides, so this search searches nothing').toBeGreaterThan(64);
-    expect(caught.filter((c) => carriesAnyRun([c.what], privateRuns)).map((c) => c.to), 'part of the unproven transaction left the device').toEqual([]);
-    const at = Buffer.from(unproven[0]!).indexOf(Buffer.from(nonce.subarray(0, WINDOW)));
-    expect(at, 'the unproven transaction does not carry the nonce where the search looks').toBeGreaterThanOrEqual(0);
-    const aroundTheNonce = unproven[0]!.subarray(Math.max(0, at - 24), at + 24);
-    const elsewhere = [...privateRuns][Math.floor(privateRuns.size / 2)]!;
-    for (const [how, what] of [
-      ['a piece around the nonce, raw', aroundTheNonce],
-      ['a piece around the nonce, in base64 inside a longer string', inside(Buffer.from(aroundTheNonce).toString('base64'))],
-      ['a piece around the nonce, in hex at an odd nibble', `f${Buffer.from(aroundTheNonce).toString('hex')}`],
-      ['one hidden run from elsewhere in it, in base64url', Buffer.from(elsewhere, 'hex').toString('base64url')],
-    ] as Array<[string, unknown]>) {
-      expect(carriesAnyRun([what], privateRuns), `the search cannot see ${how}`).toBe(true);
-    }
-    expect(carriesAnyRun([erased[0]!, finished[0]!, PROVEN], privateRuns), 'the search finds hidden parts in public bytes').toBe(false);
+      /* ---- the deposit happened, and what the service was sent is what the wallet finished ---- */
+      expect(done.note.value).toBe(VALUE);
+      /* RED WHEN: the ledger's own record of the coin built, read off what the wallet finished, is not the commitment this device worked out for it. */
+      const own = (await builder.commitments({ vault, coin: chosen! })).output;
+      /* Read twice: the deposit as built, and as the wallet handed it back with its own coins and change beside it. */
+      expect(reads.map((r) => (r as { coinsForContracts: unknown } | null)?.coinsForContracts)).toEqual([
+        [{ contract: vault.toLowerCase(), commitment: own.toLowerCase() }],
+        [{ contract: vault.toLowerCase(), commitment: own.toLowerCase() }]
+      ]);
+      /* RED WHEN: a deposit whose send named no transaction is recorded without the one its own output was found in. */
+      expect(done.note.createdIn).toBe(LANDED_IN);
+      expect(unproven, 'the deposit was built once, on this device').toHaveLength(1);
+      const asked = caught.filter((c) => c.to === 'wallet').map((c) => (c.what as { transaction: string }).transaction);
+      /* RED WHEN: the builder hands back the unproven transaction, or the wallet is asked with anything but the proven one. */
+      expect(asked).toEqual([Buffer.from(PROVEN).toString('base64')]);
+      const sent = caught.filter((c) => c.to === 'service deposit').map((c) => (c.what as unknown[])[1]);
+      /* RED WHEN: the page sends the service anything but what the wallet answered. */
+      expect(sent).toEqual([Buffer.from(finished[0]!).toString('base64')]);
+      /* RED WHEN: the deposit is built with the ledger's starting parameters, or with anything but what the chain served. */
+      expect(
+        Buffer.from(CHAIN_PARAMETERS).equals(Buffer.from(STARTING)),
+        'the parameters served are the starting ones'
+      ).toBe(false);
+      expect(
+        builtWith.map((b) => Buffer.from(b).toString('hex')),
+        "the deposit was not built with the chain's parameters"
+      ).toEqual([Buffer.from(CHAIN_PARAMETERS).toString('hex')]);
+      /* Every door a deposit uses was watched, so a search over them searched something. */
+      expect(
+        [...new Set(caught.map((c) => c.to.split(' ').slice(0, 2).join(' ')))].sort(),
+        'RED WHEN: a door stops being watched'
+      ).toEqual([
+        'browser in-flight',
+        'device block',
+        'device created-by',
+        'device read',
+        'records deposit-journal',
+        'records nonce-secret',
+        'records pool',
+        'service deposit',
+        'wallet'
+      ]);
 
-    /* ---- the search finds a nonce where one is: the unproven transaction carries it ---- */
-    expect(carries([unproven[0]!], nonce), 'the search cannot see the nonce, so the searches above prove nothing').toBe(true);
-    expect(carries([Buffer.from(unproven[0]!).toString('base64')], nonce), 'the search cannot see inside base64').toBe(true);
-    expect(carries([toHex(nonce).toUpperCase()], nonce), 'the search cannot see hex in capitals').toBe(true);
-    const controls: Array<[string, unknown]> = [
-      ['a decimal number', BigInt(`0x${toHex(nonce)}`)],
-      ['a decimal number, the bytes reversed', BigInt(`0x${Buffer.from(nonce).reverse().toString('hex')}`).toString()],
-      ['base64url', Buffer.from(nonce).toString('base64url')],
-      ['base64 inside a longer string', inside(Buffer.from(nonce).toString('base64'))],
-      ['base64 at an odd place in a longer string', `x${Buffer.concat([Buffer.from([1]), nonce]).toString('base64')}`],
-      ['the bytes reversed', Buffer.from(nonce).reverse()],
-      ['an ArrayBuffer', new Uint8Array(nonce).buffer],
-      ['a Map', new Map([['k', toHex(nonce)]])],
-      ['a Set', new Set([toHex(nonce)])],
-    ];
-    for (const [how, what] of controls) {
-      expect(carries([what], nonce), `the search cannot see the nonce as ${how}`).toBe(true);
-    }
-    /* ---- and the transaction's public part, which is what a proof leaves for the chain, does not ---- */
-    expect(carries([erased[0]!], nonce), 'the deposit\'s public part names its nonce').toBe(false);
-    expect(carries([finished[0]!], nonce), 'the finished deposit names its nonce').toBe(false);
-  }, 120_000);
-});
+      /* ---- what the chain is sent states neither the deposit's token nor its amount ---- */
+      const onChain = L.Transaction.deserialize('signature', 'no-proof', 'no-binding', finished[0]!) as any;
+      const before = L.Transaction.deserialize('signature', 'no-proof', 'no-binding', erased[0]!) as any;
+      const deltasOf = (t: any) =>
+        [t.guaranteedOffer, ...(t.fallibleOffer?.values() ?? [])]
+          .filter((o: any) => o !== undefined)
+          .flatMap((o: any) => [...o.deltas.entries()]);
+      const shieldedImbalancesOf = (t: any) =>
+        [0, ...(t.intents?.keys() ?? []), ...(t.fallibleOffer?.keys() ?? [])].flatMap((segment: number) =>
+          [...t.imbalances(segment).entries()].filter(([k]: any) => k.tag === 'shielded')
+        );
+      /* The control: before the wallet pays, the chain would see the token and the amount, and the searches below see them too. */
+      expect(deltasOf(before), 'the deposit before the wallet pays states its token and amount').toEqual([
+        [TOKEN, -VALUE]
+      ]);
+      expect(
+        carries([erased[0]!], Buffer.from(TOKEN, 'hex')),
+        'the search cannot see the token where the chain would'
+      ).toBe(true);
+      expect(holdsAmount(erased[0]!, VALUE), 'the search cannot see the amount where the chain would').toBe(true);
+      /* RED WHEN: the wallet pays in another section than the deposit's, or short, or not at all - a delta is left. */
+      expect(deltasOf(onChain), 'the finished deposit states a token and amount in public').toEqual([]);
+      expect(shieldedImbalancesOf(onChain), 'the finished deposit leaves a private token unbalanced').toEqual([]);
+      /* RED WHEN: the service's deposit refusal stops reading the private offer - it then sends a deposit that states both. */
+      expect(
+        refusalForDeposit(before, { vault }),
+        'the service would send a deposit that states its token and amount'
+      ).toMatch(/could have seen which token it moves and how much/);
+      /* RED WHEN: the refusal reads the network fee, or a zero entry, as money stated - the finished deposit is then never sent. */
+      expect(refusalForDeposit(onChain, { vault }), 'the service refuses the finished deposit').toBeNull();
+      /* RED WHEN: the token or the amount appears anywhere in what the chain is sent, however it is written. */
+      expect(carries([finished[0]!], Buffer.from(TOKEN, 'hex')), 'the finished deposit names its token').toBe(false);
+      expect(holdsAmount(finished[0]!, VALUE), 'the finished deposit names its amount').toBe(false);
+
+      /* ---- and nothing any of them was sent carries a secret ---- */
+      const inside = (x: string) => `{"note":"${x}"}`;
+      const opened = openNonceSecrets(
+        (await kept.get('nonce-secret')!.get(vault))!,
+        vault,
+        recordsKeypairFrom(companyKey)
+      );
+      const nonce = Buffer.from(done.note.nonce, 'hex');
+      const secrets: Array<[string, Uint8Array]> = [
+        ["the deposit's nonce", nonce],
+        ['the key the nonce is derived from', currentDepositNonceKey(opened)],
+        ...opened.secrets.map(
+          (s, i) => [`the vault's nonce secret, epoch ${i + 1}`, Buffer.from(s, 'hex')] as [string, Uint8Array]
+        ),
+        ['the key the wallet released for the company', companyKey],
+        ["the signer's records key", Buffer.from(recordsKeypairFrom(companyKey).secret, 'hex')],
+        ["the signer's wrapping key", Buffer.from(wrapping.secret, 'hex')],
+        ['the unproven transaction', unproven[0]!]
+      ];
+      const leaked = secrets.flatMap(([name, secret]) =>
+        caught.filter((c) => carries([c.what], secret)).map((c) => `${name}, in: ${c.to}`)
+      );
+      /* RED WHEN: any request, record or wallet ask carries one of them - in hex, in bytes, or inside base64. */
+      expect(leaked, 'these left the device').toEqual([]);
+      /* ---- and what this browser keeps of the deposit on its way states none of it ---- */
+      const keptHere = caught.filter((c) => c.to === 'browser in-flight');
+      expect(keptHere.length, 'the deposit was kept on its way').toBeGreaterThan(0);
+      /* Searched as it is kept, and with every hex string in it read back as text, since a field could be hex-encoded. */
+      const asText = (what: unknown) => {
+        const json = JSON.stringify(what);
+        return [
+          json,
+          ...(json.match(/[0-9a-f]{16,}/giu) ?? []).map((h) =>
+            Buffer.from(h.length % 2 === 0 ? h : h.slice(1), 'hex').toString('latin1')
+          )
+        ]
+          .join('\n')
+          .toLowerCase();
+      };
+      const inTheClear = keptHere.filter(
+        (c) =>
+          carries([c.what], nonce) ||
+          carries([c.what], Buffer.from(TOKEN, 'hex')) ||
+          [nonce.toString('hex'), TOKEN, VALUE.toString(), VALUE.toString(16)].some((x) =>
+            asText(c.what).includes(x.toLowerCase())
+          )
+      );
+      /* RED WHEN: the note of a deposit on its way is kept unsealed - its nonce, its token or its amount is then in this browser. */
+      expect(
+        inTheClear.map((c) => c.to),
+        'the deposit on its way is kept in the clear'
+      ).toEqual([]);
+      /*
+       * RED WHEN: any request, record, wallet ask or wallet answer carries any part of the unproven transaction the
+       * proof does not leave public - the part that carries the nonce, or any other - cut anywhere, not only whole.
+       */
+      const privateRuns = privateRunsOf(unproven[0]!, [
+        erased[0]!,
+        Buffer.from(vault, 'hex'),
+        Buffer.from(vault, 'latin1'),
+        Buffer.from(state, 'base64'),
+        CHAIN_PARAMETERS
+      ]);
+      expect(
+        privateRuns.size,
+        'the unproven transaction has no part the proof hides, so this search searches nothing'
+      ).toBeGreaterThan(64);
+      expect(
+        caught.filter((c) => carriesAnyRun([c.what], privateRuns)).map((c) => c.to),
+        'part of the unproven transaction left the device'
+      ).toEqual([]);
+      const at = Buffer.from(unproven[0]!).indexOf(Buffer.from(nonce.subarray(0, WINDOW)));
+      expect(at, 'the unproven transaction does not carry the nonce where the search looks').toBeGreaterThanOrEqual(0);
+      const aroundTheNonce = unproven[0]!.subarray(Math.max(0, at - 24), at + 24);
+      const elsewhere = [...privateRuns][Math.floor(privateRuns.size / 2)]!;
+      for (const [how, what] of [
+        ['a piece around the nonce, raw', aroundTheNonce],
+        [
+          'a piece around the nonce, in base64 inside a longer string',
+          inside(Buffer.from(aroundTheNonce).toString('base64'))
+        ],
+        ['a piece around the nonce, in hex at an odd nibble', `f${Buffer.from(aroundTheNonce).toString('hex')}`],
+        ['one hidden run from elsewhere in it, in base64url', Buffer.from(elsewhere, 'hex').toString('base64url')]
+      ] as Array<[string, unknown]>) {
+        expect(carriesAnyRun([what], privateRuns), `the search cannot see ${how}`).toBe(true);
+      }
+      expect(
+        carriesAnyRun([erased[0]!, finished[0]!, PROVEN], privateRuns),
+        'the search finds hidden parts in public bytes'
+      ).toBe(false);
+
+      /* ---- the search finds a nonce where one is: the unproven transaction carries it ---- */
+      expect(
+        carries([unproven[0]!], nonce),
+        'the search cannot see the nonce, so the searches above prove nothing'
+      ).toBe(true);
+      expect(
+        carries([Buffer.from(unproven[0]!).toString('base64')], nonce),
+        'the search cannot see inside base64'
+      ).toBe(true);
+      expect(carries([toHex(nonce).toUpperCase()], nonce), 'the search cannot see hex in capitals').toBe(true);
+      const controls: Array<[string, unknown]> = [
+        ['a decimal number', BigInt(`0x${toHex(nonce)}`)],
+        [
+          'a decimal number, the bytes reversed',
+          BigInt(`0x${Buffer.from(nonce).reverse().toString('hex')}`).toString()
+        ],
+        ['base64url', Buffer.from(nonce).toString('base64url')],
+        ['base64 inside a longer string', inside(Buffer.from(nonce).toString('base64'))],
+        [
+          'base64 at an odd place in a longer string',
+          `x${Buffer.concat([Buffer.from([1]), nonce]).toString('base64')}`
+        ],
+        ['the bytes reversed', Buffer.from(nonce).reverse()],
+        ['an ArrayBuffer', new Uint8Array(nonce).buffer],
+        ['a Map', new Map([['k', toHex(nonce)]])],
+        ['a Set', new Set([toHex(nonce)])]
+      ];
+      for (const [how, what] of controls) {
+        expect(carries([what], nonce), `the search cannot see the nonce as ${how}`).toBe(true);
+      }
+      /* ---- and the transaction's public part, which is what a proof leaves for the chain, does not ---- */
+      expect(carries([erased[0]!], nonce), "the deposit's public part names its nonce").toBe(false);
+      expect(carries([finished[0]!], nonce), 'the finished deposit names its nonce').toBe(false);
+    }, 120_000);
+  }
+);

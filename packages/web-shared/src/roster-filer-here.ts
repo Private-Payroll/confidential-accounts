@@ -1,13 +1,26 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import {
-  believedSigners, foundingRosterRefusal, ROSTER_ID, type DirectoryWitness, type RosterWitnesses,
+  believedSigners,
+  foundingRosterRefusal,
+  ROSTER_ID,
+  type DirectoryWitness,
+  type RosterWitnesses
 } from '../../../src/core/roster-record.js';
 import type { Account, Signer } from '../../../src/core/types.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
-import { companyRecordKey, seatsWithAnotherRecordsKey, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
 import {
-  attestedIn, directoryHere, foundingRecordRefusalHere, judgeIn, newerNamedRefusal, type DirectoryHere,
+  companyRecordKey,
+  seatsWithAnotherRecordsKey,
+  type DirectorySeat
+} from '../../../src/midnight/seat-directory.js';
+import {
+  attestedIn,
+  directoryHere,
+  foundingRecordRefusalHere,
+  judgeIn,
+  newerNamedRefusal,
+  type DirectoryHere
 } from './vault-page-doors.js';
 
 /**
@@ -26,15 +39,30 @@ import {
  * only those are believed to have signed an invitation.
  */
 export const provedSeatsOf = (seats: readonly DirectorySeat[]): DirectoryWitness[] =>
-  seats.flatMap((x) => (x.committeeKey === undefined ? [] : [{
-    seat: x.seat, signingKey: x.signingKey, committeeKey: x.committeeKey, retired: x.retired !== null, role: x.role, person: x.person, ...(x.rights === undefined ? {} : { rights: x.rights }),
-  }]));
+  seats.flatMap((x) =>
+    x.committeeKey === undefined
+      ? []
+      : [
+          {
+            seat: x.seat,
+            signingKey: x.signingKey,
+            committeeKey: x.committeeKey,
+            retired: x.retired !== null,
+            role: x.role,
+            person: x.person,
+            ...(x.rights === undefined ? {} : { rights: x.rights })
+          }
+        ]
+  );
 
 /**
  * The seats a retirement anchored in the company's records retired, as the directory stood at the newest version the
  * anchor holds: one retired by a version filed and not yet anchored still has its entry, until that version is anchored.
  */
-const retiredAsAnchored = (read: { readonly records: { readonly directory: ReadonlyMap<number, unknown> }; readonly at: DirectoryHere['at'] }): string[] => {
+const retiredAsAnchored = (read: {
+  readonly records: { readonly directory: ReadonlyMap<number, unknown> };
+  readonly at: DirectoryHere['at'];
+}): string[] => {
   const newest = Math.max(0, ...read.records.directory.keys());
   if (newest === 0) return [];
   return (read.at(newest)?.dir.seats ?? []).filter((x) => x.retired !== null).map((x) => x.seat.toLowerCase());
@@ -50,8 +78,10 @@ const retiredAsAnchored = (read: { readonly records: { readonly directory: Reado
  * version is named: that device made it.
  */
 const firstRosterRefusal = (
-  here: Awaited<ReturnType<typeof directoryHere>>, roster: SealedCompanyRecord, accountId: string,
-  own: { readonly signingPublicKey: string } | null,
+  here: Awaited<ReturnType<typeof directoryHere>>,
+  roster: SealedCompanyRecord,
+  accountId: string,
+  own: { readonly signingPublicKey: string } | null
 ): string | null => {
   const filer = verifiedCompanyFiler(roster);
   const read = { ...companyRecordEntry(roster), version: roster.version };
@@ -59,8 +89,10 @@ const firstRosterRefusal = (
   if (nothingAnchored && filer !== null && own !== null && filer.toLowerCase() === own.signingPublicKey.toLowerCase()) {
     return foundingRosterRefusal(roster, accountId, own.signingPublicKey) ?? newerNamedRefusal(here, read);
   }
-  return foundingRecordRefusalHere(here, roster, (key) => foundingRosterRefusal(roster, accountId, key))
-    ?? newerNamedRefusal(here, read);
+  return (
+    foundingRecordRefusalHere(here, roster, (key) => foundingRosterRefusal(roster, accountId, key)) ??
+    newerNamedRefusal(here, read)
+  );
 };
 
 /** The directory as read to judge the roster, with the chain's holders and the records it anchored. */
@@ -72,21 +104,47 @@ type RosterDirectoryRead = Awaited<ReturnType<typeof directoryHere>>;
  * the company's directory with no statements, and this device's own key.
  */
 export function rosterFilerJudged(
-  opened: Pick<Account, 'signers'>, read: RosterDirectoryRead, roster: SealedCompanyRecord,
-  d: { readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress; readonly own?: { readonly signerId?: string | null; readonly signingPublicKey: string } | null },
+  opened: Pick<Account, 'signers'>,
+  read: RosterDirectoryRead,
+  roster: SealedCompanyRecord,
+  d: {
+    readonly accountId: string;
+    readonly label: CompanyLabel;
+    readonly account: AccountAddress;
+    readonly own?: { readonly signerId?: string | null; readonly signingPublicKey: string } | null;
+  }
 ): {
-  readonly witnesses: RosterWitnesses; readonly believed: Signer[]; readonly refused: ReturnType<typeof believedSigners>['refused'];
-  readonly attesting: Signer[]; readonly here: RosterDirectoryRead & { readonly another: ReadonlySet<string> }; readonly why: string | null;
+  readonly witnesses: RosterWitnesses;
+  readonly believed: Signer[];
+  readonly refused: ReturnType<typeof believedSigners>['refused'];
+  readonly attesting: Signer[];
+  readonly here: RosterDirectoryRead & { readonly another: ReadonlySet<string> };
+  readonly why: string | null;
 } {
   const witnesses: RosterWitnesses = {
-    accountId: d.accountId, label: d.label, account: d.account, seatsOnTheChain: read.holders.seats,
+    accountId: d.accountId,
+    label: d.label,
+    account: d.account,
+    seatsOnTheChain: read.holders.seats,
     directory: provedSeatsOf(read.dir.seats),
     own: d.own ?? null,
-    retired: retiredAsAnchored(read),
+    retired: retiredAsAnchored(read)
   };
   const { believed, refused, attesting } = believedSigners(opened.signers, witnesses);
-  const here = { ...read, another: seatsWithAnotherRecordsKey(read.dir, d.label, read.holders.account, attestedIn({ signers: attesting })) };
-  const why = roster.version === 1 ? firstRosterRefusal(here, roster, d.accountId, d.own ?? null)
-    : judgeIn(here)(verifiedCompanyFiler(roster), 'roster', companyRecordKey('roster', ROSTER_ID), companyRecordEntry(roster), true, roster.keyEpoch);
+  const here = {
+    ...read,
+    another: seatsWithAnotherRecordsKey(read.dir, d.label, read.holders.account, attestedIn({ signers: attesting }))
+  };
+  const why =
+    roster.version === 1
+      ? firstRosterRefusal(here, roster, d.accountId, d.own ?? null)
+      : judgeIn(here)(
+          verifiedCompanyFiler(roster),
+          'roster',
+          companyRecordKey('roster', ROSTER_ID),
+          companyRecordEntry(roster),
+          true,
+          roster.keyEpoch
+        );
   return { witnesses, believed, refused, attesting, here, why };
 }

@@ -10,7 +10,9 @@ import { NETWORK } from '../config.js';
 
 (globalThis as { Buffer?: unknown }).Buffer = PolyfillBuffer;
 
-beforeEach(() => { localStorage.clear(); });
+beforeEach(() => {
+  localStorage.clear();
+});
 
 describe('the terms record — a network fact, kept plainly', () => {
   it('round-trips, and the key carries the network name', () => {
@@ -39,9 +41,11 @@ describe('the live doors — the live half of the seam', () => {
   it('the DEFAULT wiring is live — the seam flipped, and this is the flip', async () => {
     const { SendContext } = await import('./send-context.js');
     /* Read the default straight off the context object — no render, no dial. */
-    const wiring = (SendContext as unknown as {
-      _currentValue: import('./send-context.js').SendWiring;
-    })._currentValue;
+    const wiring = (
+      SendContext as unknown as {
+        _currentValue: import('./send-context.js').SendWiring;
+      }
+    )._currentValue;
     expect(wiring.live).not.toBeNull();
     expect(typeof wiring.live?.doorsFor).toBe('function');
     expect(typeof wiring.live?.fetchTerms).toBe('function');

@@ -33,8 +33,7 @@ export interface SubwalletRecord {
   readonly lastUsed: number;
 }
 
-const EMPTY_SUBWALLETS: Omit<SubwalletRecord, 'fingerprint'> =
-  Object.freeze({ names: Object.freeze({}), lastUsed: 0 });
+const EMPTY_SUBWALLETS: Omit<SubwalletRecord, 'fingerprint'> = Object.freeze({ names: Object.freeze({}), lastUsed: 0 });
 
 function parseSubwallets(raw: string): SubwalletRecord | null {
   let parsed: SubwalletRecord;
@@ -47,8 +46,7 @@ function parseSubwallets(raw: string): SubwalletRecord | null {
   if (!isNamed(parsed.fingerprint)) return null;
   if (!isRealNumber(parsed.lastUsed) || !Number.isInteger(parsed.lastUsed)) return null;
   if (parsed.lastUsed < 0 || parsed.lastUsed === 1) return null;
-  if (typeof parsed.names !== 'object' || parsed.names === null
-    || Array.isArray(parsed.names)) return null;
+  if (typeof parsed.names !== 'object' || parsed.names === null || Array.isArray(parsed.names)) return null;
   for (const [account, name] of Object.entries(parsed.names)) {
     if (!/^\d+$/u.test(account) || account === '1') return null;
     if (typeof name !== 'string') return null;
@@ -86,13 +84,11 @@ export function subwalletsOnRecord(walletId: string): Pick<SubwalletRecord, 'nam
   return parsed === null ? null : { names: parsed.names, fingerprint: parsed.fingerprint };
 }
 
-function saveSubwallets(
-  secret: Secret, next: Omit<SubwalletRecord, 'fingerprint'>,
-): void {
+function saveSubwallets(secret: Secret, next: Omit<SubwalletRecord, 'fingerprint'>): void {
   const record: SubwalletRecord = {
     fingerprint: toBase64Url(fingerprintOf(secret)),
     names: next.names,
-    lastUsed: next.lastUsed,
+    lastUsed: next.lastUsed
   };
   localStorage.setItem(keyFor(slotToWrite(secret), 'subwallets'), JSON.stringify(record));
 }
@@ -122,10 +118,12 @@ function saveSubwallets(
  */
 export function saveSubwalletName(secret: Secret, account: number, name: string): void {
   if (!isWalletAccount(account)) {
-    throw new Error(`subwallet names live at accounts 0 and 2–11; got ${account}. `
-      + (account === 1
-        ? 'Account 1 is the authority compartment, not a wallet.'
-        : 'That is not a slot this interface offers.'));
+    throw new Error(
+      `subwallet names live at accounts 0 and 2–11; got ${account}. ` +
+        (account === 1
+          ? 'Account 1 is the authority compartment, not a wallet.'
+          : 'That is not a slot this interface offers.')
+    );
   }
   const current = loadSubwallets(secret);
   const names = { ...current.names };
@@ -156,10 +154,12 @@ export function saveSubwalletName(secret: Secret, account: number, name: string)
  */
 export function saveLastUsedWallet(secret: Secret, account: number): void {
   if (!isWalletAccount(account)) {
-    throw new Error(`a wallet is account 0 or 2–11; got ${account}. `
-      + (account === 1
-        ? 'Account 1 is the authority compartment, not a wallet.'
-        : 'That is not a slot this interface offers.'));
+    throw new Error(
+      `a wallet is account 0 or 2–11; got ${account}. ` +
+        (account === 1
+          ? 'Account 1 is the authority compartment, not a wallet.'
+          : 'That is not a slot this interface offers.')
+    );
   }
   const current = loadSubwallets(secret);
   saveSubwallets(secret, { names: current.names, lastUsed: account });

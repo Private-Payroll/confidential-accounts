@@ -36,7 +36,10 @@ const root = resolve(here, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const name = pkg.name;
 
-const fail = (m) => { console.error(`REFUSED: ${m}`); process.exit(1); };
+const fail = (m) => {
+  console.error(`REFUSED: ${m}`);
+  process.exit(1);
+};
 
 /* ---- 1. every target named by the exports map is on disk ---------------- */
 
@@ -76,23 +79,35 @@ try {
   const { mkdirSync } = await import('node:fs');
   const mods = join(dir, 'node_modules');
   mkdirSync(mods, { recursive: true });
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({
-    name: 'outside-consumer', private: true, type: 'module', version: '0.0.0',
-  }, null, 2));
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'outside-consumer',
+        private: true,
+        type: 'module',
+        version: '0.0.0'
+      },
+      null,
+      2
+    )
+  );
   const link = join(mods, name);
   if (!existsSync(link)) symlinkSync(root, link, 'dir');
 
   const probe = join(dir, 'probe.mjs');
-  const specifiers = entries.map(([subpath]) =>
-    subpath === '.' ? name : `${name}/${subpath.replace(/^\.\//, '')}`);
-  writeFileSync(probe, [
-    'const out = [];',
-    `for (const spec of ${JSON.stringify(specifiers)}) {`,
-    '  const m = await import(spec);',
-    '  out.push([spec, Object.keys(m).length]);',
-    '}',
-    'console.log(JSON.stringify(out));',
-  ].join('\n'));
+  const specifiers = entries.map(([subpath]) => (subpath === '.' ? name : `${name}/${subpath.replace(/^\.\//, '')}`));
+  writeFileSync(
+    probe,
+    [
+      'const out = [];',
+      `for (const spec of ${JSON.stringify(specifiers)}) {`,
+      '  const m = await import(spec);',
+      '  out.push([spec, Object.keys(m).length]);',
+      '}',
+      'console.log(JSON.stringify(out));'
+    ].join('\n')
+  );
 
   const { execFileSync } = await import('node:child_process');
   const raw = execFileSync(process.execPath, [probe], { cwd: dir, encoding: 'utf8' });

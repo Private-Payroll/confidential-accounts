@@ -13,15 +13,26 @@ import { NO_VIEW_OPENED } from './step-views.test-support.js';
 const t = vi.hoisted(() => ({
   holdings: null as null | Record<string, any>,
   rebuilt: [] as { doors: Record<string, any>; vault: string }[],
-  notes: { of: 'filed', notes: [{ nonce: '0a'.repeat(32), token: '9b'.repeat(32), value: 5n }], said: [], leaver: ['a change a seat that left kept is in no pool it filed'] } as unknown,
+  notes: {
+    of: 'filed',
+    notes: [{ nonce: '0a'.repeat(32), token: '9b'.repeat(32), value: 5n }],
+    said: [],
+    leaver: ['a change a seat that left kept is in no pool it filed']
+  } as unknown
 }));
 vi.mock('../../../../packages/web-shared/src/device-vault-holdings.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/device-vault-holdings.js')>()),
-  deviceVaultHoldings: (doors: Record<string, any>) => { t.holdings = doors; return { isTheHoldings: true }; },
+  deviceVaultHoldings: (doors: Record<string, any>) => {
+    t.holdings = doors;
+    return { isTheHoldings: true };
+  }
 }));
 vi.mock('../../../../packages/web-shared/src/vault-notes-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-notes-here.js')>()),
-  vaultNotesHere: async (doors: Record<string, any>, vault: string) => { t.rebuilt.push({ doors, vault }); return t.notes; },
+  vaultNotesHere: async (doors: Record<string, any>, vault: string) => {
+    t.rebuilt.push({ doors, vault });
+    return t.notes;
+  }
 }));
 
 const { raiseDoorsFor } = await import('./one-off-payment.js');
@@ -29,21 +40,44 @@ const { raiseDoorsFor } = await import('./one-off-payment.js');
 const VAULT = 'd1'.repeat(32);
 const COINS = { isTheWalletsCoins: true };
 const r = {
-  accountId: 'acc_1', label: drawCompanyLabel(), account: 'c0'.repeat(32), leaf: 'aa'.repeat(32), companyKey: '11'.repeat(32),
-  seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) },
-  api: async () => null, send: async () => ({ status: 200, body: null }),
-  judges: { directoryHereFor: () => async () => ({ dir: { seats: [] } }), filingJudgeFor: () => async () => null, leavesFor: () => async () => [] },
-  roster: async () => ({ id: 'acc_1', signers: [] }), companyKeys: { epoch: 0 }, holders: async () => ({ seats: [] }),
-  builder: { isTheWalletsBuilder: true }, chain: { indexer: {} }, stepView: NO_VIEW_OPENED,
+  accountId: 'acc_1',
+  label: drawCompanyLabel(),
+  account: 'c0'.repeat(32),
+  leaf: 'aa'.repeat(32),
+  companyKey: '11'.repeat(32),
+  seat: {
+    signerId: 's1',
+    signingSecret: '01'.repeat(32),
+    wrappingSecret: '02'.repeat(32),
+    blinding: '03'.repeat(32),
+    scope: '04'.repeat(32)
+  },
+  api: async () => null,
+  send: async () => ({ status: 200, body: null }),
+  judges: {
+    directoryHereFor: () => async () => ({ dir: { seats: [] } }),
+    filingJudgeFor: () => async () => null,
+    leavesFor: () => async () => []
+  },
+  roster: async () => ({ id: 'acc_1', signers: [] }),
+  companyKeys: { epoch: 0 },
+  holders: async () => ({ seats: [] }),
+  builder: { isTheWalletsBuilder: true },
+  chain: { indexer: {} },
+  stepView: NO_VIEW_OPENED
 } as never;
 const reach = {
-  chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, secrets: () => ({}) as never,
-  kept: () => ({ payments: {} as never, charges: {} as never, coins: COINS as never }),
+  chain: () => ({}) as never,
+  builder: () => ({}) as never,
+  now: () => 1,
+  pause: async () => {},
+  secrets: () => ({}) as never,
+  kept: () => ({ payments: {} as never, charges: {} as never, coins: COINS as never })
 };
 const ctx = { person: 'usr_a', signal: new AbortController().signal } as never;
 const pure = { account: {} } as never;
 
-describe('a one-off payment\'s holdings are read with a door that files the vault again', () => {
+describe("a one-off payment's holdings are read with a door that files the vault again", () => {
   it('files the pool again on this seat and the kept coins, and hands back the notes and what a seat that left filed', async () => {
     raiseDoorsFor(ctx, r, reach, { registry: {} } as never, pure);
     /* RED WHEN: a payment's read of the vault has no door to file it again, so it is refused until a balance read comes first. */
@@ -55,13 +89,24 @@ describe('a one-off payment\'s holdings are read with a door that files the vaul
     expect(t.rebuilt[0]!.doors['kept']).toBe(COINS);
     /* RED WHEN: what a seat that left filed is held against a payment the same call's rebuild has already filed again. */
     expect(filed).toEqual({ answer: 'the-newest', said: [], notes: (t.notes as { notes: unknown }).notes });
-    t.notes = { of: 'not-filed', notes: [], unexplained: 1, said: ['the vault could not be filed again'], leaver: ['a change a seat that left kept is in no pool it filed'] };
+    t.notes = {
+      of: 'not-filed',
+      notes: [],
+      unexplained: 1,
+      said: ['the vault could not be filed again'],
+      leaver: ['a change a seat that left kept is in no pool it filed']
+    };
     /* RED WHEN: a re-file that failed is not named, so the payment is refused for a pool that claims too much and not for why. */
     expect(await t.holdings!['fileAgain'](VAULT, async () => true)).toEqual({
-      answer: 'the-newest', said: ['a change a seat that left kept is in no pool it filed', 'the vault could not be filed again'], notes: [],
+      answer: 'the-newest',
+      said: ['a change a seat that left kept is in no pool it filed', 'the vault could not be filed again'],
+      notes: []
     });
     t.notes = { of: 'not-read', said: ['the chain was not read'] };
     /* RED WHEN: a vault the rebuild could not read is answered with notes, which would be counted as money the vault holds, or not said. */
-    expect(await t.holdings!['fileAgain'](VAULT, async () => true)).toEqual({ answer: 'the-newest', said: ['the chain was not read'] });
+    expect(await t.holdings!['fileAgain'](VAULT, async () => true)).toEqual({
+      answer: 'the-newest',
+      said: ['the chain was not read']
+    });
   });
 });

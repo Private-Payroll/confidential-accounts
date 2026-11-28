@@ -28,7 +28,7 @@ vi.mock('../keyring/read-for-the-page.js', async (importOriginal) => {
     readFor: (...args: Parameters<typeof real.readFor>) => {
       const read = real.readFor(...args);
       return leak.atTheEnd ? { ...read, seats: { ...read.seats, ...args[2].accounts } } : read;
-    },
+    }
   };
 });
 
@@ -39,29 +39,52 @@ const held: Held = { identity, secret };
 const REQUESTER = { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' };
 const KEY = toHex(keyringSealKeyFor(identity, { requester: REQUESTER, person: 'usr_a' }));
 const SEAT = {
-  signerId: 'sig_1', signingSecret: '5a'.repeat(32), wrappingSecret: '6b'.repeat(32), blinding: 'fb'.repeat(32), scope: '44'.repeat(32),
+  signerId: 'sig_1',
+  signingSecret: '5a'.repeat(32),
+  wrappingSecret: '6b'.repeat(32),
+  blinding: 'fb'.repeat(32),
+  scope: '44'.repeat(32)
 };
 /* An invitation's token, kept for a seat offered by address and for a role change: it opens the seat's offer. */
 const INVITE_TOKEN = '7c'.repeat(32);
 const ROLE_TOKEN = '7d'.repeat(32);
 const sealed = () => ({
-  sealed: sealKeyring({
-    accounts: { acc_A: SEAT },
-    seatInvitationsKept: { ['ab'.repeat(32)]: { company: 'acc_A', id: 'ab'.repeat(32), token: INVITE_TOKEN, link: 'l', offer: {} as never } },
-    roleChangesKept: { 'acc_A|x': { accountId: 'acc_A', leaf: 'x', coinPublicKey: 'c', role: 'approver', token: ROLE_TOKEN } },
-  }, KEY).sealed,
-  version: 5,
+  sealed: sealKeyring(
+    {
+      accounts: { acc_A: SEAT },
+      seatInvitationsKept: {
+        ['ab'.repeat(32)]: { company: 'acc_A', id: 'ab'.repeat(32), token: INVITE_TOKEN, link: 'l', offer: {} as never }
+      },
+      roleChangesKept: {
+        'acc_A|x': { accountId: 'acc_A', leaf: 'x', coinPublicKey: 'c', role: 'approver', token: ROLE_TOKEN }
+      }
+    },
+    KEY
+  ).sealed,
+  version: 5
 });
 
 /* An act that gives vault keys; or one that adds a signer from their code, whose acceptance a step asks with a body of its own. */
 const request = (name: 'give-vault-keys' | 'add-signer-by-code' = 'give-vault-keys'): ActRequest => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: REQUESTER, purpose: 'A test.', nonce: 'n1',
-  expiresAt: START + 20 * 60_000, hearsProgress: true, intent: { name: name as never, fields: {} },
-  person: 'usr_a', keyring: sealed(),
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'act',
+  requester: REQUESTER,
+  purpose: 'A test.',
+  nonce: 'n1',
+  expiresAt: START + 20 * 60_000,
+  hearsProgress: true,
+  intent: { name: name as never, fields: {} },
+  person: 'usr_a',
+  keyring: sealed()
 });
 const marks = (): KeyringMarks => {
   const seen = new Map<string, KeyringMark>();
-  return { markOf: (p) => seen.get(p) ?? null, raise: (p, m) => { seen.set(p, m); } };
+  return {
+    markOf: (p) => seen.get(p) ?? null,
+    raise: (p, m) => {
+      seen.set(p, m);
+    }
+  };
 };
 
 /** A page that records everything it is handed. */
@@ -70,36 +93,71 @@ const aPage = () => {
   const ended: ActEnded[] = [];
   const channel: ActingChannel = {
     step: () => true,
-    relay: async (_at, tx) => { handed.push(`relay ${tx}`); return 'relayed'; },
-    keep: async () => { handed.push('keep'); return { of: 'kept', version: 6 }; },
-    call: async (_at, method, path, body) => { handed.push(`${method} ${path} ${body ?? ''}`); return { of: 'called', status: 200, body: null } as never; },
-    answer: (a) => { ended.push(a as ActEnded); return true; },
-    refuse: () => true, progress: () => true, over: () => false, stop: () => {},
+    relay: async (_at, tx) => {
+      handed.push(`relay ${tx}`);
+      return 'relayed';
+    },
+    keep: async () => {
+      handed.push('keep');
+      return { of: 'kept', version: 6 };
+    },
+    call: async (_at, method, path, body) => {
+      handed.push(`${method} ${path} ${body ?? ''}`);
+      return { of: 'called', status: 200, body: null } as never;
+    },
+    answer: (a) => {
+      ended.push(a as ActEnded);
+      return true;
+    },
+    refuse: () => true,
+    progress: () => true,
+    over: () => false,
+    stop: () => {}
   };
   return { channel, handed, ended };
 };
 const actionOf = (steps: readonly ActionStep[]): ActionDefinition => ({
-  headline: 'ask.act.headline', shown: async () => [], checks: [], check: async () => null, steps: () => steps,
+  headline: 'ask.act.headline',
+  shown: async () => [],
+  checks: [],
+  check: async () => null,
+  steps: () => steps
 });
-const run = (steps: readonly ActionStep[], page: ReturnType<typeof aPage>, name?: 'add-signer-by-code') => runAction({
-  definition: actionOf(steps), request: request(name), channel: page.channel, held, stop: new AbortController().signal, marks: marks(),
-});
+const run = (steps: readonly ActionStep[], page: ReturnType<typeof aPage>, name?: 'add-signer-by-code') =>
+  runAction({
+    definition: actionOf(steps),
+    request: request(name),
+    channel: page.channel,
+    held,
+    stop: new AbortController().signal,
+    marks: marks()
+  });
 const noSecretIn = (text: string): void => {
-  for (const s of [SEAT.signingSecret, SEAT.wrappingSecret, SEAT.blinding, KEY]) expect(text.toLowerCase()).not.toContain(s);
+  for (const s of [SEAT.signingSecret, SEAT.wrappingSecret, SEAT.blinding, KEY])
+    expect(text.toLowerCase()).not.toContain(s);
 };
 
-beforeEach(() => { leak.atTheEnd = false; forgetWatched(); });
+beforeEach(() => {
+  leak.atTheEnd = false;
+  forgetWatched();
+});
 
 describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
   it('an act-call body holding a seat by value is not sent, and the action stops at that step', async () => {
     const page = aPage();
-    const end = await run([{
-      title: { key: 'x' },
-      run: async (c) => {
-        const seat = c.keyring!.open().read().accounts['acc_A'];
-        await c.invitations.acceptSigner('inv_1', { ...seat });
-      },
-    }], page, 'add-signer-by-code');
+    const end = await run(
+      [
+        {
+          title: { key: 'x' },
+          run: async (c) => {
+            const seat = c.keyring!.open().read().accounts['acc_A'];
+            await c.invitations.acceptSigner('inv_1', { ...seat });
+          }
+        }
+      ],
+      page,
+      'add-signer-by-code'
+    );
     /* RED WHEN: the outgoing check is taken away, or the action's channel is not the checked one. */
     expect(page.handed).toEqual([]);
     expect(end.ended).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
@@ -108,15 +166,23 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
 
   it('a relay holding a blinding as base64url is not handed over, and nothing after it is', async () => {
     const page = aPage();
-    const end = await run([{
-      title: { key: 'x' },
-      run: async (c) => {
-        const { blinding } = c.keyring!.open().read().accounts['acc_A']!;
-        const b64 = btoa(String.fromCharCode(...fromHex(blinding))).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
-        await c.relay(`tx:${b64}`).catch(() => undefined);
-        await c.relay('AAAA');
-      },
-    }], page);
+    const end = await run(
+      [
+        {
+          title: { key: 'x' },
+          run: async (c) => {
+            const { blinding } = c.keyring!.open().read().accounts['acc_A']!;
+            const b64 = btoa(String.fromCharCode(...fromHex(blinding)))
+              .replace(/\+/gu, '-')
+              .replace(/\//gu, '_')
+              .replace(/=+$/u, '');
+            await c.relay(`tx:${b64}`).catch(() => undefined);
+            await c.relay('AAAA');
+          }
+        }
+      ],
+      page
+    );
     /* RED WHEN: a secret in another spelling passes, or a refused message does not stop the action. */
     expect(page.handed).toEqual([]);
     expect(end.ended).toMatchObject({ ended: 'stopped', why: 'step-failed' });
@@ -125,7 +191,17 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
   it('an end answer holding a seat goes out as a bare stop, with nothing of the keys in it', async () => {
     leak.atTheEnd = true;
     const page = aPage();
-    const end = await run([{ title: { key: 'x' }, run: async (c) => { c.keyring!.open(); } }], page);
+    const end = await run(
+      [
+        {
+          title: { key: 'x' },
+          run: async (c) => {
+            c.keyring!.open();
+          }
+        }
+      ],
+      page
+    );
     /* RED WHEN: the end answer is sent as built, seat and all. */
     expect(page.ended).toHaveLength(1);
     expect(page.ended[0]).toMatchObject({ ended: 'stopped', why: 'step-failed' });
@@ -134,18 +210,32 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
     expect(end.ended).toEqual(page.ended[0]);
   });
 
-  it('a keyring answer holding a seat, or the seal key\'s parent, is not given', () => {
+  it("a keyring answer holding a seat, or the seal key's parent, is not given", () => {
     const page = aPage();
     const channel = checkedChannel(page.channel);
     const ask = {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'keyring', requester: REQUESTER, purpose: 'x', nonce: 'k1',
-      expiresAt: START + 600_000, person: 'usr_a', signedInAs: null, company: null, account: null, drawLabel: false, keyring: sealed(),
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'keyring',
+      requester: REQUESTER,
+      purpose: 'x',
+      nonce: 'k1',
+      expiresAt: START + 600_000,
+      person: 'usr_a',
+      signedInAs: null,
+      company: null,
+      account: null,
+      drawLabel: false,
+      keyring: sealed()
     } as unknown as KeyringRequest;
     const here = keysReadForThePage({ identity, request: ask, marks: marks() })!;
     const answer = { schema: 'midnight-identity/keyring-release/v1', read: here.read };
     /* RED WHEN: the outgoing check is taken away, so an answer built with a seat in it is handed over. */
-    expect(() => channel.answer({ ...answer, read: { ...here.read, seats: { acc_A: SEAT } } } as never)).toThrow(SecretWouldCross);
-    expect(() => channel.answer({ ...answer, holder: toHex(keyringParentFor(identity)).toUpperCase() } as never)).toThrow(SecretWouldCross);
+    expect(() => channel.answer({ ...answer, read: { ...here.read, seats: { acc_A: SEAT } } } as never)).toThrow(
+      SecretWouldCross
+    );
+    expect(() =>
+      channel.answer({ ...answer, holder: toHex(keyringParentFor(identity)).toUpperCase() } as never)
+    ).toThrow(SecretWouldCross);
     expect(page.ended).toEqual([]);
     /* The answer as the wallet builds it goes, and the ask is over: what was watched is forgotten. */
     expect(channel.answer(answer as never)).toBe(true);
@@ -157,34 +247,63 @@ describe('NO SECRET OF THE SAVED KEYS REACHES THE PAGE', () => {
     for (const token of [INVITE_TOKEN, ROLE_TOKEN]) {
       forgetWatched();
       const page = aPage();
-      const end = await run([{
-        title: { key: 'x' },
-        run: async (c) => { c.keyring!.open(); await c.invitations.acceptSigner('inv_1', { link: `https://app.example/join/x#${token.toUpperCase()}` }); },
-      }], page, 'add-signer-by-code');
+      const end = await run(
+        [
+          {
+            title: { key: 'x' },
+            run: async (c) => {
+              c.keyring!.open();
+              await c.invitations.acceptSigner('inv_1', { link: `https://app.example/join/x#${token.toUpperCase()}` });
+            }
+          }
+        ],
+        page,
+        'add-signer-by-code'
+      );
       /* RED WHEN: a token that opens a seat's offer can cross to the page in a call, as a kept invitation's or a role change's. */
       expect(page.handed).toEqual([]);
       expect(end.ended).toMatchObject({ ended: 'stopped', why: 'step-failed', step: 1 });
     }
   });
 
-  it('every set of words a step shows stays in the wallet\'s window, in order, and none is in the end answer', async () => {
+  it("every set of words a step shows stays in the wallet's window, in order, and none is in the end answer", async () => {
     const page = aPage();
-    const end = await run([{
-      title: { key: 'x' },
-      run: async (c) => { c.show({ key: 'one', values: { link: 'https://app.example/join/a#b' } }); c.show({ key: 'two' }); },
-    }], page);
+    const end = await run(
+      [
+        {
+          title: { key: 'x' },
+          run: async (c) => {
+            c.show({ key: 'one', values: { link: 'https://app.example/join/a#b' } });
+            c.show({ key: 'two' });
+          }
+        }
+      ],
+      page
+    );
     /* RED WHEN: a later show replaces an earlier one, so an invitation's link is lost to a warning shown after it. */
-    expect([end.says, ...end.more]).toEqual([{ key: 'one', values: { link: 'https://app.example/join/a#b' } }, { key: 'two' }]);
+    expect([end.says, ...end.more]).toEqual([
+      { key: 'one', values: { link: 'https://app.example/join/a#b' } },
+      { key: 'two' }
+    ]);
     /* RED WHEN: what the window shows is sent to the page. */
     expect(JSON.stringify(page.ended)).not.toContain('join/a#b');
   });
 
   it('a value the wallet never opened is no secret of the saved keys, and passes', async () => {
     const page = aPage();
-    const end = await run([{
-      title: { key: 'x' },
-      run: async (c) => { c.keyring!.open(); await c.invitations.acceptSigner('inv_1', { x: '9d'.repeat(32) }); },
-    }], page, 'add-signer-by-code');
+    const end = await run(
+      [
+        {
+          title: { key: 'x' },
+          run: async (c) => {
+            c.keyring!.open();
+            await c.invitations.acceptSigner('inv_1', { x: '9d'.repeat(32) });
+          }
+        }
+      ],
+      page,
+      'add-signer-by-code'
+    );
     /* RED WHEN: the check refuses what it was never given to watch. */
     expect(end.ended).toMatchObject({ ended: 'done' });
     expect(page.handed).toHaveLength(1);

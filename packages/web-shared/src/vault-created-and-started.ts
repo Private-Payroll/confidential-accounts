@@ -64,10 +64,38 @@ import { NO_ASSET } from '../../../src/core/assets.js';
 import type { OpenedRound } from './governed-call-builder.js';
 import { ReadRanOutOfTime } from './read-bound.js';
 import type { AccountHolders } from 'midnight-identity/profile/records-key';
-import { NOT_BUILT, type NotBuiltCode, SAID, STALE_ADOPTION, START_READ_STOP, START_STOP, type SaidCode, type VaultCreated, VaultNotReadHere, VaultNotTheCompanys, VaultStartOwed, sentNothing } from './vault-start-stops.js';
+import {
+  NOT_BUILT,
+  type NotBuiltCode,
+  SAID,
+  STALE_ADOPTION,
+  START_READ_STOP,
+  START_STOP,
+  type SaidCode,
+  type VaultCreated,
+  VaultNotReadHere,
+  VaultNotTheCompanys,
+  VaultStartOwed,
+  sentNothing
+} from './vault-start-stops.js';
 import { type CreateVaultDoors, type VaultChainView } from './vault-doors.js';
 import { NO_VAULT_YET, circuitsOfARead, readHere } from './vault-read-here.js';
-import { NOT_READ_IN_TIME, RAN_OUT, type SeatRefusal, ZERO_HEX, accountStep, adoptionRound, approvedHere, carriedOutWrittenDown, nothingMoves, proposedAndWrittenDown, seatRefusalIn, standingNow, untilReadHere, untilTheChainShows } from './vault-start-steps.js';
+import {
+  NOT_READ_IN_TIME,
+  RAN_OUT,
+  type SeatRefusal,
+  ZERO_HEX,
+  accountStep,
+  adoptionRound,
+  approvedHere,
+  carriedOutWrittenDown,
+  nothingMoves,
+  proposedAndWrittenDown,
+  seatRefusalIn,
+  standingNow,
+  untilReadHere,
+  untilTheChainShows
+} from './vault-start-steps.js';
 import { secretStartedHere } from './vault-secret-run.js';
 import { notesAsThisDeviceReadsThem } from './vault-step-reads.js';
 
@@ -82,7 +110,10 @@ export interface VaultInfoGiven {
  * for a press it refuses before building: its `code` is the kind of refusal.
  */
 export class VaultNotBuilt extends Error {
-  constructor(readonly code: NotBuiltCode, why: string) {
+  constructor(
+    readonly code: NotBuiltCode,
+    why: string
+  ) {
     super(why);
     this.name = 'VaultNotBuilt';
   }
@@ -102,13 +133,18 @@ async function theCommitteeAVaultIsBornHeldBy(doors: CreateVaultDoors): Promise<
     /* Read before the vault exists, so the wallet is asked about the account the vault will be pinned to. */
     holders = (await doors.onChain(doors.account as string as Hex)).holders;
   } catch (e) {
-    throw new VaultNotBuilt(NOT_BUILT.committeeUnread, `your wallet could not say who holds your company's account (${(e as Error)?.message ?? e}), so no vault was built.`);
+    throw new VaultNotBuilt(
+      NOT_BUILT.committeeUnread,
+      `your wallet could not say who holds your company's account (${(e as Error)?.message ?? e}), so no vault was built.`
+    );
   }
   const committee: Committee = {
-    committee: holders.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: holders.threshold,
+    committee: holders.committee.map((k) => ({ tag: k.tag, value: k.value })),
+    threshold: holders.threshold
   };
   const notInstallable = whyNotInstallable(committee);
-  if (notInstallable !== null) throw new VaultNotBuilt(NOT_BUILT.committeeNotInstallable, `no vault was built: ${notInstallable}`);
+  if (notInstallable !== null)
+    throw new VaultNotBuilt(NOT_BUILT.committeeNotInstallable, `no vault was built: ${notInstallable}`);
   return committee;
 }
 
@@ -133,44 +169,69 @@ async function readBornHeld(doors: CreateVaultDoors, vault: Hex): Promise<void> 
       v = await notesAsThisDeviceReadsThem(doors, vault);
     } catch (e) {
       if (ranOutOfTime(e)) return RAN_OUT;
-      throw new VaultStartOwed(vault, `the chain could not be read for it on this device (${(e as Error)?.message ?? e}).`, START_READ_STOP.chainUnread);
+      throw new VaultStartOwed(
+        vault,
+        `the chain could not be read for it on this device (${(e as Error)?.message ?? e}).`,
+        START_READ_STOP.chainUnread
+      );
     }
     if (!v.onChain) return null;
     deployedWith ??= await bornHeldReadWith(doors, vault);
     try {
-      return await doors.builder.vaultAsDeployed!({ vault, account: doors.account, ...deployedWith, ...(doors.again === undefined ? {} : { again: true }) });
+      return await doors.builder.vaultAsDeployed!({
+        vault,
+        account: doors.account,
+        ...deployedWith,
+        ...(doors.again === undefined ? {} : { again: true })
+      });
     } catch (e) {
       if (ranOutOfTime(e)) return RAN_OUT;
       throw e;
     }
   });
-  if (asDeployed === RAN_OUT) throw new VaultStartOwed(vault, `it was sent, and ${NOT_READ_IN_TIME}`, START_READ_STOP.chainUnread);
+  if (asDeployed === RAN_OUT)
+    throw new VaultStartOwed(vault, `it was sent, and ${NOT_READ_IN_TIME}`, START_READ_STOP.chainUnread);
   if (asDeployed === null) throw new VaultStartOwed(vault, 'it was sent and the chain has not shown it yet.');
   if (asDeployed.refusal !== null) {
     const why = asDeployed.refusal.replace(/ Nothing was sent\.$/u, '');
-    throw new VaultNotTheCompanys(vault, doors.again !== undefined ? why : `${why} This vault is not set up and no money is put into it; create a new vault.`);
+    throw new VaultNotTheCompanys(
+      vault,
+      doors.again !== undefined
+        ? why
+        : `${why} This vault is not set up and no money is put into it; create a new vault.`
+    );
   }
 }
 
-type BornHeldReadWith = { readonly indexer: { readonly indexerUri: string; readonly indexerWsUri: string }; readonly holders: Committee };
+type BornHeldReadWith = {
+  readonly indexer: { readonly indexerUri: string; readonly indexerWsUri: string };
+  readonly holders: Committee;
+};
 
 /** The indexer and committee a vault's deploy is read against, once the chain shows the vault; refuses before any read of the deploy when this device has no reader for it, or the indexer or the committee cannot be named. */
-async function bornHeldReadWith(
-  doors: CreateVaultDoors, vault: Hex,
-): Promise<BornHeldReadWith> {
+async function bornHeldReadWith(doors: CreateVaultDoors, vault: Hex): Promise<BornHeldReadWith> {
   if (doors.builder.vaultAsDeployed === undefined) {
-    throw new VaultNotTheCompanys(vault, 'this device cannot read how this vault was created, so it is not set up from here and '
-      + 'no money is put into it. Reload the page and try again; if it still cannot be read, create a new vault.');
+    throw new VaultNotTheCompanys(
+      vault,
+      'this device cannot read how this vault was created, so it is not set up from here and ' +
+        'no money is put into it. Reload the page and try again; if it still cannot be read, create a new vault.'
+    );
   }
   const indexer = await doors.indexer();
   if (indexer === null) {
-    throw new VaultStartOwed(vault, 'your wallet did not say which indexer it reads the chain through, so this device cannot '
-      + 'read how the vault was created.');
+    throw new VaultStartOwed(
+      vault,
+      'your wallet did not say which indexer it reads the chain through, so this device cannot ' +
+        'read how the vault was created.'
+    );
   }
   const holders = await theCommitteeAVaultIsBornHeldBy(doors).catch((e: unknown) => {
     if (e instanceof VaultNotBuilt) {
-      throw new VaultStartOwed(vault, 'your wallet could not say which committee holds your company\'s account, so this device cannot '
-        + 'read how the vault was created.');
+      throw new VaultStartOwed(
+        vault,
+        "your wallet could not say which committee holds your company's account, so this device cannot " +
+          'read how the vault was created.'
+      );
     }
     throw e;
   });
@@ -191,7 +252,9 @@ async function bornHeldReadWith(
  * resume they are filed only if the vault has none yet.
  */
 export async function createCompanyVault(
-  doors: CreateVaultDoors, resume?: Hex, info?: VaultInfoGiven,
+  doors: CreateVaultDoors,
+  resume?: Hex,
+  info?: VaultInfoGiven
 ): Promise<VaultCreated> {
   let tidied: VaultInfoGiven | undefined;
   if (info !== undefined) {
@@ -209,7 +272,10 @@ export async function createCompanyVault(
     if (may !== null) throw new VaultNotBuilt(may.code, `No vault was built: ${may.says} Nothing was sent.`);
     const holders = await theCommitteeAVaultIsBornHeldBy(doors);
     if (doors.builder.bornHeldVault === undefined) {
-      throw new VaultNotBuilt(NOT_BUILT.pageOutOfDate, 'this page cannot build a vault held by the company from the start. Reload it to get the current version.');
+      throw new VaultNotBuilt(
+        NOT_BUILT.pageOutOfDate,
+        'this page cannot build a vault held by the company from the start. Reload it to get the current version.'
+      );
     }
     doors.progress?.('building the vault');
     const built = await doors.builder.bornHeldVault({ account: doors.account, holders });
@@ -222,8 +288,11 @@ export async function createCompanyVault(
     }
     /* The vault carried on is the one this device built and sent, never another address the service answers with. */
     if (String(vault).toLowerCase() !== String(built.vault).toLowerCase()) {
-      throw new VaultStartOwed(built.vault as Hex, 'the service answered with another vault than the one this device sent, so '
-        + 'nothing is carried on with that one.');
+      throw new VaultStartOwed(
+        built.vault as Hex,
+        'the service answered with another vault than the one this device sent, so ' +
+          'nothing is carried on with that one.'
+      );
     }
   }
   const sentVault: Hex = vault;
@@ -233,7 +302,11 @@ export async function createCompanyVault(
     const notNamed = tidied === undefined ? null : await vaultInfoFiledOnceItIsTheCompanys(doors, sentVault, tidied);
     const done = await startCompanyVault(doors, sentVault);
     if (notNamed === null) return done;
-    return { ...done, said: [notNamed.says, ...(done.said ?? [])], saidCodes: [notNamed.code, ...(done.saidCodes ?? []).filter((c) => c !== notNamed.code)] };
+    return {
+      ...done,
+      said: [notNamed.says, ...(done.said ?? [])],
+      saidCodes: [notNamed.code, ...(done.saidCodes ?? []).filter((c) => c !== notNamed.code)]
+    };
   } catch (e) {
     /* The vault exists from here on: whatever else fails names it, so the page offers to carry it on and never to create another. */
     if (e instanceof VaultStartOwed || e instanceof VaultNotTheCompanys) throw e;
@@ -247,25 +320,41 @@ export async function createCompanyVault(
  * not filed is said, and the vault's creation carries on.
  */
 async function vaultInfoFiledOnceItIsTheCompanys(
-  doors: CreateVaultDoors, vault: Hex, info: VaultInfoGiven,
+  doors: CreateVaultDoors,
+  vault: Hex,
+  info: VaultInfoGiven
 ): Promise<{ readonly says: string; readonly code: SaidCode } | null> {
   const notFiled = (why: string): { readonly says: string; readonly code: SaidCode } => ({
-    says: `This vault was created without its name and description: ${why} An admin names it later.`, code: SAID.nameNotFiled,
+    says: `This vault was created without its name and description: ${why} An admin names it later.`,
+    code: SAID.nameNotFiled
   });
-  if (doors.vaultInfo === undefined) return notFiled('this page cannot file them. Reload it to get the current version.');
+  if (doors.vaultInfo === undefined)
+    return notFiled('this page cannot file them. Reload it to get the current version.');
   const p = doors.proposals;
   try {
     await fileVaultInfoHere(
-      { accountId: p.accountId, companyKeys: p.companyKeys, signingSecret: p.signingSecret, directory: p.directory, entered: p.entered, records: doors.vaultInfo },
-      { vault, name: info.name, description: info.description, over: null },
+      {
+        accountId: p.accountId,
+        companyKeys: p.companyKeys,
+        signingSecret: p.signingSecret,
+        directory: p.directory,
+        entered: p.entered,
+        records: doors.vaultInfo
+      },
+      { vault, name: info.name, description: info.description, over: null }
     );
     return null;
   } catch (e) {
     if (e instanceof VaultInfoChanged) {
-      return { says: 'This vault already has a name, given before this press, so the one given here was not filed.', code: SAID.nameGivenBefore };
+      return {
+        says: 'This vault already has a name, given before this press, so the one given here was not filed.',
+        code: SAID.nameGivenBefore
+      };
     }
-    const why = String((e as Error)?.message ?? e).replace(/^This vault's name was not filed: /u, '')
-      .replace(/\s*Nothing was filed\.\s*$/u, '').replace(/([^.])$/u, '$1.');
+    const why = String((e as Error)?.message ?? e)
+      .replace(/^This vault's name was not filed: /u, '')
+      .replace(/\s*Nothing was filed\.\s*$/u, '')
+      .replace(/([^.])$/u, '$1.');
     return notFiled(why);
   }
 }
@@ -299,11 +388,13 @@ async function refuseCircuitsNotThisBuilds(doors: CreateVaultDoors, vault: Hex):
       return await readHere(doors, vault, doors.account);
     } catch (e) {
       if (ranOutOfTime(e)) return RAN_OUT;
-      if (e instanceof VaultNotReadHere) throw new VaultStartOwed(vault, (e as Error).message, START_READ_STOP.chainUnread);
+      if (e instanceof VaultNotReadHere)
+        throw new VaultStartOwed(vault, (e as Error).message, START_READ_STOP.chainUnread);
       throw e;
     }
   });
-  if (read === RAN_OUT) throw new VaultStartOwed(vault, `${NOT_READ_IN_TIME} Nothing was sent.`, START_READ_STOP.chainUnread);
+  if (read === RAN_OUT)
+    throw new VaultStartOwed(vault, `${NOT_READ_IN_TIME} Nothing was sent.`, START_READ_STOP.chainUnread);
   if (read === null) throw new VaultStartOwed(vault, `${NO_VAULT_YET} Nothing was sent.`);
   if (!read.onChain) throw new VaultStartOwed(vault, `${NO_VAULT_YET} Nothing was sent.`);
   const circuits = circuitsOfARead(read);
@@ -324,9 +415,11 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
   let at = await standingNow(doors, vault);
   /* What this press could not leave written down of the two setup proposals, said with whatever the press comes to; every sentence here is of that one kind. */
   const said: string[] = [];
-  const sayIt = (sentence: string | null): void => { if (sentence !== null && !said.includes(sentence)) said.push(sentence); };
+  const sayIt = (sentence: string | null): void => {
+    if (sentence !== null && !said.includes(sentence)) said.push(sentence);
+  };
   const saying = (): { readonly said?: readonly string[]; readonly saidCodes?: readonly SaidCode[] } =>
-    (said.length === 0 ? {} : { said: [...said], saidCodes: [SAID.proposalNotWrittenDown] });
+    said.length === 0 ? {} : { said: [...said], saidCodes: [SAID.proposalNotWrittenDown] };
   const adoption = adoptionRound(doors, vault, at.standing.adoption, 'Add a new vault to the company');
   /* Whatever the chain shows, the adoption it holds is written down and entered. */
   if (at.standing.adopted || at.standing.adoption.open) sayIt(await proposedAndWrittenDown(doors, vault, adoption));
@@ -334,8 +427,12 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
     const a = at.standing.adoption;
     const governance = { kind: 'adopt-vault', vault } as const;
     const opened: OpenedRound = {
-      chainId: a.proposal, digest: a.payload, vault: a.named, salt: a.salt,
-      summary: 'Add a new vault to the company', governance,
+      chainId: a.proposal,
+      digest: a.payload,
+      vault: a.named,
+      salt: a.salt,
+      summary: 'Add a new vault to the company',
+      governance
     };
     if (a.stale) {
       throw new VaultStartOwed(vault, STALE_ADOPTION, START_STOP.adoptionStale);
@@ -344,32 +441,77 @@ async function startCompanyVault(doors: CreateVaultDoors, vault: Hex): Promise<V
     try {
       refuseLeavingAVaultShort(await doors.approvers(), { kind: 'adopt', vault }, doors.vaultName);
     } catch (e) {
-      throw new VaultStartOwed(vault, `${(e as Error).message.replace(/ Nothing was approved\.$/u, '')} Nothing was sent.`, START_STOP.tooFewApprovers);
+      throw new VaultStartOwed(
+        vault,
+        `${(e as Error).message.replace(/ Nothing was approved\.$/u, '')} Nothing was sent.`,
+        START_STOP.tooFewApprovers
+      );
     }
     if (!a.open) {
-      sayIt(await proposedAndWrittenDown(doors, vault, adoption, {
-        order: { circuit: 'propose', adoption: governance, half: nothingMoves(noAsset, a.salt), proposal: a.proposal },
-        opened: { ...opened, half: { assetId: noAsset, changeAmount: '0', changeBatchDigest: ZERO_HEX } },
-        heldNow: async () => { const n = await standingNow(doors, vault); return n.standing.adopted || n.standing.adoption.open; },
-      }));
-      at = await untilTheChainShows(doors, vault, 'raising its adoption', (n) => n.standing.adoption.open || n.standing.adopted);
+      sayIt(
+        await proposedAndWrittenDown(doors, vault, adoption, {
+          order: {
+            circuit: 'propose',
+            adoption: governance,
+            half: nothingMoves(noAsset, a.salt),
+            proposal: a.proposal
+          },
+          opened: { ...opened, half: { assetId: noAsset, changeAmount: '0', changeBatchDigest: ZERO_HEX } },
+          heldNow: async () => {
+            const n = await standingNow(doors, vault);
+            return n.standing.adopted || n.standing.adoption.open;
+          }
+        })
+      );
+      at = await untilTheChainShows(
+        doors,
+        vault,
+        'raising its adoption',
+        (n) => n.standing.adoption.open || n.standing.adopted
+      );
     }
     /* The raise counted as its raiser's approval when the raiser may approve, so this seat approves only when the chain does not count it yet. */
-    if (!at.standing.adopted && at.standing.adoption.approvals < at.standing.adoption.needed
-      && !approvedHere(vault, at.standing.adoption, 'its adoption')) {
-      await accountStep(doors, vault, at.chain, 'adoption',
-        { circuit: 'approve', proposal: a.proposal, of: { governance, proposalSalt: a.salt } }, opened, 'approving its adoption');
-      at = await untilTheChainShows(doors, vault, 'approving its adoption',
-        (n) => n.standing.adopted || n.standing.adoption.approvedHere === true);
+    if (
+      !at.standing.adopted &&
+      at.standing.adoption.approvals < at.standing.adoption.needed &&
+      !approvedHere(vault, at.standing.adoption, 'its adoption')
+    ) {
+      await accountStep(
+        doors,
+        vault,
+        at.chain,
+        'adoption',
+        { circuit: 'approve', proposal: a.proposal, of: { governance, proposalSalt: a.salt } },
+        opened,
+        'approving its adoption'
+      );
+      at = await untilTheChainShows(
+        doors,
+        vault,
+        'approving its adoption',
+        (n) => n.standing.adopted || n.standing.adoption.approvedHere === true
+      );
     }
     if (!at.standing.adopted) {
       const now = at.standing.adoption;
       if (now.approvals < now.needed) {
         doors.progress?.('waiting for approvals');
-        return { vault, state: 'awaiting-approvals', awaiting: { round: 'adoption', proposal: a.proposal as Hex, approvals: now.approvals, needed: now.needed }, ...saying() };
+        return {
+          vault,
+          state: 'awaiting-approvals',
+          awaiting: { round: 'adoption', proposal: a.proposal as Hex, approvals: now.approvals, needed: now.needed },
+          ...saying()
+        };
       }
-      await accountStep(doors, vault, at.chain, 'adoption',
-        { circuit: 'adopt', vault, proposal: a.proposal, proposalSalt: a.salt }, opened, 'adopting it');
+      await accountStep(
+        doors,
+        vault,
+        at.chain,
+        'adoption',
+        { circuit: 'adopt', vault, proposal: a.proposal, proposalSalt: a.salt },
+        opened,
+        'adopting it'
+      );
       await untilTheChainShows(doors, vault, 'adopting it', (n) => n.standing.adopted);
     }
   }

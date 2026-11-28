@@ -8,7 +8,7 @@ import { contractCallsOf } from '../../../../packages/web-shared/src/contract-ca
 export const accountTreeOf = (runtime: typeof Runtime) => ({
   StateBoundedMerkleTree: runtime.StateBoundedMerkleTree,
   CompactTypeBytes: runtime.CompactTypeBytes,
-  CompactTypeMerkleTreeDigest: runtime.CompactTypeMerkleTreeDigest,
+  CompactTypeMerkleTreeDigest: runtime.CompactTypeMerkleTreeDigest
 });
 
 /**
@@ -19,17 +19,18 @@ export const accountTreeOf = (runtime: typeof Runtime) => ({
  * each time it is made, so nothing here is fixed to one network.
  */
 export const contractPieces = async () => {
-  const [ledger, runtime, contracts, compactJs, account, accountWitnesses, types, providers, modules] = await Promise.all([
-    import('@midnightntwrk/ledger-v9'),
-    import('@midnight-ntwrk/compact-runtime'),
-    import('@midnight-ntwrk/midnight-js-contracts'),
-    import('@midnight-ntwrk/compact-js'),
-    import('../../../../contracts/managed/contract/index.js'),
-    import('../../../../contracts/src/witnesses.js'),
-    import('@midnight-ntwrk/midnight-js-types'),
-    import('../../../../src/midnight/providers.js'),
-    import('../../../../src/midnight/contract-modules.js'),
-  ]);
+  const [ledger, runtime, contracts, compactJs, account, accountWitnesses, types, providers, modules] =
+    await Promise.all([
+      import('@midnightntwrk/ledger-v9'),
+      import('@midnight-ntwrk/compact-runtime'),
+      import('@midnight-ntwrk/midnight-js-contracts'),
+      import('@midnight-ntwrk/compact-js'),
+      import('../../../../contracts/managed/contract/index.js'),
+      import('../../../../contracts/src/witnesses.js'),
+      import('@midnight-ntwrk/midnight-js-types'),
+      import('../../../../src/midnight/providers.js'),
+      import('../../../../src/midnight/contract-modules.js')
+    ]);
   const registry = await import('../../../../contracts/managed-registry/contract/index.js');
   return {
     ledger,
@@ -39,8 +40,12 @@ export const contractPieces = async () => {
     accountWitnesses,
     registry,
     contracts: contractCallsOf({
-      contracts, types, ledger, ContractState: runtime.ContractState, settingsFor: providers.transactionSettingsFor,
-      accountModuleFor: modules.accountModuleFor,
-    }),
+      contracts,
+      types,
+      ledger,
+      ContractState: runtime.ContractState,
+      settingsFor: providers.transactionSettingsFor,
+      accountModuleFor: modules.accountModuleFor
+    })
   };
 };

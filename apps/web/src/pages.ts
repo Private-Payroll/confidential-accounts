@@ -1,9 +1,35 @@
 import { createElement, lazy, type ComponentType, type ReactNode } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
-  Activity01Icon, Analytics01Icon, ArrowDataTransferHorizontalIcon, Building03Icon, CheckListIcon, CloudServerIcon, CreditCardIcon, DocumentValidationIcon, File01Icon,
-  Folder01Icon, GridViewIcon, Home01Icon, Invoice01Icon, Key01Icon, LanguageSquareIcon, MailSend01Icon, MoneyReceive01Icon, Notification01Icon,
-  PaintBoardIcon, PolicyIcon, Rocket01Icon, SafeIcon, Settings01Icon, ShieldKeyIcon, ShieldUserIcon, Store01Icon, UserAccountIcon, UserGroupIcon, UserIcon,
+  Activity01Icon,
+  Analytics01Icon,
+  ArrowDataTransferHorizontalIcon,
+  Building03Icon,
+  CheckListIcon,
+  CloudServerIcon,
+  CreditCardIcon,
+  DocumentValidationIcon,
+  File01Icon,
+  Folder01Icon,
+  GridViewIcon,
+  Home01Icon,
+  Invoice01Icon,
+  Key01Icon,
+  LanguageSquareIcon,
+  MailSend01Icon,
+  MoneyReceive01Icon,
+  Notification01Icon,
+  PaintBoardIcon,
+  PolicyIcon,
+  Rocket01Icon,
+  SafeIcon,
+  Settings01Icon,
+  ShieldKeyIcon,
+  ShieldUserIcon,
+  Store01Icon,
+  UserAccountIcon,
+  UserGroupIcon,
+  UserIcon
 } from '@hugeicons/core-free-icons';
 import { WithMessages, type useText } from 'vaults-ui';
 import type { CompanyRecords } from './adapters/company-records.js';
@@ -57,7 +83,7 @@ export const MENU_GROUPS = {
   money: (t: Text) => t('menu.group.money'),
   people: (t: Text) => t('menu.group.people'),
   compliance: (t: Text) => t('menu.group.compliance'),
-  bottom: null,
+  bottom: null
 } as const satisfies Record<string, ((t: Text) => string) | null>;
 
 export type MenuGroup = keyof typeof MENU_GROUPS;
@@ -129,180 +155,381 @@ export interface Page {
  */
 export const PAGES = {
   landing: {
-    path: '/', name: (t) => t('page.landing.name'), icon: Home01Icon, group: null, audience: 'everyone',
-    shows: { screen: Landing },
+    path: '/',
+    name: (t) => t('page.landing.name'),
+    icon: Home01Icon,
+    group: null,
+    audience: 'everyone',
+    shows: { screen: Landing }
   },
   join: {
-    path: '/join/:id', name: (t) => t('page.join.name'), icon: MailSend01Icon, group: null, audience: 'everyone', holdsLinkToken: true,
-    shows: { screen: onDemand(() => import('./screens/join.js'), 'Join', 'join') },
+    path: '/join/:id',
+    name: (t) => t('page.join.name'),
+    icon: MailSend01Icon,
+    group: null,
+    audience: 'everyone',
+    holdsLinkToken: true,
+    shows: { screen: onDemand(() => import('./screens/join.js'), 'Join', 'join') }
   },
   readerSignUp: {
-    path: '/read/:id/:label/:account', name: (t) => t('page.readerSignUp.name'), icon: Key01Icon, group: null, audience: 'everyone',
-    shows: { screen: onDemand(() => import('./screens/reader.js'), 'ReaderSignUp', 'reader') },
+    path: '/read/:id/:label/:account',
+    name: (t) => t('page.readerSignUp.name'),
+    icon: Key01Icon,
+    group: null,
+    audience: 'everyone',
+    shows: { screen: onDemand(() => import('./screens/reader.js'), 'ReaderSignUp', 'reader') }
   },
   reader: {
-    path: '/reader/:id/:label/:account', name: (t) => t('page.reader.name'), icon: Invoice01Icon, group: null, audience: 'reader',
-    shows: { screen: onDemand(() => import('./screens/reader.js'), 'Reader', 'reader') },
+    path: '/reader/:id/:label/:account',
+    name: (t) => t('page.reader.name'),
+    icon: Invoice01Icon,
+    group: null,
+    audience: 'reader',
+    shows: { screen: onDemand(() => import('./screens/reader.js'), 'Reader', 'reader') }
   },
   superAdminsByLink: {
-    path: '/super-admins/:id/:label/:account', name: (t) => t('page.superAdminsByLink.name'), words: (t) => t('page.superAdminsByLink.words'), icon: ShieldKeyIcon, group: null, audience: 'signed-in',
-    shows: { screen: onDemand(() => import('./screens/super-admins.js'), 'SuperAdminsByLink', 'super-admins') },
+    path: '/super-admins/:id/:label/:account',
+    name: (t) => t('page.superAdminsByLink.name'),
+    words: (t) => t('page.superAdminsByLink.words'),
+    icon: ShieldKeyIcon,
+    group: null,
+    audience: 'signed-in',
+    shows: { screen: onDemand(() => import('./screens/super-admins.js'), 'SuperAdminsByLink', 'super-admins') }
   },
   setup: {
-    path: '/setup', name: (t) => t('page.setup.name'), words: (t) => t('page.setup.words'), icon: Rocket01Icon, group: null, audience: 'signed-in',
+    path: '/setup',
+    name: (t) => t('page.setup.name'),
+    words: (t) => t('page.setup.words'),
+    icon: Rocket01Icon,
+    group: null,
+    audience: 'signed-in',
     focused: { exit: (t) => t('page.setup.exit') },
-    shows: { screen: onDemand(() => import('./screens/setup.js'), 'Setup', 'setup') },
+    shows: { screen: onDemand(() => import('./screens/setup.js'), 'Setup', 'setup') }
   },
 
   home: {
-    path: '/home', name: (t) => t('page.home.name'), icon: Home01Icon, group: 'top', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/home.js'), 'Home', 'home') },
+    path: '/home',
+    name: (t) => t('page.home.name'),
+    icon: Home01Icon,
+    group: 'top',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/home.js'), 'Home', 'home') }
   },
   proposals: {
-    path: '/proposals', name: (t) => t('page.proposals.name'), words: (t) => t('page.proposals.words'), icon: CheckListIcon, group: 'top', audience: 'company', count: proposalsWaiting,
-    shows: { screen: onDemand(() => import('./screens/proposals.js'), 'Proposals', 'proposals') },
+    path: '/proposals',
+    name: (t) => t('page.proposals.name'),
+    words: (t) => t('page.proposals.words'),
+    icon: CheckListIcon,
+    group: 'top',
+    audience: 'company',
+    count: proposalsWaiting,
+    shows: { screen: onDemand(() => import('./screens/proposals.js'), 'Proposals', 'proposals') }
   },
   payroll: {
-    path: '/payroll', name: (t) => t('page.payroll.name'), icon: Invoice01Icon, group: 'money', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/payroll.js'), 'Payroll', 'payroll') },
+    path: '/payroll',
+    name: (t) => t('page.payroll.name'),
+    icon: Invoice01Icon,
+    group: 'money',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/payroll.js'), 'Payroll', 'payroll') }
   },
   run: {
-    path: '/payroll/:run', name: (t) => t('page.run.name'), icon: Invoice01Icon, group: null, inside: 'payroll', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/run.js'), 'Run', 'run') },
+    path: '/payroll/:run',
+    name: (t) => t('page.run.name'),
+    icon: Invoice01Icon,
+    group: null,
+    inside: 'payroll',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/run.js'), 'Run', 'run') }
   },
   vaults: {
-    path: '/vaults', name: (t) => t('page.vaults.name'), icon: SafeIcon, group: 'money', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/vaults.js'), 'Vaults', 'vaults') },
+    path: '/vaults',
+    name: (t) => t('page.vaults.name'),
+    icon: SafeIcon,
+    group: 'money',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/vaults.js'), 'Vaults', 'vaults') }
   },
   vault: {
-    path: '/vaults/:vault', name: (t) => t('page.vault.name'), icon: SafeIcon, group: null, inside: 'vaults', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/vault.js'), 'Vault', 'vault') },
+    path: '/vaults/:vault',
+    name: (t) => t('page.vault.name'),
+    icon: SafeIcon,
+    group: null,
+    inside: 'vaults',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/vault.js'), 'Vault', 'vault') }
   },
   transactions: {
-    path: '/transactions', name: (t) => t('page.transactions.name'), icon: ArrowDataTransferHorizontalIcon, group: 'money', audience: 'company',
-    shows: { comingSoon: (t) => t('page.transactions.soon') },
+    path: '/transactions',
+    name: (t) => t('page.transactions.name'),
+    icon: ArrowDataTransferHorizontalIcon,
+    group: 'money',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.transactions.soon') }
   },
   reports: {
-    path: '/reports', name: (t) => t('page.reports.name'), icon: Analytics01Icon, group: 'money', audience: 'company',
-    shows: { comingSoon: (t) => t('page.reports.soon') },
+    path: '/reports',
+    name: (t) => t('page.reports.name'),
+    icon: Analytics01Icon,
+    group: 'money',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.reports.soon') }
   },
   people: {
-    path: '/people', name: (t) => t('page.people.name'), icon: UserGroupIcon, group: 'people', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/people.js'), 'People', 'people') },
+    path: '/people',
+    name: (t) => t('page.people.name'),
+    icon: UserGroupIcon,
+    group: 'people',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/people.js'), 'People', 'people') }
   },
   vendors: {
-    path: '/vendors', name: (t) => t('page.vendors.name'), icon: Store01Icon, group: 'people', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/vendors.js'), 'Vendors', 'vendors') },
+    path: '/vendors',
+    name: (t) => t('page.vendors.name'),
+    icon: Store01Icon,
+    group: 'people',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/vendors.js'), 'Vendors', 'vendors') }
   },
   invitations: {
-    path: '/invitations', name: (t) => t('page.invitations.name'), icon: MailSend01Icon, group: 'people', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/invitations.js'), 'Invitations', 'invitations') },
+    path: '/invitations',
+    name: (t) => t('page.invitations.name'),
+    icon: MailSend01Icon,
+    group: 'people',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/invitations.js'), 'Invitations', 'invitations') }
   },
   disclosures: {
-    path: '/disclosures', name: (t) => t('page.disclosures.name'), icon: DocumentValidationIcon, group: 'compliance', audience: 'company',
-    shows: { comingSoon: (t) => t('page.disclosures.soon') },
+    path: '/disclosures',
+    name: (t) => t('page.disclosures.name'),
+    icon: DocumentValidationIcon,
+    group: 'compliance',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.disclosures.soon') }
   },
   policies: {
-    path: '/policies', name: (t) => t('page.policies.name'), icon: PolicyIcon, group: 'compliance', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/policies.js'), 'Policies', 'policies') },
+    path: '/policies',
+    name: (t) => t('page.policies.name'),
+    icon: PolicyIcon,
+    group: 'compliance',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/policies.js'), 'Policies', 'policies') }
   },
   activity: {
-    path: '/activity', name: (t) => t('page.activity.name'), icon: Activity01Icon, group: 'compliance', audience: 'company',
-    shows: { comingSoon: (t) => t('page.activity.soon') },
+    path: '/activity',
+    name: (t) => t('page.activity.name'),
+    icon: Activity01Icon,
+    group: 'compliance',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.activity.soon') }
   },
   apps: {
-    path: '/apps', name: (t) => t('page.apps.name'), icon: GridViewIcon, group: 'bottom', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/apps.js'), 'Apps', 'apps') },
+    path: '/apps',
+    name: (t) => t('page.apps.name'),
+    icon: GridViewIcon,
+    group: 'bottom',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/apps.js'), 'Apps', 'apps') }
   },
   settings: {
-    path: '/settings', name: (t) => t('page.settings.name'), icon: Settings01Icon, group: 'bottom', audience: 'company',
-    shows: { screen: Settings },
+    path: '/settings',
+    name: (t) => t('page.settings.name'),
+    icon: Settings01Icon,
+    group: 'bottom',
+    audience: 'company',
+    shows: { screen: Settings }
   },
   settingsCompany: {
-    path: '/settings/company', name: (t) => t('page.settingsCompany.name'), icon: Building03Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsCompany.soon'), already: onDemand(() => import('./screens/settings-sections.js'), 'CompanyCreated', 'settings-sections') },
+    path: '/settings/company',
+    name: (t) => t('page.settingsCompany.name'),
+    icon: Building03Icon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: {
+      comingSoon: (t) => t('page.settingsCompany.soon'),
+      already: onDemand(() => import('./screens/settings-sections.js'), 'CompanyCreated', 'settings-sections')
+    }
   },
   settingsSigners: {
-    path: '/settings/signers', name: (t) => t('page.settingsSigners.name'), icon: ShieldUserIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/settings-sections.js'), 'SignersBuilt', 'settings-sections') },
+    path: '/settings/signers',
+    name: (t) => t('page.settingsSigners.name'),
+    icon: ShieldUserIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/settings-sections.js'), 'SignersBuilt', 'settings-sections') }
   },
   settingsRoles: {
-    path: '/settings/roles', name: (t) => t('page.settingsRoles.name'), icon: Key01Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/roles.js'), 'Roles', 'roles') },
+    path: '/settings/roles',
+    name: (t) => t('page.settingsRoles.name'),
+    icon: Key01Icon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/roles.js'), 'Roles', 'roles') }
   },
   settingsSuperAdmins: {
-    path: '/settings/super-admins', name: (t) => t('page.settingsSuperAdmins.name'), icon: ShieldKeyIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/super-admins.js'), 'SuperAdmins', 'super-admins') },
+    path: '/settings/super-admins',
+    name: (t) => t('page.settingsSuperAdmins.name'),
+    icon: ShieldKeyIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/super-admins.js'), 'SuperAdmins', 'super-admins') }
   },
   settingsRecovery: {
-    path: '/settings/recovery', name: (t) => t('page.settingsRecovery.name'), icon: Folder01Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/recovery.js'), 'Recovery', 'recovery') },
+    path: '/settings/recovery',
+    name: (t) => t('page.settingsRecovery.name'),
+    icon: Folder01Icon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/recovery.js'), 'Recovery', 'recovery') }
   },
   settingsService: {
-    path: '/settings/service', name: (t) => t('page.settingsService.name'), icon: CloudServerIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: onDemand(() => import('./screens/service.js'), 'Service', 'service') },
+    path: '/settings/service',
+    name: (t) => t('page.settingsService.name'),
+    icon: CloudServerIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: onDemand(() => import('./screens/service.js'), 'Service', 'service') }
   },
   settingsAppearance: {
-    path: '/settings/appearance', name: (t) => t('page.settingsAppearance.name'), words: (t) => t('page.settingsAppearance.words'), icon: PaintBoardIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: Appearance },
+    path: '/settings/appearance',
+    name: (t) => t('page.settingsAppearance.name'),
+    words: (t) => t('page.settingsAppearance.words'),
+    icon: PaintBoardIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: Appearance }
   },
   settingsLanguage: {
-    path: '/settings/language', name: (t) => t('page.settingsLanguage.name'), words: (t) => t('page.settingsLanguage.words'), icon: LanguageSquareIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { screen: LanguageSettings },
+    path: '/settings/language',
+    name: (t) => t('page.settingsLanguage.name'),
+    words: (t) => t('page.settingsLanguage.words'),
+    icon: LanguageSquareIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { screen: LanguageSettings }
   },
   settingsAccount: {
-    path: '/settings/account', name: (t) => t('page.settingsAccount.name'), icon: UserAccountIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsAccount.soon') },
+    path: '/settings/account',
+    name: (t) => t('page.settingsAccount.name'),
+    icon: UserAccountIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.settingsAccount.soon') }
   },
   settingsNotifications: {
-    path: '/settings/notifications', name: (t) => t('page.settingsNotifications.name'), icon: Notification01Icon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsNotifications.soon') },
+    path: '/settings/notifications',
+    name: (t) => t('page.settingsNotifications.name'),
+    icon: Notification01Icon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.settingsNotifications.soon') }
   },
   settingsBilling: {
-    path: '/settings/billing', name: (t) => t('page.settingsBilling.name'), icon: CreditCardIcon, group: null, inside: 'settings', audience: 'company',
-    shows: { comingSoon: (t) => t('page.settingsBilling.soon') },
+    path: '/settings/billing',
+    name: (t) => t('page.settingsBilling.name'),
+    icon: CreditCardIcon,
+    group: null,
+    inside: 'settings',
+    audience: 'company',
+    shows: { comingSoon: (t) => t('page.settingsBilling.soon') }
   },
 
   payHome: {
-    path: '/pay', name: (t) => t('page.payHome.name'), icon: Home01Icon, group: 'top', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.payHome.soon') },
+    path: '/pay',
+    name: (t) => t('page.payHome.name'),
+    icon: Home01Icon,
+    group: 'top',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.payHome.soon') }
   },
   payslips: {
-    path: '/pay/payslips', name: (t) => t('page.payslips.name'), icon: File01Icon, group: 'top', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.payslips.soon') },
+    path: '/pay/payslips',
+    name: (t) => t('page.payslips.name'),
+    icon: File01Icon,
+    group: 'top',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.payslips.soon') }
   },
   paymentsReceived: {
-    path: '/pay/payments', name: (t) => t('page.paymentsReceived.name'), icon: MoneyReceive01Icon, group: 'top', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.paymentsReceived.soon') },
+    path: '/pay/payments',
+    name: (t) => t('page.paymentsReceived.name'),
+    icon: MoneyReceive01Icon,
+    group: 'top',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.paymentsReceived.soon') }
   },
   myDetails: {
-    path: '/pay/details', name: (t) => t('page.myDetails.name'), icon: UserIcon, group: 'top', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.myDetails.soon') },
+    path: '/pay/details',
+    name: (t) => t('page.myDetails.name'),
+    icon: UserIcon,
+    group: 'top',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.myDetails.soon') }
   },
   documents: {
-    path: '/pay/documents', name: (t) => t('page.documents.name'), icon: Folder01Icon, group: 'top', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.documents.soon') },
+    path: '/pay/documents',
+    name: (t) => t('page.documents.name'),
+    icon: Folder01Icon,
+    group: 'top',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.documents.soon') }
   },
   paySettings: {
-    path: '/pay/settings', name: (t) => t('page.settings.name'), icon: Settings01Icon, group: 'bottom', audience: 'employee',
-    shows: { screen: Settings },
+    path: '/pay/settings',
+    name: (t) => t('page.settings.name'),
+    icon: Settings01Icon,
+    group: 'bottom',
+    audience: 'employee',
+    shows: { screen: Settings }
   },
   payAppearance: {
-    path: '/pay/settings/appearance', name: (t) => t('page.settingsAppearance.name'), words: (t) => t('page.settingsAppearance.words'), icon: PaintBoardIcon, group: null, inside: 'paySettings', audience: 'employee',
-    shows: { screen: Appearance },
+    path: '/pay/settings/appearance',
+    name: (t) => t('page.settingsAppearance.name'),
+    words: (t) => t('page.settingsAppearance.words'),
+    icon: PaintBoardIcon,
+    group: null,
+    inside: 'paySettings',
+    audience: 'employee',
+    shows: { screen: Appearance }
   },
   payLanguage: {
-    path: '/pay/settings/language', name: (t) => t('page.settingsLanguage.name'), words: (t) => t('page.settingsLanguage.words'), icon: LanguageSquareIcon, group: null, inside: 'paySettings', audience: 'employee',
-    shows: { screen: LanguageSettings },
+    path: '/pay/settings/language',
+    name: (t) => t('page.settingsLanguage.name'),
+    words: (t) => t('page.settingsLanguage.words'),
+    icon: LanguageSquareIcon,
+    group: null,
+    inside: 'paySettings',
+    audience: 'employee',
+    shows: { screen: LanguageSettings }
   },
   payAccount: {
-    path: '/pay/settings/account', name: (t) => t('page.settingsAccount.name'), icon: UserAccountIcon, group: null, inside: 'paySettings', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.settingsAccount.soon') },
+    path: '/pay/settings/account',
+    name: (t) => t('page.settingsAccount.name'),
+    icon: UserAccountIcon,
+    group: null,
+    inside: 'paySettings',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.settingsAccount.soon') }
   },
   payNotifications: {
-    path: '/pay/settings/notifications', name: (t) => t('page.settingsNotifications.name'), icon: Notification01Icon, group: null, inside: 'paySettings', audience: 'employee',
-    shows: { comingSoon: (t) => t('page.settingsNotifications.soon') },
-  },
+    path: '/pay/settings/notifications',
+    name: (t) => t('page.settingsNotifications.name'),
+    icon: Notification01Icon,
+    group: null,
+    inside: 'paySettings',
+    audience: 'employee',
+    shows: { comingSoon: (t) => t('page.settingsNotifications.soon') }
+  }
 } as const satisfies Record<string, Page>;
 
 export type PageId = keyof typeof PAGES;
@@ -311,7 +538,10 @@ export type PageId = keyof typeof PAGES;
 export const PAGE = Object.fromEntries(Object.keys(PAGES).map((id) => [id, id])) as { readonly [Id in PageId]: Id };
 
 /** Every page, with its id, in the list's order. */
-export const EVERY_PAGE: readonly (Page & { id: PageId })[] = (Object.keys(PAGES) as PageId[]).map((id) => ({ id, ...(PAGES[id] as Page) }));
+export const EVERY_PAGE: readonly (Page & { id: PageId })[] = (Object.keys(PAGES) as PageId[]).map((id) => ({
+  id,
+  ...(PAGES[id] as Page)
+}));
 
 /** The two views a signed-in person can be in: their company's, or their own pay. */
 export const VIEWS = { company: 'company', employee: 'employee' } as const;
@@ -319,7 +549,12 @@ export const VIEWS = { company: 'company', employee: 'employee' } as const;
 export type View = (typeof VIEWS)[keyof typeof VIEWS];
 
 /** Where each view begins; the landing page, where a visitor signs in and a signed-in person chooses a company; and the setup wizard. */
-export const HOME = { company: 'home', employee: 'payHome', visitor: 'landing', setup: 'setup' } as const satisfies Record<View | 'visitor' | 'setup', PageId>;
+export const HOME = {
+  company: 'home',
+  employee: 'payHome',
+  visitor: 'landing',
+  setup: 'setup'
+} as const satisfies Record<View | 'visitor' | 'setup', PageId>;
 
 /** Where each view's own settings are. */
 export const SETTINGS_OF = { company: 'settings', employee: 'paySettings' } as const satisfies Record<View, PageId>;
@@ -365,14 +600,21 @@ export const outerOf = (page: Page): PageId | undefined => page.inside as PageId
  * names one and that the viewer may open, by the shortcut's id. A page the
  * viewer may not open has no shortcut for them.
  */
-export function pagesByShortcut(pages: readonly (Page & { id: PageId })[], viewer: Viewer): Partial<Record<string, PageId>> {
+export function pagesByShortcut(
+  pages: readonly (Page & { id: PageId })[],
+  viewer: Viewer
+): Partial<Record<string, PageId>> {
   const out: Partial<Record<string, PageId>> = {};
   for (const p of pages) if (p.shortcut !== undefined && mayOpen(p, viewer) && reachedByName(p)) out[p.shortcut] = p.id;
   return out;
 }
 
 /** The names of the values a page's address stands for, in order; none for most pages. */
-export const valuesOf = (page: Pick<Page, 'path'>): string[] => page.path.split(/\//).filter((part) => part.startsWith(':')).map((part) => part.slice(1));
+export const valuesOf = (page: Pick<Page, 'path'>): string[] =>
+  page.path
+    .split(/\//)
+    .filter((part) => part.startsWith(':'))
+    .map((part) => part.slice(1));
 
 /**
  * Whether a page can be gone to by name alone, from the command bar or a
@@ -381,4 +623,5 @@ export const valuesOf = (page: Pick<Page, 'path'>): string[] => page.path.split(
 export const reachedByName = (page: Pick<Page, 'path'>): boolean => valuesOf(page).length === 0;
 
 /** Whether a page is built: it has a screen rather than a line on what it will be. */
-export const isBuilt = (page: Page): page is Page & { shows: { screen: Screen } } => (page.shows as { screen?: Screen }).screen !== undefined;
+export const isBuilt = (page: Page): page is Page & { shows: { screen: Screen } } =>
+  (page.shows as { screen?: Screen }).screen !== undefined;

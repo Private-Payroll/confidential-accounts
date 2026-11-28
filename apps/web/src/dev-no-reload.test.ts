@@ -21,54 +21,70 @@ describe('the development server never reloads the page by itself', () => {
 
 const CHROMIUM = process.env.CHROMIUM_PATH ?? chromium.executablePath();
 
-describe.skipIf(!existsSync(CHROMIUM))('A FILE CHANGING WHILE THE PAGE IS OPEN, IN A BROWSER [needs Chromium; `npx playwright install chromium` installs it, or CHROMIUM_PATH names one]', () => {
-  let browser: Browser;
-  let folder = '';
-  const servers: ViteDevServer[] = [];
+describe.skipIf(!existsSync(CHROMIUM))(
+  'A FILE CHANGING WHILE THE PAGE IS OPEN, IN A BROWSER [needs Chromium; `npx playwright install chromium` installs it, or CHROMIUM_PATH names one]',
+  () => {
+    let browser: Browser;
+    let folder = '';
+    const servers: ViteDevServer[] = [];
 
-  const serve = async (server: InlineConfig['server']): Promise<string> => {
-    const s = await createServer({ root: folder, configFile: false, cacheDir: `${folder}/.cache`, logLevel: 'silent', server: { port: 0, fs: { allow: [folder] }, ...server } });
-    await s.listen();
-    servers.push(s);
-    return s.resolvedUrls!.local[0]!;
-  };
+    const serve = async (server: InlineConfig['server']): Promise<string> => {
+      const s = await createServer({
+        root: folder,
+        configFile: false,
+        cacheDir: `${folder}/.cache`,
+        logLevel: 'silent',
+        server: { port: 0, fs: { allow: [folder] }, ...server }
+      });
+      await s.listen();
+      servers.push(s);
+      return s.resolvedUrls!.local[0]!;
+    };
 
-  const surviving = async (url: string): Promise<boolean> => {
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'load' });
-    await page.waitForFunction(() => (window as unknown as { kept?: number }).kept === 1);
-    await page.evaluate(() => { (window as unknown as { marker?: string }).marker = 'same page'; });
-    writeFileSync(`${folder}/part.js`, 'window.kept = 1; // changed\n');
-    await page.waitForTimeout(3000);
-    const marker = await page.evaluate(() => (window as unknown as { marker?: string }).marker).catch(() => undefined);
-    await page.close();
-    return marker === 'same page';
-  };
+    const surviving = async (url: string): Promise<boolean> => {
+      const page = await browser.newPage();
+      await page.goto(url, { waitUntil: 'load' });
+      await page.waitForFunction(() => (window as unknown as { kept?: number }).kept === 1);
+      await page.evaluate(() => {
+        (window as unknown as { marker?: string }).marker = 'same page';
+      });
+      writeFileSync(`${folder}/part.js`, 'window.kept = 1; // changed\n');
+      await page.waitForTimeout(3000);
+      const marker = await page
+        .evaluate(() => (window as unknown as { marker?: string }).marker)
+        .catch(() => undefined);
+      await page.close();
+      return marker === 'same page';
+    };
 
-  beforeAll(async () => {
-    folder = mkdtempSync(`${tmpdir()}/web-dev-no-reload-`);
-    writeFileSync(`${folder}/index.html`, '<!doctype html><html><body><script type="module" src="./part.js"></script></body></html>');
-    writeFileSync(`${folder}/part.js`, 'window.kept = 1;\n');
-    browser = await chromium.launch(process.env.CHROMIUM_PATH === undefined ? {} : { executablePath: process.env.CHROMIUM_PATH });
-  }, 120_000);
+    beforeAll(async () => {
+      folder = mkdtempSync(`${tmpdir()}/web-dev-no-reload-`);
+      writeFileSync(
+        `${folder}/index.html`,
+        '<!doctype html><html><body><script type="module" src="./part.js"></script></body></html>'
+      );
+      writeFileSync(`${folder}/part.js`, 'window.kept = 1;\n');
+      browser = await chromium.launch(
+        process.env.CHROMIUM_PATH === undefined ? {} : { executablePath: process.env.CHROMIUM_PATH }
+      );
+    }, 120_000);
 
-  // Closing Chromium can take longer than the default 10 s on a loaded machine;
-  // the same bound as launching it.
-  afterAll(async () => {
-    await browser?.close();
-    for (const s of servers) await s.close();
-    if (folder !== '') rmSync(folder, { recursive: true, force: true });
-  }, 120_000);
+    // Closing Chromium can take longer than the default 10 s on a loaded machine;
+    // the same bound as launching it.
+    afterAll(async () => {
+      await browser?.close();
+      for (const s of servers) await s.close();
+      if (folder !== '') rmSync(folder, { recursive: true, force: true });
+    }, 120_000);
 
+    it('a server left to its defaults does reload the page when a script of it changes, so this check can see a reload', async () => {
+      expect(await surviving(await serve({}))).toBe(false);
+    }, 60_000);
 
-  it('a server left to its defaults does reload the page when a script of it changes, so this check can see a reload', async () => {
-    expect(await surviving(await serve({}))).toBe(false);
-  }, 60_000);
-
-
-  /* RED WHEN: saving a script of the page, with the application's server settings, reloads the page and loses what the person had done on it. */
-  it('the application\'s server leaves the page as it is when a script of it changes', async () => {
-    const { proxy: _proxy, fs: _fs, ...kept } = (config as { server: InlineConfig['server'] & object }).server;
-    expect(await surviving(await serve(kept))).toBe(true);
-  }, 60_000);
-});
+    /* RED WHEN: saving a script of the page, with the application's server settings, reloads the page and loses what the person had done on it. */
+    it("the application's server leaves the page as it is when a script of it changes", async () => {
+      const { proxy: _proxy, fs: _fs, ...kept } = (config as { server: InlineConfig['server'] & object }).server;
+      expect(await surviving(await serve(kept))).toBe(true);
+    }, 60_000);
+  }
+);

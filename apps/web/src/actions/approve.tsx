@@ -4,7 +4,6 @@ import { approveProposal, canApprove, PROPOSAL_ACTED } from '../adapters/proposa
 import { ActedSays, useProposalAct } from '../records/proposal-act.js';
 import { PanelFooter } from '../shell/right-panel.js';
 
-
 /**
  * THE ONE APPROVE, on every list of proposals: asks the person's wallet to approve this proposal, and says what came of it. Nothing is drawn for a proposal
  * the list cannot approve. On a one-off payment the chain holds approved and shows not yet paid it is the same act, pressed as Pay, since the wallet finds
@@ -16,11 +15,20 @@ export function Approve({ row, size = 'default' }: { row: ProposalRow; size?: 'd
   if (!canApprove(row)) return null;
   const paying = row.status === 'approved';
   const state = act.result?.of === PROPOSAL_ACTED.done ? act.result.state : null;
-  const done = !paying ? t('proposal.act.approved') : state === 'paid' || state === 'already-paid' ? t('oneOff.done.paid') : t('proposal.act.notPaid');
+  const done = !paying
+    ? t('proposal.act.approved')
+    : state === 'paid' || state === 'already-paid'
+      ? t('oneOff.done.paid')
+      : t('proposal.act.notPaid');
   return (
     <PanelFooter>
       <div className="flex flex-col items-start gap-2" data-approve={row.id}>
-        <Button size={size} disabled={act.phase !== null || act.done} onClick={() => act.start((person, company, onStep) => approveProposal(person, company, row, onStep))} data-action="approve">
+        <Button
+          size={size}
+          disabled={act.phase !== null || act.done}
+          onClick={() => act.start((person, company, onStep) => approveProposal(person, company, row, onStep))}
+          data-action="approve"
+        >
           {paying ? t('proposals.pay') : t('proposals.approve')}
         </Button>
         <ActedSays phase={act.phase} result={act.result} done={done} />

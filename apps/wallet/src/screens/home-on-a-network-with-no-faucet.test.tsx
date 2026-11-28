@@ -50,7 +50,7 @@ describe('the home screen on a network with no faucet', () => {
     render(
       <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: syncs, dust: inert }}>
         <Home identity={identityFromSecret(secret)} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     fireEvent.click(screen.getByText('Check the balance'));
     /* RED WHEN the title names the faucet whatever the record says. */

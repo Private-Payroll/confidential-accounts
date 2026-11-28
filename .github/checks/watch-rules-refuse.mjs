@@ -44,41 +44,186 @@ import { fileURLToPath } from 'node:url';
 const SOURCE = process.argv[2] ?? fileURLToPath(new URL('.', import.meta.url));
 
 const M = [
-  ['subject limit raised past what a log can read', 'commit.mjs', 'export const SUBJECT_LIMIT = 72;', 'export const SUBJECT_LIMIT = 200;'],
-  ['subject counted in bytes instead of characters', 'commit.mjs', 'const length = [...subject].length;', 'const length = Buffer.byteLength(subject, "utf8");'],
-  ['an empty subject accepted', 'commit.mjs', "return 'a subject line has to say what the change does, and this one is empty';", 'return null;'],
-  ['the kinds no longer close the shape', 'commit.mjs', '`^(${SUBJECT_KINDS.join(\'|\')})', '`^([a-z]+)'],
-  ['the punctuation rule removed', 'commit.mjs', "if (hasPunctuation(description.replace(/ \\(#\\d+\\)$/, ''))) {", 'if (false) {'],
-  ['the scope charset widened to anything', 'commit.mjs', '(\\\\(([a-z0-9][a-z0-9._/-]*)\\\\))?', '(\\\\(([^()]*)\\\\))?'],
-  ['a trailing full stop allowed', 'commit.mjs', "return 'a subject line does not end with a full stop';", 'return null;'],
-  ['a capital after the colon allowed', 'commit.mjs', "return 'a subject line is not capitalised after the colon';", 'return null;'],
-  ['the blank line no longer required', 'commit.mjs', "return 'a blank line separates the subject from the body';", 'return null;'],
-  ['the attribution trailer rule removed', 'commit.mjs', 'pattern: /^[\\s>|]*[a-z]+(-[a-z]+)*-by:/im,', 'pattern: /$^/,'],
-  ['the produced-by rule removed', 'commit.mjs', 'pattern: /^[\\s>|]*(co-)?(generated|authored|created|written)\\s+(with|by)\\b/im,', 'pattern: /$^/,'],
+  [
+    'subject limit raised past what a log can read',
+    'commit.mjs',
+    'export const SUBJECT_LIMIT = 72;',
+    'export const SUBJECT_LIMIT = 200;'
+  ],
+  [
+    'subject counted in bytes instead of characters',
+    'commit.mjs',
+    'const length = [...subject].length;',
+    'const length = Buffer.byteLength(subject, "utf8");'
+  ],
+  [
+    'an empty subject accepted',
+    'commit.mjs',
+    "return 'a subject line has to say what the change does, and this one is empty';",
+    'return null;'
+  ],
+  ['the kinds no longer close the shape', 'commit.mjs', "`^(${SUBJECT_KINDS.join('|')})", '`^([a-z]+)'],
+  [
+    'the punctuation rule removed',
+    'commit.mjs',
+    "if (hasPunctuation(description.replace(/ \\(#\\d+\\)$/, ''))) {",
+    'if (false) {'
+  ],
+  [
+    'the scope charset widened to anything',
+    'commit.mjs',
+    '(\\\\(([a-z0-9][a-z0-9._/-]*)\\\\))?',
+    '(\\\\(([^()]*)\\\\))?'
+  ],
+  [
+    'a trailing full stop allowed',
+    'commit.mjs',
+    "return 'a subject line does not end with a full stop';",
+    'return null;'
+  ],
+  [
+    'a capital after the colon allowed',
+    'commit.mjs',
+    "return 'a subject line is not capitalised after the colon';",
+    'return null;'
+  ],
+  [
+    'the blank line no longer required',
+    'commit.mjs',
+    "return 'a blank line separates the subject from the body';",
+    'return null;'
+  ],
+  [
+    'the attribution trailer rule removed',
+    'commit.mjs',
+    'pattern: /^[\\s>|]*[a-z]+(-[a-z]+)*-by:/im,',
+    'pattern: /$^/,'
+  ],
+  [
+    'the produced-by rule removed',
+    'commit.mjs',
+    'pattern: /^[\\s>|]*(co-)?(generated|authored|created|written)\\s+(with|by)\\b/im,',
+    'pattern: /$^/,'
+  ],
   ['the tool mark rule removed', 'commit.mjs', 'pattern: /[\\u{1F916}\\u{1F9BE}]/u,', 'pattern: /$^/u,'],
   ['the address rule removed', 'commit.mjs', 'pattern: /[^\\s@<>]+@[^\\s@<>]+\\.[a-z]{2,}/i,', 'pattern: /$^/,'],
-  ['the home-path rule removed', 'commit.mjs', 'pattern: /(\\/Users\\/|\\/home\\/|~\\/|[A-Za-z]:\\\\Users\\\\)[A-Za-z0-9._-]+/,', 'pattern: /$^/,'],
+  [
+    'the home-path rule removed',
+    'commit.mjs',
+    'pattern: /(\\/Users\\/|\\/home\\/|~\\/|[A-Za-z]:\\\\Users\\\\)[A-Za-z0-9._-]+/,',
+    'pattern: /$^/,'
+  ],
   ['the dash rule removed', 'commit.mjs', 'pattern: /[\\u2010-\\u2015\\u2212]/u,', 'pattern: /$^/u,'],
   ['the merged-into branch no longer named', 'commit.mjs', 'if (PROTECTED.includes(branch)) {', 'if (false) {'],
   ['branch limit raised', 'commit.mjs', 'export const BRANCH_LIMIT = 60;', 'export const BRANCH_LIMIT = 200;'],
-  ['the branch shape widened to anything', 'commit.mjs', "const BRANCH = new RegExp(`^(${BRANCH_KINDS.join('|')})\\\\/[a-z0-9]+(-[a-z0-9]+)*$`);", 'const BRANCH = /^.+$/;'],
-  ['a branch name no longer read for what must not be published', 'commit.mjs', "const carried = unpublishable(branch, 'a branch name', also);", 'const carried = null;'],
-  ['a branch read for what must not be published only AFTER its shape', 'commit.mjs', "  const carried = unpublishable(branch, 'a branch name', also);\n  if (carried !== null) {\n    return carried;\n  }\n", '  '],
-  ['a body no longer read for what must not be published', 'commit.mjs', "return unpublishable(lines.slice(1).join('\\n'), 'a commit message', also);", 'return null;'],
-  ['the trailer rule anchored at column zero again', 'commit.mjs', 'pattern: /^[\\s>|]*[a-z]+(-[a-z]+)*-by:/im,', 'pattern: /^[a-z]+(-[a-z]+)*-by:/im,'],
-  ['the produced-by rule anchored at column zero again', 'commit.mjs', 'pattern: /^[\\s>|]*(co-)?(generated', 'pattern: /^(co-)?(generated'],
-  ['the home-path rule needing a delimiter in front again', 'commit.mjs', 'pattern: /(\\/Users\\/', 'pattern: /(^|[\\s])(\\/Users\\/'],
-  ['the minus sign no longer counted as a dash', 'commit.mjs', 'pattern: /[\\u2010-\\u2015\\u2212]/u,', 'pattern: /[\\u2010-\\u2015]/u,'],
-  ['a list handed in by a caller ignored', 'commit.mjs', 'for (const rule of [...FORBIDDEN, ...also]) {', 'for (const rule of FORBIDDEN) {'],
-  ['the appended number no longer explained', 'commit.mjs', "        : `${[...appended[0]].length} of those are the number appended when this is merged, so the title itself has ${SUBJECT_LIMIT - [...appended[0]].length}`;", "        : 'the detail belongs in the body';"],
-  ['the number a squashed merge appends is dropped', 'commit.mjs', 'return `${title} (#${number})`;', 'return `${title}`;'],
-  ['the compiler version no longer checked', 'toolchain.mjs', "if (!reported.includes(COMPACTC_REPORTS)) {", 'if (false) {'],
-  ['a compiler that says nothing accepted', 'toolchain.mjs', "return 'the compiler did not say which version it is, so it cannot be the pinned one';", 'return null;'],
-  ['an unpublished machine given a compiler anyway', 'toolchain.mjs', '  if (target === undefined) {', '  if (target === undefined) { return TARGETS["linux/x64"]; }\n  if (false) {'],
-  ['the release fetched over an unprotected connection', 'toolchain.mjs', "const RELEASE = 'https://github.com", "const RELEASE = 'http://github.com"],
-  ['the version dropped from the unpack path', 'toolchain.mjs', 'return `${home}/.compact/versions/${COMPACTC_VERSION}/${targetFor(platform, arch)}`;', 'return `${home}/.compact/versions/${targetFor(platform, arch)}`;'],
-  ['two machines unpacked to one place', 'toolchain.mjs', "  'darwin/arm64': 'aarch64-darwin',", "  'darwin/arm64': 'x86_64-unknown-linux-musl',"],
-  ['the asset no longer names the pinned version', 'toolchain.mjs', 'return `compactc_v${COMPACTC_VERSION}_${targetFor(platform, arch)}.zip`;', 'return `compactc_${targetFor(platform, arch)}.zip`;'],
+  [
+    'the branch shape widened to anything',
+    'commit.mjs',
+    "const BRANCH = new RegExp(`^(${BRANCH_KINDS.join('|')})\\\\/[a-z0-9]+(-[a-z0-9]+)*$`);",
+    'const BRANCH = /^.+$/;'
+  ],
+  [
+    'a branch name no longer read for what must not be published',
+    'commit.mjs',
+    "const carried = unpublishable(branch, 'a branch name', also);",
+    'const carried = null;'
+  ],
+  [
+    'a branch read for what must not be published only AFTER its shape',
+    'commit.mjs',
+    "  const carried = unpublishable(branch, 'a branch name', also);\n  if (carried !== null) {\n    return carried;\n  }\n",
+    '  '
+  ],
+  [
+    'a body no longer read for what must not be published',
+    'commit.mjs',
+    "return unpublishable(lines.slice(1).join('\\n'), 'a commit message', also);",
+    'return null;'
+  ],
+  [
+    'the trailer rule anchored at column zero again',
+    'commit.mjs',
+    'pattern: /^[\\s>|]*[a-z]+(-[a-z]+)*-by:/im,',
+    'pattern: /^[a-z]+(-[a-z]+)*-by:/im,'
+  ],
+  [
+    'the produced-by rule anchored at column zero again',
+    'commit.mjs',
+    'pattern: /^[\\s>|]*(co-)?(generated',
+    'pattern: /^(co-)?(generated'
+  ],
+  [
+    'the home-path rule needing a delimiter in front again',
+    'commit.mjs',
+    'pattern: /(\\/Users\\/',
+    'pattern: /(^|[\\s])(\\/Users\\/'
+  ],
+  [
+    'the minus sign no longer counted as a dash',
+    'commit.mjs',
+    'pattern: /[\\u2010-\\u2015\\u2212]/u,',
+    'pattern: /[\\u2010-\\u2015]/u,'
+  ],
+  [
+    'a list handed in by a caller ignored',
+    'commit.mjs',
+    'for (const rule of [...FORBIDDEN, ...also]) {',
+    'for (const rule of FORBIDDEN) {'
+  ],
+  [
+    'the appended number no longer explained',
+    'commit.mjs',
+    '        : `${[...appended[0]].length} of those are the number appended when this is merged, so the title itself has ${SUBJECT_LIMIT - [...appended[0]].length}`;',
+    "        : 'the detail belongs in the body';"
+  ],
+  [
+    'the number a squashed merge appends is dropped',
+    'commit.mjs',
+    'return `${title} (#${number})`;',
+    'return `${title}`;'
+  ],
+  [
+    'the compiler version no longer checked',
+    'toolchain.mjs',
+    'if (!reported.includes(COMPACTC_REPORTS)) {',
+    'if (false) {'
+  ],
+  [
+    'a compiler that says nothing accepted',
+    'toolchain.mjs',
+    "return 'the compiler did not say which version it is, so it cannot be the pinned one';",
+    'return null;'
+  ],
+  [
+    'an unpublished machine given a compiler anyway',
+    'toolchain.mjs',
+    '  if (target === undefined) {',
+    '  if (target === undefined) { return TARGETS["linux/x64"]; }\n  if (false) {'
+  ],
+  [
+    'the release fetched over an unprotected connection',
+    'toolchain.mjs',
+    "const RELEASE = 'https://github.com",
+    "const RELEASE = 'http://github.com"
+  ],
+  [
+    'the version dropped from the unpack path',
+    'toolchain.mjs',
+    'return `${home}/.compact/versions/${COMPACTC_VERSION}/${targetFor(platform, arch)}`;',
+    'return `${home}/.compact/versions/${targetFor(platform, arch)}`;'
+  ],
+  [
+    'two machines unpacked to one place',
+    'toolchain.mjs',
+    "  'darwin/arm64': 'aarch64-darwin',",
+    "  'darwin/arm64': 'x86_64-unknown-linux-musl',"
+  ],
+  [
+    'the asset no longer names the pinned version',
+    'toolchain.mjs',
+    'return `compactc_v${COMPACTC_VERSION}_${targetFor(platform, arch)}.zip`;',
+    'return `compactc_${targetFor(platform, arch)}.zip`;'
+  ]
 ];
 
 /**
@@ -96,7 +241,7 @@ const run = (dir) => {
       // prints neither "# pass N" nor "not ok N - name" when its output is not
       // a terminal, so read with the default this run counted no cases at all.
       ['--test', '--test-reporter=tap', join(dir, 'commit.test.mjs'), join(dir, 'toolchain.test.mjs')],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
   } catch (e) {
     out = `${e.stdout ?? ''}`;
@@ -122,7 +267,7 @@ rmSync(base, { recursive: true, force: true });
 if (clean.collected === 0) {
   console.error(
     `THE BASELINE COLLECTED NO CASES AT ALL, so nothing below would mean anything.\n` +
-      `  Looked in ${SOURCE} for commit.test.mjs and toolchain.test.mjs.`,
+      `  Looked in ${SOURCE} for commit.test.mjs and toolchain.test.mjs.`
   );
   process.exit(1);
 }
@@ -139,7 +284,9 @@ for (const [name, file, from, to] of M) {
   const at = join(dir, file);
   const text = readFileSync(at, 'utf8');
   if (!text.includes(from)) {
-    console.log(`REFUSED  ${name}\n         its target is not in ${file}, so it would have scored a kill it did not earn`);
+    console.log(
+      `REFUSED  ${name}\n         its target is not in ${file}, so it would have scored a kill it did not earn`
+    );
     rmSync(dir, { recursive: true, force: true });
     survived++;
     continue;
@@ -154,7 +301,7 @@ for (const [name, file, from, to] of M) {
     console.log(
       `REFUSED  ${name}\n` +
         `         it broke the file rather than the rule: ${after.collected} of ${clean.collected} cases even ran, ` +
-        'so nothing here was measured. Write it as a change the file can still parse.',
+        'so nothing here was measured. Write it as a change the file can still parse.'
     );
     survived++;
     continue;

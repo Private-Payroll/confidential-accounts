@@ -1,4 +1,9 @@
-import { RELEASED_CONTRACTS, RELEASED_VERSIONS, type ReleasedContract, type ReleasedVersion } from 'midnight-identity/wallet/released-versions';
+import {
+  RELEASED_CONTRACTS,
+  RELEASED_VERSIONS,
+  type ReleasedContract,
+  type ReleasedVersion
+} from 'midnight-identity/wallet/released-versions';
 import { contractStateOfHex, publishedBuildOfState } from '../apps/wallet/src/chain/published-build.js';
 
 /*
@@ -10,7 +15,8 @@ import { contractStateOfHex, publishedBuildOfState } from '../apps/wallet/src/ch
  */
 
 export const TIP_QUERY = 'query { block { height } }';
-export const BLOCK_QUERY = 'query ($height: Int!) { block(offset: { height: $height }) { height transactions { contractActions { __typename address } } } }';
+export const BLOCK_QUERY =
+  'query ($height: Int!) { block(offset: { height: $height }) { height transactions { contractActions { __typename address } } } }';
 
 const ADDRESS = /^[0-9a-f]{64}$/u;
 
@@ -28,17 +34,20 @@ const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'obj
 
 /** A deploy is a contract action whose type is ContractDeploy; calls and updates of a contract are not deploys. */
 export function deploysInBlock(answer: unknown): BlockAnswer {
-  if (!isObject(answer)) return unread('the indexer\'s answer is not an object.');
+  if (!isObject(answer)) return unread("the indexer's answer is not an object.");
   if (answer.errors !== undefined) return unread('the indexer refused the question about this block.');
-  if (!isObject(answer.data)) return unread('the indexer\'s answer carries no data.');
+  if (!isObject(answer.data)) return unread("the indexer's answer carries no data.");
   const block = answer.data.block;
   if (block === null) return { of: 'no-block' };
-  if (!isObject(block) || !Array.isArray(block.transactions)) return unread('the block\'s answer carries no list of transactions.');
+  if (!isObject(block) || !Array.isArray(block.transactions))
+    return unread("the block's answer carries no list of transactions.");
   const deploys = new Set<string>();
   for (const tx of block.transactions) {
-    if (!isObject(tx) || !Array.isArray(tx.contractActions)) return unread('a transaction\'s answer carries no list of contract actions.');
+    if (!isObject(tx) || !Array.isArray(tx.contractActions))
+      return unread("a transaction's answer carries no list of contract actions.");
     for (const action of tx.contractActions) {
-      if (!isObject(action) || typeof action.__typename !== 'string') return unread('a contract action carries no type.');
+      if (!isObject(action) || typeof action.__typename !== 'string')
+        return unread('a contract action carries no type.');
       if (action.__typename !== 'ContractDeploy') continue;
       const address = typeof action.address === 'string' ? action.address.toLowerCase() : '';
       if (!ADDRESS.test(address)) return unread('a deploy carries an address that is not 64 hex characters.');
@@ -50,7 +59,8 @@ export function deploysInBlock(answer: unknown): BlockAnswer {
 
 /** The chain's newest block height from the answer to TIP_QUERY, or null when the answer does not give one. */
 export function tipOf(answer: unknown): number | null {
-  if (!isObject(answer) || answer.errors !== undefined || !isObject(answer.data) || !isObject(answer.data.block)) return null;
+  if (!isObject(answer) || answer.errors !== undefined || !isObject(answer.data) || !isObject(answer.data.block))
+    return null;
   const height = answer.data.block.height;
   return Number.isSafeInteger(height) && (height as number) >= 0 ? (height as number) : null;
 }
@@ -65,13 +75,17 @@ export type Verdict =
  * Judges one deployed contract's state against each released contract in turn: the first match decides, and keys that
  * cannot be read end the search as "unchecked", never as "matches none".
  */
-export function verdictOfState(hex: string | null, address: string, versions: readonly ReleasedVersion[] = RELEASED_VERSIONS): Verdict {
+export function verdictOfState(
+  hex: string | null,
+  address: string,
+  versions: readonly ReleasedVersion[] = RELEASED_VERSIONS
+): Verdict {
   if (hex === null) return { of: 'unchecked', why: 'the indexer holds no state at that address.' };
   const state = contractStateOfHex(hex);
   if (state === null) return { of: 'unchecked', why: 'the state is not a contract state.' };
   for (const contract of RELEASED_CONTRACTS) {
     const build = publishedBuildOfState(state, address, contract, versions);
-    if (build.of === 'unchecked') return { of: 'unchecked', why: 'the contract\'s keys could not be read.' };
+    if (build.of === 'unchecked') return { of: 'unchecked', why: "the contract's keys could not be read." };
     if (build.of === 'published') return { of: 'published', contract, version: build.version };
   }
   return { of: 'matches-none' };
@@ -85,7 +99,10 @@ export interface Tally {
 }
 
 export const emptyTally = (): Tally => ({
-  deploys: 0, byContract: Object.fromEntries(RELEASED_CONTRACTS.map((contract) => [contract, {}])), matchesNone: 0, unchecked: 0,
+  deploys: 0,
+  byContract: Object.fromEntries(RELEASED_CONTRACTS.map((contract) => [contract, {}])),
+  matchesNone: 0,
+  unchecked: 0
 });
 
 /** One verdict added to the tally. A published one is counted under its contract and its version id. */
@@ -94,27 +111,46 @@ export function withVerdict(tally: Tally, verdict: Verdict): Tally {
   if (verdict.of === 'matches-none') return { ...tally, deploys, matchesNone: tally.matchesNone + 1 };
   if (verdict.of === 'unchecked') return { ...tally, deploys, unchecked: tally.unchecked + 1 };
   const of = tally.byContract[verdict.contract] ?? {};
-  return { ...tally, deploys, byContract: { ...tally.byContract, [verdict.contract]: { ...of, [verdict.version]: (of[verdict.version] ?? 0) + 1 } } };
+  return {
+    ...tally,
+    deploys,
+    byContract: {
+      ...tally.byContract,
+      [verdict.contract]: { ...of, [verdict.version]: (of[verdict.version] ?? 0) + 1 }
+    }
+  };
 }
 
 /** The first height a start argument names, or why it cannot be used. No argument means the first block. */
-export function startHeight(arg: string | undefined, tip: number): { readonly of: 'ok'; readonly height: number } | { readonly of: 'refused'; readonly why: string } {
+export function startHeight(
+  arg: string | undefined,
+  tip: number
+): { readonly of: 'ok'; readonly height: number } | { readonly of: 'refused'; readonly why: string } {
   if (arg === undefined || arg === '') return { of: 'ok', height: 0 };
-  if (!/^\d+$/u.test(arg)) return { of: 'refused', why: `"${arg}" is not a block height. Give a whole number, or nothing to start at the first block.` };
+  if (!/^\d+$/u.test(arg))
+    return {
+      of: 'refused',
+      why: `"${arg}" is not a block height. Give a whole number, or nothing to start at the first block.`
+    };
   const height = Number(arg);
-  if (!Number.isSafeInteger(height) || height > tip) return { of: 'refused', why: `block ${arg} is beyond the chain's newest block, ${tip}.` };
+  if (!Number.isSafeInteger(height) || height > tip)
+    return { of: 'refused', why: `block ${arg} is beyond the chain's newest block, ${tip}.` };
   return { of: 'ok', height };
 }
 
 /** The lines printed for a tally, with the range of blocks it covers; a run that counted nothing says so. */
 export function tallyLines(tally: Tally, counted: { readonly from: number; readonly to: number | null }): string[] {
-  const lines = [counted.to === null
-    ? 'No block was counted: 0 contract deploys.'
-    : `Counted blocks ${counted.from} to ${counted.to}: ${tally.deploys} contract deploys.`];
+  const lines = [
+    counted.to === null
+      ? 'No block was counted: 0 contract deploys.'
+      : `Counted blocks ${counted.from} to ${counted.to}: ${tally.deploys} contract deploys.`
+  ];
   for (const contract of RELEASED_CONTRACTS) {
     const versions = Object.entries(tally.byContract[contract] ?? {}).sort(([a], [b]) => Number(a) - Number(b));
     const total = versions.reduce((n, [, count]) => n + count, 0);
-    lines.push(`  ${contract}: ${total} built from our published code${versions.length === 0 ? '' : ` (${versions.map(([v, n]) => `version ${v}: ${n}`).join(', ')})`}`);
+    lines.push(
+      `  ${contract}: ${total} built from our published code${versions.length === 0 ? '' : ` (${versions.map(([v, n]) => `version ${v}: ${n}`).join(', ')})`}`
+    );
   }
   lines.push(`  Contracts that match no published version: ${tally.matchesNone}`);
   lines.push(`  Contracts that could not be checked: ${tally.unchecked}`);
@@ -133,7 +169,13 @@ export interface WalkDoors {
 
 export type Walk =
   | { readonly of: 'done'; readonly tally: Tally; readonly lastCounted: number | null }
-  | { readonly of: 'stopped'; readonly tally: Tally; readonly lastCounted: number | null; readonly stoppedIn: number; readonly why: string };
+  | {
+      readonly of: 'stopped';
+      readonly tally: Tally;
+      readonly lastCounted: number | null;
+      readonly stoppedIn: number;
+      readonly why: string;
+    };
 
 const AT_ONCE = 8;
 const READ_TIMEOUT_MS = 30_000;
@@ -141,7 +183,9 @@ const TIMED_OUT = Symbol('timed out');
 
 async function readWithin(doors: WalkDoors, address: string): Promise<string | null | typeof TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<typeof TIMED_OUT>((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), doors.readTimeoutMs ?? READ_TIMEOUT_MS); });
+  const late = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), doors.readTimeoutMs ?? READ_TIMEOUT_MS);
+  });
   try {
     return await Promise.race([doors.read(address), late]);
   } finally {
@@ -149,7 +193,8 @@ async function readWithin(doors: WalkDoors, address: string): Promise<string | n
   }
 }
 
-type Counted = { readonly of: 'counted'; readonly verdicts: readonly Verdict[] } | { readonly of: 'stopped'; readonly why: string };
+type Counted =
+  { readonly of: 'counted'; readonly verdicts: readonly Verdict[] } | { readonly of: 'stopped'; readonly why: string };
 
 const reason = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -162,13 +207,18 @@ async function countBlock(doors: WalkDoors, height: number): Promise<Counted> {
     return { of: 'stopped', why: reason(e) };
   }
   const block = deploysInBlock(answer);
-  if (block.of === 'no-block') return { of: 'stopped', why: 'the indexer holds no block at this height, though the chain reaches past it.' };
+  if (block.of === 'no-block')
+    return { of: 'stopped', why: 'the indexer holds no block at this height, though the chain reaches past it.' };
   if (block.of === 'unread') return { of: 'stopped', why: block.why };
   const verdicts: Verdict[] = [];
   for (const address of block.deploys) {
     try {
       const hex = await readWithin(doors, address);
-      verdicts.push(hex === TIMED_OUT ? { of: 'unchecked', why: 'the state read took too long.' } : verdictOfState(hex, address, doors.versions));
+      verdicts.push(
+        hex === TIMED_OUT
+          ? { of: 'unchecked', why: 'the state read took too long.' }
+          : verdictOfState(hex, address, doors.versions)
+      );
     } catch (e) {
       return { of: 'stopped', why: reason(e) };
     }
@@ -181,7 +231,12 @@ async function countBlock(doors: WalkDoors, height: number): Promise<Counted> {
  * that stops resumes in the block it stopped in (`stoppedIn`), never after it, and a block the indexer does not hold
  * below the tip is a stop, never the end of the chain. Heights above `tip` are never asked for.
  */
-export async function walkBlocks(doors: WalkDoors, start: number, tip: number, progress: (height: number, tally: Tally) => void = () => {}): Promise<Walk> {
+export async function walkBlocks(
+  doors: WalkDoors,
+  start: number,
+  tip: number,
+  progress: (height: number, tally: Tally) => void = () => {}
+): Promise<Walk> {
   let tally = emptyTally();
   let lastCounted: number | null = null;
   for (let from = start; from <= tip; from += AT_ONCE) {

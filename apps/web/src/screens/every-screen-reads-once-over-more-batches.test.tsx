@@ -6,7 +6,6 @@ import { aCompanyOf } from './company-harness.test-support.js';
 import { SCREEN_PINS } from './screen-count-pins.test-support.js';
 import { screensCountedOn } from './screen-counts.test-support.js';
 
-
 const company = aCompanyOf({ people: 6, vendors: 4, vaults: 4, proposals: 2, anchoredBatches: 4 });
 
 screensCountedOn(company, { pins: SCREEN_PINS, labels: ['at the first size', 'over four batches'] });

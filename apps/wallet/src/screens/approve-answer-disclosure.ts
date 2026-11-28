@@ -16,11 +16,27 @@ import { openWalletId } from '../accounts/wallets-held.js';
 import type { ApproveInputs } from './approve-inputs.js';
 import type { ApproveState, WhatIsAsked } from './approve-state.js';
 
-export type DisclosureAnswer = Pick<ApproveInputs & ApproveState & WhatIsAsked,
-  'request' | 'profile' | 'channel' | 'rows' | 'picked' | 'refused' | 'subwallet' | 'identity' | 'port' | 'now' | 'thisWallet'
-  | 'setProblem' | 'setProfile' | 'setSentAt'>;
+export type DisclosureAnswer = Pick<
+  ApproveInputs & ApproveState & WhatIsAsked,
+  | 'request'
+  | 'profile'
+  | 'channel'
+  | 'rows'
+  | 'picked'
+  | 'refused'
+  | 'subwallet'
+  | 'identity'
+  | 'port'
+  | 'now'
+  | 'thisWallet'
+  | 'setProblem'
+  | 'setProfile'
+  | 'setSentAt'
+>;
 
-export function disclosedAndDeclined(a: Pick<DisclosureAnswer, 'rows' | 'picked' | 'refused'> & { readonly profile: Profile }): { readonly disclosed: Sent[]; readonly declined: AttributeName[] } {
+export function disclosedAndDeclined(
+  a: Pick<DisclosureAnswer, 'rows' | 'picked' | 'refused'> & { readonly profile: Profile }
+): { readonly disclosed: Sent[]; readonly declined: AttributeName[] } {
   const { rows, picked, refused, profile } = a;
   const disclosed: Sent[] = [];
   const declined: AttributeName[] = [];
@@ -52,22 +68,43 @@ export function disclosedAndDeclined(a: Pick<DisclosureAnswer, 'rows' | 'picked'
         /* NOBODY SAID IT. THIS WALLET WORKED IT OUT. `model.ts`'s third arm,
          * and `by: 'self'` here would be the wallet telling a recipient the
          * person typed something nothing they could type would change. */
-        asserted: { by: 'wallet' },
+        asserted: { by: 'wallet' }
       });
       continue;
     }
     const id = picked[row.attribute];
     const held = id === undefined ? undefined : profile.held.find((h) => h.id === id);
-    if (held === undefined) { declined.push(row.attribute); continue; }
+    if (held === undefined) {
+      declined.push(row.attribute);
+      continue;
+    }
     disclosed.push({
-      id: held.id, about: held.about, says: held.says, asserted: held.asserted,
+      id: held.id,
+      about: held.about,
+      says: held.says,
+      asserted: held.asserted
     });
   }
   return { disclosed, declined };
 }
 
 export function answerDisclosure(a: DisclosureAnswer): void {
-  const { identity, port, now, channel, profile, setProfile, subwallet, picked, refused, setProblem, setSentAt, thisWallet, request, rows } = a;
+  const {
+    identity,
+    port,
+    now,
+    channel,
+    profile,
+    setProfile,
+    subwallet,
+    picked,
+    refused,
+    setProblem,
+    setSentAt,
+    thisWallet,
+    request,
+    rows
+  } = a;
   if (request === null || profile === null || channel === null) return;
   /*
    * **AN UNLOCK NEVER COMES THROUGH HERE, AND THE TYPE IS WHAT SAYS
@@ -119,7 +156,7 @@ export function answerDisclosure(a: DisclosureAnswer): void {
     at,
     disclosed,
     declined,
-    requesterSaidItWas: { name: request.requester.name, rdns: request.requester.rdns },
+    requesterSaidItWas: { name: request.requester.name, rdns: request.requester.rdns }
   });
 
   /*
@@ -147,13 +184,11 @@ export function answerDisclosure(a: DisclosureAnswer): void {
    */
   let outgoing;
   try {
-    outgoing = request.kind === 'join'
-      ? sealToInbox(JSON.stringify(response), request.inboxPublicKey)
-      : response;
+    outgoing = request.kind === 'join' ? sealToInbox(JSON.stringify(response), request.inboxPublicKey) : response;
   } catch (e) {
-    setProblem(e instanceof Error
-      ? `${e.message} Nothing has been sent.`
-      : 'That could not be sealed, so nothing has been sent.');
+    setProblem(
+      e instanceof Error ? `${e.message} Nothing has been sent.` : 'That could not be sealed, so nothing has been sent.'
+    );
     return;
   }
   channel.answer(outgoing);
@@ -163,13 +198,17 @@ export function answerDisclosure(a: DisclosureAnswer): void {
    * has gone whether or not this can be written, so a failure is said, not thrown. */
   let noted = true;
   if (request.kind === 'sign-in') {
-    try { rememberSignIn(port, request.requester.origin, thisWallet, openWalletId()); } catch { noted = false; }
+    try {
+      rememberSignIn(port, request.requester.origin, thisWallet, openWalletId());
+    } catch {
+      noted = false;
+    }
   }
 
   const recipient: Recipient = {
     origin: request.requester.origin,
     name: request.requester.name,
-    rdns: request.requester.rdns,
+    rdns: request.requester.rdns
   };
   /*
    * **A SIGN-IN DOES NOT TOUCH THE GRANT, AND THAT IS A BUG THIS CHANGE CAUGHT
@@ -189,35 +228,41 @@ export function answerDisclosure(a: DisclosureAnswer): void {
    * the held values and the derived row is remembered by the disclosure
    * history alone, which is the record that says what was actually sent.
    */
-  const grantedIds = disclosed
-    .filter((s) => s.asserted.by !== 'wallet').map((s) => s.id);
-  let next = request.kind === 'sign-in'
-    ? profile
-    : grantTo(profile, recipient, subwallet, grantedIds, at);
+  const grantedIds = disclosed.filter((s) => s.asserted.by !== 'wallet').map((s) => s.id);
+  let next = request.kind === 'sign-in' ? profile : grantTo(profile, recipient, subwallet, grantedIds, at);
   /* THE HISTORY RECORDS CONTENT, NOT POINTERS. §3.2b. */
-  next = recordDisclosure(next, recipient, subwallet, {
-    at,
-    kind: request.kind,
-    nonce: request.nonce,
-    sent: disclosed,
-    declined,
-    /* §5.5 — the EXACT bytes that were signed, carried straight from `mint`
-     * rather than rebuilt here. Nothing on this screen re-serialises them. */
-    signed: {
-      bytes: signedBytes,
-      signature: response.signature,
-      verifyingKey: response.verifyingKey,
-      scheme: response.scheme,
+  next = recordDisclosure(
+    next,
+    recipient,
+    subwallet,
+    {
+      at,
+      kind: request.kind,
+      nonce: request.nonce,
+      sent: disclosed,
+      declined,
+      /* §5.5 — the EXACT bytes that were signed, carried straight from `mint`
+       * rather than rebuilt here. Nothing on this screen re-serialises them. */
+      signed: {
+        bytes: signedBytes,
+        signature: response.signature,
+        verifyingKey: response.verifyingKey,
+        scheme: response.scheme
+      }
     },
-  }, at);
+    at
+  );
   setProfile(next);
   setSentAt(at);
   if (!noted) {
-    setProblem('It was sent, and this wallet could not note that it answered this sign-in. Until a '
-      + 'later sign-in to that page is noted, this browser\'s note of which wallet answered it may be '
-      + 'out of date: another wallet here may be let give that page a company\'s key, and this one '
-      + 'may be refused.');
+    setProblem(
+      'It was sent, and this wallet could not note that it answered this sign-in. Until a ' +
+        "later sign-in to that page is noted, this browser's note of which wallet answered it may be " +
+        "out of date: another wallet here may be let give that page a company's key, and this one " +
+        'may be refused.'
+    );
   }
-  void save(port, identity, next).catch(
-    () => setProblem('It was sent, and this wallet could not write down that it was.'));
+  void save(port, identity, next).catch(() =>
+    setProblem('It was sent, and this wallet could not write down that it was.')
+  );
 }

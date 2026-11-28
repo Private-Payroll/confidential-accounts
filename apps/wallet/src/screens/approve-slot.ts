@@ -17,7 +17,12 @@ import { alsoUsedBy, chooseSlot } from '../accounts/slot-choice.js';
  * nothing. An action named here is given no way to the person's own wallet or coins, which a test checks over what
  * each action is given.
  */
-export const SENDS_NOTHING: ReadonlySet<string> = new Set(['claim-by-address', 'join-by-code', 'reader-keys', 'drop-role-change']);
+export const SENDS_NOTHING: ReadonlySet<string> = new Set([
+  'claim-by-address',
+  'join-by-code',
+  'reader-keys',
+  'drop-role-change'
+]);
 
 /**
  * The actions whose payment is coins from the person's own account, not only a call's network fee. A test refuses an
@@ -50,6 +55,9 @@ export const paysCoins = (ask: Ask): boolean =>
  */
 export const slotIsQuiet = (profile: Profile, origin: string, subwallet: number): boolean => {
   const offered = chooseSlot(profile, origin);
-  return offered.account === subwallet && offered.because !== 'every-slot-used'
-    && alsoUsedBy(profile, subwallet, origin).length === 0;
+  return (
+    offered.account === subwallet &&
+    offered.because !== 'every-slot-used' &&
+    alsoUsedBy(profile, subwallet, origin).length === 0
+  );
 };

@@ -52,7 +52,9 @@ const bodyOf = (name: string): string => {
  * tag it is the SHA-256 of named in the comment above them; `fixedBytesOf` checks the bytes are that hash.
  */
 const tagOf = (name: string): string => {
-  const m = bodyOf(name).match(/pad\(32, "([^"]+)"\)/) ?? bodyOf(name).match(/\/\/ SHA-256 of "([^"]+)" zero-padded to 32 bytes/);
+  const m =
+    bodyOf(name).match(/pad\(32, "([^"]+)"\)/) ??
+    bodyOf(name).match(/\/\/ SHA-256 of "([^"]+)" zero-padded to 32 bytes/);
   if (!m) throw new Error(`${name} hashes no tag`);
   return m[1]!;
 };
@@ -60,7 +62,10 @@ const tagOf = (name: string): string => {
 const fixedBytesOf = (name: string): string => {
   const m = bodyOf(name).match(/return Bytes\[([^\]]+)\];/);
   if (!m) throw new Error(`${name} is not written out as 32 bytes`);
-  return m[1]!.split(',').map((b) => Number(b.trim()).toString(16).padStart(2, '0')).join('');
+  return m[1]!
+    .split(',')
+    .map((b) => Number(b.trim()).toString(16).padStart(2, '0'))
+    .join('');
 };
 /** SHA-256 of a tag padded with zeros to 32 bytes, as the fixed names were first derived. */
 const sha256OfTag = (tag: string): string => {
@@ -75,8 +80,15 @@ const sha256OfTag = (tag: string): string => {
  * together still fail.
  */
 const FIXED = [
-  'allVaults', 'noVault', 'companyWide', 'payKeyCommitmentKey', 'companyLabelKey', 'anchorKey', 'anchorSeatKey',
-  'lastRecoveryKey', 'policyBarKey',
+  'allVaults',
+  'noVault',
+  'companyWide',
+  'payKeyCommitmentKey',
+  'companyLabelKey',
+  'anchorKey',
+  'anchorSeatKey',
+  'lastRecoveryKey',
+  'policyBarKey'
 ] as const;
 const IN_FORCE = versionsInForce();
 
@@ -97,7 +109,7 @@ const SIGNER_ROLES_WRITES = [
   'anchorSeatKey()',
   'anchorKey()',
   'anchorSeatKey()',
-  'lastRecoveryKey()',
+  'lastRecoveryKey()'
 ];
 /*
  * `propose` writes each proposal's hold; `holdRun`, `releaseHold` and the receipt step (which marks
@@ -148,14 +160,21 @@ describe('every insert into the two shared maps is one this file knows', () => {
 
   it('the anchor and a recovery write one head and one seat under their fixed keys, each derived in the circuit', () => {
     /* RED WHEN the anchor or a recovery writes under a key or a value taken from its caller. */
-    expect(SRC).toContain('signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorHeldOf(records, judged, root, tag)));');
-    expect(bodyOf('recoverAnchor')).toContain('const head = anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed));');
+    expect(SRC).toContain(
+      'signerRoles.insert(anchorKey(), anchorHeadOf(before, anchorHeldOf(records, judged, root, tag)));'
+    );
+    expect(bodyOf('recoverAnchor')).toContain(
+      'const head = anchorHeadOf(before, anchorRecoveredOf(records, judged, root, tag, resumed));'
+    );
     expect(bodyOf('recoverAnchor')).toContain('signerRoles.insert(anchorKey(), head);');
     expect(SRC.match(/signerRoles\.insert\(anchorSeatKey\(\), tag\);/g)).toHaveLength(2);
     /* RED WHEN a recovery writes anything but the head it moved the anchor to as the latest recovery's head. */
     expect(bodyOf('recoverAnchor')).toContain('signerRoles.insert(lastRecoveryKey(), head);');
     /* RED WHEN the seat's tag is taken from the caller rather than worked out from the seat the circuit proved. */
-    const mayMove = SRC.slice(SRC.indexOf('circuit anchorMayMove('), SRC.indexOf('\n}\n', SRC.indexOf('circuit anchorMayMove(')));
+    const mayMove = SRC.slice(
+      SRC.indexOf('circuit anchorMayMove('),
+      SRC.indexOf('\n}\n', SRC.indexOf('circuit anchorMayMove('))
+    );
     expect(mayMove).toContain('return disclose(anchorTagOf(kernel.self().bytes, caller.pk, caller.blinding));');
     expect(bodyOf('anchor')).toContain('const caller = openedSeat();');
     expect(bodyOf('recoverAnchor')).toContain('const caller = openedSeat();');
@@ -170,7 +189,10 @@ describe('every insert into the two shared maps is one this file knows', () => {
     expect(bodyOf('holdRun')).toContain('const hold = holdOf(id);');
     expect(bodyOf('releaseHold')).toContain('const hold = holdOf(id);');
     /* RED WHEN the paid-from mark writes under a key it did not first read as an open proposal's hold. */
-    const mark = SRC.slice(SRC.indexOf('circuit markPaidFrom('), SRC.indexOf('\n}\n', SRC.indexOf('circuit markPaidFrom(')));
+    const mark = SRC.slice(
+      SRC.indexOf('circuit markPaidFrom('),
+      SRC.indexOf('\n}\n', SRC.indexOf('circuit markPaidFrom('))
+    );
     expect(mark).toContain('const hold = holdOf(proposal);');
   });
 
@@ -186,21 +208,42 @@ describe('every insert into the two shared maps is one this file knows', () => {
     expect(SRC.match(/approvals\.insert\(nul\);/g)).toHaveLength(2);
     /* The third is the raise's: the raiser's approval nullifier, computed in the helper both raises share from the
      * secret key of the seat each one proved. */
-    const opened = SRC.slice(SRC.indexOf('circuit openProposal('), SRC.indexOf('\n}\n', SRC.indexOf('circuit openProposal(')));
+    const opened = SRC.slice(
+      SRC.indexOf('circuit openProposal('),
+      SRC.indexOf('\n}\n', SRC.indexOf('circuit openProposal('))
+    );
     expect(opened).toContain('approvals.insert(disclose(approvalNullifier(sk, id)));');
     expect(bodyOf('propose')).toMatch(/const caller = seat\(\);[\s\S]*openProposal\(id, change, caller\.sk,/);
-    expect(bodyOf('proposeCompanyChange')).toMatch(/const caller = seat\(\);[\s\S]*openProposal\(id, companyChangeMark\(\), caller\.sk,/);
+    expect(bodyOf('proposeCompanyChange')).toMatch(
+      /const caller = seat\(\);[\s\S]*openProposal\(id, companyChangeMark\(\), caller\.sk,/
+    );
   });
 });
 
 describe('the derivations are separated by their tags', () => {
   const DERIVATIONS = [
-    'companyLabelKey', 'payKeyCommitmentKey', 'payKeyWrapBaseOf', 'anchorKey',
-    'removalCountKey', 'proposalIdOf',
-    'policyKeyOf', 'policyOnKeyOf', 'periodKeyOf', 'chargedKeyOf', 'changesUsedKeyOf',
-    'anchorHeadOf', 'anchorHeldOf', 'retrySaltOf', 'periodTotalTag', 'legTakenTag',
-    'anchorSeatKey', 'anchorTagOf', 'anchorRecoveredOf', 'recoverAnchorPayload', 'lastRecoveryKey',
-    'approvalNullifierOf',
+    'companyLabelKey',
+    'payKeyCommitmentKey',
+    'payKeyWrapBaseOf',
+    'anchorKey',
+    'removalCountKey',
+    'proposalIdOf',
+    'policyKeyOf',
+    'policyOnKeyOf',
+    'periodKeyOf',
+    'chargedKeyOf',
+    'changesUsedKeyOf',
+    'anchorHeadOf',
+    'anchorHeldOf',
+    'retrySaltOf',
+    'periodTotalTag',
+    'legTakenTag',
+    'anchorSeatKey',
+    'anchorTagOf',
+    'anchorRecoveredOf',
+    'recoverAnchorPayload',
+    'lastRecoveryKey',
+    'approvalNullifierOf'
   ];
 
   it("every derivation has its own tag, and the anchor's is the one ruled", () => {
@@ -219,7 +262,8 @@ describe('the derivations are separated by their tags', () => {
       /* RED WHEN the compiled circuit returns anything but those bytes. */
       expect(hex((pureCircuits as unknown as Record<string, () => Uint8Array>)[fixed]!())).toBe(fixedBytesOf(fixed));
       /* RED WHEN a fixed name moves off the value accounts on any version in force hold their entries under, even with its tag moved too. */
-      for (const [version, facts] of IN_FORCE) expect(fixedBytesOf(fixed), `version ${version}`).toBe(recordedHexOf(facts.account, fixed));
+      for (const [version, facts] of IN_FORCE)
+        expect(fixedBytesOf(fixed), `version ${version}`).toBe(recordedHexOf(facts.account, fixed));
     }
     /* RED WHEN two fixed names share a tag or a value: two writers of a shared map, or a scope standing for a vault. */
     expect(new Set(FIXED.map(tagOf)).size).toBe(FIXED.length);
@@ -231,38 +275,73 @@ describe('the derivations are separated by their tags', () => {
     const wrapped = [0n, 1n, 2n, 3n].map((part) => hex(partKeyOf(top, part)));
     /* RED WHEN the runtime stops keeping the key to the 31 bytes the circuit keeps, so a device reads where nothing was written. */
     expect(wrapped).toEqual(['ff'.repeat(31) + '00', '00'.repeat(32), '01' + '00'.repeat(31), '02' + '00'.repeat(31)]);
-    for (const [dir, circuit] of [['managed', 'sealPayKey'], ['managed-vault', 'writeSecretCopy']]) {
-      const zkir = JSON.parse(readFileSync(join(import.meta.dirname, '..', dir!, 'zkir', `${circuit}.zkir`), 'utf8')) as { instructions: Array<{ op: string; bits?: number }> };
+    for (const [dir, circuit] of [
+      ['managed', 'sealPayKey'],
+      ['managed-vault', 'writeSecretCopy']
+    ]) {
+      const zkir = JSON.parse(
+        readFileSync(join(import.meta.dirname, '..', dir!, 'zkir', `${circuit}.zkir`), 'utf8')
+      ) as { instructions: Array<{ op: string; bits?: number }> };
       /* RED WHEN the circuit stops keeping each part key to 248 bits, as the runtime does. */
-      expect(zkir.instructions.filter((i) => i.op === 'div_mod_power_of_two' && i.bits === 248).length).toBeGreaterThanOrEqual(4);
+      expect(
+        zkir.instructions.filter((i) => i.op === 'div_mod_power_of_two' && i.bits === 248).length
+      ).toBeGreaterThanOrEqual(4);
     }
   });
 
   it('the derived keys hash their tag FIRST', () => {
-    expect(bodyOf('payKeyWrapBaseOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[pad\(32, "midnight-accounts:roles:wrap:"\), account, sk\]\)/);
+    expect(bodyOf('payKeyWrapBaseOf')).toMatch(
+      /persistentHash<Vector<3, Bytes<32>>>\(\[pad\(32, "midnight-accounts:roles:wrap:"\), account, sk\]\)/
+    );
     /* RED WHEN a part's key is made any other way than the shared hash plus the part. */
     expect(bodyOf('payKeyWrapKeyOf')).toMatch(/return payKeyWrapKeyFrom\(payKeyWrapBaseOf\(account, sk\), part\);/);
-    expect(bodyOf('payKeyWrapKeyFrom')).toMatch(/return upgradeFromTransient\(degradeToTransient\(base\) \+ \(part as Field\)\);/);
-    expect(bodyOf('proposalIdOf')).toMatch(/persistentCommit<Vector<3, Bytes<32>>>\(\s*\[pad\(32, "midnight-accounts:proposal-id:"\)/);
+    expect(bodyOf('payKeyWrapKeyFrom')).toMatch(
+      /return upgradeFromTransient\(degradeToTransient\(base\) \+ \(part as Field\)\);/
+    );
+    expect(bodyOf('proposalIdOf')).toMatch(
+      /persistentCommit<Vector<3, Bytes<32>>>\(\s*\[pad\(32, "midnight-accounts:proposal-id:"\)/
+    );
     /* RED WHEN a policy key stops hashing its own tag first. */
-    expect(bodyOf('policyKeyOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:policy:"\), vault, assetKey/);
-    expect(bodyOf('policyOnKeyOf')).toMatch(/persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:pol-on:"\), vault/);
-    expect(bodyOf('periodKeyOf')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:period:"\), policyKey, commitment,/);
-    expect(bodyOf('chargedKeyOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:charged:"\), periodKey, root/);
+    expect(bodyOf('policyKeyOf')).toMatch(
+      /persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:policy:"\), vault, assetKey/
+    );
+    expect(bodyOf('policyOnKeyOf')).toMatch(
+      /persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:pol-on:"\), vault/
+    );
+    expect(bodyOf('periodKeyOf')).toMatch(
+      /persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:period:"\), policyKey, commitment,/
+    );
+    expect(bodyOf('chargedKeyOf')).toMatch(
+      /persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:charged:"\), periodKey, root/
+    );
     /* RED WHEN a head stops hashing its own tag first, then the head before it, then the batch. */
-    expect(bodyOf('anchorHeadOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:"\), previous, batch/);
+    expect(bodyOf('anchorHeadOf')).toMatch(
+      /persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:"\), previous, batch/
+    );
     /* RED WHEN what one anchor folds stops hashing its own tag first, then the batch, the approvals and the signer root. */
-    expect(bodyOf('anchorHeldOf')).toMatch(/persistentHash<Vector<5, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:held:"\), batch, approvals as Field as Bytes<32>, signerRoot\.field as Bytes<32>, tag/);
+    expect(bodyOf('anchorHeldOf')).toMatch(
+      /persistentHash<Vector<5, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:held:"\), batch, approvals as Field as Bytes<32>, signerRoot\.field as Bytes<32>, tag/
+    );
     /* RED WHEN what a recovery folds stops hashing its own tag first, then as an anchor does, then the head it resumes from. */
-    expect(bodyOf('anchorRecoveredOf')).toMatch(/persistentHash<Vector<6, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:recovered:"\), batch, approvals as Field as Bytes<32>, signerRoot\.field as Bytes<32>, tag,\s*resumesFrom/);
+    expect(bodyOf('anchorRecoveredOf')).toMatch(
+      /persistentHash<Vector<6, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:recovered:"\), batch, approvals as Field as Bytes<32>, signerRoot\.field as Bytes<32>, tag,\s*resumesFrom/
+    );
     /* RED WHEN what a recovery is approved for stops hashing its own tag first, then the head it resumes from, its latest time and the latest recovery's head. */
-    expect(bodyOf('recoverAnchorPayload')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:recover:"\), resumesFrom, latest as Field as Bytes<32>, lastRecovery/);
+    expect(bodyOf('recoverAnchorPayload')).toMatch(
+      /persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:recover:"\), resumesFrom, latest as Field as Bytes<32>, lastRecovery/
+    );
     /* RED WHEN a seat's tag stops hashing its own tag first, then the account, the seat's key and its blinding. */
-    expect(bodyOf('anchorTagOf')).toMatch(/persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:seat:"\), account, pk, blinding/);
+    expect(bodyOf('anchorTagOf')).toMatch(
+      /persistentHash<Vector<4, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:anchor:seat:"\), account, pk, blinding/
+    );
     /* RED WHEN a retry's salt stops hashing its own tag first, then its leg's root. */
-    expect(bodyOf('retrySaltOf')).toMatch(/persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:retry-salt:"\), legRoot, fresh/);
+    expect(bodyOf('retrySaltOf')).toMatch(
+      /persistentHash<Vector<3, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:retry-salt:"\), legRoot, fresh/
+    );
     /* RED WHEN the count of a run's used changes stops hashing its own tag first, with the run's id. */
-    expect(bodyOf('changesUsedKeyOf')).toMatch(/persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:used:"\), proposal/);
+    expect(bodyOf('changesUsedKeyOf')).toMatch(
+      /persistentHash<Vector<2, Bytes<32>>>\(\[\s*pad\(32, "midnight-accounts:roles:used:"\), proposal/
+    );
     /* The removal count's key is the padded tag itself, which no hash is expected to produce. */
     expect(bodyOf('removalCountKey')).toMatch(/return pad\(32, "midnight-accounts:removal-count"\);/);
   });
@@ -275,7 +354,7 @@ describe('and computed for real inputs, every key differs', () => {
       pureCircuits.payKeyCommitmentKey(),
       pureCircuits.anchorKey(),
       pureCircuits.anchorSeatKey(),
-      pureCircuits.lastRecoveryKey(),
+      pureCircuits.lastRecoveryKey()
     ];
     for (const account of [bytes(0xa0), bytes(0xa1)]) {
       for (const sk of [bytes(1), bytes(2)]) {
@@ -306,8 +385,12 @@ describe('and computed for real inputs, every key differs', () => {
 
   it('and nothing in one map is keyed like the other: the fixed keys of both are six distinct values', () => {
     const fixed = [
-      pureCircuits.companyLabelKey(), pureCircuits.payKeyCommitmentKey(),
-      pureCircuits.anchorKey(), pureCircuits.anchorSeatKey(), pureCircuits.lastRecoveryKey(), pureCircuits.removalCountKey(),
+      pureCircuits.companyLabelKey(),
+      pureCircuits.payKeyCommitmentKey(),
+      pureCircuits.anchorKey(),
+      pureCircuits.anchorSeatKey(),
+      pureCircuits.lastRecoveryKey(),
+      pureCircuits.removalCountKey()
     ];
     expect(new Set(fixed.map(hex)).size).toBe(6);
   });

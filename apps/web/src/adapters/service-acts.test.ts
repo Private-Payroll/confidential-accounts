@@ -12,38 +12,61 @@ import { ACT_REFUSAL } from './refusals.js';
  */
 const COMPANY = 'c-1';
 const kr = vi.hoisted(() => ({
-  user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
-  named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, seat: null as unknown, filed: null as unknown,
+  user: { id: 'u1' } as { id: string } | null,
+  acts: [] as Record<string, string>[],
+  ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
+  named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown,
+  seat: null as unknown,
+  filed: null as unknown,
   /* What the shared reader of the versions was handed to read the company's records with. */
-  reach: null as Record<string, unknown> | null,
+  reach: null as Record<string, unknown> | null
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('./filing-judge.js', async (real) => ({
-  ...(await real<typeof import('./filing-judge.js')>()),
+  ...(await real<typeof import('./filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  actOnACompanyInTheWallet: async (intent: Record<string, string>) => { kr.acts.push(intent); return kr.ended; },
+  actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
+    kr.acts.push(intent);
+    return kr.ended;
+  }
 }));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : kr.named),
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('./service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : kr.named)
+  })
+);
 /* Who holds the company, as the person's wallet reads it for the view's first read. */
 vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
-  holdersFromTheWallet: async () => ({ holders: { committee: [], threshold: 1, seats: [], approvals: 1, adoptedVaults: [], vaultThresholds: [], policyBar: null }, indexer: null }),
+  holdersFromTheWallet: async () => ({
+    holders: {
+      committee: [],
+      threshold: 1,
+      seats: [],
+      approvals: 1,
+      adoptedVaults: [],
+      vaultThresholds: [],
+      policyBar: null
+    },
+    indexer: null
+  })
 }));
 vi.mock('./vault-private-money.js', async (real) => ({
   ...(await real<typeof import('./vault-private-money.js')>()),
-  seatAndRecordsHere: async () => kr.seat,
+  seatAndRecordsHere: async () => kr.seat
 }));
 vi.mock('vaults-web-shared/company-service-here.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/company-service-here.js')>()),
-  companyServiceFiledHere: async (reach: Record<string, unknown>) => { kr.reach = reach; return kr.filed; },
+  companyServiceFiledHere: async (reach: Record<string, unknown>) => {
+    kr.reach = reach;
+    return kr.filed;
+  }
 }));
 
 async function load() {
@@ -55,15 +78,35 @@ async function load() {
 const key = (n: number): Hex => n.toString(16).padStart(64, '0') as Hex;
 const SEATS = [1, 2, 3].map((n) => ({ seat: `0${n}`.padEnd(64, '0'), signingKey: key(n) }));
 const HERE = {
-  leaf: SEATS[1]!.seat, company: 'label-1', account: 'c0'.repeat(32), viewingKey: {}, opened: { signers: [] }, mine: { signerId: 'x', wrappingSecret: key(9) },
-  directory: async () => ({ dir: { seats: SEATS } }),
+  leaf: SEATS[1]!.seat,
+  company: 'label-1',
+  account: 'c0'.repeat(32),
+  viewingKey: {},
+  opened: { signers: [] },
+  mine: { signerId: 'x', wrappingSecret: key(9) },
+  directory: async () => ({ dir: { seats: SEATS } })
 };
 const OWN = { service: 'own' as const, at: 'https://service.example.com' };
 const filedBy = (version: number, who: number, choice: unknown) => ({ version, filer: key(who), choice });
-const reset = (): void => { kr.user = { id: 'u1' }; kr.acts = []; kr.ended = { of: 'done', steps: 1, relayed: 0 }; kr.seat = HERE; kr.filed = { versions: [], needed: 2, highest: 0 }; };
-const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({ of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', ...(refused === undefined ? {} : { refused }), ...over });
+const reset = (): void => {
+  kr.user = { id: 'u1' };
+  kr.acts = [];
+  kr.ended = { of: 'done', steps: 1, relayed: 0 };
+  kr.seat = HERE;
+  kr.filed = { versions: [], needed: 2, highest: 0 };
+};
+const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({
+  of: 'stopped',
+  step: 2,
+  steps: 4,
+  relayed: 0,
+  unconfirmed: 0,
+  why: 'check-failed',
+  ...(refused === undefined ? {} : { refused }),
+  ...over
+});
 
-describe('what the page reads of the company\'s choice of service', () => {
+describe("what the page reads of the company's choice of service", () => {
   /* RED WHEN: a company that filed nothing is shown as having chosen, or is not told its calls go through ours. */
   it('says nothing was chosen and that the calls go through ours', async () => {
     reset();
@@ -74,23 +117,37 @@ describe('what the page reads of the company\'s choice of service', () => {
   });
 
   /* RED WHEN: a choice filed by too few signers is shown in force, or the seats that filed it, this device's own among them, are not named. */
-  it('shows a choice filed by one of two needed as asked, not in force, naming who filed it and which seat is this device\'s', async () => {
+  it("shows a choice filed by one of two needed as asked, not in force, naming who filed it and which seat is this device's", async () => {
     reset();
     kr.filed = { versions: [filedBy(1, 2, OWN)], needed: 2, highest: 1 };
     const { readService, SERVICE_READ } = await load();
     expect(await readService('u1', aViewOf(COMPANY))).toMatchObject({
-      of: SERVICE_READ.read, inForce: { service: 'ours' }, asked: { choice: OWN, needed: 2, filers: [{ seat: SEATS[1]!.seat, you: true }] },
+      of: SERVICE_READ.read,
+      inForce: { service: 'ours' },
+      asked: { choice: OWN, needed: 2, filers: [{ seat: SEATS[1]!.seat, you: true }] }
     });
   });
 
   /* RED WHEN: the choice in force is not the one the needed number of signers filed, or the filers of an earlier, different choice are counted for it. */
   it('puts a choice in force once enough seats filed it and counts only the seats that filed the newest choice', async () => {
     reset();
-    kr.filed = { versions: [filedBy(1, 2, { service: 'none' }), filedBy(2, 1, OWN), filedBy(3, 3, OWN)], needed: 2, highest: 3 };
+    kr.filed = {
+      versions: [filedBy(1, 2, { service: 'none' }), filedBy(2, 1, OWN), filedBy(3, 3, OWN)],
+      needed: 2,
+      highest: 3
+    };
     const { readService, SERVICE_READ } = await load();
     expect(await readService('u1', aViewOf(COMPANY))).toMatchObject({
-      of: SERVICE_READ.read, inForce: OWN, unchosen: null,
-      asked: { choice: OWN, filers: [{ seat: SEATS[0]!.seat, you: false }, { seat: SEATS[2]!.seat, you: false }] },
+      of: SERVICE_READ.read,
+      inForce: OWN,
+      unchosen: null,
+      asked: {
+        choice: OWN,
+        filers: [
+          { seat: SEATS[0]!.seat, you: false },
+          { seat: SEATS[2]!.seat, you: false }
+        ]
+      }
     });
   });
 
@@ -99,9 +156,17 @@ describe('what the page reads of the company\'s choice of service', () => {
     reset();
     const { readService, SERVICE_READ } = await load();
     kr.filed = { unread: 'the service did not give version 2', fileOver: { versions: [], needed: 2, highest: 2 } };
-    expect(await readService('u1', aViewOf(COMPANY))).toEqual({ of: SERVICE_READ.unread, why: 'the service did not give version 2', canFileOver: true });
+    expect(await readService('u1', aViewOf(COMPANY))).toEqual({
+      of: SERVICE_READ.unread,
+      why: 'the service did not give version 2',
+      canFileOver: true
+    });
     kr.filed = { unread: 'withheld' };
-    expect(await readService('u1', aViewOf(COMPANY))).toEqual({ of: SERVICE_READ.unread, why: 'withheld', canFileOver: false });
+    expect(await readService('u1', aViewOf(COMPANY))).toEqual({
+      of: SERVICE_READ.unread,
+      why: 'withheld',
+      canFileOver: false
+    });
   });
 
   /* RED WHEN: a device with no seat or no keys is shown a choice, or a read that throws escapes the page. */
@@ -109,15 +174,23 @@ describe('what the page reads of the company\'s choice of service', () => {
     reset();
     kr.seat = ACT_REFUSAL.noKeysHere;
     const { readService, SERVICE_READ } = await load();
-    expect(await readService('u1', aViewOf(COMPANY))).toEqual({ of: SERVICE_READ.refused, why: ACT_REFUSAL.noKeysHere });
-    kr.seat = { ...HERE, directory: async () => { throw new Error('down'); } };
+    expect(await readService('u1', aViewOf(COMPANY))).toEqual({
+      of: SERVICE_READ.refused,
+      why: ACT_REFUSAL.noKeysHere
+    });
+    kr.seat = {
+      ...HERE,
+      directory: async () => {
+        throw new Error('down');
+      }
+    };
     expect((await readService('u1', aViewOf(COMPANY))).of).toBe(SERVICE_READ.refused);
   });
 });
 
-describe('the company\'s records the choice of service is read from', () => {
+describe("the company's records the choice of service is read from", () => {
   /* RED WHEN: the shared reader the wallet also calls is handed a way to the company's records around the opening's view, so its read is not the one the check before a write compares. */
-  it('are read through the opening\'s view, and the reader is handed no other way to the service', async () => {
+  it("are read through the opening's view, and the reader is handed no other way to the service", async () => {
     reset();
     const { readService } = await load();
     const view = aViewOf(COMPANY);
@@ -126,21 +199,29 @@ describe('the company\'s records the choice of service is read from', () => {
     expect(Object.keys(reach)).not.toContain('api');
     expect(Object.keys(reach)).not.toContain('send');
     const before = view.counts()['records'] ?? 0;
-    await (reach['records'] as (asked: readonly { kind: string; id: string }[]) => Promise<unknown>)([{ kind: 'service', id: 'service' }]);
+    await (reach['records'] as (asked: readonly { kind: string; id: string }[]) => Promise<unknown>)([
+      { kind: 'service', id: 'service' }
+    ]);
     expect((view.counts()['records'] ?? 0) - before).toBe(1);
   });
 });
 
 describe('what the page asks of the wallet when the choice is filed', () => {
   /* RED WHEN: the act is not the wallet's choose-company-service, or its address is sent for a choice that names none. */
-  it('sends the choice and, for the company\'s own service, its address', async () => {
+  it("sends the choice and, for the company's own service, its address", async () => {
     reset();
     const { chooseService, SERVICE_ACTED, SERVICE_STATE } = await load();
     kr.ended = { of: 'done', steps: 4, relayed: 0, outcome: { state: SERVICE_STATE.waiting, filed: 1, needed: 2 } };
-    expect(await chooseService('u1', aViewOf(COMPANY), OWN)).toEqual({ of: SERVICE_ACTED.done, state: 'waiting-for-signers', filed: 1, needed: 2 });
+    expect(await chooseService('u1', aViewOf(COMPANY), OWN)).toEqual({
+      of: SERVICE_ACTED.done,
+      state: 'waiting-for-signers',
+      filed: 1,
+      needed: 2
+    });
     await chooseService('u1', aViewOf(COMPANY), { service: 'none' });
     expect(kr.acts.map((a) => ({ name: a['name'], service: a['service'], at: a['at'] }))).toEqual([
-      { name: 'choose-company-service', service: 'own', at: OWN.at }, { name: 'choose-company-service', service: 'none', at: undefined },
+      { name: 'choose-company-service', service: 'own', at: OWN.at },
+      { name: 'choose-company-service', service: 'none', at: undefined }
     ]);
   });
 
@@ -148,9 +229,18 @@ describe('what the page asks of the wallet when the choice is filed', () => {
   it('opens no wallet for a choice that is not one', async () => {
     reset();
     const { chooseService, SERVICE_ACTED } = await load();
-    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'own', at: 'http://x.example.com' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-an-address' });
-    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'own', at: '' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-an-address' });
-    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'sideways' as 'none' })).toEqual({ of: SERVICE_ACTED.problem, problem: 'not-a-choice' });
+    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'own', at: 'http://x.example.com' })).toEqual({
+      of: SERVICE_ACTED.problem,
+      problem: 'not-an-address'
+    });
+    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'own', at: '' })).toEqual({
+      of: SERVICE_ACTED.problem,
+      problem: 'not-an-address'
+    });
+    expect(await chooseService('u1', aViewOf(COMPANY), { service: 'sideways' as 'none' })).toEqual({
+      of: SERVICE_ACTED.problem,
+      problem: 'not-a-choice'
+    });
     expect(kr.acts).toEqual([]);
   });
 
@@ -162,7 +252,12 @@ describe('what the page asks of the wallet when the choice is filed', () => {
       kr.ended = stopped(code === undefined ? undefined : `act.choose-company-service.why.${code}`, over);
       return chooseService('u1', aViewOf(COMPANY), OWN);
     };
-    expect(await why('role-may-not-file')).toEqual({ of: SERVICE_ACTED.stopped, why: SERVICE_WHY.mayNotFile, partial: false, handedOver: false });
+    expect(await why('role-may-not-file')).toEqual({
+      of: SERVICE_ACTED.stopped,
+      why: SERVICE_WHY.mayNotFile,
+      partial: false,
+      handedOver: false
+    });
     expect(await why('filed-meanwhile')).toMatchObject({ why: SERVICE_WHY.filedMeanwhile, partial: false });
     expect(await why('unread')).toMatchObject({ why: SERVICE_WHY.unread });
     expect(await why('no-seat')).toMatchObject({ why: SERVICE_WHY.seat });

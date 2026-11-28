@@ -16,9 +16,16 @@ import { ActionStopped } from './run.js';
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
 export async function companyRecordFiledHere(
-  r: CompanyReach, rec: SealedCompanyRecord, why: (key: string, values?: Readonly<Record<string, string | number>>) => Words,
+  r: CompanyReach,
+  rec: SealedCompanyRecord,
+  why: (key: string, values?: Readonly<Record<string, string | number>>) => Words
 ): Promise<void> {
-  const store = new HttpCompanyRecordStore(r.accountId, readsJoinedIn(r.stepView), r.seat.signingSecret as Hex, r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster));
+  const store = new HttpCompanyRecordStore(
+    r.accountId,
+    readsJoinedIn(r.stepView),
+    r.seat.signingSecret as Hex,
+    r.judges.filingJudgeFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)
+  );
   try {
     await store.put(rec);
   } catch (e) {

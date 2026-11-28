@@ -126,7 +126,6 @@ export interface KeyringStore {
   write(sealed: Uint8Array, ifVersion: number): Promise<number>;
 }
 
-
 /**
  * READING A WALLET — balance, history, the address. This is what is implemented.
  *

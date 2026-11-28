@@ -27,11 +27,14 @@ export function parametersFetched(o: ParameterOutcome): { ok: boolean; lines: st
   const left = o.unread.filter((u) => NETWORK_LABELS.some((label) => u === `${label}: ${ABSENT}`));
   const unread = o.unread.filter((u) => !left.includes(u));
   if (o.present.length > 0) lines.push(`already here and checked: ${o.present.join(', ')}`);
-  for (const f of o.fetched) lines.push(`fetched ${f.name} (${f.bytes} bytes) from ${f.from}, checked against Midnight's published digest`);
-  for (const a of o.setAside) lines.push(`${a.from} was not the published file; it was renamed to ${a.to} and replaced`);
+  for (const f of o.fetched)
+    lines.push(`fetched ${f.name} (${f.bytes} bytes) from ${f.from}, checked against Midnight's published digest`);
+  for (const a of o.setAside)
+    lines.push(`${a.from} was not the published file; it was renamed to ${a.to} and replaced`);
   if (left.length > 0) lines.push(`not fetched here: ${left.join('; ')} (this check does not fetch them)`);
   const problems: string[] = [];
-  for (const m of o.missing) problems.push(`${m.name} is missing and could not be fetched: ${m.why}; needed by: ${m.circuits.join(', ')}`);
+  for (const m of o.missing)
+    problems.push(`${m.name} is missing and could not be fetched: ${m.why}; needed by: ${m.circuits.join(', ')}`);
   for (const u of unread) problems.push(`${u}, so the parameters it needs were not looked for`);
   if (problems.length === 0 && o.present.length + o.fetched.length === 0) {
     problems.push('no circuit was checked, so no public parameters are in place');

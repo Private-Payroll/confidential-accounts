@@ -29,52 +29,78 @@ export type Stage =
   | { of: 'sent'; at: number; leaves: LeavesTheWallet[]; pays: PageAskPays };
 
 /** What this wallet cannot check of the vault, and the one check that is made: by the company's own service, and only there. */
-const VAULT_CHECK = 'This wallet cannot check that the vault belongs to that company. If this page is run by the company\u2019s own service, '
-  + 'that service will not send a deposit into a vault it did not see created for the company and that is not pinned to the '
-  + 'company\u2019s account on the chain. A page run by someone else gives you no such check. Compare the vault with one the '
-  + 'company gave you another way.';
+const VAULT_CHECK =
+  'This wallet cannot check that the vault belongs to that company. If this page is run by the company\u2019s own service, ' +
+  'that service will not send a deposit into a vault it did not see created for the company and that is not pinned to the ' +
+  'company\u2019s account on the chain. A page run by someone else gives you no such check. Compare the vault with one the ' +
+  'company gave you another way.';
 
 /** The coins that leave this wallet, one block each. */
 export const leavingList = (leaves: readonly LeavesTheWallet[]) => (
   <div data-leaves>
     {leaves.map((l) => (
       <div key={`${l.kind}:${l.token}`} style={{ marginBottom: '0.5rem' }}>
-        <p className="m-0 text-foreground text-lg" data-leaving-amount>{describeLeaving(l)}</p>
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-leaving-token>{`${l.kind} token ${l.token}`}</p>
+        <p className="m-0 text-foreground text-lg" data-leaving-amount>
+          {describeLeaving(l)}
+        </p>
+        <p
+          className="m-0 font-mono break-all text-sm text-muted-foreground"
+          data-leaving-token
+        >{`${l.kind} token ${l.token}`}</p>
       </div>
     ))}
   </div>
 );
 
 /** Where the money goes: the company as the page names it, and the vault. */
-function WhereTheMoneyGoes({ request, check, publicly }: {
+function WhereTheMoneyGoes({
+  request,
+  check,
+  publicly
+}: {
   readonly request: BalanceRequest;
   readonly check: CompanyCheck;
   readonly publicly: boolean;
 }): ReactNode {
   return (
     <Section
-      list={false} box={false} aria-label="Where the money goes"
+      list={false}
+      box={false}
+      aria-label="Where the money goes"
       title="Where the money goes"
-      description={publicly
-        ? 'What the page says. This wallet checked that the transaction calls this vault\'s public deposit and nothing else, and that it puts exactly the amount shown above into this vault.'
-        : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'}
+      description={
+        publicly
+          ? "What the page says. This wallet checked that the transaction calls this vault's public deposit and nothing else, and that it puts exactly the amount shown above into this vault."
+          : 'What the page says. This wallet checked that the transaction calls this vault and nothing else, and that the one coin it creates belongs to this vault.'
+      }
     >
       <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
       <CompanyOnChain
-        label={request.company} account={request.account} check={check} doing="paid"
+        label={request.company}
+        account={request.account}
+        check={check}
+        doing="paid"
         compareWith="the person at this company who asked you to pay gave you themselves, and not through this page"
       />
-      <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>The vault the transaction pays into</p>
-      <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>{request.vault}</p>
+      <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
+        The vault the transaction pays into
+      </p>
+      <p className="m-0 font-mono break-all text-foreground text-lg" data-vault>
+        {request.vault}
+      </p>
       <BuildStamp address={request.vault} contract="vault" />
-      <p className="m-0 text-sm text-muted-foreground" data-vault-check>{VAULT_CHECK}</p>
+      <p className="m-0 text-sm text-muted-foreground" data-vault-check>
+        {VAULT_CHECK}
+      </p>
     </Section>
   );
 }
 
 /** The page after this wallet has added its coins and handed the transaction back. */
-export function PaidPublicly({ request, stage }: {
+export function PaidPublicly({
+  request,
+  stage
+}: {
   readonly request: BalanceRequest;
   readonly stage: Extract<Stage, { of: 'sent' }>;
 }): ReactNode {
@@ -88,13 +114,18 @@ export function PaidPublicly({ request, stage }: {
       </p>
       {leavingList(stage.leaves)}
       <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.vault}</p>
-      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+      <p style={{ marginTop: '1.5rem' }}>
+        <a href={hrefOf('home')}>&larr; Your wallet</a>
+      </p>
     </>
   );
 }
 
 /** The page after this wallet has added its coins and handed the transaction back. */
-export function PaidPrivately({ request, stage }: {
+export function PaidPrivately({
+  request,
+  stage
+}: {
   readonly request: BalanceRequest;
   readonly stage: Extract<Stage, { of: 'sent' }>;
 }): ReactNode {
@@ -108,7 +139,9 @@ export function PaidPrivately({ request, stage }: {
       </p>
       {leavingList(stage.leaves)}
       <p className="m-0 font-mono break-all text-sm text-muted-foreground">{request.vault}</p>
-      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+      <p style={{ marginTop: '1.5rem' }}>
+        <a href={hrefOf('home')}>&larr; Your wallet</a>
+      </p>
     </>
   );
 }
@@ -120,7 +153,9 @@ function WhatLeaves({ stage }: { readonly stage: Exclude<Stage, { of: 'sent' }> 
     <>
       {(stage.of === 'ready' || stage.of === 'paying' || stage.of === 'failed') && (
         <Section
-          list={false} box={false} aria-label="What leaves this wallet"
+          list={false}
+          box={false}
+          aria-label="What leaves this wallet"
           title="What leaves this wallet"
           description="Worked out from the transaction itself, not from anything the page said."
         >
@@ -166,8 +201,7 @@ function PayingNotice({ stage }: { readonly stage: Exclude<Stage, { of: 'sent' }
       )}
       {stage.of === 'paying' && !stage.reading && !publicly && stage.proving && (
         <p className="lede" data-paying data-proving>
-          Proving your coins in this browser. This can take a few minutes, and nothing is sent to the network from
-          here.
+          Proving your coins in this browser. This can take a few minutes, and nothing is sent to the network from here.
         </p>
       )}
       {stage.of === 'paying' && !stage.reading && publicly && (
@@ -180,7 +214,18 @@ function PayingNotice({ stage }: { readonly stage: Exclude<Stage, { of: 'sent' }
 }
 
 /** Pay, and Close or Do not pay, with the reasons each is held back. */
-function Decision({ stage, consent, channel, busy, held, onChain, publicly, pay, close, decline }: {
+function Decision({
+  stage,
+  consent,
+  channel,
+  busy,
+  held,
+  onChain,
+  publicly,
+  pay,
+  close,
+  decline
+}: {
   readonly stage: Exclude<Stage, { of: 'sent' }>;
   readonly consent: Consent;
   readonly channel: Channel | null;
@@ -198,7 +243,10 @@ function Decision({ stage, consent, channel, busy, held, onChain, publicly, pay,
         <Button
           size="lg"
           type="button"
-          variant="default" onClick={pay} data-approve data-pay
+          variant="default"
+          onClick={pay}
+          data-approve
+          data-pay
           disabled={!consent.ok || stage.of !== 'ready' || channel === null || busy || channel.over() || !onChain}
         >
           {publicly ? 'Pay publicly into the vault' : 'Pay into the vault'}
@@ -208,7 +256,14 @@ function Decision({ stage, consent, channel, busy, held, onChain, publicly, pay,
             Close
           </Button>
         ) : (
-          <Button size="lg" type="button" variant="ghost" data-decline onClick={decline} disabled={held || (stage.of === 'paying' && !stage.reading)}>
+          <Button
+            size="lg"
+            type="button"
+            variant="ghost"
+            data-decline
+            onClick={decline}
+            disabled={held || (stage.of === 'paying' && !stage.reading)}
+          >
             Do not pay
           </Button>
         )}
@@ -218,7 +273,21 @@ function Decision({ stage, consent, channel, busy, held, onChain, publicly, pay,
 }
 
 /** The screen while the ask is read, refused, ready to pay, paying or failed. */
-export function BalanceAsk({ stage, request, check, consent, channel, busy, held, onChain, whoIsAsking, whichWallet, pay, close, decline }: {
+export function BalanceAsk({
+  stage,
+  request,
+  check,
+  consent,
+  channel,
+  busy,
+  held,
+  onChain,
+  whoIsAsking,
+  whichWallet,
+  pay,
+  close,
+  decline
+}: {
   readonly stage: Exclude<Stage, { of: 'sent' }>;
   readonly request: BalanceRequest;
   readonly check: CompanyCheck;
@@ -244,10 +313,16 @@ export function BalanceAsk({ stage, request, check, consent, channel, busy, held
   return (
     <>
       {headline}
-      {stage.of === 'reading' && <p className="lede" data-reading>Reading what the page sent. Nothing has been paid.</p>}
+      {stage.of === 'reading' && (
+        <p className="lede" data-reading>
+          Reading what the page sent. Nothing has been paid.
+        </p>
+      )}
       {stage.of === 'refused' && (
         <StatusAlert tone="danger" title="This wallet will not pay for this">
-          <p className="m-0" data-balance-refused>{stage.says}</p>
+          <p className="m-0" data-balance-refused>
+            {stage.says}
+          </p>
         </StatusAlert>
       )}
       <WhatLeaves stage={stage} />
@@ -257,7 +332,9 @@ export function BalanceAsk({ stage, request, check, consent, channel, busy, held
       <PayingNotice stage={stage} />
       {stage.of === 'failed' && (
         <StatusAlert tone="danger" title="Nothing was paid">
-          <p className="m-0" data-balance-failed>{stage.says}</p>
+          <p className="m-0" data-balance-failed>
+            {stage.says}
+          </p>
         </StatusAlert>
       )}
       <StatusAlert tone="warning" role={null} title="What is paid, is paid">

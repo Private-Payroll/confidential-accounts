@@ -8,10 +8,17 @@ import { HEX64 } from '../../../src/midnight/directory-change-shape.js';
 import { SeatingRefusedOnTheChain, TWO_SEATINGS, UNREAD_SEATING } from './seat-not-read-on-the-chain.js';
 
 /** One seating the account's history shows: the proposal a `seatInvited` call closed and the one leaf it seated. */
-export interface Seating { readonly proposal: string; readonly leaf: string }
+export interface Seating {
+  readonly proposal: string;
+  readonly leaf: string;
+}
 
 type HistoryStep = {
-  readonly kind: string; readonly transaction: string; readonly entryPoint?: string; readonly succeeded: boolean; readonly raw?: Uint8Array;
+  readonly kind: string;
+  readonly transaction: string;
+  readonly entryPoint?: string;
+  readonly succeeded: boolean;
+  readonly raw?: Uint8Array;
 };
 
 /**
@@ -24,10 +31,13 @@ type HistoryStep = {
  */
 export function seatingsIn(
   deps: Pick<GovernedCallDeps, 'accountLedger' | 'runtimeState'> & Partial<Pick<GovernedCallDeps, 'ledger'>>,
-  steps: readonly HistoryStep[], account: string,
+  steps: readonly HistoryStep[],
+  account: string
 ): readonly Seating[] {
   if (deps.accountLedger === undefined) {
-    throw new Error('this device was not given the account\'s reader, so which seat each invitation took was not read. Reload the page');
+    throw new Error(
+      "this device was not given the account's reader, so which seat each invitation took was not read. Reload the page"
+    );
   }
   const seatings: Seating[] = [];
   const read = new Set<string>();
@@ -35,7 +45,9 @@ export function seatingsIn(
     if (step.kind !== 'call' || !step.succeeded || read.has(step.transaction)) continue;
     if (step.raw === undefined) {
       if (step.entryPoint === 'seatInvited') {
-        throw new Error('a seat taken on the account was served without its transaction, so which invitation it answered was not read. Read again');
+        throw new Error(
+          'a seat taken on the account was served without its transaction, so which invitation it answered was not read. Read again'
+        );
       }
       continue;
     }
@@ -56,11 +68,15 @@ export function seatingsIn(
  * bytes, and for good (`SeatingRefusedOnTheChain`) when two seatings closed one proposal asked about: a seat this
  * device cannot tell from another must not read as one of the two.
  */
-export function seatsInvitedIn(seatings: readonly Seating[], proposals: readonly string[]): ReadonlyMap<string, string | null> {
+export function seatsInvitedIn(
+  seatings: readonly Seating[],
+  proposals: readonly string[]
+): ReadonlyMap<string, string | null> {
   const out = new Map<string, string | null>();
   for (const asked of proposals) {
     const hex = String(asked).toLowerCase();
-    if (!HEX64.test(hex)) throw new Error('an invitation\'s proposal was asked about by an identity that is not thirty-two bytes');
+    if (!HEX64.test(hex))
+      throw new Error("an invitation's proposal was asked about by an identity that is not thirty-two bytes");
     const taken = seatings.filter((x) => x.proposal === hex);
     if (taken.length > 1) throw new SeatingRefusedOnTheChain(TWO_SEATINGS);
     out.set(hex, taken.length === 0 ? null : taken[0]!.leaf);

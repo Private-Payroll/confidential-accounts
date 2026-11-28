@@ -11,11 +11,24 @@ import { fileURLToPath } from 'node:url';
 /** What one opening read: each route and wallet ask by name, and each read through a door by door and ask, with its count. */
 export type PinnedReads = Readonly<Record<string, number>>;
 /** A panel opened inside its screen: what the opening read, and what a press on it read where one is run. */
-export interface PinnedOpening { readonly opened: PinnedReads; readonly pressed?: PinnedReads }
+export interface PinnedOpening {
+  readonly opened: PinnedReads;
+  readonly pressed?: PinnedReads;
+}
 /** One table of the pins file: its name, what it pins, whether its rows are reads or openings, and its rows by the page, panel or opening they are of. */
 export type PinTable =
-  | { readonly name: string; readonly about: string; readonly of: 'reads'; readonly rows: Readonly<Record<string, PinnedReads>> }
-  | { readonly name: string; readonly about: string; readonly of: 'openings'; readonly rows: Readonly<Record<string, PinnedOpening>> };
+  | {
+      readonly name: string;
+      readonly about: string;
+      readonly of: 'reads';
+      readonly rows: Readonly<Record<string, PinnedReads>>;
+    }
+  | {
+      readonly name: string;
+      readonly about: string;
+      readonly of: 'openings';
+      readonly rows: Readonly<Record<string, PinnedOpening>>;
+    };
 
 const PINS_FILE = resolve(dirname(fileURLToPath(import.meta.url)), 'screen-count-pins.test-support.ts');
 
@@ -28,15 +41,23 @@ const HEADER = `/*
  */
 `;
 const READS = 'Readonly<Record<string, Readonly<Record<string, number>>>>';
-const OPENINGS = 'Readonly<Record<string, { readonly opened: Readonly<Record<string, number>>; readonly pressed?: Readonly<Record<string, number>> }>>';
+const OPENINGS =
+  'Readonly<Record<string, { readonly opened: Readonly<Record<string, number>>; readonly pressed?: Readonly<Record<string, number>> }>>';
 
-const readsSource = (reads: PinnedReads): string => `{${Object.keys(reads).sort().map((k) => `'${k}': ${reads[k]}`).join(', ')}}`;
+const readsSource = (reads: PinnedReads): string =>
+  `{${Object.keys(reads)
+    .sort()
+    .map((k) => `'${k}': ${reads[k]}`)
+    .join(', ')}}`;
 const openingSource = (name: string, row: PinnedOpening): string =>
   `  '${name}': {\n    opened: ${readsSource(row.opened)},\n${row.pressed === undefined ? '' : `    pressed: ${readsSource(row.pressed)},\n`}  },\n`;
 
 /** The text of one table of the pins file, as the writer writes it. */
 export const tableSource = (t: PinTable): string => {
-  const rows = t.of === 'reads' ? Object.entries(t.rows).map(([n, r]) => `  '${n}': ${readsSource(r)},\n`) : Object.entries(t.rows).map(([n, r]) => openingSource(n, r));
+  const rows =
+    t.of === 'reads'
+      ? Object.entries(t.rows).map(([n, r]) => `  '${n}': ${readsSource(r)},\n`)
+      : Object.entries(t.rows).map(([n, r]) => openingSource(n, r));
   return `/* ${t.about} */\nexport const ${t.name}: ${t.of === 'reads' ? READS : OPENINGS} = {\n${rows.join('')}};\n`;
 };
 
@@ -45,9 +66,12 @@ const tableIn = (file: string, name: string): string | null =>
   new RegExp(`/\\* [^\\n]*\\*/\\nexport const ${name}: [^\\n]*\\n(?:[^\\n]*\\n)*?\\};\\n`, 'u').exec(file)?.[0] ?? null;
 /* The rows of a table's text, each by its name, in the order the text holds them. */
 const rowsIn = (table: string): Map<string, string> =>
-  new Map([...table.matchAll(/^ {2}'([^']+)': (?:\{[^\n]*\},\n|\{\n(?:[^\n]*\n)*? {2}\},\n)/gmu)].map((m) => [m[1]!, m[0]]));
+  new Map(
+    [...table.matchAll(/^ {2}'([^']+)': (?:\{[^\n]*\},\n|\{\n(?:[^\n]*\n)*? {2}\},\n)/gmu)].map((m) => [m[1]!, m[0]])
+  );
 /* A table's text from its opening lines and the rows given, in their order. */
-const withRows = (table: string, rows: Iterable<string>): string => `${table.slice(0, table.indexOf('= {\n') + 4)}${[...rows].join('')}};\n`;
+const withRows = (table: string, rows: Iterable<string>): string =>
+  `${table.slice(0, table.indexOf('= {\n') + 4)}${[...rows].join('')}};\n`;
 
 /**
  * The table named `measured.name` as the pins file holds it, or, when the run counted only some of the table's rows, the
@@ -62,11 +86,15 @@ export const tableHeld = (measured: PinTable, everyRowCounted: boolean): string 
   const made = tableSource(measured);
   if (process.env['WRITE_PINS'] === '1') {
     const headed = file.replace(/^\/\*[\s\S]*?\*\/\n/u, HEADER);
-    const merged = was === null || everyRowCounted ? made : withRows(made, new Map([...rowsIn(was), ...rowsIn(made)]).values());
+    const merged =
+      was === null || everyRowCounted ? made : withRows(made, new Map([...rowsIn(was), ...rowsIn(made)]).values());
     writeFileSync(PINS_FILE, was === null ? `${headed.trimEnd()}\n\n${merged}` : headed.replace(was, () => merged));
   }
   const held = tableIn(readFileSync(PINS_FILE, 'utf8'), measured.name);
   if (held === null || everyRowCounted) return held;
   const rows = rowsIn(held);
-  return withRows(held, [...rowsIn(made).keys()].map((n) => rows.get(n) ?? `  '${n}': not pinned\n`));
+  return withRows(
+    held,
+    [...rowsIn(made).keys()].map((n) => rows.get(n) ?? `  '${n}': not pinned\n`)
+  );
 };

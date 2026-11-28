@@ -16,7 +16,8 @@ import { ActionStopped } from './run.js';
  * when the service kept back a record the anchor names, `not-read` when the records or the chain could not be read.
  */
 export async function proposalsAndSeatsOf(
-  r: CompanyReach, why: (key: string, values?: Readonly<Record<string, string | number>>) => Words,
+  r: CompanyReach,
+  why: (key: string, values?: Readonly<Record<string, string | number>>) => Words
 ): Promise<{ readonly proposals: readonly SealedProposal[]; readonly onTheChain: readonly string[] }> {
   const records = governanceRecordsFor(r);
   try {

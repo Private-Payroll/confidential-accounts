@@ -66,7 +66,7 @@ async function twoWallets() {
   const secondId = await saveSecret(second);
   return {
     first: { id: firstId, secret: first, identity: identityFromSecret(first) },
-    second: { id: secondId, secret: second, identity: identityFromSecret(second) },
+    second: { id: secondId, secret: second, identity: identityFromSecret(second) }
   };
 }
 
@@ -77,7 +77,7 @@ const ask = (kind: 'sign-in' | 'unlock') => ({
   purpose: 'We need to know it is you.',
   nonce: `n-${kind}`,
   expiresAt: NOW + 600_000,
-  ...(kind === 'unlock' ? { company: COMPANY, account: ACCOUNT } : {}),
+  ...(kind === 'unlock' ? { company: COMPANY, account: ACCOUNT } : {})
 });
 
 type Wallet = Awaited<ReturnType<typeof twoWallets>>['first'];
@@ -90,10 +90,24 @@ async function asked(wallet: Wallet, kind: 'sign-in' | 'unlock') {
   const handlers: ((event: MessageEvent) => void)[] = [];
   const view: ChannelWindow = {
     opener: opener as ChannelWindow['opener'],
-    addEventListener: (_t, h) => { handlers.push(h); },
-    removeEventListener: () => { /* torn down by cleanup */ },
+    addEventListener: (_t, h) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {
+      /* torn down by cleanup */
+    }
   };
-  render(<Approve readLabel={carries} identity={wallet.identity} secret={wallet.secret} port={port} view={view} now={() => NOW} embedder={ORIGIN} />);
+  render(
+    <Approve
+      readLabel={carries}
+      identity={wallet.identity}
+      secret={wallet.secret}
+      port={port}
+      view={view}
+      now={() => NOW}
+      embedder={ORIGIN}
+    />
+  );
   for (const h of handlers) {
     h({ source: opener, origin: ORIGIN, data: ask(kind) } as unknown as MessageEvent);
   }
@@ -114,7 +128,7 @@ async function answer(wallet: Wallet, kind: 'sign-in' | 'unlock') {
 }
 
 describe('a wallet that did not save the details already kept in this browser', () => {
-  it('ANSWERS A SIGN-IN, records it under its own name, and leaves the first wallet\'s record byte for byte', async () => {
+  it("ANSWERS A SIGN-IN, records it under its own name, and leaves the first wallet's record byte for byte", async () => {
     const { first, second } = await twoWallets();
     await save(port, first.identity, founder());
     const firstsRecord = JSON.stringify(await sealedFor(port, first.identity));
@@ -124,11 +138,14 @@ describe('a wallet that did not save the details already kept in this browser', 
 
     expect(JSON.stringify(await sealedFor(port, first.identity))).toBe(firstsRecord);
     const firsts = await load(port, first.identity);
-    expect(firsts.of === 'profile' && firsts.profile.held.map((h) => h.says))
-      .toEqual([{ of: 'value', value: 'Founder' }]);
+    expect(firsts.of === 'profile' && firsts.profile.held.map((h) => h.says)).toEqual([
+      { of: 'value', value: 'Founder' }
+    ]);
     const seconds = await load(port, second.identity);
-    expect(seconds.of === 'profile' && seconds.profile.grants.flatMap((g) => g.disclosures).length,
-      'the sign-in was written down').toBe(1);
+    expect(
+      seconds.of === 'profile' && seconds.profile.grants.flatMap((g) => g.disclosures).length,
+      'the sign-in was written down'
+    ).toBe(1);
   });
 
   it('ANSWERS AN UNLOCK, which is what opens a company', async () => {
@@ -206,7 +223,7 @@ describe('a wallet whose OWN record will not open', () => {
   });
 });
 
-describe('a company\'s key is given only by the wallet that signed in to the page asking', () => {
+describe("a company's key is given only by the wallet that signed in to the page asking", () => {
   /*
    * Each wallet gives a different key for the same company. With every wallet
    * here able to answer, the one the person picks at a passkey prompt could be
@@ -220,10 +237,13 @@ describe('a company\'s key is given only by the wallet that signed in to the pag
 
     const { opener, button } = await asked(second, 'unlock');
     expect(button.disabled).toBe(true);
-    expect(document.querySelector('[data-not-this-wallet]')?.textContent)
-      .toContain(`The last sign-in to ${ORIGIN} from this browser was answered by another of the wallets held here`);
-    expect(document.querySelector('[data-not-this-wallet]')?.textContent, 'no advice to sign out over unsaved work')
-      .toContain('signing out of it first drops anything it has not finished saving');
+    expect(document.querySelector('[data-not-this-wallet]')?.textContent).toContain(
+      `The last sign-in to ${ORIGIN} from this browser was answered by another of the wallets held here`
+    );
+    expect(
+      document.querySelector('[data-not-this-wallet]')?.textContent,
+      'no advice to sign out over unsaved work'
+    ).toContain('signing out of it first drops anything it has not finished saving');
     const before = opener.sent.length;
     fireEvent.click(button);
     await settled(20);
@@ -264,9 +284,14 @@ describe('a company\'s key is given only by the wallet that signed in to the pag
     /* And the page is not named in the clear, in the record's name or its value. */
     const touched: string[] = [];
     const watching = {
-      getItem: (k: string) => { touched.push(k); return null; },
-      setItem: (k: string, v: string) => { touched.push(k, v); },
-      removeItem: () => {},
+      getItem: (k: string) => {
+        touched.push(k);
+        return null;
+      },
+      setItem: (k: string, v: string) => {
+        touched.push(k, v);
+      },
+      removeItem: () => {}
     };
     rememberSignIn(watching, ORIGIN, 'slot-a');
     expect(touched.length).toBeGreaterThan(0);
@@ -283,7 +308,7 @@ describe('a company\'s key is given only by the wallet that signed in to the pag
       setItem: (k, v) => {
         if (k.startsWith('midnight-identity:signed-in:')) throw new Error('the storage is full');
         plain.setItem(k, v);
-      },
+      }
     };
     const sent = await answer(first, 'sign-in');
     expect(sent.length).toBeGreaterThan(0);

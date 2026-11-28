@@ -6,6 +6,10 @@
 import { describe } from 'vitest';
 import { asMoneyGrowsCounted } from './actions-set-up-first.test-support.js';
 
-describe('RAISING A RUN READS THE SAME HOWEVER MANY RUNS, PAID RUNS, ONE-OFF PAYMENTS AND SPENDING POLICIES THE COMPANY HOLDS', { timeout: 160_000 }, () => {
-  asMoneyGrowsCounted(import.meta.url);
-});
+describe(
+  'RAISING A RUN READS THE SAME HOWEVER MANY RUNS, PAID RUNS, ONE-OFF PAYMENTS AND SPENDING POLICIES THE COMPANY HOLDS',
+  { timeout: 160_000 },
+  () => {
+    asMoneyGrowsCounted(import.meta.url);
+  }
+);

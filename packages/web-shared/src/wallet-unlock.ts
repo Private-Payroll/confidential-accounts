@@ -1,11 +1,24 @@
 import { readKeyringRelease, readRelease } from 'midnight-identity/profile/unlock';
-import type { HeldScope, KeyringHandedIn, KeysRead, ReleaseFailure, SealedKeyring, WalletIndexer } from 'midnight-identity/profile/unlock';
+import type {
+  HeldScope,
+  KeyringHandedIn,
+  KeysRead,
+  ReleaseFailure,
+  SealedKeyring,
+  WalletIndexer
+} from 'midnight-identity/profile/unlock';
 import type { FoundingAsked, ServedHandedIn, TidyAsked } from 'midnight-identity/profile/request';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import {
-  KEYRING_AND_COMPANY_PURPOSE, KEYRING_AND_NEW_COMPANY_PURPOSE, KEYRING_AND_OPENED_COMPANY_PURPOSE, KEYRING_PURPOSE, UNLOCK_PURPOSE, UNLOCK_WINDOW_MS,
-  keyringAsk, unlockAsk,
+  KEYRING_AND_COMPANY_PURPOSE,
+  KEYRING_AND_NEW_COMPANY_PURPOSE,
+  KEYRING_AND_OPENED_COMPANY_PURPOSE,
+  KEYRING_PURPOSE,
+  UNLOCK_PURPOSE,
+  UNLOCK_WINDOW_MS,
+  keyringAsk,
+  unlockAsk
 } from '../../../src/core/wallet-unlock.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -79,7 +92,10 @@ export interface UnlockAsked {
  * same reason.
  */
 export async function askWalletToUnlock(
-  view: Openable, walletOrigin: string, ask: UnlockAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: UnlockAsked,
+  dialog?: WalletDialog
 ): Promise<Uint8Array> {
   return (await askWalletToUnlockAndWhereItReads(view, walletOrigin, ask, dialog)).key;
 }
@@ -102,22 +118,30 @@ interface HeldAddresses {
  * `null` when the wallet did not say.
  */
 export async function askWalletToUnlockAndWhereItReads(
-  view: Openable, walletOrigin: string, ask: UnlockAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: UnlockAsked,
+  dialog?: WalletDialog
 ): Promise<{ key: Uint8Array; indexer: WalletIndexer | null; held: HeldAddresses | null }> {
   const now = ask.now ?? (() => Date.now());
   /* Sixteen random bytes. It ties one answer to one question and is not a
    * secret; it is generated here because nobody else is a party to it. */
   const nonce = ask.nonce ?? toHex(randomBytes(16));
 
-  const answer = await askWallet(view, walletOrigin, unlockAsk({
-    name: ask.name,
-    rdns: ask.rdns,
-    purpose: UNLOCK_PURPOSE,
-    nonce,
-    expiresAt: now() + UNLOCK_WINDOW_MS,
-    company: ask.company,
-    account: ask.account,
-  }), dialog);
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    unlockAsk({
+      name: ask.name,
+      rdns: ask.rdns,
+      purpose: UNLOCK_PURPOSE,
+      nonce,
+      expiresAt: now() + UNLOCK_WINDOW_MS,
+      company: ask.company,
+      account: ask.account
+    }),
+    dialog
+  );
 
   /*
    * **THREE EXPECTATIONS, ALL THREE OURS.** `atOrigin` is where this page is
@@ -131,14 +155,19 @@ export async function askWalletToUnlockAndWhereItReads(
     atOrigin: ask.atOrigin,
     expectingNonce: nonce,
     forCompany: ask.company,
-    forAccount: ask.account,
+    forAccount: ask.account
   });
   if (read.ok === false) throw new UnlockRefused(read.code, read.says);
   return {
-    key: read.key, indexer: read.indexer,
-    held: read.held === null ? null : Object.freeze({
-      scope: Object.freeze({ nonce, origin: ask.atOrigin, company: ask.company }), digests: read.held,
-    }),
+    key: read.key,
+    indexer: read.indexer,
+    held:
+      read.held === null
+        ? null
+        : Object.freeze({
+            scope: Object.freeze({ nonce, origin: ask.atOrigin, company: ask.company }),
+            digests: read.held
+          })
   };
 }
 
@@ -166,7 +195,11 @@ export interface KeyringAsked {
    * creation changes this page asks for: the wallet opens the saved keys itself and answers with what they hold that
    * is not secret (`read`). With a founding, the founding's saved keys are these.
    */
-  readonly keys?: { readonly keyring: KeyringHandedIn; readonly served: readonly ServedHandedIn[]; readonly tidy: readonly TidyAsked[] };
+  readonly keys?: {
+    readonly keyring: KeyringHandedIn;
+    readonly served: readonly ServedHandedIn[];
+    readonly tidy: readonly TidyAsked[];
+  };
   /**
    * With a named company and `keys`: the company is the one the person opened, named beside opening the saved keys.
    * The wallet gives its key only when its own read of the chain confirms it; an answer giving none is then the saved
@@ -189,7 +222,10 @@ export interface KeyringAsked {
  * page uses that read, and never the key, to know the seats it holds.
  */
 export async function askWalletForKeys(
-  view: Openable, walletOrigin: string, ask: KeyringAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: KeyringAsked,
+  dialog?: WalletDialog
 ): Promise<{
   companyKey: Uint8Array | null;
   /** Public: the key the person sits on this company's vault committee with. */
@@ -203,36 +239,56 @@ export async function askWalletForKeys(
 }> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
-  const opened = ask.companyIfOnChain === true && ask.company !== null && ask.company !== 'new' && ask.account !== null
-    && ask.keys !== undefined;
-  const answer = await askWallet(view, walletOrigin, keyringAsk({
-    name: ask.name,
-    rdns: ask.rdns,
-    purpose: ask.company === null ? KEYRING_PURPOSE
-      : ask.company === 'new' ? KEYRING_AND_NEW_COMPANY_PURPOSE
-        : opened ? KEYRING_AND_OPENED_COMPANY_PURPOSE : KEYRING_AND_COMPANY_PURPOSE,
-    nonce,
-    expiresAt: now() + UNLOCK_WINDOW_MS,
-    person: ask.person,
-    signedInAs: ask.signedInAs,
-    company: ask.company === 'new' ? null : ask.company,
-    account: ask.company === 'new' ? null : ask.account,
-    drawLabel: ask.company === 'new',
-    ...(opened ? { companyIfOnChain: true } : {}),
-    ...(ask.company === 'new' && ask.founding !== undefined ? { founding: ask.founding } : {}),
-    ...(ask.company !== 'new' && ask.keys !== undefined ? { keys: ask.keys } : {}),
-  }), dialog);
+  const opened =
+    ask.companyIfOnChain === true &&
+    ask.company !== null &&
+    ask.company !== 'new' &&
+    ask.account !== null &&
+    ask.keys !== undefined;
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    keyringAsk({
+      name: ask.name,
+      rdns: ask.rdns,
+      purpose:
+        ask.company === null
+          ? KEYRING_PURPOSE
+          : ask.company === 'new'
+            ? KEYRING_AND_NEW_COMPANY_PURPOSE
+            : opened
+              ? KEYRING_AND_OPENED_COMPANY_PURPOSE
+              : KEYRING_AND_COMPANY_PURPOSE,
+      nonce,
+      expiresAt: now() + UNLOCK_WINDOW_MS,
+      person: ask.person,
+      signedInAs: ask.signedInAs,
+      company: ask.company === 'new' ? null : ask.company,
+      account: ask.company === 'new' ? null : ask.account,
+      drawLabel: ask.company === 'new',
+      ...(opened ? { companyIfOnChain: true } : {}),
+      ...(ask.company === 'new' && ask.founding !== undefined ? { founding: ask.founding } : {}),
+      ...(ask.company !== 'new' && ask.keys !== undefined ? { keys: ask.keys } : {})
+    }),
+    dialog
+  );
   const { atOrigin, person, signedInAs, company } = ask;
   const checked = readKeyringRelease(answer, {
-    atOrigin, expectingNonce: nonce, person, signedInAs,
+    atOrigin,
+    expectingNonce: nonce,
+    person,
+    signedInAs,
     forCompany: company === 'new' ? 'drawn' : company,
     forAccount: company === 'new' ? null : ask.account,
     handedIn: ask.keys !== undefined || ask.founding !== undefined,
-    companyIfOnChain: opened,
+    companyIfOnChain: opened
   });
   if (checked.ok === false) throw new UnlockRefused(checked.code, checked.says);
   return {
-    companyKey: checked.companyKey, committeeKey: checked.committeeKey, company: checked.company,
-    founding: checked.founding, read: checked.read,
+    companyKey: checked.companyKey,
+    committeeKey: checked.committeeKey,
+    company: checked.company,
+    founding: checked.founding,
+    read: checked.read
   };
 }

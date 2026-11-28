@@ -33,7 +33,10 @@ import type { Hex } from '../../../src/core/crypto.js';
 import { holdersFromTheWallet } from './wallet-asks.js';
 
 /** Where a company is on the chain: its label and the account that carries it. */
-export interface OnTheChain { readonly company: CompanyLabel; readonly account: AccountAddress }
+export interface OnTheChain {
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+}
 
 /** What the page hands in to open its views: its wallet, its builder, and how a view of a company on the chain reads held. */
 export interface PageDoors {
@@ -47,7 +50,9 @@ export interface PageDoors {
 /** The company has no account on the chain yet, so nothing of it is read through a view. */
 export class NotOnTheChainYet extends Error {
   constructor() {
-    super('this company has no account on the chain yet, so who holds it cannot be read and nothing of it is believed here.');
+    super(
+      'this company has no account on the chain yet, so who holds it cannot be read and nothing of it is believed here.'
+    );
     this.name = 'NotOnTheChainYet';
   }
 }
@@ -58,7 +63,9 @@ export const sourceOnPage = (companyId: string): RecordSource => serviceSource(s
 /** The company's account names another place on the chain than the one its view was opened at. */
 class NotWhereItWasOpened extends Error {
   constructor() {
-    super('the company\'s account names another place on the chain than the one this view was opened at, so nothing is written through it.');
+    super(
+      "the company's account names another place on the chain than the one this view was opened at, so nothing is written through it."
+    );
     this.name = 'NotWhereItWasOpened';
   }
 }
@@ -67,7 +74,9 @@ class NotWhereItWasOpened extends Error {
 export const whereOnTheChainIn = (sealed: unknown): OnTheChain | null => {
   const s = (sealed ?? {}) as { readonly companyLabel?: unknown; readonly contractAddress?: unknown };
   const { companyLabel: company, contractAddress: account } = s;
-  return typeof company !== 'string' || typeof account !== 'string' ? null : { company: company as CompanyLabel, account: account as AccountAddress };
+  return typeof company !== 'string' || typeof account !== 'string'
+    ? null
+    : { company: company as CompanyLabel, account: account as AccountAddress };
 };
 
 /**
@@ -77,7 +86,8 @@ export const whereOnTheChainIn = (sealed: unknown): OnTheChain | null => {
  */
 export const openOnPage = (companyId: string, doors: PageDoors, where?: OnTheChain): JudgeView => {
   /* Else the wallet door finds the company on the chain from the view's one read of the account, before the view's first read. */
-  const found = where === undefined ? once(async () => whereOnTheChainIn(await made.doors.account())) : async () => where;
+  const found =
+    where === undefined ? once(async () => whereOnTheChainIn(await made.doors.account())) : async () => where;
   const there = async (): Promise<OnTheChain> => {
     const at = await found();
     if (at === null) throw new NotOnTheChainYet();
@@ -97,25 +107,31 @@ export const openOnPage = (companyId: string, doors: PageDoors, where?: OnTheCha
     readOnce = true;
     return at;
   };
-  const made: JudgeView = companyViewFor(sourceOnPage(companyId), {
-    holders: async (): Promise<HoldersOnPage> => {
-      const read = await holdersFromTheWallet(doors.walletOrigin, await named());
-      return { ...read.holders, indexer: read.indexer };
+  const made: JudgeView = companyViewFor(
+    sourceOnPage(companyId),
+    {
+      holders: async (): Promise<HoldersOnPage> => {
+        const read = await holdersFromTheWallet(doors.walletOrigin, await named());
+        return { ...read.holders, indexer: read.indexer };
+      },
+      onChain: async () => {
+        const at = await there();
+        const { indexer } = await made.holders();
+        return anchorsOnChainAt(await doors.builder(), at.account, indexer ?? null);
+      },
+      builder: {
+        anchorHeads: async (ask) => anchorHeadsKept(await doors.builder())(ask),
+        vaultsOnChain: async (ask) => (await doors.builder()).vaultsOnChain(ask)
+      },
+      /* The account's roles asked, as the same wallet reads them off the chain; the view keeps each answer for the set asked. */
+      roles: async (asked) => ({
+        roles: (await holdersFromTheWallet(doors.walletOrigin, { ...(await there()), roles: asked })).roles
+      }),
+      kept: () => treeKeptHere(),
+      directory: (view) => doors.directory(view)
     },
-    onChain: async () => {
-      const at = await there();
-      const { indexer } = await made.holders();
-      return anchorsOnChainAt(await doors.builder(), at.account, indexer ?? null);
-    },
-    builder: {
-      anchorHeads: async (ask) => anchorHeadsKept(await doors.builder())(ask),
-      vaultsOnChain: async (ask) => (await doors.builder()).vaultsOnChain(ask),
-    },
-    /* The account's roles asked, as the same wallet reads them off the chain; the view keeps each answer for the set asked. */
-    roles: async (asked) => ({ roles: (await holdersFromTheWallet(doors.walletOrigin, { ...(await there()), roles: asked })).roles }),
-    kept: () => treeKeptHere(),
-    directory: (view) => doors.directory(view),
-  }, async (inner, asked) => doors.held(made, await there())(inner, asked));
+    async (inner, asked) => doors.held(made, await there())(inner, asked)
+  );
   return made;
 };
 
@@ -128,13 +144,15 @@ export const openOnPage = (companyId: string, doors: PageDoors, where?: OnTheCha
 export const accountOnPage = (view: JudgeView): Promise<unknown> => view.doors.account();
 
 /** Where the view's company is on the chain, or null while it has no account there, from the view's one read of the account. */
-export const onTheChain = async (view: JudgeView): Promise<OnTheChain | null> => whereOnTheChainIn(await view.doors.account());
+export const onTheChain = async (view: JudgeView): Promise<OnTheChain | null> =>
+  whereOnTheChainIn(await view.doors.account());
 
 /**
  * The indexer the person's wallet named when the view asked it who holds the company: the one place this page reads
  * the chain from for the company. Null when the wallet named none.
  */
-export const indexerOnPage = async (view: JudgeView): Promise<WalletIndexer | null> => (await view.holders()).indexer ?? null;
+export const indexerOnPage = async (view: JudgeView): Promise<WalletIndexer | null> =>
+  (await view.holders()).indexer ?? null;
 
 /**
  * **A VAULT ON THE CHAIN, READ THROUGH THE VIEW.** Every vault the company's account adopted, as the view's holders name
@@ -143,9 +161,14 @@ export const indexerOnPage = async (view: JudgeView): Promise<WalletIndexer | nu
  * handed out for a press to read the vaults again (`vaultRoundOnPage`): each round reads the chain afresh, once for
  * every tile asking in it. Each round's reads are kept in the view, so they go when it ends.
  */
-export const vaultOnPage = async (view: JudgeView, vault: string, indexer: WalletIndexer, round = 0): Promise<VaultOnChainOnTheWire> => {
-  const inRound: () => Pick<JudgeView, 'layer'> = round === 0 ? () => view
-    : () => ({ layer: (name, build) => view.layer(`${name}:again-${round}`, build) });
+export const vaultOnPage = async (
+  view: JudgeView,
+  vault: string,
+  indexer: WalletIndexer,
+  round = 0
+): Promise<VaultOnChainOnTheWire> => {
+  const inRound: () => Pick<JudgeView, 'layer'> =
+    round === 0 ? () => view : () => ({ layer: (name, build) => view.layer(`${name}:again-${round}`, build) });
   const reads = await view.layer(`vaults-read:${round}`, async () => vaultsReadInTheView(inRound, view.doors.builder));
   reads.declare((await view.holders()).adoptedVaults);
   return reads.read(vault as Hex, indexer);

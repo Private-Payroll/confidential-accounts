@@ -19,8 +19,12 @@ function useApprovalsNeeded(): ReadonlyMap<string, SeatBarRead> {
   useEffect(() => {
     if (person === null) return undefined;
     let alive = true;
-    void approvalsNeededFor(person).then((n) => { if (alive) setNeeded(n); });
-    return () => { alive = false; };
+    void approvalsNeededFor(person).then((n) => {
+      if (alive) setNeeded(n);
+    });
+    return () => {
+      alive = false;
+    };
   }, [person]);
   return needed;
 }
@@ -43,19 +47,26 @@ export function useCompanyName(): (company: { createdAt?: string }, name?: strin
   };
 }
 
-
 export function useCompanyWords(): { approvals: (c: Company) => string; why: (c: Company) => string } {
   const t = useText();
   const needed = useApprovalsNeeded();
   return {
     approvals: (c) => {
       const bar = needed.get(c.id);
-      return bar === undefined ? t('switcher.signersOnly', { count: c.signers }) : t('switcher.approvals', { needed: bar.needed, signers: c.signers });
+      return bar === undefined
+        ? t('switcher.signersOnly', { count: c.signers })
+        : t('switcher.approvals', { needed: bar.needed, signers: c.signers });
     },
     why: (c) => {
       const bar = needed.get(c.id)?.because;
-      return bar === undefined ? '' : bar === 'account' ? t('switcher.because.account') : bar === 'policy-bar' ? t('switcher.because.policyBar') : t('switcher.because.vault');
-    },
+      return bar === undefined
+        ? ''
+        : bar === 'account'
+          ? t('switcher.because.account')
+          : bar === 'policy-bar'
+            ? t('switcher.because.policyBar')
+            : t('switcher.because.vault');
+    }
   };
 }
 
@@ -69,12 +80,18 @@ function useNotFinished(company: string): boolean {
   useEffect(() => {
     let alive = true;
     setNotFinished(false);
-    creationOfCompany(company).then((creation) => { if (alive) setNotFinished(creation.mark !== null); }, () => {});
-    return () => { alive = false; };
+    creationOfCompany(company).then(
+      (creation) => {
+        if (alive) setNotFinished(creation.mark !== null);
+      },
+      () => {}
+    );
+    return () => {
+      alive = false;
+    };
   }, [company]);
   return notFinished;
 }
-
 
 /**
  * A COMPANY, SHOWN BY WHAT THE SERVICE LISTS OF IT: its name when it is given
@@ -86,26 +103,63 @@ function useNotFinished(company: string): boolean {
  * Where its name did not open on this device, why is said under the word for it, wrapping within the row. A company
  * the wallet has not opened is said in the words of a list (`inList`: one with no button of its own says where to open it).
  */
-export function CompanyFacts({ company, name = null, whyUnnamed = null, inList = false }: {
-  company: Company; name?: string | null; whyUnnamed?: ActRefusal | null; inList?: boolean;
+export function CompanyFacts({
+  company,
+  name = null,
+  whyUnnamed = null,
+  inList = false
+}: {
+  company: Company;
+  name?: string | null;
+  whyUnnamed?: ActRefusal | null;
+  inList?: boolean;
 }) {
   const words = useCompanyWords();
   const nameOf = useCompanyName();
   const t = useText();
   const notFinished = useNotFinished(company.id);
   /* Why the name did not open on this device, in the person's words; any other reason is said as an action that did not finish. */
-  const unnamedBecause = whyUnnamed === null ? undefined : whyUnnamed === 'roster-not-believed' ? t('act.refused.rosterNotBelieved')
-    : whyUnnamed === 'no-keys-here' ? t('act.refused.noKeysHere')
-      : whyUnnamed === 'not-opened-yet' ? (inList ? t('company.notOpenedYet.switcher') : t('company.notOpenedYet')) : t('act.refused.didNotFinish');
+  const unnamedBecause =
+    whyUnnamed === null
+      ? undefined
+      : whyUnnamed === 'roster-not-believed'
+        ? t('act.refused.rosterNotBelieved')
+        : whyUnnamed === 'no-keys-here'
+          ? t('act.refused.noKeysHere')
+          : whyUnnamed === 'not-opened-yet'
+            ? inList
+              ? t('company.notOpenedYet.switcher')
+              : t('company.notOpenedYet')
+            : t('act.refused.didNotFinish');
   return (
     <span className="grid min-w-0 flex-1 text-start leading-tight">
-      {name === null || name.trim() === ''
-        ? <span data-company-unnamed data-why={whyUnnamed ?? undefined}>{nameOf(company)}</span>
-        : <span className="font-medium" data-company-name>{name}</span>}
-      {unnamedBecause === undefined ? null : <span className="whitespace-normal text-xs text-muted-foreground" data-unnamed-why>{unnamedBecause}</span>}
-      <span className="text-xs text-muted-foreground" data-approvals>{words.approvals(company)}</span>
-      {words.why(company) === '' ? null : <span className="text-xs text-muted-foreground" data-approvals-why>{words.why(company)}</span>}
-      {notFinished ? <Badge variant="outline" className="mt-1 justify-self-start" data-not-finished>{t('company.notFinished')}</Badge> : null}
+      {name === null || name.trim() === '' ? (
+        <span data-company-unnamed data-why={whyUnnamed ?? undefined}>
+          {nameOf(company)}
+        </span>
+      ) : (
+        <span className="font-medium" data-company-name>
+          {name}
+        </span>
+      )}
+      {unnamedBecause === undefined ? null : (
+        <span className="whitespace-normal text-xs text-muted-foreground" data-unnamed-why>
+          {unnamedBecause}
+        </span>
+      )}
+      <span className="text-xs text-muted-foreground" data-approvals>
+        {words.approvals(company)}
+      </span>
+      {words.why(company) === '' ? null : (
+        <span className="text-xs text-muted-foreground" data-approvals-why>
+          {words.why(company)}
+        </span>
+      )}
+      {notFinished ? (
+        <Badge variant="outline" className="mt-1 justify-self-start" data-not-finished>
+          {t('company.notFinished')}
+        </Badge>
+      ) : null}
     </span>
   );
 }

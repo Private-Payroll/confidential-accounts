@@ -8,13 +8,22 @@ function parts(name: string) {
   const dust = new Subject<unknown>();
   const stopped: string[] = [];
   const held: HeldParts & { name: string } = {
-    name, provider: { name }, facade: { state: () => whole, dust: { state: dust } },
-    dust: () => 1n, night: () => 1n, stop: () => { stopped.push(name); },
+    name,
+    provider: { name },
+    facade: { state: () => whole, dust: { state: dust } },
+    dust: () => 1n,
+    night: () => 1n,
+    stop: () => {
+      stopped.push(name);
+    }
   };
   return { held, whole, dust, stopped };
 }
 
-const settled = () => new Promise((r) => { setTimeout(r, 0); });
+const settled = () =>
+  new Promise((r) => {
+    setTimeout(r, 0);
+  });
 
 function holderOver(first: ReturnType<typeof parts>, next: Array<ReturnType<typeof parts> | Error>, clock = { t: 0 }) {
   const rebuilds: boolean[] = [];
@@ -27,14 +36,18 @@ function holderOver(first: ReturnType<typeof parts>, next: Array<ReturnType<type
       if (n === undefined || n instanceof Error) throw n ?? new Error('nothing to build');
       return n.held;
     },
-    save: async (p) => { saved.push((p as { name?: string }).name ?? '?'); },
-    note: (l) => { notes.push(l); },
-    now: () => clock.t,
+    save: async (p) => {
+      saved.push((p as { name?: string }).name ?? '?');
+    },
+    note: (l) => {
+      notes.push(l);
+    },
+    now: () => clock.t
   });
   return { holder, rebuilds, saved, notes };
 }
 
-describe('the fee payer\'s wallet is held in one place and built again when it fails', () => {
+describe("the fee payer's wallet is held in one place and built again when it fails", () => {
   /* RED WHEN: a failure of the DUST part is not watched, so nothing builds the wallet again. */
   it('a failure of the DUST part starts one rebuild, and a second failure while it builds starts none', async () => {
     const a = parts('a');
@@ -119,7 +132,7 @@ describe('the fee payer\'s wallet is held in one place and built again when it f
    * RED WHEN: a height left below the chain's is never noticed, because the wallet's own streams never report it.
    * RED WHEN: a height that is still moving, or one at the chain's, is taken as stuck.
    */
-  it('a DUST height left below the chain\'s for long enough starts a rebuild; a moving or current one does not', async () => {
+  it("a DUST height left below the chain's for long enough starts a rebuild; a moving or current one does not", async () => {
     vi.useFakeTimers();
     try {
       const clock = { t: 0 };
@@ -127,9 +140,17 @@ describe('the fee payer\'s wallet is held in one place and built again when it f
       const { holder, rebuilds } = holderOver(a, [parts('b')], clock);
       let reading = { applied: 10n as bigint | null, tip: 20n };
       const stop = holder.watchHeight(async () => reading, 1_000);
-      const tick = async (ms: number) => { for (let left = ms; left > 0; left -= 1_000) { clock.t += 1_000; await vi.advanceTimersByTimeAsync(1_000); } };
+      const tick = async (ms: number) => {
+        for (let left = ms; left > 0; left -= 1_000) {
+          clock.t += 1_000;
+          await vi.advanceTimersByTimeAsync(1_000);
+        }
+      };
       await tick(1_000);
-      for (let i = 0; i < 5; i += 1) { reading = { applied: 11n + BigInt(i), tip: 20n }; await tick(STUCK_MS / 5); }
+      for (let i = 0; i < 5; i += 1) {
+        reading = { applied: 11n + BigInt(i), tip: 20n };
+        await tick(STUCK_MS / 5);
+      }
       expect(rebuilds, 'a moving height was taken as stuck').toEqual([]);
       reading = { applied: 20n, tip: 20n };
       await tick(STUCK_MS + 1_000);
@@ -144,4 +165,3 @@ describe('the fee payer\'s wallet is held in one place and built again when it f
     }
   });
 });
-

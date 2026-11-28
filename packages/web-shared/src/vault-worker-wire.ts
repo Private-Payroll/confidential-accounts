@@ -6,7 +6,10 @@
  */
 import type { Committee } from '../../../src/midnight/vault-committee.js';
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
-import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import type {
+  PrivatePaymentOnTheWire,
+  PrivatePaymentOrderOnTheWire
+} from '../../../src/midnight/private-payment-wire.js';
 import type { PaymentsFitAnswer } from '../../../src/midnight/vault-notes.js';
 import type { EventOnTheWire, NoteOnTheWire, PaymentConfirmation, TransactionRead } from './vault-builder.js';
 import type { SecretRunOnTheWire } from './vault-secret-built.js';
@@ -22,18 +25,36 @@ export type { StartStandingOnTheWire };
 export type { VaultRebuildAsked, VaultRebuilt } from './vault-rebuild-wire.js';
 
 import type {
-  AnchorPlacement, AnchorsOnChain, GovernedCallOrder, HeadStepAsked, OpenedRound, ProposalIdentity, RoundChangeOnTheWire, RoundOnChain, SignerMaterial, SpendingPolicyKeys, VouchedRunOnTheWire,
+  AnchorPlacement,
+  AnchorsOnChain,
+  GovernedCallOrder,
+  HeadStepAsked,
+  OpenedRound,
+  ProposalIdentity,
+  RoundChangeOnTheWire,
+  RoundOnChain,
+  SignerMaterial,
+  SpendingPolicyKeys,
+  VouchedRunOnTheWire
 } from './governed-call-builder.js';
 import type { PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
 import type { BatchHolders } from '../../../src/midnight/record-manifest.js';
 import type { AddressClaimFor, UnshieldedAddressClaim } from 'midnight-identity/profile/address-claim';
-import type { PeriodTotalAskOnTheWire, RunChargeStanding, RunToChargeOnTheWire, RunTreeOnTheWire } from './run-charge-builder.js';
-
+import type {
+  PeriodTotalAskOnTheWire,
+  RunChargeStanding,
+  RunToChargeOnTheWire,
+  RunTreeOnTheWire
+} from './run-charge-builder.js';
 
 /** An invitee's call taking an invited seat, as a wallet asks its worker for it: the chain's state as base64. */
 /** One vault and currency whose spending policy keys are asked, and with `policy` (and a run's `total`) what it commits to and needs. */
 export interface SpendingPolicyKeysAsked {
-  readonly vault: string; readonly asset: string; readonly assetBlinding: string; readonly policy?: PolicyOpeningOnTheWire; readonly total?: string;
+  readonly vault: string;
+  readonly asset: string;
+  readonly assetBlinding: string;
+  readonly policy?: PolicyOpeningOnTheWire;
+  readonly total?: string;
 }
 
 /** One pair's keys as the worker made them, or why they could not be made: one pair's refusal is never another's. */
@@ -53,8 +74,15 @@ export interface InvitedSeatOnTheWire {
 
 export type { AccountCallChainOnTheWire, PayoutChainOnTheWire } from './one-block-read.js';
 import type { AccountCallChainOnTheWire, PayoutChainOnTheWire } from './one-block-read.js';
-export interface SigningKeyOnTheWire { readonly tag: string; readonly value: string }
-export interface CoinOnTheWire { readonly nonce: string; readonly token: string; readonly value: string }
+export interface SigningKeyOnTheWire {
+  readonly tag: string;
+  readonly value: string;
+}
+export interface CoinOnTheWire {
+  readonly nonce: string;
+  readonly token: string;
+  readonly value: string;
+}
 export type OrderOnTheWire = Omit<PrivatePaymentOrderOnTheWire, 'payments'>;
 /**
  * Which transaction created a note, as its events say: `found`; `refused`, the
@@ -66,8 +94,12 @@ export type CreatingTransactionAnswer =
   | { readonly state: 'refused' }
   | { readonly state: 'unreadable' };
 /** Whether the chain holds an account, the newest block's time (ms) as the indexer names it, and the newest time to live (ms) of the transactions asked about, or null when one could not be read. */
-export interface AccountPresenceOnTheWire { held: boolean; blockHeight: number; blockTime: number; ttl: number | null }
-
+export interface AccountPresenceOnTheWire {
+  held: boolean;
+  blockHeight: number;
+  blockTime: number;
+  ttl: number | null;
+}
 
 export type VaultAsk =
   | { id: number; network: string; ask: 'deploy'; account: string }
@@ -77,67 +109,214 @@ export type VaultAsk =
    * by that key in the founding signer's wallet. Nothing secret crosses: a
    * seat, a label, a public key and a signature.
    */
-  | { id: number; network: string; ask: 'account-deploy'; foundingLeaf: string; label: string; foundingKey: SigningKeyOnTheWire; clockOffsetMs?: number }
-  | { id: number; network: string; ask: 'finished-creation'; account: string; signature: SigningKeyOnTheWire; clockOffsetMs?: number }
+  | {
+      id: number;
+      network: string;
+      ask: 'account-deploy';
+      foundingLeaf: string;
+      label: string;
+      foundingKey: SigningKeyOnTheWire;
+      clockOffsetMs?: number;
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'finished-creation';
+      account: string;
+      signature: SigningKeyOnTheWire;
+      clockOffsetMs?: number;
+    }
   /*
    * **A VAULT HELD BY THE COMPANY'S COMMITTEE FROM ITS FIRST TRANSACTION**, and
    * the reading of a vault's deploy, as sent, before it is adopted: held by
    * exactly that committee, this build's circuits, nothing written.
    */
   | { id: number; network: string; ask: 'born-held-vault'; account: string; holders: Committee }
-  | { id: number; network: string; ask: 'vault-as-deployed'; vault: string; account: string; holders: Committee; again?: boolean; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'handover'; vault: string; counter: string; temporaryKey: SigningKeyOnTheWire; to: Committee }
-  | { id: number; network: string; ask: 'deposit'; vault: string; coin: CoinOnTheWire; state: string; parameters: string }
-  | { id: number; network: string; ask: 'public-deposit'; vault: string; token: string; amount: string; state: string; parameters: string }
+  | {
+      id: number;
+      network: string;
+      ask: 'vault-as-deployed';
+      vault: string;
+      account: string;
+      holders: Committee;
+      again?: boolean;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'handover';
+      vault: string;
+      counter: string;
+      temporaryKey: SigningKeyOnTheWire;
+      to: Committee;
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'deposit';
+      vault: string;
+      coin: CoinOnTheWire;
+      state: string;
+      parameters: string;
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'public-deposit';
+      vault: string;
+      token: string;
+      amount: string;
+      state: string;
+      parameters: string;
+    }
   | { id: number; network: string; ask: 'commitments'; vault: string; coin: CoinOnTheWire }
   | { id: number; network: string; ask: 'step-kept'; vault: string; secret: string; step: StepOnTheWire }
   | ({ id: number; network: string; ask: 'vault-rebuilt' } & VaultRebuildAsked)
-  | { id: number; network: string; ask: 'vault-on-chain'; vault: string; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | {
+      id: number;
+      network: string;
+      ask: 'vault-on-chain';
+      vault: string;
+      account?: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
   /* Many vaults read together: their states, and the account's, in one request for each 256. */
-  | { id: number; network: string; ask: 'vaults-on-chain'; vaults: string[]; account?: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | {
+      id: number;
+      network: string;
+      ask: 'vaults-on-chain';
+      vaults: string[];
+      account?: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
   /* What a step out of the vault is built on, and the events it is judged by, read here at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'chain-at-one-block'; vault: string; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'events-of'; transactionHash: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'created-by'; vault: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'vault-call-on-chain'; vault: string; entryPoints: string[]; transaction: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | {
+      id: number;
+      network: string;
+      ask: 'chain-at-one-block';
+      vault: string;
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'events-of';
+      transactionHash: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'created-by';
+      vault: string;
+      commitment: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'vault-call-on-chain';
+      vault: string;
+      entryPoints: string[];
+      transaction: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
   | { id: number; network: string; ask: 'transaction-read'; transaction: string }
   | { id: number; network: string; ask: 'own-seat'; material: SignerMaterial }
   | { id: number; network: string; ask: 'warm-proving' }
   /* A company's deploy and its signed second step, carried in fresh transactions: the same account, the same signature. */
   | { id: number; network: string; ask: 'creation-again'; deploy: string; insert: string; clockOffsetMs?: number }
   | { id: number; network: string; ask: 'secret-is-the-vaults'; vault: string; state: string; secret: string }
-  | { id: number; network: string; ask: 'own-chain-copy'; vault: string; state: string; reader: string; of: 'commitment' | 'copies-written' }
-  | { id: number; network: string; ask: 'secret-set-at'; vault: string; account: string; commitment: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'notes-for-payment'; notes: readonly NoteOnTheWire[]; token: string; amount: string }
   | {
-    id: number; network: string; ask: 'payments-fit'; notes: readonly NoteOnTheWire[];
-    payments: ReadonlyArray<{ token: string; amount: string }>;
-  }
+      id: number;
+      network: string;
+      ask: 'own-chain-copy';
+      vault: string;
+      state: string;
+      reader: string;
+      of: 'commitment' | 'copies-written';
+    }
   | {
-    id: number; network: string; ask: 'after-payment'; notes: readonly NoteOnTheWire[];
-    spent: string; further?: readonly string[]; amount: string; change: NoteOnTheWire | null; createdIn: string | null;
-  }
+      id: number;
+      network: string;
+      ask: 'secret-set-at';
+      vault: string;
+      account: string;
+      commitment: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
   | {
-    id: number; network: string; ask: 'confirm-payment'; vault: string; transactionHash: string;
-    change: NoteOnTheWire | null; events: readonly EventOnTheWire[]; merge?: true;
-  }
+      id: number;
+      network: string;
+      ask: 'notes-for-payment';
+      notes: readonly NoteOnTheWire[];
+      token: string;
+      amount: string;
+    }
   | {
-    id: number; network: string; ask: 'creating-transaction'; vault: string; commitment: string;
-    transactionHash: string; events: readonly EventOnTheWire[];
-  }
+      id: number;
+      network: string;
+      ask: 'payments-fit';
+      notes: readonly NoteOnTheWire[];
+      payments: ReadonlyArray<{ token: string; amount: string }>;
+    }
   | {
-    id: number; network: string; ask: 'payout'; vault: string; account: string; order: OrderOnTheWire;
-    payment: PrivatePaymentOnTheWire; note: NoteOnTheWire; events: readonly EventOnTheWire[];
-    further?: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>; chain: PayoutChainOnTheWire;
-    /** The vault's current nonce secret, opened on this device, for this one payment. */
-    secret: string;
-  }
+      id: number;
+      network: string;
+      ask: 'after-payment';
+      notes: readonly NoteOnTheWire[];
+      spent: string;
+      further?: readonly string[];
+      amount: string;
+      change: NoteOnTheWire | null;
+      createdIn: string | null;
+    }
   | {
-    id: number; network: string; ask: 'merge'; vault: string;
-    notes: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>; chain: PayoutChainOnTheWire;
-    /** The vault's current nonce secret, opened on this device, for this one merge. */
-    secret: string;
-  }
+      id: number;
+      network: string;
+      ask: 'confirm-payment';
+      vault: string;
+      transactionHash: string;
+      change: NoteOnTheWire | null;
+      events: readonly EventOnTheWire[];
+      merge?: true;
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'creating-transaction';
+      vault: string;
+      commitment: string;
+      transactionHash: string;
+      events: readonly EventOnTheWire[];
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'payout';
+      vault: string;
+      account: string;
+      order: OrderOnTheWire;
+      payment: PrivatePaymentOnTheWire;
+      note: NoteOnTheWire;
+      events: readonly EventOnTheWire[];
+      further?: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>;
+      chain: PayoutChainOnTheWire;
+      /** The vault's current nonce secret, opened on this device, for this one payment. */
+      secret: string;
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'merge';
+      vault: string;
+      notes: ReadonlyArray<{ readonly note: NoteOnTheWire; readonly events: readonly EventOnTheWire[] }>;
+      chain: PayoutChainOnTheWire;
+      /** The vault's current nonce secret, opened on this device, for this one merge. */
+      secret: string;
+    }
   /*
    * **A VAULT'S START, OR A SECRET RUN REPLACING ITS SECRET.** The secret, when
    * given, is the one the page opened from the company's filed record or from its
@@ -148,33 +327,74 @@ export type VaultAsk =
    * none of them.
    */
   | {
-    id: number; network: string; ask: 'start-standing'; vault: string; account: string;
-    accountState: string; vaultState: string; secret?: string; readers?: readonly string[]; now: string;
-    window?: { opensAt: string; closesAt: string }; seat?: string; previous?: string; earlier?: readonly string[]; again?: string;
-  }
+      id: number;
+      network: string;
+      ask: 'start-standing';
+      vault: string;
+      account: string;
+      accountState: string;
+      vaultState: string;
+      secret?: string;
+      readers?: readonly string[];
+      now: string;
+      window?: { opensAt: string; closesAt: string };
+      seat?: string;
+      previous?: string;
+      earlier?: readonly string[];
+      again?: string;
+    }
   | {
-    id: number; network: string; ask: 'set-nonce-secret'; vault: string; account: string; run: SecretRunOnTheWire;
-    secret: string; earlier?: string; proposal: string; opensAt: string; closesAt: string; chain: PayoutChainOnTheWire;
-  }
+      id: number;
+      network: string;
+      ask: 'set-nonce-secret';
+      vault: string;
+      account: string;
+      run: SecretRunOnTheWire;
+      secret: string;
+      earlier?: string;
+      proposal: string;
+      opensAt: string;
+      closesAt: string;
+      chain: PayoutChainOnTheWire;
+    }
   | RetireAsk
   | {
-    id: number; network: string; ask: 'write-secret-copy'; vault: string; run: SecretRunOnTheWire; place: number;
-    state: string; parameters: string;
-  }
+      id: number;
+      network: string;
+      ask: 'write-secret-copy';
+      vault: string;
+      run: SecretRunOnTheWire;
+      place: number;
+      state: string;
+      parameters: string;
+    }
   | {
-    id: number; network: string; ask: 'payout-publicly'; vault: string; account: string; order: OrderOnTheWire;
-    payment: PrivatePaymentOnTheWire; chain: PayoutChainOnTheWire;
-  }
+      id: number;
+      network: string;
+      ask: 'payout-publicly';
+      vault: string;
+      account: string;
+      order: OrderOnTheWire;
+      payment: PrivatePaymentOnTheWire;
+      chain: PayoutChainOnTheWire;
+    }
   /*
    * A proposal's identity, made in the worker by the account's own functions from the change and its salt: a change of
    * seats, thresholds, policies or a vault retired, a vault adopted, or the pay-record key committed.
    */
   | {
-    id: number; network: string; ask: 'proposal-identity'; change: RoundChangeOnTheWire; salt: string;
-  }
+      id: number;
+      network: string;
+      ask: 'proposal-identity';
+      change: RoundChangeOnTheWire;
+      salt: string;
+    }
   | {
-    id: number; network: string; ask: 'vouched-run-identity'; run: VouchedRunOnTheWire;
-  }
+      id: number;
+      network: string;
+      ask: 'vouched-run-identity';
+      run: VouchedRunOnTheWire;
+    }
   | { id: number; network: string; ask: 'company-wide' }
   | { id: number; network: string; ask: 'policy-bar-key' }
   /*
@@ -191,49 +411,135 @@ export type VaultAsk =
   /* The keys of every vault and currency asked, made in one message and answered in one, each pair on its own. */
   | { id: number; network: string; ask: 'spending-policy-keys'; pairs: readonly SpendingPolicyKeysAsked[] }
   | {
-    id: number; network: string; ask: 'governed-call'; account: string; order: GovernedCallOrder;
-    material: SignerMaterial; chain: AccountCallChainOnTheWire; opened: OpenedRound;
-  }
+      id: number;
+      network: string;
+      ask: 'governed-call';
+      account: string;
+      order: GovernedCallOrder;
+      material: SignerMaterial;
+      chain: AccountCallChainOnTheWire;
+      opened: OpenedRound;
+    }
   | {
-    id: number; network: string; ask: 'clear-run'; account: string; run: RunToChargeOnTheWire;
-    runs: readonly RunTreeOnTheWire[]; chain: { accountState: string; parameters: string };
-  }
+      id: number;
+      network: string;
+      ask: 'clear-run';
+      account: string;
+      run: RunToChargeOnTheWire;
+      runs: readonly RunTreeOnTheWire[];
+      chain: { accountState: string; parameters: string };
+    }
   | { id: number; network: string; ask: 'period-total'; accountState: string; total: PeriodTotalAskOnTheWire }
   | { id: number; network: string; ask: 'run-charged'; accountState: string; proposal: string }
   /* The head the latest recovery carried out wrote, read off one state of the account by its own reader and key. */
   | { id: number; network: string; ask: 'last-recovery'; accountState: string }
-  | { id: number; network: string; ask: 'anchor-heads'; after: readonly HeadStepAsked[]; holders?: readonly BatchHolders[] }
+  | {
+      id: number;
+      network: string;
+      ask: 'anchor-heads';
+      after: readonly HeadStepAsked[];
+      holders?: readonly BatchHolders[];
+    }
   /* The tag this signer's seat anchors under in the account, by the account's own functions. */
   | { id: number; network: string; ask: 'anchor-tag'; account: string; material: SignerMaterial }
   /* What each seat's opening opens and the tag it anchors under, and this signer's own, by the account's own functions. */
   | {
-    id: number; network: string; ask: 'seat-openings'; account: string;
-    openings: ReadonlyArray<{ publicKey: string; scope: string; blinding: string }>; own?: SignerMaterial;
-  }
+      id: number;
+      network: string;
+      ask: 'seat-openings';
+      account: string;
+      openings: ReadonlyArray<{ publicKey: string; scope: string; blinding: string }>;
+      own?: SignerMaterial;
+    }
   /* Every head the account's history shows, one per block, read in the worker at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'anchors-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  /* Where each proposal asked about stands, read in the worker from the account's history at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'rounds-on-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; chainIds: readonly string[]; seat?: string }
-  /* Which of the leaves asked about the account records paid, read in the worker from its history's latest state at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'paid-leaves'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; leaves: readonly string[] }
-  /* Every run open now that a removal has outrun, read in the worker from the account's history at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'runs-outrun'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
-  | { id: number; network: string; ask: 'seat-invited' } & Omit<InvitedSeatOnTheWire, never>
-  | { id: number; network: string; ask: 'invited-seats'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; proposals: readonly string[] }
   | {
-    id: number; network: string; ask: 'anchor'; account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire;
-    previous: string; batch: string; held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
-  }
+      id: number;
+      network: string;
+      ask: 'anchors-on-chain';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
+  /* Where each proposal asked about stands, read in the worker from the account's history at the indexer the wallet names. */
+  | {
+      id: number;
+      network: string;
+      ask: 'rounds-on-chain';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+      chainIds: readonly string[];
+      seat?: string;
+    }
+  /* Which of the leaves asked about the account records paid, read in the worker from its history's latest state at the indexer the wallet names. */
+  | {
+      id: number;
+      network: string;
+      ask: 'paid-leaves';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+      leaves: readonly string[];
+    }
+  /* Every run open now that a removal has outrun, read in the worker from the account's history at the indexer the wallet names. */
+  | {
+      id: number;
+      network: string;
+      ask: 'runs-outrun';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
+  | ({ id: number; network: string; ask: 'seat-invited' } & Omit<InvitedSeatOnTheWire, never>)
+  | {
+      id: number;
+      network: string;
+      ask: 'invited-seats';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+      proposals: readonly string[];
+    }
+  | {
+      id: number;
+      network: string;
+      ask: 'anchor';
+      account: string;
+      material: SignerMaterial;
+      chain: AccountCallChainOnTheWire;
+      previous: string;
+      batch: string;
+      held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+    }
   /* A recovery of the record anchor under its approved proposal: as an anchor, resuming from a head its quorum approved. */
   | {
-    id: number; network: string; ask: 'recover-anchor'; account: string; material: SignerMaterial; chain: AccountCallChainOnTheWire;
-    previous: string; batch: string; held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
-    resumesFrom: string; latest: string; lastRecovery: string; proposal: string; proposalSalt: string;
-  }
+      id: number;
+      network: string;
+      ask: 'recover-anchor';
+      account: string;
+      material: SignerMaterial;
+      chain: AccountCallChainOnTheWire;
+      previous: string;
+      batch: string;
+      held: Pick<BatchHolders, 'approvals' | 'signerRoot'>;
+      resumesFrom: string;
+      latest: string;
+      lastRecovery: string;
+      proposal: string;
+      proposalSalt: string;
+    }
   /* What a call to the account alone is built on, at one block, read in the worker at the indexer the wallet names. */
-  | { id: number; network: string; ask: 'account-call-chain'; account: string; indexer: { indexerUri: string; indexerWsUri: string } }
+  | {
+      id: number;
+      network: string;
+      ask: 'account-call-chain';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+    }
   /* Whether the indexer the wallet names holds a contract at the account, the chain's newest block time with it, and the newest time to live of the kept transactions. */
-  | { id: number; network: string; ask: 'account-presence'; account: string; indexer: { indexerUri: string; indexerWsUri: string }; transactions: string[] }
+  | {
+      id: number;
+      network: string;
+      ask: 'account-presence';
+      account: string;
+      indexer: { indexerUri: string; indexerWsUri: string };
+      transactions: string[];
+    }
   /* A change of the super admins: the chain's reads and the ledger's part, asked of the worker so the ledger loads only there. */
   | SuperAdminAsk;
 
@@ -247,7 +553,11 @@ type Answered<A extends VaultAsk['ask'], T> = { id: number; ok: true; ask: A } &
  * themselves never leave the worker.
  */
 export interface OneOffOnTheWire {
-  readonly vault: string; readonly asset: string; readonly token: string; readonly amount: string; readonly reason: string;
+  readonly vault: string;
+  readonly asset: string;
+  readonly token: string;
+  readonly amount: string;
+  readonly reason: string;
   readonly payee: { readonly ref: string | null; readonly name: string | null; readonly address: string };
   readonly proposal: { readonly id: string; readonly chainId: string };
   readonly leaf: string | null;
@@ -343,23 +653,22 @@ export type VaultRequest = Without<VaultAsk>;
 export type VaultOnChainOnTheWire =
   | { readonly onChain: false }
   | {
-    readonly onChain: true;
-    readonly state: string;
-    readonly notes?: readonly string[];
-    /** The secret's commitment the vault holds, and its split journal (nullifier, masked amount): read only with `notes`. */
-    readonly nonceCommitment?: string;
-    readonly splitJournal?: ReadonlyArray<readonly [string, string]>;
-    readonly notesFromThisBuild: boolean;
-    readonly notesWhy?: string;
-    readonly everCreated: readonly string[];
-    readonly account: string | null;
-    readonly started: boolean;
-    /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
-    readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
-    readonly publicBalancesWhy?: string;
-    /** Whether the vault marked itself retired, so it takes no deposit; absent off a ledger of another shape. */
-    readonly retired?: boolean;
-    readonly circuits?: { readonly why: string; readonly circuit: string | null } | null;
-    readonly accountCircuits?: { readonly why: string; readonly circuit: string | null } | null;
-  };
-
+      readonly onChain: true;
+      readonly state: string;
+      readonly notes?: readonly string[];
+      /** The secret's commitment the vault holds, and its split journal (nullifier, masked amount): read only with `notes`. */
+      readonly nonceCommitment?: string;
+      readonly splitJournal?: ReadonlyArray<readonly [string, string]>;
+      readonly notesFromThisBuild: boolean;
+      readonly notesWhy?: string;
+      readonly everCreated: readonly string[];
+      readonly account: string | null;
+      readonly started: boolean;
+      /** What it holds in public money, read off its state; absent, with why, when that could not be read. */
+      readonly publicBalances?: ReadonlyArray<{ readonly token: string; readonly amount: string }>;
+      readonly publicBalancesWhy?: string;
+      /** Whether the vault marked itself retired, so it takes no deposit; absent off a ledger of another shape. */
+      readonly retired?: boolean;
+      readonly circuits?: { readonly why: string; readonly circuit: string | null } | null;
+      readonly accountCircuits?: { readonly why: string; readonly circuit: string | null } | null;
+    };

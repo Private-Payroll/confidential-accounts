@@ -17,19 +17,43 @@
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import { sealingWith } from '../../../src/core/company-key.js';
 import { keysByPurpose } from './keys-by-purpose.js';
-import { assetIdBytes, assetIdHex, assets as theAssets, type AssetId, type AssetRegistry } from '../../../src/core/assets.js';
+import {
+  assetIdBytes,
+  assetIdHex,
+  assets as theAssets,
+  type AssetId,
+  type AssetRegistry
+} from '../../../src/core/assets.js';
 import { canonical, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import type { Privacy } from '../../../src/core/movement.js';
 import type { PaymentsAmong } from '../../../src/core/ledger.js';
-import { batchDigestOf, raiseByOf, sealTransferProposal, signProposalFiling } from '../../../src/core/proposal-filing.js';
+import {
+  batchDigestOf,
+  raiseByOf,
+  sealTransferProposal,
+  signProposalFiling
+} from '../../../src/core/proposal-filing.js';
 import { DEVICE_RAISE_VERSION } from '../../../src/core/device-raise.js';
 import { refuseARunNoVaultCanPay } from '../../../src/core/run-raising.js';
 import { refuseWhatTheVaultCannotPay } from '../../../src/core/vault-holdings.js';
 import {
-  newOneOffId, newOneOffSeed, ONE_OFF_KIND, ONE_OFF_VERSION, oneOffTidied, OneOffRefused, openOneOff, sealOneOff, type OneOffGiven, type OneOffOpened, type OneOffPayee,
+  newOneOffId,
+  newOneOffSeed,
+  ONE_OFF_KIND,
+  ONE_OFF_VERSION,
+  oneOffTidied,
+  OneOffRefused,
+  openOneOff,
+  sealOneOff,
+  type OneOffGiven,
+  type OneOffOpened,
+  type OneOffPayee
 } from '../../../src/midnight/one-off-record.js';
 import { rootOfPayments } from '../../../src/midnight/payout-tree.js';
-import { assemblePrivatePayments, type PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
+import {
+  assemblePrivatePayments,
+  type PrivatePaymentOrderOnTheWire
+} from '../../../src/midnight/private-payment-wire.js';
 import { companyRecordEntry, proposalEntry } from '../../../src/midnight/record-manifest.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { oneOffSaltOf } from '../../../src/midnight/run-keys.js';
@@ -37,7 +61,13 @@ import type { OpenedRound, RaiseRunOrder } from './governed-call-builder.js';
 import { theRoundAsked, type RoundOnThePage } from './governed-call-on-device.js';
 import type { RaiseDoors } from './payroll-run-on-device.js';
 import {
-  oneOffBuiltHere, oneOffRaisedByHere, refuseAOneOffToAnotherVendorHere, type OneOffBelieved, type OneOffReadDoors, type OneOffRecords, type OneOffsHere,
+  oneOffBuiltHere,
+  oneOffRaisedByHere,
+  refuseAOneOffToAnotherVendorHere,
+  type OneOffBelieved,
+  type OneOffReadDoors,
+  type OneOffRecords,
+  type OneOffsHere
 } from './one-off-here.js';
 import { FilingNotBelieved } from './http-sealed-pool-store.js';
 import { seatThatMayFileHere } from './may-file-here.js';
@@ -64,15 +94,32 @@ export class OneOffNotFiled extends Error {
 }
 
 /** What a one-off says, written one way, so two records of it compare as text. */
-const factsOf = (o: OneOffOpened): string => canonical({
-  vault: o.vault, asset: o.asset, amount: o.amount.toString(), payee: o.payee, reason: o.reason, proposal: o.proposal,
-  run: { opensAt: o.run.opensAt.toString(), closesAt: o.run.closesAt.toString(), required: o.run.required.toString() }, seed: o.seed,
-});
+const factsOf = (o: OneOffOpened): string =>
+  canonical({
+    vault: o.vault,
+    asset: o.asset,
+    amount: o.amount.toString(),
+    payee: o.payee,
+    reason: o.reason,
+    proposal: o.proposal,
+    run: {
+      opensAt: o.run.opensAt.toString(),
+      closesAt: o.run.closesAt.toString(),
+      required: o.run.required.toString()
+    },
+    seed: o.seed
+  });
 
 /** This seat in the directory this device believes, if it may file a one-off (`seatThatMayFileHere`); otherwise why not. */
-async function thisSeatHere(doors: Pick<OneOffFilingDoors, 'signingSecret' | 'directory'>): Promise<{ readonly seat: string } | string> {
-  const mine = seatThatMayFileHere(await doors.directory(), signingPublicKeyOf(doors.signingSecret), ONE_OFF_KIND,
-    'your seat\'s role on this company may not propose payments from a vault');
+async function thisSeatHere(
+  doors: Pick<OneOffFilingDoors, 'signingSecret' | 'directory'>
+): Promise<{ readonly seat: string } | string> {
+  const mine = seatThatMayFileHere(
+    await doors.directory(),
+    signingPublicKeyOf(doors.signingSecret),
+    ONE_OFF_KIND,
+    "your seat's role on this company may not propose payments from a vault"
+  );
   return typeof mine === 'string' ? mine : { seat: mine.seat };
 }
 
@@ -94,7 +141,8 @@ const mineAndTheSame = (doors: OneOffFilingDoors, rec: SealedCompanyRecord, give
  * another record holds is refused.
  */
 export async function fileOneOffHere(
-  doors: OneOffFilingDoors, input: { readonly id: string; readonly given: OneOffGiven },
+  doors: OneOffFilingDoors,
+  input: { readonly id: string; readonly given: OneOffGiven }
 ): Promise<{ readonly state: 'filed' | 'entered-again'; readonly id: string; readonly version: number }> {
   const seat = await thisSeatHere(doors);
   if (typeof seat === 'string') throw new OneOffNotFiled(seat);
@@ -103,8 +151,12 @@ export async function fileOneOffHere(
   try {
     const sealing = sealingWith(doors.keys, doors.keyEpoch);
     rec = sealOneOff({
-      company: doors.accountId, id: input.id, keyEpoch: sealing.epoch, key: sealing.key, given: input.given,
-      ...(doors.registry === undefined ? {} : { registry: doors.registry }),
+      company: doors.accountId,
+      id: input.id,
+      keyEpoch: sealing.epoch,
+      key: sealing.key,
+      given: input.given,
+      ...(doors.registry === undefined ? {} : { registry: doors.registry })
     });
     given = openOneOff(rec, keysByPurpose(doors.keys).at(rec.keyEpoch), doors.registry);
   } catch (e) {
@@ -115,12 +167,21 @@ export async function fileOneOffHere(
   try {
     held = await doors.records.at(ONE_OFF_KIND, input.id, ONE_OFF_VERSION);
   } catch (e) {
-    if (!(e instanceof FilingNotBelieved)) throw new OneOffNotFiled(`this wallet could not check whether its record is already filed (${said(e)}). Press Pay again in a minute`, { cause: e });
+    if (!(e instanceof FilingNotBelieved))
+      throw new OneOffNotFiled(
+        `this wallet could not check whether its record is already filed (${said(e)}). Press Pay again in a minute`,
+        { cause: e }
+      );
     held = await doors.records.served(ONE_OFF_KIND, input.id).catch(() => null);
-    if (held === null) throw new OneOffNotFiled(`a record is already filed under its number and this wallet cannot trust it (${said(e)}). Press Pay again in a minute`, { cause: e });
+    if (held === null)
+      throw new OneOffNotFiled(
+        `a record is already filed under its number and this wallet cannot trust it (${said(e)}). Press Pay again in a minute`,
+        { cause: e }
+      );
   }
   if (held !== null) {
-    if (!mineAndTheSame(doors, held, given)) throw new OneOffNotFiled('another record is already filed under this id; raise it under a new one');
+    if (!mineAndTheSame(doors, held, given))
+      throw new OneOffNotFiled('another record is already filed under this id; raise it under a new one');
     await doors.entered.enter([companyRecordEntry(held)]);
     return { state: 'entered-again', id: input.id, version: held.version };
   }
@@ -128,7 +189,10 @@ export async function fileOneOffHere(
     await doors.records.put(rec);
   } catch (e) {
     if ((e as Error)?.name === 'VaultPoolVersionAlreadyFiled') {
-      throw new OneOffNotFiled('another record was filed under this id while this one was made; raise it under a new one', { cause: e });
+      throw new OneOffNotFiled(
+        'another record was filed under this id while this one was made; raise it under a new one',
+        { cause: e }
+      );
     }
     throw e;
   }
@@ -138,7 +202,13 @@ export async function fileOneOffHere(
 
 /** The account's own functions a one-off's identity on the chain is made with. */
 interface OneOffRunDeps {
-  readonly runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint) => Uint8Array;
+  readonly runPayload: (
+    root: Uint8Array,
+    payees: bigint,
+    opensAt: bigint,
+    closesAt: bigint,
+    required: bigint
+  ) => Uint8Array;
   readonly proposalIdOf: (payload: Uint8Array, vault: Uint8Array, salt: Uint8Array) => Uint8Array;
   readonly retrySaltOf: (legRoot: Uint8Array, fresh: Uint8Array) => Uint8Array;
   readonly noVault: () => Uint8Array;
@@ -181,8 +251,11 @@ const SUMMARY = 'One-off payment from a vault';
  * `LegNotRaisedHere` with the reason.
  */
 async function checkedBeforeAnythingIsFiled(
-  doors: OneOffRaiseDoors, input: OneOffAsked & { readonly viewingKey: KeysHeld }, registry: AssetRegistry, vault: Hex,
-  draft: (chainId: Hex, required: bigint) => Parameters<typeof oneOffTidied>[0],
+  doors: OneOffRaiseDoors,
+  input: OneOffAsked & { readonly viewingKey: KeysHeld },
+  registry: AssetRegistry,
+  vault: Hex,
+  draft: (chainId: Hex, required: bigint) => Parameters<typeof oneOffTidied>[0]
 ) {
   const { records } = doors;
   const key = input.viewingKey;
@@ -204,21 +277,37 @@ async function checkedBeforeAnythingIsFiled(
   const window = { opensAt: input.opensAt, closesAt: input.closesAt };
   const now = (doors.now ?? (() => new Date()))();
   try {
-    refuseARunNoVaultCanPay({ root, vault, ...window }, hex(doors.runs.noVault()), BigInt(Math.floor(now.getTime() / 1000)));
+    refuseARunNoVaultCanPay(
+      { root, vault, ...window },
+      hex(doors.runs.noVault()),
+      BigInt(Math.floor(now.getTime() / 1000))
+    );
   } catch (e) {
     throw new LegNotRaisedHere(said(e));
   }
-  const { required, policy } = await approvalsItsBandNeeds(doors, key, { vault, asset: tidied.asset, total: tidied.amount, window });
+  const { required, policy } = await approvalsItsBandNeeds(doors, key, {
+    vault,
+    asset: tidied.asset,
+    total: tidied.amount,
+    window
+  });
   try {
     refuseWhatThePolicyWouldNotCharge(policy, tidied.amount, required, 'one-off');
   } catch (e) {
     throw new LegNotRaisedHere(said(e));
   }
   doors.progress?.('checking-the-vault');
-  await refuseWhatTheVaultCannotPay(doors.holdings, {
-    vault, asset: registry.require(tidied.asset), total: tidied.amount, payees: 1n,
-    payments: [{ payee: { kind: tidied.paidTo.kind }, token: tidied.token, amount: tidied.amount }],
-  }, ['shielded', 'unshielded']);
+  await refuseWhatTheVaultCannotPay(
+    doors.holdings,
+    {
+      vault,
+      asset: registry.require(tidied.asset),
+      total: tidied.amount,
+      payees: 1n,
+      payments: [{ payee: { kind: tidied.paidTo.kind }, token: tidied.token, amount: tidied.amount }]
+    },
+    ['shielded', 'unshielded']
+  );
   return { tidied, secrets, root, window, now, required };
 }
 
@@ -230,19 +319,36 @@ async function checkedBeforeAnythingIsFiled(
  * or names no vault, the vault's policy would not charge it, or the vault
  * cannot pay it.
  */
-export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAsked & { readonly viewingKey: KeysHeld }): Promise<RoundOnThePage> {
+export async function raiseOneOffHere(
+  doors: OneOffRaiseDoors,
+  input: OneOffAsked & { readonly viewingKey: KeysHeld }
+): Promise<RoundOnThePage> {
   const { records, accountId, service } = doors;
-  if (!service.file) throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
+  if (!service.file)
+    throw new LegNotRaisedHere('This page cannot write proposals down. Reload the page to get the current version');
   const registry = doors.assets ?? records.oneOffs.registry ?? records.registry ?? theAssets;
   const key = input.viewingKey;
   const vault = String(input.vault).toLowerCase() as Hex;
   const seed = newOneOffSeed();
   const proposalId = doors.filing.newId();
   const draft = (chainId: Hex, required: bigint) => ({
-    vault, asset: input.asset, amount: input.amount, form: input.form, payee: input.payee, reason: input.reason,
-    proposal: { id: proposalId, chainId }, run: { opensAt: input.opensAt, closesAt: input.closesAt, required }, seed,
+    vault,
+    asset: input.asset,
+    amount: input.amount,
+    form: input.form,
+    payee: input.payee,
+    reason: input.reason,
+    proposal: { id: proposalId, chainId },
+    run: { opensAt: input.opensAt, closesAt: input.closesAt, required },
+    seed
   });
-  const { tidied, secrets, root, window, now, required } = await checkedBeforeAnythingIsFiled(doors, input, registry, vault, draft);
+  const { tidied, secrets, root, window, now, required } = await checkedBeforeAnythingIsFiled(
+    doors,
+    input,
+    registry,
+    vault,
+    draft
+  );
 
   const salt = oneOffSaltOf(secrets, doors.runs.retrySaltOf);
   const digest = hex(doors.runs.runPayload(bytes(root), 1n, window.opensAt, window.closesAt, BigInt(required)));
@@ -250,44 +356,92 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
   const sealing = sealingWith(key, doors.filing.keyEpoch);
   const oneOffId = newOneOffId();
   const change = { asset: tidied.asset, amount: tidied.amount, batchDigest: batchDigestOf([]), salt };
-  const proposal = signProposalFiling(accountId, {
-    id: proposalId, digest, chainId, keyEpoch: sealing.epoch, createdAt: now.toISOString(),
-    sealed: sealTransferProposal({
-      accountId, viewingKey: sealing.key, vault, summary: SUMMARY, oneOff: { id: oneOffId, version: 1 }, change,
-      proposedBy: doors.filing.seat,
-    }),
-  }, doors.material.signingSecret as Hex);
+  const proposal = signProposalFiling(
+    accountId,
+    {
+      id: proposalId,
+      digest,
+      chainId,
+      keyEpoch: sealing.epoch,
+      createdAt: now.toISOString(),
+      sealed: sealTransferProposal({
+        accountId,
+        viewingKey: sealing.key,
+        vault,
+        summary: SUMMARY,
+        oneOff: { id: oneOffId, version: 1 },
+        change,
+        proposedBy: doors.filing.seat
+      })
+    },
+    doors.material.signingSecret as Hex
+  );
   const assetBlinding = (await signedStateHere(records, accountId, key)).assetBlinding;
   const named = { assetId: assetIdBytes(tidied.asset) };
   const assetId = hex(named.assetId);
   const opened: OpenedRound = {
-    chainId, digest, vault, salt, summary: SUMMARY, raiseBy: raiseByOf(proposal.createdAt),
+    chainId,
+    digest,
+    vault,
+    salt,
+    summary: SUMMARY,
+    raiseBy: raiseByOf(proposal.createdAt),
     half: { assetId, changeAmount: String(change.amount), changeBatchDigest: change.batchDigest },
     made: {
-      kind: 'transfer', asset: tidied.asset, facts: { payee: tidied.paidTo, token: tidied.token, amount: tidied.amount }, seed,
-      opensAt: String(window.opensAt), closesAt: String(window.closesAt), required,
-    },
+      kind: 'transfer',
+      asset: tidied.asset,
+      facts: { payee: tidied.paidTo, token: tidied.token, amount: tidied.amount },
+      seed,
+      opensAt: String(window.opensAt),
+      closesAt: String(window.closesAt),
+      required
+    }
   };
   const order: RaiseRunOrder = {
     circuit: 'propose',
     run: { root, payees: '1', opensAt: String(window.opensAt), closesAt: String(window.closesAt), vault, required },
-    half: { assetId, assetBlinding, proposalSalt: salt, changeAmount: opened.half!.changeAmount, changeBatchDigest: change.batchDigest },
-    proposal: chainId,
+    half: {
+      assetId,
+      assetBlinding,
+      proposalSalt: salt,
+      changeAmount: opened.half!.changeAmount,
+      changeBatchDigest: change.batchDigest
+    },
+    proposal: chainId
   };
   doors.progress?.('reading-the-chain');
   const chain = await service.callState(accountId);
   doors.progress?.('building');
-  const { tx } = await doors.builder.governedCall({ account: chain.account, material: doors.material, chain, opened, order });
+  const { tx } = await doors.builder.governedCall({
+    account: chain.account,
+    material: doors.material,
+    chain,
+    opened,
+    order
+  });
   doors.progress?.('writing-down');
-  await fileOneOffHere({
-    accountId, directory: records.directory, records: { at: records.oneOffs.at, ...doors.oneOffFiling }, keys: key,
-    signingSecret: doors.material.signingSecret as Hex, entered: doors.recorded.entered, keyEpoch: doors.filing.keyEpoch, registry,
-  }, { id: oneOffId, given: draft(chainId, BigInt(required)) });
+  await fileOneOffHere(
+    {
+      accountId,
+      directory: records.directory,
+      records: { at: records.oneOffs.at, ...doors.oneOffFiling },
+      keys: key,
+      signingSecret: doors.material.signingSecret as Hex,
+      entered: doors.recorded.entered,
+      keyEpoch: doors.filing.keyEpoch,
+      registry
+    },
+    { id: oneOffId, given: draft(chainId, BigInt(required)) }
+  );
   doors.progress?.('sending');
   const filed = [proposalEntry(accountId, proposal)];
   let round: RoundOnThePage;
   try {
-    round = theRoundAsked(await service.file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, vault }), proposal.id, chainId);
+    round = theRoundAsked(
+      await service.file(accountId, { proposal, tx, version: DEVICE_RAISE_VERSION, salt, vault }),
+      proposal.id,
+      chainId
+    );
   } catch (e) {
     /* Written down and not sent is still written down: its filer enters it, as a payroll raise does. */
     await doors.recorded.entered.enter(filed).catch(() => undefined);
@@ -308,10 +462,13 @@ export async function raiseOneOffHere(doors: OneOffRaiseDoors, input: OneOffAske
  * policy (`chargeTheRunHere`).
  */
 export async function oneOffToPayHere(
-  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'proposals' | 'vendors'>, accountId: string, viewingKey: KeysHeld, proposalId: string,
+  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'proposals' | 'vendors'>,
+  accountId: string,
+  viewingKey: KeysHeld,
+  proposalId: string,
   deps: Pick<OneOffRunDeps, 'runPayload' | 'proposalIdOf' | 'retrySaltOf'> & {
     readonly paidAmong: (leaves: readonly Hex[]) => Promise<PaymentsAmong | null>;
-  },
+  }
 ): Promise<{ readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string }> {
   let found: OneOffBelieved | null;
   try {
@@ -321,7 +478,10 @@ export async function oneOffToPayHere(
     if (e instanceof OneOffRefused) throw new LegNotRaisedHere(e.message);
     throw e;
   }
-  if (found === null) throw new LegNotRaisedHere('The company\'s records hold no one-off payment raised by that proposal, so there is nothing to pay');
+  if (found === null)
+    throw new LegNotRaisedHere(
+      "The company's records hold no one-off payment raised by that proposal, so there is nothing to pay"
+    );
   const { oneOff: o, secrets, tree } = found;
   const salt = oneOffSaltOf(secrets, deps.retrySaltOf);
   const facts = { payee: o.paidTo, token: o.token, amount: o.amount };
@@ -329,18 +489,33 @@ export async function oneOffToPayHere(
   const paid = await deps.paidAmong(leaves);
   const assembled = assemblePrivatePayments({
     order: {
-      asset: assetIdHex(o.asset).toLowerCase(), form: o.paidTo.kind, vault: o.vault, proposal: o.proposal.chainId, salt,
-      root: tree.tree.root, payees: 1n, opensAt: o.run.opensAt, closesAt: o.run.closesAt,
+      asset: assetIdHex(o.asset).toLowerCase(),
+      form: o.paidTo.kind,
+      vault: o.vault,
+      proposal: o.proposal.chainId,
+      salt,
+      root: tree.tree.root,
+      payees: 1n,
+      opensAt: o.run.opensAt,
+      closesAt: o.run.closesAt
     },
-    leaves, window: { from: o.run.opensAt, until: o.run.closesAt },
-    idFrom: (made, w) => hex(deps.proposalIdOf(
-      deps.runPayload(bytes(rootOfPayments(made, [facts], o.asset)), 1n, w.from, w.until, o.run.required), bytes(o.vault), bytes(salt))),
-    built: tree, facts: [facts],
-    paid: paid?.known === true ? new Set(paid.paid) : null,
+    leaves,
+    window: { from: o.run.opensAt, until: o.run.closesAt },
+    idFrom: (made, w) =>
+      hex(
+        deps.proposalIdOf(
+          deps.runPayload(bytes(rootOfPayments(made, [facts], o.asset)), 1n, w.from, w.until, o.run.required),
+          bytes(o.vault),
+          bytes(salt)
+        )
+      ),
+    built: tree,
+    facts: [facts],
+    paid: paid?.known === true ? new Set(paid.paid) : null
   });
   if ('refusal' in assembled) throw new LegNotRaisedHere(assembled.refusal.replace(/ Nothing was sent\.$/u, ''));
   return {
     order: o.run.required === 0n ? assembled.order : { ...assembled.order, required: o.run.required.toString() },
-    proposalId: o.proposal.id,
+    proposalId: o.proposal.id
   };
 }

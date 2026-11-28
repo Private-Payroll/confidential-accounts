@@ -36,14 +36,19 @@ const rig = () => {
     }),
     console: {
       error: (...a: any[]) => originalCalls.push(`error:${a.join(' ')}`),
-      warn: (...a: any[]) => originalCalls.push(`warn:${a.join(' ')}`),
+      warn: (...a: any[]) => originalCalls.push(`warn:${a.join(' ')}`)
     },
     location: { href: 'http://localhost:5173/' },
     // Synchronous, so a test never waits: the debounce is not what is under test.
-    setTimeout: (fn: () => void) => { fn(); return 0 as any; },
+    setTimeout: (fn: () => void) => {
+      fn();
+      return 0 as any;
+    }
   };
 
-  installErrorSink(w, (body) => { posted.push(body); });
+  installErrorSink(w, (body) => {
+    posted.push(body);
+  });
 
   return {
     w,
@@ -55,7 +60,7 @@ const rig = () => {
       for (const handler of listeners.get(type) ?? []) handler(event);
     },
     /** Everything posted, flattened to text — what would reach the report. */
-    text: () => JSON.stringify(posted),
+    text: () => JSON.stringify(posted)
   };
 };
 
@@ -92,7 +97,7 @@ describe('the browser error sink', () => {
     const r = rig();
     r.w.console.error('boom', 1);
     r.w.console.warn('careful');
-    const levels = r.posted.flatMap(p => p.entries.map(e => e.level));
+    const levels = r.posted.flatMap((p) => p.entries.map((e) => e.level));
     expect(levels).toEqual(['console.error', 'console.warn']);
   });
 
@@ -121,7 +126,10 @@ describe('the browser error sink', () => {
    * already resolved, and there is no condition to wait FOR. the discipline
    * here is to await the thing, never poll for it.
    */
-  const settled = () => new Promise(resolve => { setTimeout(resolve, 0); });
+  const settled = () =>
+    new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
 
   /** A response whose body can be read once, like a real one. */
   const answering = (status: number, body: string) => {
@@ -134,7 +142,7 @@ describe('the browser error sink', () => {
         taken = true;
         return body;
       },
-      clone: () => ({ text: async () => body }),
+      clone: () => ({ text: async () => body })
     };
     return response;
   };
@@ -144,8 +152,7 @@ describe('the browser error sink', () => {
     r.willAnswer(answering(400, JSON.stringify({ error: 'you are already on this account' })));
     await r.w.fetch('/api/accounts');
     await settled();
-    expect(r.posted[0]!.entries[0]!.message)
-      .toBe('400 /api/accounts — you are already on this account');
+    expect(r.posted[0]!.entries[0]!.message).toBe('400 /api/accounts — you are already on this account');
   });
 
   /* RED WHEN: a refusal that names its cause with a `code` is recorded without it, with the code after a cut text, or a refusal with no code gets a bracket. */
@@ -158,7 +165,7 @@ describe('the browser error sink', () => {
     await settled();
     expect(r.posted.flatMap((p) => p.entries.map((e) => e.message))).toEqual([
       '401 /api/me — [session-not-valid] not signed in',
-      '400 /api/accounts — no',
+      '400 /api/accounts — no'
     ]);
   });
 
@@ -217,11 +224,9 @@ describe('the browser error sink', () => {
 
   it('THE ONE C145 ASKS OF THE PAGE: nothing shaped like a secret crosses the wire', () => {
     const r = rig();
-    r.w.console.error('login failed for '
-      + '{"password":"hunter2","authKey":"0123456789abcdef0123456789abcdef"}');
+    r.w.console.error('login failed for ' + '{"password":"hunter2","authKey":"0123456789abcdef0123456789abcdef"}');
     r.fire('error', {
-      error: new Error('Your wallet seed is: '
-        + '39aebaeb0a2f4c1d8e7b6a5940312233445566778899aabbccddeeff00112233'),
+      error: new Error('Your wallet seed is: ' + '39aebaeb0a2f4c1d8e7b6a5940312233445566778899aabbccddeeff00112233')
     });
     const wire = r.text();
     expect(wire).not.toContain('hunter2');

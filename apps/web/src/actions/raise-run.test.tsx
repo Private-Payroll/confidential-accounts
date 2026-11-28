@@ -12,38 +12,54 @@ import { untilPageShown } from '../page-shown.test-support.js';
  * answer, and that the answer stays on screen while the company's records are read again.
  */
 
-vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
+vi.hoisted(() => {
+  vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
+});
 const kr = vi.hoisted(() => ({
-  acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown, steps: [] as { step: number; steps: number }[],
-  hold: null as Promise<void> | null, company: null as unknown, reads: 0, user: { id: 'u1' } as { id: string } | null,
+  acts: [] as Record<string, string>[],
+  ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
+  steps: [] as { step: number; steps: number }[],
+  hold: null as Promise<void> | null,
+  company: null as unknown,
+  reads: 0,
+  user: { id: 'u1' } as { id: string } | null
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  actOnACompanyInTheWallet: async (intent: Record<string, string>, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
+  actOnACompanyInTheWallet: async (
+    intent: Record<string, string>,
+    _origin: string,
+    opts?: { onStep?: (at: { step: number; steps: number }) => void }
+  ) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
     if (kr.hold !== null) await kr.hold;
     return kr.ended;
-  },
+  }
 }));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) })
+  })
+);
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
-  readCompany: async () => { kr.reads += 1; return kr.company; },
+  readCompany: async () => {
+    kr.reads += 1;
+    return kr.company;
+  }
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
-  companyNamesFor: async () => new Map(),
+  companyNamesFor: async () => new Map()
 }));
 
 const { Payroll } = await import('../screens/payroll.js');
@@ -51,9 +67,15 @@ const { SessionProvider } = await import('../session.js');
 const { PanelProvider, RightPanel } = await import('../shell/right-panel.js');
 const { CompanyRecordsProvider } = await import('../records/company-records.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const words = (key: string, values: Record<string, string | number> = {}): string =>
@@ -61,21 +83,56 @@ const words = (key: string, values: Record<string, string | number> = {}): strin
 
 const VAULT = 'ab'.repeat(32);
 const records = () => ({
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [], approvalsNeeded: { of: 'read', value: 2 }, proposals: { of: 'read', value: [] },
-  runs: { of: 'read', value: [] }, vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00Z', standing: 'ready', adopted: true, approvals: 2 }] },
+  of: 'open',
+  id: 'c-1',
+  name: 'Northwind',
+  signers: [],
+  approvalsNeeded: { of: 'read', value: 2 },
+  proposals: { of: 'read', value: [] },
+  runs: { of: 'read', value: [] },
+  vaults: {
+    of: 'read',
+    value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00Z', standing: 'ready', adopted: true, approvals: 2 }]
+  }
 });
 const session = () => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true },
-  chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES, choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.company, signs: true },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {})
 });
-const settle = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); }); };
+const settle = async () => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+};
 const q = (s: string): HTMLElement | null => document.body.querySelector(s);
-const press = async (selector: string) => { fireEvent.click(q(selector)!); await settle(); };
+const press = async (selector: string) => {
+  fireEvent.click(q(selector)!);
+  await settle();
+};
 const opened = async () => {
   const view = render(
     <KitProvider languages={LANGUAGES} pick="en">
-      <SessionProvider session={session()}><PanelProvider><CompanyRecordsProvider><Payroll /><RightPanel /></CompanyRecordsProvider></PanelProvider></SessionProvider>
-    </KitProvider>,
+      <SessionProvider session={session()}>
+        <PanelProvider>
+          <CompanyRecordsProvider>
+            <Payroll />
+            <RightPanel />
+          </CompanyRecordsProvider>
+        </PanelProvider>
+      </SessionProvider>
+    </KitProvider>
   );
   await untilPageShown(view.container);
   await press('[data-action=new-run]');
@@ -92,16 +149,34 @@ const give = async (opens: string, closes: string) => {
   await settle();
 };
 const goodWindow = () => give(local(Date.now() + 2 * DAY), local(Date.now() + 9 * DAY));
-const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({ of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: refused === undefined ? 'declined' : 'check-failed', ...(refused === undefined ? {} : { refused }), ...over });
+const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({
+  of: 'stopped',
+  step: 2,
+  steps: 4,
+  relayed: 0,
+  unconfirmed: 0,
+  why: refused === undefined ? 'declined' : 'check-failed',
+  ...(refused === undefined ? {} : { refused }),
+  ...over
+});
 
 beforeEach(() => {
-  kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.user = { id: 'u1' }; kr.company = records();
-  kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'raised', run: 'run_9', proposal: 'prop_9', approvals: 1, needed: 2 } };
+  kr.acts = [];
+  kr.steps = [];
+  kr.hold = null;
+  kr.reads = 0;
+  kr.user = { id: 'u1' };
+  kr.company = records();
+  kr.ended = {
+    of: 'done',
+    steps: 5,
+    relayed: 1,
+    outcome: { state: 'raised', run: 'run_9', proposal: 'prop_9', approvals: 1, needed: 2 }
+  };
 });
 afterEach(cleanup);
 
 describe('New run on the payroll page', () => {
-
   /* RED WHEN: New run stays disabled or opens nothing, or the panel asks the wallet anything before the person presses. */
   it('opens the panel from the page, and asks the wallet nothing until the person presses', async () => {
     await opened();
@@ -115,7 +190,9 @@ describe('New run on the payroll page', () => {
   it('asks the wallet once to draw the run, with the fields that name it and no people and no total, and keeps Draw off while it works', async () => {
     kr.steps = [{ step: 2, steps: 5 }];
     let release = (): void => {};
-    kr.hold = new Promise<void>((r) => { release = r; });
+    kr.hold = new Promise<void>((r) => {
+      release = r;
+    });
     await opened();
     fireEvent.change(q('[data-field=month]')!, { target: { value: '2026-11' } });
     const opens = local(Date.now() + 2 * DAY);
@@ -127,10 +204,23 @@ describe('New run on the payroll page', () => {
     await press('[data-panel] [data-action=raise-run]');
     expect(kr.acts).toHaveLength(1);
     const asked = kr.acts[0]!;
-    expect(asked).toMatchObject({ name: 'raise-run', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), period: '2026-11', list: 'vendors', vault: VAULT, form: 'public' });
+    expect(asked).toMatchObject({
+      name: 'raise-run',
+      record: 'c-1',
+      company: 'label-1',
+      account: 'c0'.repeat(32),
+      period: '2026-11',
+      list: 'vendors',
+      vault: VAULT,
+      form: 'public'
+    });
     expect(asked['token']).toMatch(/^[0-9a-f]{64}$/u);
-    expect([asked['opensAt'], asked['closesAt']]).toEqual([String(new Date(opens).getTime() / 1000), String(new Date(closes).getTime() / 1000)]);
-    for (const named of ['run', 'payees', 'total', 'indices', 'proposal']) expect(asked, named).not.toHaveProperty(named);
+    expect([asked['opensAt'], asked['closesAt']]).toEqual([
+      String(new Date(opens).getTime() / 1000),
+      String(new Date(closes).getTime() / 1000)
+    ]);
+    for (const named of ['run', 'payees', 'total', 'indices', 'proposal'])
+      expect(asked, named).not.toHaveProperty(named);
     expect(q('[data-working]')!.textContent).toBe(words('signers.working.step', { step: 2, steps: 5 }));
     expect((q('[data-action=raise-run]') as HTMLButtonElement).disabled).toBe(true);
     release();
@@ -139,11 +229,13 @@ describe('New run on the payroll page', () => {
   });
 
   /* RED WHEN: the result shows a count the wallet did not give, or is lost when the company's records are read again. */
-  it('shows the wallet\'s answer and keeps it while the records are read again', async () => {
+  it("shows the wallet's answer and keeps it while the records are read again", async () => {
     await opened();
     await goodWindow();
     await press('[data-panel] [data-action=raise-run]');
-    expect(q('[data-panel] [data-raise-state=raised]')!.textContent).toBe(words('raiseRun.done.counted', { approvals: 1, needed: 2 }));
+    expect(q('[data-panel] [data-raise-state=raised]')!.textContent).toBe(
+      words('raiseRun.done.counted', { approvals: 1, needed: 2 })
+    );
     expect(kr.reads).toBe(2);
     expect((q('[data-action=raise-run]') as HTMLButtonElement).disabled).toBe(true);
     cleanup();
@@ -157,8 +249,13 @@ describe('New run on the payroll page', () => {
   /* RED WHEN: a stop of the wallet is shown in another stop's words, or a refusal before the wallet opened is not shown. */
   it('shows each refusal in its own words, and nothing raised where nothing was', async () => {
     for (const [code, why] of [
-      ['no-seat', 'seat'], ['not-a-run', 'not-a-run'], ['no-window', 'window'], ['not-as-shown', 'not-as-shown'], ['not-raised', 'not-raised'],
-      ['raise-may-be-sent', 'may-be-sent'], ['nobody-knows', 'other'],
+      ['no-seat', 'seat'],
+      ['not-a-run', 'not-a-run'],
+      ['no-window', 'window'],
+      ['not-as-shown', 'not-as-shown'],
+      ['not-raised', 'not-raised'],
+      ['raise-may-be-sent', 'may-be-sent'],
+      ['nobody-knows', 'other']
     ] as const) {
       kr.ended = stopped(`act.raise-run.why.${code}`);
       cleanup();

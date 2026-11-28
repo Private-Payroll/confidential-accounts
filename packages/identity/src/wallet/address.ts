@@ -1,6 +1,9 @@
 import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
 import {
-  MidnightBech32m, ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey,
+  MidnightBech32m,
+  ShieldedAddress,
+  ShieldedCoinPublicKey,
+  ShieldedEncryptionPublicKey
 } from '@midnightntwrk/wallet-sdk-address-format';
 import type { MoneyKey } from '../keys/derivation.js';
 import type { NetworkName } from './network.js';
@@ -55,11 +58,7 @@ export interface PayeeAddress {
   readonly encryptionPublicKey: string;
 }
 
-export type AddressFailure =
-  | 'empty'
-  | 'not-an-address'
-  | 'wrong-kind'
-  | 'wrong-network';
+export type AddressFailure = 'empty' | 'not-an-address' | 'wrong-kind' | 'wrong-network';
 
 export class AddressError extends Error {
   readonly code: AddressFailure;
@@ -73,15 +72,14 @@ export class AddressError extends Error {
 /** Each of an address's two keys is this many bytes. */
 const KEY_BYTES = 32;
 
-const build = (
-  address: ShieldedAddress, bech32: string, network: NetworkName,
-): PayeeAddress => Object.freeze({
-  bech32,
-  network,
-  /* One decode, both halves, one expression. This is the whole invariant. */
-  coinPublicKey: address.coinPublicKey.toHexString(),
-  encryptionPublicKey: address.encryptionPublicKey.toHexString(),
-}) as PayeeAddress;
+const build = (address: ShieldedAddress, bech32: string, network: NetworkName): PayeeAddress =>
+  Object.freeze({
+    bech32,
+    network,
+    /* One decode, both halves, one expression. This is the whole invariant. */
+    coinPublicKey: address.coinPublicKey.toHexString(),
+    encryptionPublicKey: address.encryptionPublicKey.toHexString()
+  }) as PayeeAddress;
 
 /**
  * THE WAY AN ADDRESS ENTERS FROM OUTSIDE: parsed, checked, never trusted.
@@ -120,9 +118,10 @@ export function payeeAddress(bech32: string, network: NetworkName): PayeeAddress
      * one thing the reader needs is WHICH value was rejected. */
     throw new AddressError(
       'not-an-address',
-      `"${raw}" is not a Midnight address: ${(e as Error).message}. `
-      + 'One looks like mn_shield-addr_<network>1... and carries its own checksum, '
-      + 'so a single mistyped character fails here.');
+      `"${raw}" is not a Midnight address: ${(e as Error).message}. ` +
+        'One looks like mn_shield-addr_<network>1... and carries its own checksum, ' +
+        'so a single mistyped character fails here.'
+    );
   }
 
   /*
@@ -135,9 +134,10 @@ export function payeeAddress(bech32: string, network: NetworkName): PayeeAddress
   if (parsed.type === ShieldedAddress.codec.type && parsed.data.length !== KEY_BYTES * 2) {
     throw new AddressError(
       'wrong-kind',
-      `"${raw}" carries ${parsed.data.length} bytes and a payee address carries `
-      + `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for `
-      + 'the key that may read.');
+      `"${raw}" carries ${parsed.data.length} bytes and a payee address carries ` +
+        `${KEY_BYTES * 2} — ${KEY_BYTES} for the key that may spend and ${KEY_BYTES} for ` +
+        'the key that may read.'
+    );
   }
 
   let address: ShieldedAddress;
@@ -159,9 +159,10 @@ export function payeeAddress(bech32: string, network: NetworkName): PayeeAddress
       looksLikeNetwork ? 'wrong-network' : 'wrong-kind',
       looksLikeNetwork
         ? `"${raw}" is not an address for ${network}: ${message}.`
-        : `"${raw}" is not a payee address: ${message}. It must be a shield-addr — `
-          + 'a coin public key on its own is not enough to pay somebody, because it does '
-          + 'not say who may READ the payment.');
+        : `"${raw}" is not a payee address: ${message}. It must be a shield-addr — ` +
+            'a coin public key on its own is not enough to pay somebody, because it does ' +
+            'not say who may READ the payment.'
+    );
   }
 
   return build(address, parsed.asString(), network);
@@ -193,7 +194,8 @@ export function addressFor(zswapKey: MoneyKey, network: NetworkName): PayeeAddre
   const keys = ZswapSecretKeys.fromSeed(zswapKey);
   const address = new ShieldedAddress(
     ShieldedCoinPublicKey.fromHexString(keys.coinPublicKey),
-    ShieldedEncryptionPublicKey.fromHexString(keys.encryptionPublicKey));
+    ShieldedEncryptionPublicKey.fromHexString(keys.encryptionPublicKey)
+  );
   return payeeAddress(MidnightBech32m.encode(network, address).asString(), network);
 }
 

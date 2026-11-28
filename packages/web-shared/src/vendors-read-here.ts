@@ -11,13 +11,23 @@ import { keysByPurpose } from './keys-by-purpose.js';
 import { madeByRefusal, whyVendorNotPayable } from '../../../src/core/person-record.js';
 import { openVendor, vendorVersionsRefusal, type VendorRecord } from '../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
-import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  verifiedCompanyFiler,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { readAddressClaim, typedAddressIsShielded } from 'midnight-identity/profile/address-claim';
 import { judgeIn, kindAsked, namedHere, type DirectoryRead } from './vault-page-doors.js';
 import type { InvitingCompany } from './invitation-on-device.js';
-import { claimFor, everyVersionAsked, versionsAskedTogether, type ClaimRefusal, type ListsReach } from './people-read-here.js';
+import {
+  claimFor,
+  everyVersionAsked,
+  versionsAskedTogether,
+  type ClaimRefusal,
+  type ListsReach
+} from './people-read-here.js';
 
 /** One vendor as this device read them: the newest version of their entry, and its version number. */
 export interface VendorHere {
@@ -56,7 +66,7 @@ type VendorsReader = VendorsReadWith & ListsReach;
 /** Every version of the vendor `id` the service gives, oldest first, each read as the record it says it is. */
 async function versionsOf(d: VendorsReader, id: string): Promise<SealedCompanyRecord[]> {
   const b = await everyVersionAsked(d, 'vendor', id);
-  if (!Array.isArray(b.versions)) throw new Error('the service did not send the vendor\'s versions');
+  if (!Array.isArray(b.versions)) throw new Error("the service did not send the vendor's versions");
   return b.versions.map((w) => fromCompanyWire(w, { company: d.company.id, kind: 'vendor', id }).sealed);
 }
 
@@ -64,17 +74,39 @@ async function versionsOf(d: VendorsReader, id: string): Promise<SealedCompanyRe
  * Every version of a vendor opened here, oldest first, or null when any is not believed: each must be the next
  * version, filed by a seat the company's records hold as filing it, and name that seat as its maker.
  */
-export async function believedVersionsOf(d: VendorsReader, id: string, judge: ReturnType<typeof judgeIn>): Promise<VendorRecord[] | null> {
+export async function believedVersionsOf(
+  d: VendorsReader,
+  id: string,
+  judge: ReturnType<typeof judgeIn>
+): Promise<VendorRecord[] | null> {
   let recs: SealedCompanyRecord[];
-  try { recs = await versionsOf(d, id); } catch { return null; }
+  try {
+    recs = await versionsOf(d, id);
+  } catch {
+    return null;
+  }
   if (recs.length === 0) return null;
   const opened: VendorRecord[] = [];
   for (const [i, rec] of recs.entries()) {
     const filer = verifiedCompanyFiler(rec);
-    if (rec.version !== i + 1
-      || judge(filer, 'vendor', companyRecordKey('vendor', id), companyRecordEntry(rec), i === recs.length - 1, rec.keyEpoch) !== null) return null;
+    if (
+      rec.version !== i + 1 ||
+      judge(
+        filer,
+        'vendor',
+        companyRecordKey('vendor', id),
+        companyRecordEntry(rec),
+        i === recs.length - 1,
+        rec.keyEpoch
+      ) !== null
+    )
+      return null;
     let v: VendorRecord;
-    try { v = openVendor(rec, keysByPurpose(d.company.viewingKey).at(rec.keyEpoch)); } catch { return null; }
+    try {
+      v = openVendor(rec, keysByPurpose(d.company.viewingKey).at(rec.keyEpoch));
+    } catch {
+      return null;
+    }
     if (madeByRefusal(v, filer) !== null) return null;
     opened.push(v);
   }
@@ -95,9 +127,15 @@ const claimRefusalHere = async (d: VendorsReader, v: VendorRecord): Promise<stri
  * their address across their versions (`vendorVersionsRefusal`), and, once they claimed an unshielded typed address,
  * their wallet's claim of it, whose signature is checked by the reader's `claimRefusal`.
  */
-const vendorNotPayableHere = async (d: VendorsReader, versions: readonly VendorRecord[], period?: string): Promise<string | null> => {
+const vendorNotPayableHere = async (
+  d: VendorsReader,
+  versions: readonly VendorRecord[],
+  period?: string
+): Promise<string | null> => {
   const v = versions.at(-1)!;
-  return whyVendorNotPayable(v, d.company.label, period) ?? vendorVersionsRefusal(versions) ?? await claimRefusalHere(d, v);
+  return (
+    whyVendorNotPayable(v, d.company.label, period) ?? vendorVersionsRefusal(versions) ?? (await claimRefusalHere(d, v))
+  );
 };
 
 /**
@@ -106,11 +144,14 @@ const vendorNotPayableHere = async (d: VendorsReader, versions: readonly VendorR
  * address, the address they were added by or their own wallet's signed code for it, its keys and their wallet's claim
  * (`whyVendorNotPayable` with their standing and dates aside). A vendor with no address yet has none to check.
  */
-const addressOfRecordRefusalHere = async (d: VendorsReader, versions: readonly VendorRecord[]): Promise<string | null> => {
+const addressOfRecordRefusalHere = async (
+  d: VendorsReader,
+  versions: readonly VendorRecord[]
+): Promise<string | null> => {
   const v = versions.at(-1)!;
   const why = vendorVersionsRefusal(versions);
   if (why !== null || v.address === null) return why;
-  return whyVendorNotPayable({ ...v, status: 'active' }, d.company.label) ?? await claimRefusalHere(d, v);
+  return whyVendorNotPayable({ ...v, status: 'active' }, d.company.label) ?? (await claimRefusalHere(d, v));
 };
 
 /** Whether the service holds a hand-over for this vendor, asked through the company's view; undefined when it did not answer. */
@@ -132,7 +173,11 @@ async function handoverWaitsHere(d: VendorsReader, id: string): Promise<boolean 
  * is also asked of the service whether a hand-over waits: one request for all of them through the company's view;
  * callers that do not ask send nothing more.
  */
-export async function readVendorsHere(d: VendorsReader, period?: string, options?: { readonly handedOver?: boolean }): Promise<VendorsHere> {
+export async function readVendorsHere(
+  d: VendorsReader,
+  period?: string,
+  options?: { readonly handedOver?: boolean }
+): Promise<VendorsHere> {
   const here = await d.directory(kindAsked('company', 'vendor'));
   const judge = judgeIn(here);
   const vendors: VendorHere[] = [];
@@ -144,13 +189,28 @@ export async function readVendorsHere(d: VendorsReader, period?: string, options
   if (options?.handedOver === true && named.length > 0) await Promise.allSettled([d.view.vendorHandovers(named)]);
   for (const id of named) {
     const versions = await believedVersionsOf(d, id, judge);
-    if (versions === null) { notBelieved.push(id); continue; }
+    if (versions === null) {
+      notBelieved.push(id);
+      continue;
+    }
     const vendor = versions.at(-1)!;
-    const waiting = options?.handedOver === true && vendor.status === 'pending' && (vendor.payeeCode ?? null) === null
-      ? await handoverWaitsHere(d, id) : undefined;
-    const one: VendorHere = { vendor, version: versions.length, ...(waiting === undefined ? {} : { handedOver: waiting }) };
-    const why = vendor.status === 'active' ? await vendorNotPayableHere(d, versions, period) : await addressOfRecordRefusalHere(d, versions);
-    if (why !== null) { notPayable.push({ here: one, why }); continue; }
+    const waiting =
+      options?.handedOver === true && vendor.status === 'pending' && (vendor.payeeCode ?? null) === null
+        ? await handoverWaitsHere(d, id)
+        : undefined;
+    const one: VendorHere = {
+      vendor,
+      version: versions.length,
+      ...(waiting === undefined ? {} : { handedOver: waiting })
+    };
+    const why =
+      vendor.status === 'active'
+        ? await vendorNotPayableHere(d, versions, period)
+        : await addressOfRecordRefusalHere(d, versions);
+    if (why !== null) {
+      notPayable.push({ here: one, why });
+      continue;
+    }
     vendors.push(one);
   }
   return { vendors, notBelieved, notPayable };
@@ -162,5 +222,9 @@ export async function readVendorsHere(d: VendorsReader, period?: string, options
  * key it already holds and sends nothing of it anywhere.
  */
 export const readVendorsWithKeys = (
-  company: Pick<InvitingCompany, 'id' | 'label'>, keys: KeysHeld, reads: Omit<VendorsReadWith, 'company'> & ListsReach, period?: string, options?: { readonly handedOver?: boolean },
+  company: Pick<InvitingCompany, 'id' | 'label'>,
+  keys: KeysHeld,
+  reads: Omit<VendorsReadWith, 'company'> & ListsReach,
+  period?: string,
+  options?: { readonly handedOver?: boolean }
 ): Promise<VendorsHere> => readVendorsHere({ ...reads, company: { ...company, viewingKey: keys } }, period, options);

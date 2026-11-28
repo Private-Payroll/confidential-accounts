@@ -23,8 +23,12 @@ const at = (seq: number): CheckedHead => ({ seq, head: headOf(seq), root: 'cc'.r
 const RECOVERED: CheckedHead = { seq: 2, head: 'e2'.repeat(32) as Hex, root: 'cc'.repeat(32) as Hex, dirVersion: 0 };
 const AFTER: CheckedHead = { seq: 3, head: 'e3'.repeat(32) as Hex, root: 'cc'.repeat(32) as Hex, dirVersion: 0 };
 /* The account's history: the four batches this device checked, then the recovery's anchor, each block's seat bar its own. */
-const LANDED: readonly AnchorLanded[] = [...[0, 1, 2, 3].map((s) => headOf(s)), RECOVERED.head]
-  .map((head, i) => ({ head, seatBar: i + 1, height: i + 1, at: 1_000 * (i + 1) }));
+const LANDED: readonly AnchorLanded[] = [...[0, 1, 2, 3].map((s) => headOf(s)), RECOVERED.head].map((head, i) => ({
+  head,
+  seatBar: i + 1,
+  height: i + 1,
+  at: 1_000 * (i + 1)
+}));
 const nothingAsked = { accountId: CO, tree: {}, builder: {} } as unknown as Parameters<typeof headsHere>[0];
 
 /** What a device keeps after checking the batches up to `last`, each kept as the held read keeps it. */
@@ -35,17 +39,20 @@ const checkedUpTo = (last: number, from: CheckedHeads | null = null): CheckedHea
 };
 const checkedFour = async (store: CheckedHeadsStore): Promise<CheckedHeads> => {
   let kept: CheckedHeads | null = null;
-  for (let s = 0; s < 4; s += 1) { kept = keptAfter(kept, at(s), s === 0); await store.write(CO, kept); }
+  for (let s = 0; s < 4; s += 1) {
+    kept = keptAfter(kept, at(s), s === 0);
+    await store.write(CO, kept);
+  }
   return kept!;
 };
 
 const STORES: readonly (readonly [string, () => CheckedHeadsStore])[] = [
   ['in memory', () => checkedHeadsInMemory()],
-  ['in the browser\'s database', () => treeKeptHere(new IDBFactory()).checked],
+  ["in the browser's database", () => treeKeptHere(new IDBFactory()).checked]
 ];
 
 describe.each(STORES)('WHAT A DEVICE KEEPS %s AFTER A RECOVERY MOVED IT BACK', (_where, storeOf) => {
-  it('KEEPS THE HEADS BELOW THE RECOVERY\'S SEQ AND THEN THE RECOVERY\'S HEAD, EACH READ AT ITS OWN SEQ', async () => {
+  it("KEEPS THE HEADS BELOW THE RECOVERY'S SEQ AND THEN THE RECOVERY'S HEAD, EACH READ AT ITS OWN SEQ", async () => {
     const store = storeOf();
     const moved = keptAfter(await checkedFour(store), RECOVERED, false);
     /* RED WHEN: the write does not say which latest the recovery gave up, so no store can tell it from an older writer. */
@@ -86,7 +93,7 @@ describe.each(STORES)('WHAT A DEVICE KEEPS %s AFTER A RECOVERY MOVED IT BACK', (
     expect((await store.read(CO))!.latest).toEqual(four.latest);
     expect((await store.read(CO))!.heads).toEqual(four.heads);
   });
-  it('A READ BEGUN BEFORE THE RECOVERY, WRITING AFTER IT, LEAVES THE RECOVERY\'S HEAD KEPT: IT NEVER CHECKED THAT HEAD', async () => {
+  it("A READ BEGUN BEFORE THE RECOVERY, WRITING AFTER IT, LEAVES THE RECOVERY'S HEAD KEPT: IT NEVER CHECKED THAT HEAD", async () => {
     const store = storeOf();
     await checkedFour(store);
     const snapshot = (await store.read(CO))!;
@@ -100,14 +107,19 @@ describe.each(STORES)('WHAT A DEVICE KEEPS %s AFTER A RECOVERY MOVED IT BACK', (
   });
 });
 
-describe('THE BROWSER\'S DATABASE, AFTER A RECOVERY MOVED A DEVICE BACK', () => {
-  it('READS BACK THE SHORTER HEADS WHERE THE RECOVERY\'S HEAD ENDS A ROW, AND EVERY HEAD AS THEY GROW AGAIN', async () => {
+describe("THE BROWSER'S DATABASE, AFTER A RECOVERY MOVED A DEVICE BACK", () => {
+  it("READS BACK THE SHORTER HEADS WHERE THE RECOVERY'S HEAD ENDS A ROW, AND EVERY HEAD AS THEY GROW AGAIN", async () => {
     const store = treeKeptHere(new IDBFactory()).checked;
     const kept = checkedUpTo(1025);
     expect(kept.heads).toHaveLength(1026);
     await store.write(CO, kept);
     /* A recovery from batch 1022: its head is the 1024th, the last of the first row of heads. */
-    const recovered: CheckedHead = { seq: 1023, head: 'e4'.repeat(32) as Hex, root: 'cc'.repeat(32) as Hex, dirVersion: 0 };
+    const recovered: CheckedHead = {
+      seq: 1023,
+      head: 'e4'.repeat(32) as Hex,
+      root: 'cc'.repeat(32) as Hex,
+      dirVersion: 0
+    };
     await store.write(CO, keptAfter(kept, recovered, false));
     const back = (await store.read(CO))!;
     /* RED WHEN: only the rows past the heads kept are written, so the row the recovery's head ends is read back as it was. */

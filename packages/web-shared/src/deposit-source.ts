@@ -94,18 +94,21 @@ export type DepositSource = PrivateDepositSource | PublicDepositSource;
  * the wallet; it is given exactly what the vault's step hands this source.
  */
 export function privateTokenFromTheWallet(
-  pay: (ask: DepositAsk) => Promise<PaidIn>, registry: AssetRegistry = assets,
+  pay: (ask: DepositAsk) => Promise<PaidIn>,
+  registry: AssetRegistry = assets
 ): PrivateDepositSource {
   return {
     endsIn: 'private-deposit',
     money: ({ code, value }) => {
       const asset = registry.require(code);
       if (ledgerFormOf(asset, 'shielded').of !== 'token') {
-        throw new Error(`${asset.symbol} cannot be put into a vault privately. Nothing was sent. Choose a token that can be held privately.`);
+        throw new Error(
+          `${asset.symbol} cannot be put into a vault privately. Nothing was sent. Choose a token that can be held privately.`
+        );
       }
       return { token: ledgerTokenOf(code, 'shielded', registry) as Hex, value };
     },
-    payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction }),
+    payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction })
   };
 }
 
@@ -118,18 +121,21 @@ export function privateTokenFromTheWallet(
  * exactly what the vault's step hands this source.
  */
 export function publicTokenFromTheWallet(
-  pay: (ask: DepositAsk) => Promise<PaidIn>, registry: AssetRegistry = assets,
+  pay: (ask: DepositAsk) => Promise<PaidIn>,
+  registry: AssetRegistry = assets
 ): PublicDepositSource {
   return {
     endsIn: 'public-deposit',
     money: ({ code, value }) => {
       const asset = registry.require(code);
       if (ledgerFormOf(asset, 'unshielded').of !== 'token') {
-        throw new Error(`${asset.symbol} cannot be put into a vault publicly. Nothing was sent. Put it in privately instead.`);
+        throw new Error(
+          `${asset.symbol} cannot be put into a vault publicly. Nothing was sent. Put it in privately instead.`
+        );
       }
       return { token: ledgerTokenOf(code, 'unshielded', registry) as Hex, value };
     },
-    payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction }),
+    payIn: ({ company, account, vault, transaction }) => pay({ company, account, vault, transaction })
   };
 }
 
@@ -139,17 +145,33 @@ export function publicTokenFromTheWallet(
  * runs, so a deposit that cannot be brought chooses, files and builds nothing.
  */
 export async function depositFromSource(
-  doors: Omit<DepositDoors, 'pay'>, vault: Hex, source: PrivateDepositSource, brought: Brought,
+  doors: Omit<DepositDoors, 'pay'>,
+  vault: Hex,
+  source: PrivateDepositSource,
+  brought: Brought
 ): ReturnType<typeof depositIntoCompanyVault>;
 export async function depositFromSource(
-  doors: Omit<DepositDoors, 'pay'>, vault: Hex, source: PublicDepositSource, brought: Brought,
+  doors: Omit<DepositDoors, 'pay'>,
+  vault: Hex,
+  source: PublicDepositSource,
+  brought: Brought
 ): ReturnType<typeof depositPubliclyIntoCompanyVault>;
 export async function depositFromSource(
-  doors: Omit<DepositDoors, 'pay'>, vault: Hex, source: DepositSource, brought: Brought,
-): Promise<Awaited<ReturnType<typeof depositIntoCompanyVault>> | Awaited<ReturnType<typeof depositPubliclyIntoCompanyVault>>>;
+  doors: Omit<DepositDoors, 'pay'>,
+  vault: Hex,
+  source: DepositSource,
+  brought: Brought
+): Promise<
+  Awaited<ReturnType<typeof depositIntoCompanyVault>> | Awaited<ReturnType<typeof depositPubliclyIntoCompanyVault>>
+>;
 export async function depositFromSource(
-  doors: Omit<DepositDoors, 'pay'>, vault: Hex, source: DepositSource, brought: Brought,
-): Promise<Awaited<ReturnType<typeof depositIntoCompanyVault>> | Awaited<ReturnType<typeof depositPubliclyIntoCompanyVault>>> {
+  doors: Omit<DepositDoors, 'pay'>,
+  vault: Hex,
+  source: DepositSource,
+  brought: Brought
+): Promise<
+  Awaited<ReturnType<typeof depositIntoCompanyVault>> | Awaited<ReturnType<typeof depositPubliclyIntoCompanyVault>>
+> {
   if (brought.value <= 0n) throw new Error('an amount of nothing is not a deposit.');
   if (source.endsIn === 'public-deposit') {
     const money = source.money(brought);

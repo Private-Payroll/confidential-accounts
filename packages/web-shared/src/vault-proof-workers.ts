@@ -66,13 +66,13 @@ const failureOf = (e: unknown): string => (e instanceof Error ? e.message : Stri
  * them.
  */
 const THREAD_STOPPED =
-  'This device stopped working out the proof for this transaction before it finished, so nothing was sent. '
-  + 'Try again; if it happens again, reload the page and try once more.';
+  'This device stopped working out the proof for this transaction before it finished, so nothing was sent. ' +
+  'Try again; if it happens again, reload the page and try once more.';
 const PROOF_FAILED =
   'This device could not work out the proof for this transaction, so nothing was sent. Reload the page and try again.';
 const proofTookTooLong = (op: 'prove' | 'check'): string =>
-  `${op === 'prove' ? 'Working out' : 'Checking'} the proof for this transaction took more than ten minutes, so this device `
-  + 'stopped and nothing was sent. Try again with this page open in front and other heavy work closed.';
+  `${op === 'prove' ? 'Working out' : 'Checking'} the proof for this transaction took more than ten minutes, so this device ` +
+  'stopped and nothing was sent. Try again with this page open in front and other heavy work closed.';
 const plainly = (says: string, underneath: string): Error => new Error(says, { cause: new Error(underneath) });
 
 /**
@@ -94,8 +94,13 @@ export function provingOnWorkers(
   timers: {
     set(run: () => void, ms: number): unknown;
     clear(handle: unknown): void;
-  } = { set: (run, ms) => setTimeout(run, ms), clear: (h) => { clearTimeout(h as ReturnType<typeof setTimeout>); } },
-  cap = 2,
+  } = {
+    set: (run, ms) => setTimeout(run, ms),
+    clear: (h) => {
+      clearTimeout(h as ReturnType<typeof setTimeout>);
+    }
+  },
+  cap = 2
 ): LedgerProvingProvider & { stop(): void; readonly idle: number; readonly didNotLoad: boolean } {
   interface Job {
     readonly op: 'prove' | 'check';
@@ -126,7 +131,10 @@ export function provingOnWorkers(
   const post = (t: Thread): void => {
     if (t.job === null || !t.ready) return;
     t.worker.postMessage({
-      op: t.job.op, keyLocation: t.job.keyLocation, preimage: t.job.preimage, overwriteBindingInput: t.job.overwriteBindingInput,
+      op: t.job.op,
+      keyLocation: t.job.keyLocation,
+      preimage: t.job.preimage,
+      overwriteBindingInput: t.job.overwriteBindingInput
     });
   };
   const answer = (t: Thread, job: Job, askId: number, work: Promise<unknown>): void => {
@@ -141,7 +149,7 @@ export function provingOnWorkers(
           if (e instanceof Error && e.name === 'ProvingMaterialRefused') job.refused ??= e;
         }
         t.worker.postMessage({ op: 'answer', askId, ok: false, error: failureOf(e) });
-      },
+      }
     );
   };
   const make = (): Thread => {
@@ -152,19 +160,31 @@ export function provingOnWorkers(
       t.dead = true;
       if (!t.ready) didNotLoad = true;
       t.worker.terminate();
-      job?.reject(plainly(THREAD_STOPPED, event.message || 'a proof\'s thread stopped before it answered'));
+      job?.reject(plainly(THREAD_STOPPED, event.message || "a proof's thread stopped before it answered"));
     });
     t.worker.addEventListener('message', ({ data }) => {
       const job = t.job;
       switch (data.op) {
-        case 'ready': t.ready = true; post(t); return;
+        case 'ready':
+          t.ready = true;
+          post(t);
+          return;
         case 'lookupKey':
-          if (job !== null) { job.again(); answer(t, job, data.askId, source.lookupKey(data.keyLocation)); }
+          if (job !== null) {
+            job.again();
+            answer(t, job, data.askId, source.lookupKey(data.keyLocation));
+          }
           return;
         case 'getParams':
-          if (job !== null) { job.again(); answer(t, job, data.askId, source.getParams(data.k)); }
+          if (job !== null) {
+            job.again();
+            answer(t, job, data.askId, source.getParams(data.k));
+          }
           return;
-        case 'result': t.job = null; job?.resolve(data.value); return;
+        case 'result':
+          t.job = null;
+          job?.resolve(data.value);
+          return;
         case 'failure':
           t.job = null;
           t.dead = true;
@@ -175,7 +195,10 @@ export function provingOnWorkers(
     return t;
   };
   const keep = (keyLocation: string, t: Thread): void => {
-    if (stopped || t.dead || idle.has(keyLocation)) { t.worker.terminate(); return; }
+    if (stopped || t.dead || idle.has(keyLocation)) {
+      t.worker.terminate();
+      return;
+    }
     t.letGo = timers.set(() => {
       if (idle.get(keyLocation) !== t) return;
       idle.delete(keyLocation);
@@ -238,7 +261,11 @@ export function provingOnWorkers(
         };
         again();
         t.job = {
-          op, keyLocation, preimage, overwriteBindingInput, again,
+          op,
+          keyLocation,
+          preimage,
+          overwriteBindingInput,
+          again,
           resolve: (value) => {
             if (settled) return;
             end();
@@ -251,7 +278,7 @@ export function provingOnWorkers(
             end();
             startWaiting();
             reject(e);
-          },
+          }
         };
         post(t);
       };
@@ -273,8 +300,12 @@ export function provingOnWorkers(
       }
       idle.clear();
     },
-    get idle() { return idle.size; },
-    get didNotLoad() { return didNotLoad; },
+    get idle() {
+      return idle.size;
+    },
+    get didNotLoad() {
+      return didNotLoad;
+    }
   };
 }
 
@@ -293,10 +324,13 @@ interface TransactionProver {
  */
 export function oneThreadWhenAThreadDoesNotLoad(
   workers: TransactionProver & { readonly didNotLoad: boolean; stop(): void },
-  inThread: () => Promise<TransactionProver>,
+  inThread: () => Promise<TransactionProver>
 ): TransactionProver {
   let one: Promise<TransactionProver> | null = null;
-  const onOneThread = (): Promise<TransactionProver> => { one ??= inThread(); return one; };
+  const onOneThread = (): Promise<TransactionProver> => {
+    one ??= inThread();
+    return one;
+  };
   return {
     proveTx: async (tx, config) => {
       if (workers.didNotLoad) return (await onOneThread()).proveTx(tx, config);
@@ -307,7 +341,7 @@ export function oneThreadWhenAThreadDoesNotLoad(
         workers.stop();
         return (await onOneThread()).proveTx(tx, config);
       }
-    },
+    }
   };
 }
 
@@ -321,17 +355,22 @@ export type Provable = UnprovenTx | UnprovenTransaction;
  * Proves a transaction a builder made, and answers the proven transaction as Midnight.js hands it back. A builder
  * hands either Midnight.js's own handle, or a ledger transaction it made itself, which is sealed into a handle first.
  */
-export const provedTransaction = async (prover: TransactionProver, unproven: unknown): Promise<{ serialize(): Uint8Array }> => {
+export const provedTransaction = async (
+  prover: TransactionProver,
+  unproven: unknown
+): Promise<{ serialize(): Uint8Array }> => {
   const { LedgerTransaction } = await import('@midnight-ntwrk/midnight-js-types');
   const serializable = (x: unknown): x is { serialize(): Uint8Array } =>
     typeof x === 'object' && x !== null && typeof (x as { serialize?: unknown }).serialize === 'function';
   let handle: unknown = unproven;
   if (!LedgerTransaction.isLedgerTransaction(unproven)) {
-    if (!serializable(unproven)) throw new Error('what was handed to be proved is not a transaction, so nothing was proved or sent.');
+    if (!serializable(unproven))
+      throw new Error('what was handed to be proved is not a transaction, so nothing was proved or sent.');
     handle = LedgerTransaction.seal('v9', 'Unproven', unproven);
   }
   const proven = await prover.proveTx(handle);
-  if (!LedgerTransaction.isLedgerTransaction(proven)) throw new Error('the proof came back as something other than a transaction, so nothing was sent.');
+  if (!LedgerTransaction.isLedgerTransaction(proven))
+    throw new Error('the proof came back as something other than a transaction, so nothing was sent.');
   return proven;
 };
 
@@ -348,19 +387,32 @@ const MOST_PROOF_THREADS = 4;
 export async function proofProviderOnWorkers(
   source: KeyMaterialSource,
   scope: { readonly Worker?: unknown; readonly navigator?: { readonly hardwareConcurrency?: unknown } },
-  inThread: () => Promise<TransactionProver>,
+  inThread: () => Promise<TransactionProver>
 ): Promise<TransactionProver> {
   if (typeof scope.Worker !== 'function') return inThread();
   const { createLedger9ProofProvider } = await import('@midnight-ntwrk/midnight-js-types');
   const cores = scope.navigator?.hardwareConcurrency;
-  const cap = typeof cores === 'number' && Number.isInteger(cores) && cores >= 1 ? Math.min(cores, MOST_PROOF_THREADS) : 2;
-  const provider = provingOnWorkers(source, () => new Worker(new URL('./vault-proof-worker-entry.js', import.meta.url), {
-    type: 'module', name: 'vault-proof',
-  }) as unknown as ProofWorkerLike, undefined, cap);
+  const cap =
+    typeof cores === 'number' && Number.isInteger(cores) && cores >= 1 ? Math.min(cores, MOST_PROOF_THREADS) : 2;
+  const provider = provingOnWorkers(
+    source,
+    () =>
+      new Worker(new URL('./vault-proof-worker-entry.js', import.meta.url), {
+        type: 'module',
+        name: 'vault-proof'
+      }) as unknown as ProofWorkerLike,
+    undefined,
+    cap
+  );
   const onWorkers: TransactionProver = createLedger9ProofProvider(provider);
-  return oneThreadWhenAThreadDoesNotLoad({
-    proveTx: (tx, config) => onWorkers.proveTx(tx, config),
-    get didNotLoad() { return provider.didNotLoad; },
-    stop: () => provider.stop(),
-  }, inThread);
+  return oneThreadWhenAThreadDoesNotLoad(
+    {
+      proveTx: (tx, config) => onWorkers.proveTx(tx, config),
+      get didNotLoad() {
+        return provider.didNotLoad;
+      },
+      stop: () => provider.stop()
+    },
+    inThread
+  );
 }

@@ -3,9 +3,7 @@
  * words a raiser is shown say which.
  */
 import { describe, it, expect } from 'vitest';
-import {
-  isApproved, stillNeeded, describeApprovals, proposerReminder,
-} from '../../src/midnight/approvals.js';
+import { isApproved, stillNeeded, describeApprovals, proposerReminder } from '../../src/midnight/approvals.js';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
@@ -13,8 +11,7 @@ import { toHex, fromHex } from '../../src/core/crypto.js';
 const A = privateStateFor(1);
 const B = privateStateFor(2);
 const PAYROLL = new Uint8Array(32).fill(0xa1);
-const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
-  sim.applying(d, c);
+const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) => sim.applying(d, c);
 const nullifiers = (sim: AccountSimulator): string[] =>
   [...(sim.ledger.approvals as unknown as Iterable<Uint8Array>)].map((n) => toHex(n));
 
@@ -22,16 +19,25 @@ describe("a raise counts as its raiser's approval", () => {
   it("THE CHAIN AGREES: raising a run or a governance proposal counts its raiser's approval, once", async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const c: Change = change(0n, 91);
-    const tree = payoutTreeOf([{ details: toHex(new Uint8Array(32).fill(3)), nonce: toHex(new Uint8Array(32).fill(4)) }]);
+    const tree = payoutTreeOf([
+      { details: toHex(new Uint8Array(32).fill(3)), nonce: toHex(new Uint8Array(32).fill(4)) }
+    ]);
     const from = 1_799_996_400n;
     const until = 1_800_003_600n;
 
     const before = nullifiers(sim);
     await sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees, from, until, vault: PAYROLL,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from,
+      until,
+      vault: PAYROLL
     });
     const id = sim.proposalId(
-      pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n), c.salt, PAYROLL);
+      pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n),
+      c.salt,
+      PAYROLL
+    );
     /* RED WHEN `propose` writes a count of nought for a raiser who may approve. */
     expect(sim.approvalsFor(id)).toBe(1n);
     /* RED WHEN the raise counts its raiser without burning the raiser's approval: A could then approve again. */
@@ -51,7 +57,8 @@ describe("a raise counts as its raiser's approval", () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const g = change(0n, 96);
     const payload = new Uint8Array(32).fill(6);
-    const markerOf = (who: typeof A, id: Uint8Array) => toHex(pureCircuits.approvalNullifierOf(who.secretKey, sim.selfBytes(), id));
+    const markerOf = (who: typeof A, id: Uint8Array) =>
+      toHex(pureCircuits.approvalNullifierOf(who.secretKey, sim.selfBytes(), id));
     await sim.as(carrying(sim, A, g)).propose(payload);
     const id = sim.proposalId(payload, g.salt);
     /* RED WHEN the marker a device computes is not the one the raise writes: a raiser would be told to approve again. */
@@ -62,7 +69,9 @@ describe("a raise counts as its raiser's approval", () => {
     /* RED WHEN the marker a device computes is not the one `approve` writes. */
     expect(nullifiers(sim)).toContain(markerOf(B, id));
     /* RED WHEN the marker is not tied to the account: the same seat's approval elsewhere would read as approved here. */
-    expect(nullifiers(sim)).not.toContain(toHex(pureCircuits.approvalNullifierOf(B.secretKey, new Uint8Array(32).fill(7), id)));
+    expect(nullifiers(sim)).not.toContain(
+      toHex(pureCircuits.approvalNullifierOf(B.secretKey, new Uint8Array(32).fill(7), id))
+    );
   });
 
   it('AT A THRESHOLD OF ONE A RAISE IS CARRIED OUT WITH NO APPROVE', async () => {
@@ -108,18 +117,18 @@ describe("a raise counts as its raiser's approval", () => {
   });
 
   it('never renders a count without its threshold', () => {
-    expect(describeApprovals({ approvals: 0, threshold: 3 }))
-      .toBe('0 of 3 — 3 more approvals needed');
-    expect(describeApprovals({ approvals: 2, threshold: 3 }))
-      .toBe('2 of 3 — 1 more approval needed');
+    expect(describeApprovals({ approvals: 0, threshold: 3 })).toBe('0 of 3 — 3 more approvals needed');
+    expect(describeApprovals({ approvals: 2, threshold: 3 })).toBe('2 of 3 — 1 more approval needed');
     expect(describeApprovals({ approvals: 3, threshold: 3 })).toBe('approved — 3 of 3');
   });
 
   it('tells a raiser, in words, whether their approval was counted', () => {
-    expect(proposerReminder({ approvals: 1, threshold: 3 }))
-      .toBe('Raised, and your approval is counted. 1 of 3 — 2 more approvals needed.');
-    expect(proposerReminder({ approvals: 0, threshold: 3 }))
-      .toBe('Raised, and not yet approved: your seat may not approve here. 0 of 3 — 3 more approvals needed.');
+    expect(proposerReminder({ approvals: 1, threshold: 3 })).toBe(
+      'Raised, and your approval is counted. 1 of 3 — 2 more approvals needed.'
+    );
+    expect(proposerReminder({ approvals: 0, threshold: 3 })).toBe(
+      'Raised, and not yet approved: your seat may not approve here. 0 of 3 — 3 more approvals needed.'
+    );
   });
 
   it('answers the only question that matters, and never a negative shortfall', () => {

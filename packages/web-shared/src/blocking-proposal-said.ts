@@ -16,10 +16,15 @@ export const passedOverAs = (e: unknown, kind: string): boolean =>
   e instanceof NotOpenedOnThisDevice && (e.passedOver === true || (e.kind !== undefined && e.kind !== kind));
 
 /** The seat whose signing key filed proposal `id` in the company's records, or null where the directory names none. */
-const raiserSeatOf = (here: Pick<DirectoryHere, 'records' | 'dir'>, id: string): DirectoryHere['dir']['seats'][number] | null => {
+const raiserSeatOf = (
+  here: Pick<DirectoryHere, 'records' | 'dir'>,
+  id: string
+): DirectoryHere['dir']['seats'][number] | null => {
   const key = recordKeyOf({ store: 'proposal', kind: 'proposal', id });
-  const filer = (here.records.history.get(key) ?? [])[0]?.filedBy
-    ?? here.records.notYetAnchored.find((e) => recordKeyOf(e) === key)?.filedBy.publicKey ?? null;
+  const filer =
+    (here.records.history.get(key) ?? [])[0]?.filedBy ??
+    here.records.notYetAnchored.find((e) => recordKeyOf(e) === key)?.filedBy.publicKey ??
+    null;
   if (filer === null) return null;
   return here.dir.seats.find((x) => x.signingKey.toLowerCase() === filer.toLowerCase()) ?? null;
 };
@@ -31,19 +36,30 @@ const raiserSeatOf = (here: Pick<DirectoryHere, 'records' | 'dir'>, id: string):
  * clear it on the chain. A proposal whose kind was not read may be a payroll run, which any signer can withdraw before
  * its window opens and which closes once its window has passed, so the words say both.
  */
-export const blockingProposalSaid = (here: Pick<DirectoryHere, 'records' | 'dir' | 'holders'>, id: string, e: unknown): string => {
+export const blockingProposalSaid = (
+  here: Pick<DirectoryHere, 'records' | 'dir' | 'holders'>,
+  id: string,
+  e: unknown
+): string => {
   const why = (e as Error)?.message ?? String(e);
   const seat = raiserSeatOf(here, id);
-  const seated = seat !== null && seat.retired === null && here.holders.seats.some((x) => x.toLowerCase() === seat.seat.toLowerCase());
+  const seated =
+    seat !== null &&
+    seat.retired === null &&
+    here.holders.seats.some((x) => x.toLowerCase() === seat.seat.toLowerCase());
   const raiser = seat === null ? 'the signer who raised it' : `the signer who raised it, seat ${seat.seat},`;
   const opened = `proposal ${id} did not open on this device (${why}).`;
   if (!(e instanceof NotOpenedOnThisDevice) || e.kind === undefined) {
-    return `${opened} Its kind could not be read. If it is a payroll run, any signer can withdraw it before its window opens, `
-      + `and it closes once its window has passed; any other proposal only ${raiser} can withdraw, and it stays open until then`;
+    return (
+      `${opened} Its kind could not be read. If it is a payroll run, any signer can withdraw it before its window opens, ` +
+      `and it closes once its window has passed; any other proposal only ${raiser} can withdraw, and it stays open until then`
+    );
   }
   if (seat !== null && !seated) {
-    return `${opened} ${raiser.charAt(0).toUpperCase()}${raiser.slice(1)} is no longer seated, so no signer can withdraw it, and it `
-      + 'never expires: the company\'s super admins clear it on the network';
+    return (
+      `${opened} ${raiser.charAt(0).toUpperCase()}${raiser.slice(1)} is no longer seated, so no signer can withdraw it, and it ` +
+      "never expires: the company's super admins clear it on the network"
+    );
   }
   return `${opened} Only ${raiser} can withdraw it, and until then it stays open, since a proposal of the company never expires`;
 };

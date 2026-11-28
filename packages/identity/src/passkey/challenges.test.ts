@@ -10,10 +10,7 @@ import type { ChallengeStore } from '../ports.js';
  * with it. The clock is a parameter for the same reason it is a parameter on
  * the store: expiry tested with a real clock is a test that sleeps.
  */
-export function everyChallengeStoreMustPass(
-  name: string,
-  make: (clock: { now: number }) => ChallengeStore,
-): void {
+export function everyChallengeStoreMustPass(name: string, make: (clock: { now: number }) => ChallengeStore): void {
   describe(name, () => {
     it('issues something long enough to be unguessable, and never the same twice', async () => {
       const clock = { now: 1_000 };
@@ -57,13 +54,10 @@ export function everyChallengeStoreMustPass(
       expect(await store.take(challenge, 'sign-in')).toBe(false);
       expect(await store.take(stillGood, 'sign-in')).toBe(true);
     });
-
   });
 }
 
-everyChallengeStoreMustPass(
-  'MemoryChallengeStore',
-  (clock) => new MemoryChallengeStore({ now: () => clock.now }));
+everyChallengeStoreMustPass('MemoryChallengeStore', (clock) => new MemoryChallengeStore({ now: () => clock.now }));
 
 describe('MemoryChallengeStore, and what it costs', () => {
   it('does not grow without bound, and drops the OLDEST rather than refusing to issue', async () => {

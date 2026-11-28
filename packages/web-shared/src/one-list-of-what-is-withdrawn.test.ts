@@ -4,7 +4,13 @@
  * (`KINDS_IN_THE_WALLET`), so the two cannot disagree about a kind.
  */
 import { describe, expect, it } from 'vitest';
-import { KINDS_IN_THE_WALLET, kindInTheWallet, NEVER_WITHDRAWN as LISTED_NEVER, neverWithdrawn, WALLET_KIND as LISTED_KIND } from './proposal-kinds-in-the-wallet.js';
+import {
+  KINDS_IN_THE_WALLET,
+  kindInTheWallet,
+  NEVER_WITHDRAWN as LISTED_NEVER,
+  neverWithdrawn,
+  WALLET_KIND as LISTED_KIND
+} from './proposal-kinds-in-the-wallet.js';
 import { NEVER_WITHDRAWN, WALLET_KIND } from './proposal-in-the-wallet.js';
 
 describe('ONE LIST OF THE KINDS OF PROPOSAL THE WALLET ACTS ON', () => {

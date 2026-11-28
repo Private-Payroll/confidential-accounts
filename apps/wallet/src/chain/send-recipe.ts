@@ -45,8 +45,10 @@ export const unshieldedStarsTo = (recipe: BalancingRecipe, ownerHex: string): bi
  * variants are the SDK's (`BalancingRecipe`). */
 const handlesIn = (recipe: BalancingRecipe) => {
   switch (recipe.type) {
-    case 'UNPROVEN_TRANSACTION': return [recipe.transaction];
-    case 'FINALIZED_TRANSACTION': return [recipe.originalTransaction, recipe.balancingTransaction];
+    case 'UNPROVEN_TRANSACTION':
+      return [recipe.transaction];
+    case 'FINALIZED_TRANSACTION':
+      return [recipe.originalTransaction, recipe.balancingTransaction];
     case 'UNBOUND_TRANSACTION':
       return recipe.balancingTransaction
         ? [recipe.baseTransaction, recipe.balancingTransaction]
@@ -61,23 +63,29 @@ interface OfferRead {
   readonly signatures?: readonly unknown[];
 }
 interface TransactionRead {
-  readonly intents?: Map<number, {
-    readonly guaranteedUnshieldedOffer?: OfferRead;
-    readonly fallibleUnshieldedOffer?: OfferRead;
-    readonly dustActions?: { readonly spends?: readonly { readonly vFee: bigint }[] };
-  }>;
+  readonly intents?: Map<
+    number,
+    {
+      readonly guaranteedUnshieldedOffer?: OfferRead;
+      readonly fallibleUnshieldedOffer?: OfferRead;
+      readonly dustActions?: { readonly spends?: readonly { readonly vFee: bigint }[] };
+    }
+  >;
 }
 
 /* The ledger transactions a recipe carries. A recipe this wallet cannot read
  * in full is refused rather than read in part: a fee or a payment read from
  * half a recipe would be a confirmation of something else. */
-const BalancingRecipeTransactions = (recipe: BalancingRecipe): TransactionRead[] => handlesIn(recipe).map((handle) => {
-  const tx = carriedBy(handle);
-  if (tx === null || typeof tx !== 'object') {
-    throw new Error('this wallet could not read the transaction it built for this payment, so it shows nothing to confirm');
-  }
-  return tx as TransactionRead;
-});
+const BalancingRecipeTransactions = (recipe: BalancingRecipe): TransactionRead[] =>
+  handlesIn(recipe).map((handle) => {
+    const tx = carriedBy(handle);
+    if (tx === null || typeof tx !== 'object') {
+      throw new Error(
+        'this wallet could not read the transaction it built for this payment, so it shows nothing to confirm'
+      );
+    }
+    return tx as TransactionRead;
+  });
 
 /** The identifiers of a finished transaction, read from the ledger
  * transaction its handle carries: what the chain is asked about it by. */

@@ -5,8 +5,13 @@
  * each verifying key to the digest its compiled module carries.
  */
 import {
-  contractPins, httpKeyMaterialSource, networkPins,
-  type ArtefactSource, type CompiledManifest, type HttpKeyMaterialOptions, type NetworkKeyPins,
+  contractPins,
+  httpKeyMaterialSource,
+  networkPins,
+  type ArtefactSource,
+  type CompiledManifest,
+  type HttpKeyMaterialOptions,
+  type NetworkKeyPins
 } from './key-material.js';
 import { publishedByMidnight } from '../../../src/midnight/proving-parameter-digests.js';
 import { ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS } from '../../../src/midnight/vault-contract.js';
@@ -41,13 +46,16 @@ export interface ThisBuild {
  */
 export const thisBuildsSources = (options: Omit<HttpKeyMaterialOptions, 'pins'>, build: ThisBuild) => {
   const vault = httpKeyMaterialSource(VAULT_ARTEFACT_BASE, {
-    ...options, pins: contractPins('the vault', build.vault.expectedVk, build.vault.manifest, publishedByMidnight),
+    ...options,
+    pins: contractPins('the vault', build.vault.expectedVk, build.vault.manifest, publishedByMidnight)
   });
   const account = httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/account`, {
-    ...options, pins: contractPins('the company account', build.account.expectedVk, build.account.manifest),
+    ...options,
+    pins: contractPins('the company account', build.account.expectedVk, build.account.manifest)
   });
   const network = httpKeyMaterialSource(`${VAULT_ARTEFACT_BASE}/builtin/${NETWORK_KEYS_FOLDER}`, {
-    ...options, pins: networkPins('the network\'s shielded transfers', build.network, NETWORK_KEYS_FOLDER),
+    ...options,
+    pins: networkPins("the network's shielded transfers", build.network, NETWORK_KEYS_FOLDER)
   });
   return { source: networkCircuitsBeside(accountCircuitsBeside(vault, account), network), vault, account };
 };
@@ -85,33 +93,53 @@ const CIRCUITS_A_DEPOSIT_PROVES = ['deposit', 'depositUnshielded', 'midnight/zsw
  * sign-in do not slow the read a person is waiting on.
  */
 export const provingWarmed = async (
-  source: ArtefactSource, sizeOf: (circuit: Uint8Array, location: string) => number | Promise<number>,
-  readsFirst: () => Promise<void> = readsGoFirst,
+  source: ArtefactSource,
+  sizeOf: (circuit: Uint8Array, location: string) => number | Promise<number>,
+  readsFirst: () => Promise<void> = readsGoFirst
 ): Promise<void> => {
   const fetchedSizes = new Set<number>();
   const failures: unknown[] = [];
   const stage = async (circuits: readonly string[], keysToo: boolean): Promise<void> => {
     const sizes = new Set<number>();
-    await Promise.all(circuits.flatMap((location) => [
-      (async () => {
-        try {
-          await readsFirst();
-          sizes.add(await sizeOf(await source.artefact('ir', location), location));
-        } catch (e) { failures.push(e); }
-      })(),
-      ...(keysToo ? (['prover', 'verifier'] as const) : []).map(async (kind) => {
-        try { await readsFirst(); await source.artefact(kind, location); } catch (e) { failures.push(e); }
-      }),
-    ]));
+    await Promise.all(
+      circuits.flatMap((location) => [
+        (async () => {
+          try {
+            await readsFirst();
+            sizes.add(await sizeOf(await source.artefact('ir', location), location));
+          } catch (e) {
+            failures.push(e);
+          }
+        })(),
+        ...(keysToo ? (['prover', 'verifier'] as const) : []).map(async (kind) => {
+          try {
+            await readsFirst();
+            await source.artefact(kind, location);
+          } catch (e) {
+            failures.push(e);
+          }
+        })
+      ])
+    );
     for (const k of [...sizes].filter((k) => !fetchedSizes.has(k)).sort((a, b) => a - b)) {
       fetchedSizes.add(k);
-      try { await readsFirst(); await source.getParams(k); } catch (e) { failures.push(e); }
+      try {
+        await readsFirst();
+        await source.getParams(k);
+      } catch (e) {
+        failures.push(e);
+      }
     }
   };
   await stage(CIRCUITS_A_DEPOSIT_PROVES, true);
-  await stage([
-    ...VAULT_CIRCUITS, ...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, ...NETWORK_SHIELDED_CIRCUITS.map((c) => `midnight/zswap/${c}`),
-  ].filter((location) => !(CIRCUITS_A_DEPOSIT_PROVES as readonly string[]).includes(location)), false);
+  await stage(
+    [
+      ...VAULT_CIRCUITS,
+      ...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE,
+      ...NETWORK_SHIELDED_CIRCUITS.map((c) => `midnight/zswap/${c}`)
+    ].filter((location) => !(CIRCUITS_A_DEPOSIT_PROVES as readonly string[]).includes(location)),
+    false
+  );
   if (failures.length > 0) throw failures[0];
 };
 
@@ -121,8 +149,10 @@ export const provingWarmed = async (
  * build's own is refused by name before anything is built or read with it.
  */
 export const checkedAccountKeys = (
-  fetchKey: (circuit: string) => Promise<Uint8Array>, expected: Readonly<Record<string, string>>,
-  digest: (bytes: Uint8Array) => Uint8Array, whose = 'the company account',
+  fetchKey: (circuit: string) => Promise<Uint8Array>,
+  expected: Readonly<Record<string, string>>,
+  digest: (bytes: Uint8Array) => Uint8Array,
+  whose = 'the company account'
 ): CheckedVerifierKeys => {
   const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   const one = async (c: string): Promise<Uint8Array> => {
@@ -130,12 +160,14 @@ export const checkedAccountKeys = (
     if (typeof want !== 'string') throw new Error(`${whose} has no circuit called ${c} in this build.`);
     const key = await fetchKey(c);
     if (hex(digest(key)) !== want.toLowerCase()) {
-      throw new Error(`the verifying key served for ${whose}'s ${c} circuit is not this build's, so nothing was built.`);
+      throw new Error(
+        `the verifying key served for ${whose}'s ${c} circuit is not this build's, so nothing was built.`
+      );
     }
     return key;
   };
   return {
     getVerifierKey: one,
-    getVerifierKeys: async (cs) => Promise.all(cs.map(async (c): Promise<[string, Uint8Array]> => [c, await one(c)])),
+    getVerifierKeys: async (cs) => Promise.all(cs.map(async (c): Promise<[string, Uint8Array]> => [c, await one(c)]))
   };
 };

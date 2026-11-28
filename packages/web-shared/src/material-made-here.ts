@@ -35,11 +35,25 @@ import type { PayrollRun, RunLeg, SealedProposal } from '../../../src/core/types
 import { paymentChecked, paymentsOnTheWire } from '../../../src/core/device-raise.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
 import {
-  assetOfLeg, legChoiceOf, legEmployees, legFieldsOf, legName, legOf, legOfRound, legsOfRun, raisedLegOf,
+  assetOfLeg,
+  legChoiceOf,
+  legEmployees,
+  legFieldsOf,
+  legName,
+  legOf,
+  legOfRound,
+  legsOfRun,
+  raisedLegOf
 } from '../../../src/core/run-legs.js';
 import type { PaymentFacts } from '../../../src/midnight/payout-tree.js';
 import {
-  openedRunHere, payableFactsHere, payrollRoundsHere, proposalsListedHere, signedStateHere, type CompanyRecordsHere, type RoundIdentity,
+  openedRunHere,
+  payableFactsHere,
+  payrollRoundsHere,
+  proposalsListedHere,
+  signedStateHere,
+  type CompanyRecordsHere,
+  type RoundIdentity
 } from './run-rebuilt-here.js';
 import type { GovernedCallOrder, OpenedRound } from './governed-call-builder.js';
 import type { LegPaymentsOnTheWire, RaiseOrderOnTheWire, RetryOrderOnTheWire } from './payroll-run-on-device.js';
@@ -74,14 +88,19 @@ interface ProposalHere {
 }
 
 /** Which leg a request names: its token, and its form where the run pays that token both ways. */
-export interface LegNamed { readonly asset?: string; readonly form?: LedgerForm }
+export interface LegNamed {
+  readonly asset?: string;
+  readonly form?: LedgerForm;
+}
 
 const registryOf = (records: CompanyRecordsHere): AssetRegistry | undefined => records.registry;
 
 const proposalsOf = async (records: CompanyRecordsHere): Promise<readonly SealedProposal[]> => {
   if (records.proposals === undefined) {
-    throw new NotMadeHere('This page cannot read the company\'s proposals, so it cannot make this here. Reload the page to '
-      + 'get the current version.');
+    throw new NotMadeHere(
+      "This page cannot read the company's proposals, so it cannot make this here. Reload the page to " +
+        'get the current version.'
+    );
   }
   return proposalsListedHere({ ...records, proposals: records.proposals });
 };
@@ -96,22 +115,32 @@ const openedProposal = (rec: SealedProposal, accountId: string, viewingKey: Keys
     envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
     change = parseCanonical<{ __change?: StateChange }>(unseal(envelope.sealedPayload, key)).__change;
   } catch {
-    throw new NotMadeHere('This device cannot read the company\'s record of a proposal this run names. Reload the page and '
-      + 'try again.');
+    throw new NotMadeHere(
+      "This device cannot read the company's record of a proposal this run names. Reload the page and " + 'try again.'
+    );
   }
   if (change === undefined || !/^[0-9a-f]{64}$/u.test(String(change.salt))) {
-    throw new NotMadeHere('A proposal this run names is incomplete in the company\'s records. Withdraw it and raise the run '
-      + 'again.');
+    throw new NotMadeHere(
+      "A proposal this run names is incomplete in the company's records. Withdraw it and raise the run " + 'again.'
+    );
   }
   return {
-    rec, kind: envelope.kind, change, sealedPayload: envelope.sealedPayload,
+    rec,
+    kind: envelope.kind,
+    change,
+    sealedPayload: envelope.sealedPayload,
     /* When the chain was first seen to hold it is kept plain on the record; a record written before that kept it sealed. */
-    ...((rec.raisedAt ?? envelope.raisedAt) ? { raisedAt: (rec.raisedAt ?? envelope.raisedAt)! } : {}),
+    ...((rec.raisedAt ?? envelope.raisedAt) ? { raisedAt: (rec.raisedAt ?? envelope.raisedAt)! } : {})
   };
 };
 
 /** The legs of a run, side by side, each with its token, form, symbol, people, total and proposal. */
-export async function legsHere(records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld): Promise<LegHere[]> {
+export async function legsHere(
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld
+): Promise<LegHere[]> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   return legsOfRun(run).map((leg) => {
     const people = legEmployees(run, leg);
@@ -120,7 +149,7 @@ export async function legsHere(records: CompanyRecordsHere, accountId: string, r
       symbol: symbolOf(assetOfLeg(leg), registryOf(records)),
       people: people.map((e) => e.id),
       total: people.reduce((sum, e) => sum + e.amount, 0n),
-      proposalId: run.proposalIds[leg] ?? null,
+      proposalId: run.proposalIds[leg] ?? null
     };
   });
 }
@@ -134,18 +163,28 @@ export async function legsHere(records: CompanyRecordsHere, accountId: string, r
  * (`proposalsListedHere`, `payrollRoundsHere`), judged by this device's clock.
  */
 const raisedFromItsRecord = (
-  run: PayrollRun, leg: RunLeg, proposals: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld,
-  identity: RoundIdentity,
+  run: PayrollRun,
+  leg: RunLeg,
+  proposals: readonly SealedProposal[],
+  accountId: string,
+  viewingKey: KeysHeld,
+  identity: RoundIdentity
 ): boolean => {
   if (run.payout?.[leg] === undefined) return false;
   const pointed = run.proposalIds[leg];
   const at = { identity, nowInSeconds: BigInt(Math.floor(Date.now() / 1000)) };
   if (pointed !== undefined) {
-    const round = payrollRoundsHere(proposals.filter((p) => p.id === pointed), accountId, viewingKey, at)[0];
+    const round = payrollRoundsHere(
+      proposals.filter((p) => p.id === pointed),
+      accountId,
+      viewingKey,
+      at
+    )[0];
     return round !== undefined && round.status !== 'cancelled';
   }
-  return payrollRoundsHere(proposals, accountId, viewingKey, at)
-    .some((round) => round.runId === run.id && legOfRound(round) === leg && round.retry === undefined && isLiveRound(round));
+  return payrollRoundsHere(proposals, accountId, viewingKey, at).some(
+    (round) => round.runId === run.id && legOfRound(round) === leg && round.retry === undefined && isLiveRound(round)
+  );
 };
 
 /**
@@ -155,7 +194,11 @@ const raisedFromItsRecord = (
  * from the people it believes and would pay.
  */
 export async function legPaymentsHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, which?: LegNamed,
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld,
+  which?: LegNamed
 ): Promise<LegPaymentsOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = legOf(run, legChoiceOf(which ?? {}), registryOf(records));
@@ -163,8 +206,13 @@ export async function legPaymentsHere(
   if (raisedFromItsRecord(run, leg, await proposalsOf(records), accountId, viewingKey, records.roundIdentity)) {
     facts = run.payout![leg]!.facts;
   } else {
-    facts = await payableFactsHere(records, run, legEmployees(run, leg), 'Put their record right before this run is raised.',
-      'This device will not raise a run it would not pay.');
+    facts = await payableFactsHere(
+      records,
+      run,
+      legEmployees(run, leg),
+      'Put their record right before this run is raised.',
+      'This device will not raise a run it would not pay.'
+    );
   }
   return { ...legFieldsOf(leg), payments: paymentsOnTheWire(facts.map(paymentChecked)) };
 }
@@ -174,14 +222,21 @@ export async function legPaymentsHere(
  * leg's recorded payment of each person it names, in the order it names them.
  */
 export async function retryPaymentsHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, indices: readonly number[], which?: LegNamed,
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld,
+  indices: readonly number[],
+  which?: LegNamed
 ): Promise<LegPaymentsOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = legOf(run, legChoiceOf(which ?? {}), registryOf(records));
   const recorded = run.payout?.[leg];
   if (recorded === undefined) {
-    throw new NotMadeHere(`The ${legName(leg, registryOf(records))} leg of this run has not been raised, so there is nobody on `
-      + 'it to retry. Raise the leg first.');
+    throw new NotMadeHere(
+      `The ${legName(leg, registryOf(records))} leg of this run has not been raised, so there is nobody on ` +
+        'it to retry. Raise the leg first.'
+    );
   }
   if (indices.length === 0 || new Set(indices).size !== indices.length) {
     throw new NotMadeHere('A retry names each person it pays once, and at least one. Reload the run and choose again.');
@@ -189,8 +244,10 @@ export async function retryPaymentsHere(
   const payments = indices.map((i) => {
     const f = Number.isInteger(i) && i >= 0 ? recorded.facts[i] : undefined;
     if (f === undefined) {
-      throw new NotMadeHere(`This run pays ${recorded.facts.length} people in this leg, so there is no person #${Number(i) + 1} `
-        + 'on it to retry. Reload the run and choose again.');
+      throw new NotMadeHere(
+        `This run pays ${recorded.facts.length} people in this leg, so there is no person #${Number(i) + 1} ` +
+          'on it to retry. Reload the run and choose again.'
+      );
     }
     return paymentChecked(f);
   });
@@ -203,13 +260,17 @@ const halfOf = async (records: CompanyRecordsHere, accountId: string, viewingKey
   /* The account's own name for the asset, which is what the asset witness answers with. */
   const named = { assetId: assetIdBytes(p.change.asset) };
   return {
-    assetId: Array.from(named.assetId, (x) => x.toString(16).padStart(2, '0')).join(''), assetBlinding: state.assetBlinding, proposalSalt: p.change.salt,
-    changeAmount: String(p.change.amount), changeBatchDigest: p.change.batchDigest,
+    assetId: Array.from(named.assetId, (x) => x.toString(16).padStart(2, '0')).join(''),
+    assetBlinding: state.assetBlinding,
+    proposalSalt: p.change.salt,
+    changeAmount: String(p.change.amount),
+    changeBatchDigest: p.change.batchDigest
   };
 };
 
-const NOTHING_WAITING = 'This run has no proposal written down that is waiting to be sent to the chain: it has been sent '
-  + 'already, or withdrawn. Reload the run to see where it stands.';
+const NOTHING_WAITING =
+  'This run has no proposal written down that is waiting to be sent to the chain: it has been sent ' +
+  'already, or withdrawn. Reload the run to see where it stands.';
 
 /**
  * **WHAT A PROPOSAL WRITTEN DOWN COMMITS TO PAYING**, from its own record: the
@@ -218,8 +279,10 @@ const NOTHING_WAITING = 'This run has no proposal written down that is waiting t
  */
 const writtenDownPays = (rec: SealedProposal): string => {
   if (typeof rec.pays !== 'string' || !/^[0-9a-f]{64}$/iu.test(rec.pays)) {
-    throw new NotMadeHere('The proposal written down for this run does not say what it pays, so this device cannot hold what '
-      + 'it sends to it. Withdraw the proposal and raise the run again.');
+    throw new NotMadeHere(
+      'The proposal written down for this run does not say what it pays, so this device cannot hold what ' +
+        'it sends to it. Withdraw the proposal and raise the run again.'
+    );
   }
   return rec.pays.toLowerCase();
 };
@@ -230,7 +293,11 @@ const writtenDownPays = (rec: SealedProposal): string => {
  * account's half of the call.
  */
 export async function raiseOrderHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, which?: LegNamed,
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld,
+  which?: LegNamed
 ): Promise<RaiseOrderOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = raisedLegOf(run, legChoiceOf(which ?? {}), registryOf(records));
@@ -246,14 +313,17 @@ export async function raiseOrderHere(
     order: {
       circuit: 'propose',
       run: {
-        root: payout.root, payees: payout.payees.toString(), opensAt: payout.opensAt.toString(),
-        closesAt: payout.closesAt.toString(), vault: payout.vault,
-        ...(payout.required ? { required: payout.required.toString() } : {}),
+        root: payout.root,
+        payees: payout.payees.toString(),
+        opensAt: payout.opensAt.toString(),
+        closesAt: payout.closesAt.toString(),
+        vault: payout.vault,
+        ...(payout.required ? { required: payout.required.toString() } : {})
       },
       half: await halfOf(records, accountId, viewingKey, opened),
-      proposal: rec.chainId,
+      proposal: rec.chainId
     },
-    pays: writtenDownPays(rec),
+    pays: writtenDownPays(rec)
   };
 }
 
@@ -264,7 +334,12 @@ export async function raiseOrderHere(
  * in the leg.
  */
 export async function retryOrderHere(
-  records: CompanyRecordsHere, accountId: string, runId: string, viewingKey: KeysHeld, proposalId: string, which?: LegNamed,
+  records: CompanyRecordsHere,
+  accountId: string,
+  runId: string,
+  viewingKey: KeysHeld,
+  proposalId: string,
+  which?: LegNamed
 ): Promise<RetryOrderOnTheWire> {
   const run = await openedRunHere(records, accountId, runId, viewingKey);
   const leg = raisedLegOf(run, legChoiceOf(which ?? {}), registryOf(records));
@@ -280,15 +355,18 @@ export async function retryOrderHere(
     order: {
       circuit: 'propose',
       run: {
-        root: retry.root, payees: retry.payees.toString(), opensAt: retry.opensAt.toString(),
-        closesAt: retry.closesAt.toString(), vault: retry.vault,
-        ...(retry.required ? { required: retry.required.toString() } : {}),
+        root: retry.root,
+        payees: retry.payees.toString(),
+        opensAt: retry.opensAt.toString(),
+        closesAt: retry.closesAt.toString(),
+        vault: retry.vault,
+        ...(retry.required ? { required: retry.required.toString() } : {})
       },
       half: await halfOf(records, accountId, viewingKey, opened),
-      proposal: rec.chainId,
+      proposal: rec.chainId
     },
     indices: [...retry.originalIndices],
-    pays: writtenDownPays(rec),
+    pays: writtenDownPays(rec)
   };
 }
 
@@ -300,12 +378,22 @@ export async function retryOrderHere(
  */
 export function carryOrderHere(opened: OpenedRound): GovernedCallOrder {
   const g = opened.governance;
-  if (g?.kind === 'threshold') return { circuit: 'setThreshold', threshold: g.threshold, proposal: opened.chainId, proposalSalt: opened.salt };
+  if (g?.kind === 'threshold')
+    return { circuit: 'setThreshold', threshold: g.threshold, proposal: opened.chainId, proposalSalt: opened.salt };
   if (g?.kind === 'vault-threshold') {
-    return { circuit: 'setVaultThreshold', vault: g.vault, threshold: g.threshold, proposal: opened.chainId, proposalSalt: opened.salt };
+    return {
+      circuit: 'setVaultThreshold',
+      vault: g.vault,
+      threshold: g.threshold,
+      proposal: opened.chainId,
+      proposalSalt: opened.salt
+    };
   }
-  if (g?.kind === 'policy-bar') return { circuit: 'setPolicyBar', bar: g.bar, proposal: opened.chainId, proposalSalt: opened.salt };
+  if (g?.kind === 'policy-bar')
+    return { circuit: 'setPolicyBar', bar: g.bar, proposal: opened.chainId, proposalSalt: opened.salt };
   /* A spending policy is carried out with the policy's opening, which only the company's record of it holds (`spending-policy-here.ts`). */
-  throw new NotMadeHere('This proposal does not change the approvals required, so there is nothing to carry out from here. '
-    + 'A person invited as a signer takes their seat from their own wallet.');
+  throw new NotMadeHere(
+    'This proposal does not change the approvals required, so there is nothing to carry out from here. ' +
+      'A person invited as a signer takes their seat from their own wallet.'
+  );
 }

@@ -10,9 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Purposes, identityFromWords } from '../keys/derivation.js';
-import {
-  CommitteeKeyError, committeeKeyFor, committeeSigningKeyFor, readCommitteeKey,
-} from './committee-key.js';
+import { CommitteeKeyError, committeeKeyFor, committeeSigningKeyFor, readCommitteeKey } from './committee-key.js';
 import type { CompanyLabel } from './company-label.js';
 
 /*
@@ -28,8 +26,7 @@ const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 const text = (s: string) => new TextEncoder().encode(s);
 const identity = identityFromWords(TEST_MNEMONIC);
 
-const root = HDKey.fromMasterSeed(mnemonicToSeedSync(TEST_MNEMONIC))
-  .derive("m/44'/2400'/1'/0/0").privateKey!;
+const root = HDKey.fromMasterSeed(mnemonicToSeedSync(TEST_MNEMONIC)).derive("m/44'/2400'/1'/0/0").privateKey!;
 const authority = (purpose: string, index: number): Uint8Array =>
   hkdf(sha256, root, text('midnight-identity/authority/v1'), text(`${purpose}/${index}`), 32);
 const independentSecret = (company: string): Uint8Array =>
@@ -37,11 +34,16 @@ const independentSecret = (company: string): Uint8Array =>
 const independentUnlock = (company: string): Uint8Array =>
   hkdf(sha256, authority('unlock', 0), text('midnight-identity/unlock/v3'), text(company), 32);
 const independentRecordsSeed = (company: string): Uint8Array =>
-  hkdf(sha256, independentUnlock(company),
-    text('confidential-accounts/company-records-wrapping/v1'), new Uint8Array(0), 32);
+  hkdf(
+    sha256,
+    independentUnlock(company),
+    text('confidential-accounts/company-records-wrapping/v1'),
+    new Uint8Array(0),
+    32
+  );
 
 describe('THE COMMITTEE KEY', () => {
-  it('is the BIP-340 key of an expansion of its own parent under the company\'s label, byte for byte', () => {
+  it("is the BIP-340 key of an expansion of its own parent under the company's label, byte for byte", () => {
     /* RED WHEN: the salt is not `v2`, the input is not the whole label as written, or the parent moves. */
     const secret = independentSecret(CO_A);
     expect(committeeSigningKeyFor(identity, CO_A)).toEqual({ tag: 'schnorr', value: hex(secret) });
@@ -65,7 +67,7 @@ describe('THE COMMITTEE KEY', () => {
       hex(independentRecordsSeed(CO_A)),
       hex(authority('unlock', 0)),
       hex(authority('keyring', 0)),
-      hex(hkdf(sha256, authority('unlock', 0), text('midnight-identity/vault-committee/v2'), text(CO_A), 32)),
+      hex(hkdf(sha256, authority('unlock', 0), text('midnight-identity/vault-committee/v2'), text(CO_A), 32))
     ]) {
       expect(other).not.toBe(secret);
     }
@@ -78,7 +80,7 @@ describe('THE COMMITTEE KEY', () => {
     expect(code).not.toContain('Purposes.Keyring');
   });
 
-  it('IS THE LEDGER\'S OWN BIP-340 KEY: the ledger reads the secret and derives the same public half', () => {
+  it("IS THE LEDGER'S OWN BIP-340 KEY: the ledger reads the secret and derives the same public half", () => {
     const secret = committeeSigningKeyFor(identity, CO_A);
     expect(signingKeyFromBip340(Buffer.from(secret.value, 'hex'))).toEqual(secret);
     expect(signatureVerifyingKey(secret)).toEqual(committeeKeyFor(identity, CO_A));
@@ -98,18 +100,40 @@ describe('THE COMMITTEE KEY', () => {
     expect(verifySignature(committeeKeyFor(identity, CO_B), data, signature)).toBe(false);
   });
 
-  it('refuses anything that is not a company\'s label - an account\'s address first of all - and derives nothing', () => {
+  it("refuses anything that is not a company's label - an account's address first of all - and derives nothing", () => {
     /* RED WHEN: the reader accepts a bare address, a label with anything around it, or a zero label. */
-    for (const bad of ['', ADDRESS_A, ADDRESS_A.toUpperCase(), CO_A.slice(1), `${CO_A} `, ` ${CO_A}`,
-      `co_${'0'.repeat(64)}`, `CO_${ADDRESS_A}`, `co_${ADDRESS_A}00`, 'g'.repeat(64)]) {
+    for (const bad of [
+      '',
+      ADDRESS_A,
+      ADDRESS_A.toUpperCase(),
+      CO_A.slice(1),
+      `${CO_A} `,
+      ` ${CO_A}`,
+      `co_${'0'.repeat(64)}`,
+      `CO_${ADDRESS_A}`,
+      `co_${ADDRESS_A}00`,
+      'g'.repeat(64)
+    ]) {
       expect(() => committeeKeyFor(identity, bad as CompanyLabel)).toThrow(CommitteeKeyError);
     }
   });
 
-  it('NO KEY IS DERIVED FROM AN ADDRESS ANY MORE: the label\'s key is not the key the old derivation gave its address', () => {
+  it("NO KEY IS DERIVED FROM AN ADDRESS ANY MORE: the label's key is not the key the old derivation gave its address", () => {
     /* RED WHEN: the salt goes back to `v1`, or the prefix is stripped before the expansion. */
-    const fromAddress = hkdf(sha256, authority('maintenance', 0), text('midnight-identity/vault-committee/v1'), text(ADDRESS_A), 32);
-    const fromAddressNewSalt = hkdf(sha256, authority('maintenance', 0), text('midnight-identity/vault-committee/v2'), text(ADDRESS_A), 32);
+    const fromAddress = hkdf(
+      sha256,
+      authority('maintenance', 0),
+      text('midnight-identity/vault-committee/v1'),
+      text(ADDRESS_A),
+      32
+    );
+    const fromAddressNewSalt = hkdf(
+      sha256,
+      authority('maintenance', 0),
+      text('midnight-identity/vault-committee/v2'),
+      text(ADDRESS_A),
+      32
+    );
     const mine = committeeSigningKeyFor(identity, CO_A).value;
     expect(mine).not.toBe(hex(fromAddress));
     expect(mine).not.toBe(hex(fromAddressNewSalt));

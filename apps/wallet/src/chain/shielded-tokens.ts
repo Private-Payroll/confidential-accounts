@@ -34,7 +34,8 @@ export type OtherTokens = Readonly<Record<string, bigint>>;
  * above zero, so the screens never list a token at zero.
  */
 export function splitShielded(
-  balances: Readonly<Record<string, bigint>>, nightRaw: string,
+  balances: Readonly<Record<string, bigint>>,
+  nightRaw: string
 ): { readonly night: bigint; readonly others: OtherTokens } {
   const others: Record<string, bigint> = {};
   for (const [colour, amount] of Object.entries(balances)) {
@@ -61,7 +62,7 @@ export const holdsAnyOther = (others: OtherTokens | undefined): boolean =>
  * cannot tell two tokens apart for certain, so every caller keeps the whole
  * colour reachable beside it. */
 export const shortColour = (colour: string): string =>
-  (colour.length <= 12 ? colour : `${colour.slice(0, 6)}…${colour.slice(-4)}`);
+  colour.length <= 12 ? colour : `${colour.slice(0, 6)}…${colour.slice(-4)}`;
 
 /** The amount in the token's smallest unit, grouped and never divided. */
 export const smallestUnits = (amount: bigint): string => amount.toLocaleString();

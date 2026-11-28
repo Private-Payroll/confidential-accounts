@@ -50,9 +50,9 @@ export function QuickActions({ owned }: { readonly owned: OwnedAddress }): React
       <ReceiveRow owned={owned} />
       <EarnRow />
       {/* THE TILE SAYS *Contacts*; THE ROUTE IS STILL `address-book`. The
-        * words on a tile are what a person reads and the route name is what
-        * the code and every recorded hash refer to — renaming the second to
-        * follow the first would change a URL people may already have. */}
+       * words on a tile are what a person reads and the route name is what
+       * the code and every recorded hash refer to — renaming the second to
+       * follow the first would change a URL people may already have. */}
       <ShortcutTile
         href={hrefOf('address-book')}
         glyph={GLYPH.contacts}
@@ -60,18 +60,18 @@ export function QuickActions({ owned }: { readonly owned: OwnedAddress }): React
         says="People you pay, so an address is never typed twice"
       />
       {/*
-        * MY PROFILE — A DOOR, ADDED BESIDE THE OTHERS RATHER THAN INSTEAD OF
-        * ONE. `#/profile` existed and was reachable only from Settings, which
-        * is two clicks and a guess; a person who has typed their name in once
-        * looks for it where the wallet's other shortcuts are.
-        *
-        * **IT IS STILL NOT A PLACE.** The design keeps the
-        * navigation at four on purpose. A shortcut is a door, and adding one
-        * does not widen what the bottom bar or the rail holds.
-        *
-        * `quiet`, like its neighbours — **Send is the one accented tile on
-        * this screen** and a second accent is no hierarchy at all.
-        */}
+       * MY PROFILE — A DOOR, ADDED BESIDE THE OTHERS RATHER THAN INSTEAD OF
+       * ONE. `#/profile` existed and was reachable only from Settings, which
+       * is two clicks and a guess; a person who has typed their name in once
+       * looks for it where the wallet's other shortcuts are.
+       *
+       * **IT IS STILL NOT A PLACE.** The design keeps the
+       * navigation at four on purpose. A shortcut is a door, and adding one
+       * does not widen what the bottom bar or the rail holds.
+       *
+       * `quiet`, like its neighbours — **Send is the one accented tile on
+       * this screen** and a second accent is no hierarchy at all.
+       */}
       <ShortcutTile
         href={hrefOf('profile')}
         glyph={GLYPH.details}
@@ -121,9 +121,9 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
         <DialogHeader>
           <DialogTitle>Receive into {name}</DialogTitle>
           <DialogDescription>
-            Nothing here moves money. Both addresses below are real and payable on{' '}
-            {address.network}; when comparing either, check <strong>both ends</strong>:
-            every address on this network starts with the same run of characters.
+            Nothing here moves money. Both addresses below are real and payable on {address.network}; when comparing
+            either, check <strong>both ends</strong>: every address on this network starts with the same run of
+            characters.
           </DialogDescription>
         </DialogHeader>
         <p className="wallet-owner m-0 flex items-center gap-2">
@@ -134,18 +134,17 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
         <AddressBlock
           kind="unshielded"
           title="Unshielded NIGHT"
-          says={(
+          says={
             <>
               Ordinary NIGHT transfers pay here
               {FAUCET_NAME !== null && (
                 <>
-                  {', '}and the {FAUCET_NAME} pays <strong>only</strong> here: it
-                  rejects shielded and DUST addresses
+                  {', '}and the {FAUCET_NAME} pays <strong>only</strong> here: it rejects shielded and DUST addresses
                 </>
               )}
               .
             </>
-          )}
+          }
           bech32={unshieldedBech32}
           short={shortUnshielded(unshieldedBech32)}
           owner={owner}
@@ -172,7 +171,14 @@ function ReceiveRow({ owned }: { readonly owned: OwnedAddress }): ReactNode {
  * wallet, and the all-wallets card draws `.address-full` the same way. Moving
  * them into the kit would be a change to both screens, which is not this one.
  */
-function AddressBlock({ kind, title, says, bech32, short, owner }: {
+function AddressBlock({
+  kind,
+  title,
+  says,
+  bech32,
+  short,
+  owner
+}: {
   readonly kind: 'unshielded' | 'shielded';
   readonly title: string;
   readonly says: ReactNode;
@@ -185,10 +191,7 @@ function AddressBlock({ kind, title, says, bech32, short, owner }: {
     <div data-addr={kind} className="rounded-md border border-border p-3">
       <h3 className="m-0 text-sm font-semibold text-foreground">{title}</h3>
       <p className="m-0 mt-1 text-xs text-muted-foreground">{says}</p>
-      <div
-        className="address-short"
-        aria-label={`${title} address of ${owner}, short form: ${short}`}
-      >
+      <div className="address-short" aria-label={`${title} address of ${owner}, short form: ${short}`}>
         <span className="net">{parts.network}</span>
         <span className="end">{parts.head}</span>
         {parts.tail !== null && (
@@ -199,7 +202,7 @@ function AddressBlock({ kind, title, says, bech32, short, owner }: {
         )}
       </div>
       {/* Capped: at the panel's full width the second address block is pushed
-        * off the popup, and a code this size still scans. */}
+       * off the popup, and a code this size still scans. */}
       <div className="max-w-[10rem]">
         <QrPanel
           payload={bech32}
@@ -256,25 +259,18 @@ function EarnRow(): ReactNode {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <ShortcutTile
-        onClick={() => setOpen(true)}
-        glyph={GLYPH.earn}
-        label="Earn"
-        says="Coming soon"
-      />
+      <ShortcutTile onClick={() => setOpen(true)} glyph={GLYPH.earn} label="Earn" says="Coming soon" />
       <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Earn is coming soon</DialogTitle>
           <DialogDescription>
-            This is where staking and yield will live: putting NIGHT to work without
-            handing it to anybody.
+            This is where staking and yield will live: putting NIGHT to work without handing it to anybody.
           </DialogDescription>
         </DialogHeader>
         <p className="m-0 text-sm text-muted-foreground">
-          There is no date for it and this screen will not invent one. When it exists it
-          will name every host it dials, the way the rest of this wallet does, and
-          nothing will move without going through the same approval screen a payment
-          does.
+          There is no date for it and this screen will not invent one. When it exists it will name every host it dials,
+          the way the rest of this wallet does, and nothing will move without going through the same approval screen a
+          payment does.
         </p>
       </DialogContent>
     </Dialog>

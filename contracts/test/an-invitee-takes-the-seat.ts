@@ -38,21 +38,28 @@ export interface InviteeSeat {
 /** The invitee's `seatInvited` call, unproven, base64 - or a refusal from the account's own circuit. */
 export async function inviteeSeatCall(i: InviteeSeat): Promise<string> {
   const keys = L.ZswapSecretKeys.fromSeed(new Uint8Array(32).fill(3));
-  const built = await callsTheProductBuilds().buildCall(i.accountZk, {
-    compiledContract: i.accountCompiled,
-    circuitId: 'seatInvited',
-    contractAddress: i.company,
-    coinPublicKey: keys.coinPublicKey,
-    network: i.network,
-    read: {
-      contract: i.accountState,
-      zswap: new L.ZswapChainState().serialize(),
-      parameters: L.LedgerParameters.initialParameters().serialize(),
+  const built = await callsTheProductBuilds().buildCall(
+    i.accountZk,
+    {
+      compiledContract: i.accountCompiled,
+      circuitId: 'seatInvited',
+      contractAddress: i.company,
+      coinPublicKey: keys.coinPublicKey,
+      network: i.network,
+      read: {
+        contract: i.accountState,
+        zswap: new L.ZswapChainState().serialize(),
+        parameters: L.LedgerParameters.initialParameters().serialize()
+      },
+      initialPrivateState: {
+        ...i.who,
+        invite: i.invite ?? invitedAddressFor(i.who),
+        proposalSalt: Buffer.from(i.salt, 'hex'),
+        pinnedPath: null
+      },
+      args: [Buffer.from(i.proposal, 'hex'), i.intoVacatedSlot === true, i.newThreshold ?? 0n]
     },
-    initialPrivateState: {
-      ...i.who, invite: i.invite ?? invitedAddressFor(i.who), proposalSalt: Buffer.from(i.salt, 'hex'), pinnedPath: null,
-    },
-    args: [Buffer.from(i.proposal, 'hex'), i.intoVacatedSlot === true, i.newThreshold ?? 0n],
-  }, keys.encryptionPublicKey);
+    keys.encryptionPublicKey
+  );
   return Buffer.from(built.private.unprovenTx.serialize()).toString('base64');
 }

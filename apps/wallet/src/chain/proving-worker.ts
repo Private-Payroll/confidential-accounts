@@ -18,19 +18,31 @@ type Ask =
   | { readonly op: 'getParams'; readonly askId: number; readonly k: number };
 
 type FromPage =
-  | { readonly op: 'prove'; readonly keyLocation: string; readonly preimage: Uint8Array; readonly overwriteBindingInput?: bigint }
+  | {
+      readonly op: 'prove';
+      readonly keyLocation: string;
+      readonly preimage: Uint8Array;
+      readonly overwriteBindingInput?: bigint;
+    }
   | { readonly op: 'check'; readonly keyLocation: string; readonly preimage: Uint8Array }
-  | { readonly op: 'answer'; readonly askId: number; readonly ok: boolean; readonly value?: unknown; readonly error?: string };
+  | {
+      readonly op: 'answer';
+      readonly askId: number;
+      readonly ok: boolean;
+      readonly value?: unknown;
+      readonly error?: string;
+    };
 
 const pending = new Map<number, { resolve: (value: never) => void; reject: (e: Error) => void }>();
 let nextAskId = 0;
 
-const ask = <T>(payload: Omit<Ask, 'askId'>): Promise<T> => new Promise<T>((resolve, reject) => {
-  const askId = nextAskId;
-  nextAskId += 1;
-  pending.set(askId, { resolve: resolve as (value: never) => void, reject });
-  postMessage({ ...payload, askId });
-});
+const ask = <T>(payload: Omit<Ask, 'askId'>): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const askId = nextAskId;
+    nextAskId += 1;
+    pending.set(askId, { resolve: resolve as (value: never) => void, reject });
+    postMessage({ ...payload, askId });
+  });
 
 /** Key material comes from the thread that started this worker (the page, or
  * the wallet's account builder): it owns the provider and its cache, and moves
@@ -38,7 +50,7 @@ const ask = <T>(payload: Omit<Ask, 'askId'>): Promise<T> => new Promise<T>((reso
  * and holds a key only for the proof that asked for it. */
 const keyMaterial = {
   lookupKey: (keyLocation: string) => ask<never>({ op: 'lookupKey', keyLocation } as Omit<Ask, 'askId'>),
-  getParams: (k: number) => ask<never>({ op: 'getParams', k } as Omit<Ask, 'askId'>),
+  getParams: (k: number) => ask<never>({ op: 'getParams', k } as Omit<Ask, 'askId'>)
 };
 
 addEventListener('message', ({ data }: MessageEvent<FromPage>) => {
@@ -58,9 +70,12 @@ addEventListener('message', ({ data }: MessageEvent<FromPage>) => {
   });
   work
     .then((value) => postMessage({ op: 'result', value }))
-    .catch((e: unknown) => postMessage({
-      op: 'failure', error: describeFailure(e),
-    }));
+    .catch((e: unknown) =>
+      postMessage({
+        op: 'failure',
+        error: describeFailure(e)
+      })
+    );
 });
 
 /* THE HANDSHAKE — after the listener, and not a line before. */

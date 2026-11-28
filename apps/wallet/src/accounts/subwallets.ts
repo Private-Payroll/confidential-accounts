@@ -34,17 +34,16 @@ export const MAIN_ACCOUNT = 0;
 
 /** Accounts 2–11. Never 0 (the main wallet), never 1 (the authority). */
 export const SUBWALLET_ACCOUNTS: readonly number[] = Object.freeze(
-  Array.from({ length: SUBWALLET_COUNT }, (_, i) => FIRST_SUBWALLET_ACCOUNT + i));
+  Array.from({ length: SUBWALLET_COUNT }, (_, i) => FIRST_SUBWALLET_ACCOUNT + i)
+);
 
 /** Every account the interface will ever offer. */
-export const WALLET_ACCOUNTS: readonly number[] =
-  Object.freeze([MAIN_ACCOUNT, ...SUBWALLET_ACCOUNTS]);
+export const WALLET_ACCOUNTS: readonly number[] = Object.freeze([MAIN_ACCOUNT, ...SUBWALLET_ACCOUNTS]);
 
 /** How many subwallets the picker shows before “Show more”. */
 export const OFFERED_UP_FRONT = 5;
 
-export const isWalletAccount = (account: number): boolean =>
-  WALLET_ACCOUNTS.includes(account);
+export const isWalletAccount = (account: number): boolean => WALLET_ACCOUNTS.includes(account);
 
 /**
  * The slot NUMBER a person sees — “Subwallet 1” lives at account 2. The
@@ -60,9 +59,7 @@ export function defaultNameOf(account: number): string {
 }
 
 /** The name to show: the person's, or the slot's own. */
-export function displayNameOf(
-  account: number, names: Readonly<Record<string, string>>,
-): string {
+export function displayNameOf(account: number, names: Readonly<Record<string, string>>): string {
   const named = names[String(account)]?.trim();
   return named ? named : defaultNameOf(account);
 }

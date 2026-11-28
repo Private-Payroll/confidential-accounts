@@ -24,35 +24,43 @@ let tipAskedOf: string[] = [];
 
 vi.mock('node:fs', async (orig) => ({
   ...(await orig<typeof import('node:fs')>()),
-  rmSync: (p: string) => { removed.push(String(p)); },
+  rmSync: (p: string) => {
+    removed.push(String(p));
+  }
 }));
 
 vi.mock('./dust-wallet.js', () => ({
   buildWalletWithDust: async (...args: any[]) => {
     installs.push({ how: installHow, options: args[5] });
-    if (installHow === 'unbuilt') throw new Error('the wallet configuration carries no history store, so no wallet was built');
-    const { MidnightWalletProvider } = await import('@midnight-ntwrk/testkit-js') as any;
+    if (installHow === 'unbuilt')
+      throw new Error('the wallet configuration carries no history store, so no wallet was built');
+    const { MidnightWalletProvider } = (await import('@midnight-ntwrk/testkit-js')) as any;
     const wallet = await MidnightWalletProvider.build();
     return {
       wallet,
       installed: { how: installHow, detail: 'stub', ...(installReason ? { reason: installReason } : {}) },
-      forkV9: 2000000n,
+      forkV9: 2000000n
     };
   },
-  facadeAtLedger9: async (_facade: unknown, forkV9: bigint) => { trace.push(`ledger 9 at ${forkV9}`); },
+  facadeAtLedger9: async (_facade: unknown, forkV9: bigint) => {
+    trace.push(`ledger 9 at ${forkV9}`);
+  },
   registrationSidesSynced: async (facade: any, forkV9: bigint) => {
     trace.push(`sides at ${forkV9}`);
     return facade.waitForSyncedState();
   },
   dustCachePath: () => '/tmp/stub-dust-cache.state',
   dustIndexerHttpOf: () => 'https://indexer.example/graphql',
-  networkHeightAt: async (url: string) => { tipAskedOf.push(url); return 5n; },
+  networkHeightAt: async (url: string) => {
+    tipAskedOf.push(url);
+    return 5n;
+  },
   describeDustView: (a: bigint | null, t: bigint | null) => `dust applied ${a} of ${t}`,
   waitForDustAtTip: async (_live: unknown, tipNow: () => Promise<bigint>) => {
     trace.push('wait for the DUST view');
     await tipNow();
     return atTip;
-  },
+  }
 }));
 
 /** Every call, in order, so a missing or misordered step is visible. */
@@ -72,7 +80,7 @@ vi.mock('../src/midnight/dust-registration.js', () => ({
     registered.push({ wallet, key: owner.verifyingKey, transaction });
     dustNow[mine] = dustAfterRegistering;
     return { registered: 2, fee: 5n, transaction };
-  },
+  }
 }));
 /** How much DUST each successive wallet reports. One entry per build. */
 let dustPerBuild: bigint[] = [];
@@ -89,13 +97,27 @@ vi.mock('@midnight-ntwrk/testkit-js', () => ({
       const dust = () => dustNow[mine]!;
       let started = false;
       return {
-        start: async (gate: boolean) => { trace.push(`start(${gate})#${mine}`); started = true; },
-        stop: async () => { trace.push(`stop#${mine}`); },
-        unshieldedKeystore: { getPublicKey: () => `own-key#${mine}`, signDataAsync: async () => `own-signature#${mine}` },
+        start: async (gate: boolean) => {
+          trace.push(`start(${gate})#${mine}`);
+          started = true;
+        },
+        stop: async () => {
+          trace.push(`stop#${mine}`);
+        },
+        unshieldedKeystore: {
+          getPublicKey: () => `own-key#${mine}`,
+          signDataAsync: async () => `own-signature#${mine}`
+        },
         wallet: {
-          waitForSyncedState: async () => { trace.push(`synced#${mine}`); return { dust: { balance: () => dust() } }; },
+          waitForSyncedState: async () => {
+            trace.push(`synced#${mine}`);
+            return { dust: { balance: () => dust() } };
+          },
           finalizeRecipe: async (recipe: string) => `finalised ${recipe}`,
-          submitTransaction: async (tx: string) => { trace.push(`submit#${mine} ${tx}`); return `tx-of-${mine}`; },
+          submitTransaction: async (tx: string) => {
+            trace.push(`submit#${mine} ${tx}`);
+            return `tx-of-${mine}`;
+          },
           state: () => {
             trace.push(`subscribe#${mine}${started ? '' : ' BEFORE-START'}`);
             return {
@@ -103,35 +125,49 @@ vi.mock('@midnight-ntwrk/testkit-js', () => ({
                 next({
                   dust: { balance: () => dust() },
                   unshielded: { balances: { NIGHT_TOKEN: 5n }, progress: { isCompleteWithin: () => true } },
-                  shielded: { progress: { isConnected: shieldedCaught, isCompleteWithin: () => shieldedCaught } },
+                  shielded: { progress: { isConnected: shieldedCaught, isCompleteWithin: () => shieldedCaught } }
                 });
-                return { unsubscribe: () => { trace.push(`unsubscribe#${mine}`); } };
-              },
+                return {
+                  unsubscribe: () => {
+                    trace.push(`unsubscribe#${mine}`);
+                  }
+                };
+              }
             };
-          },
-        },
+          }
+        }
       };
-    },
-  },
+    }
+  }
 }));
 
 vi.mock('@midnight-ntwrk/midnight-js-protocol/v9', () => ({
-  unshieldedToken: () => ({ raw: 'NIGHT_TOKEN' }),
+  unshieldedToken: () => ({ raw: 'NIGHT_TOKEN' })
 }));
 
 const { bringUpWallet, noDustAfterTheDeadline } = await import('./wallet-bringup.js');
 
 const bring = (opts = {}) =>
   bringUpWallet({}, {}, 'seed', NETWORK, '/tmp', {
-    cachedTimeoutMs: 60, coldTimeoutMs: 60, ...opts,
+    cachedTimeoutMs: 60,
+    coldTimeoutMs: 60,
+    ...opts
   });
 
 beforeEach(() => {
-  trace = []; builds = 0; dustPerBuild = []; removed.length = 0;
-  dustNow = []; dustAfterRegistering = 0n; registered = [];
-  installs.length = 0; installHow = 'fresh'; shieldedCaught = true;
+  trace = [];
+  builds = 0;
+  dustPerBuild = [];
+  removed.length = 0;
+  dustNow = [];
+  dustAfterRegistering = 0n;
+  registered = [];
+  installs.length = 0;
+  installHow = 'fresh';
+  shieldedCaught = true;
   installReason = undefined;
-  atTip = { ok: true, applied: 5n, tip: 5n }; tipAskedOf = [];
+  atTip = { ok: true, applied: 5n, tip: 5n };
+  tipAskedOf = [];
 });
 
 describe('bringUpWallet', () => {
@@ -159,11 +195,11 @@ describe('bringUpWallet', () => {
     dustPerBuild = [7n];
     await bring();
     const start = trace.indexOf('start(false)#0');
-    const subscribe = trace.findIndex(t => t.startsWith('subscribe#0'));
+    const subscribe = trace.findIndex((t) => t.startsWith('subscribe#0'));
     expect(installs).toHaveLength(1);
     expect(start).toBeGreaterThan(-1);
     expect(subscribe).toBeGreaterThan(start);
-    expect(trace.some(t => t.includes('BEFORE-START'))).toBe(false);
+    expect(trace.some((t) => t.includes('BEFORE-START'))).toBe(false);
   });
 
   /* RED WHEN: a wallet is built with anything but the one DUST wallet there is, which syncs by projections. */
@@ -191,7 +227,10 @@ describe('bringUpWallet', () => {
     expect(installs).toHaveLength(1);
     expect(trace.indexOf('ledger 9 at 2000000')).toBeGreaterThan(trace.indexOf('start(false)#0'));
     expect(empty.dust()).toBe(0n);
-    trace = []; installs.length = 0; dustPerBuild = [7n]; builds = 0;
+    trace = [];
+    installs.length = 0;
+    dustPerBuild = [7n];
+    builds = 0;
     await bring();
     expect(trace).toContain('ledger 9 at 2000000');
   });
@@ -212,7 +251,7 @@ describe('bringUpWallet', () => {
      * it is the suspect.
      */
     installHow = 'restored';
-    dustPerBuild = [0n, 9n];   // restored wallet finds nothing; the cold one does
+    dustPerBuild = [0n, 9n]; // restored wallet finds nothing; the cold one does
     const live = await bring();
 
     expect(removed).toEqual(['/tmp/stub-dust-cache.state']);
@@ -259,7 +298,8 @@ describe('bringUpWallet', () => {
   it('STOPS the run when the floor is KNOWN to disagree', async () => {
     // TURNS RED IF: the gate stops switching on the reason. A floor that is
     // wrong is a defect no re-run clears, and the door must not submit on it.
-    installHow = 'refused'; installReason = 'disagrees';
+    installHow = 'refused';
+    installReason = 'disagrees';
     dustPerBuild = [7n];
     await expect(bring()).rejects.toThrow(/fee floor in force/i);
   });
@@ -268,7 +308,8 @@ describe('bringUpWallet', () => {
     // TURNS RED IF: 'not-a-floor' is left out of the known-absent set. A floor
     // of zero is reachable from the environment and every other reading agrees
     // with it, so only the reason distinguishes it.
-    installHow = 'refused'; installReason = 'not-a-floor';
+    installHow = 'refused';
+    installReason = 'not-a-floor';
     dustPerBuild = [7n];
     await expect(bring()).rejects.toThrow(/fee floor in force/i);
   });
@@ -283,7 +324,8 @@ describe('bringUpWallet', () => {
      * to run because a library renamed a field. The unknown case must not stop
      * anything.
      */
-    installHow = 'refused'; installReason = 'unreadable';
+    installHow = 'refused';
+    installReason = 'unreadable';
     dustPerBuild = [7n];
     const live = await bring();
     expect(live.dust()).toBe(7n);
@@ -294,7 +336,8 @@ describe('bringUpWallet', () => {
     // run. `undefined !== null` is true, and the first version of this gate was
     // written that way — which stopped the door on exactly the case the comment
     // above it said must never stop it.
-    installHow = 'refused'; installReason = undefined;
+    installHow = 'refused';
+    installReason = undefined;
     dustPerBuild = [7n];
     const live = await bring();
     expect(live.dust()).toBe(7n);
@@ -312,8 +355,10 @@ describe('bringUpWallet', () => {
    */
   it('stops a wallet that will pay when its DUST view does not reach the network, and stops the wallet', async () => {
     dustPerBuild = [7n];
-    atTip = { ok: false, why: 'the wallet\'s view of the network\'s DUST has not moved for 60 s (dust applied 3 of 9)' };
-    await expect(bring({ withDust: true, requireDust: true })).rejects.toThrow(/has not moved for 60 s \(dust applied 3 of 9\)/);
+    atTip = { ok: false, why: "the wallet's view of the network's DUST has not moved for 60 s (dust applied 3 of 9)" };
+    await expect(bring({ withDust: true, requireDust: true })).rejects.toThrow(
+      /has not moved for 60 s \(dust applied 3 of 9\)/
+    );
     expect(trace).toContain('wait for the DUST view');
     expect(trace).toContain('stop#0');
     /* RED WHEN: the network's DUST is read from anywhere but the indexer the installed DUST wallet syncs from. */
@@ -327,7 +372,9 @@ describe('bringUpWallet', () => {
     dustPerBuild = [7n, 7n];
     const notes: string[] = [];
     atTip = { ok: false, why: 'behind' };
-    await expect(bring({ withDust: true, requireDust: false, onNote: (m: string) => notes.push(m) })).resolves.toBeTruthy();
+    await expect(
+      bring({ withDust: true, requireDust: false, onNote: (m: string) => notes.push(m) })
+    ).resolves.toBeTruthy();
     expect(notes.join('\n')).toMatch(/behind; anything this wallet pays may be refused/);
     atTip = { ok: true, applied: 9n, tip: 9n };
     await bring({ withDust: true, requireDust: true, onNote: (m: string) => notes.push(m) });
@@ -372,7 +419,9 @@ describe('bringUpWallet', () => {
 
   /* RED WHEN: a wallet with no NIGHT is told its DUST failed to sync, when nothing could ever have been registered. */
   it('names the cause that fits when DUST never comes: no NIGHT to register, or a view that did not catch up', async () => {
-    expect(noDustAfterTheDeadline(0n)).toMatch(/holds no NIGHT[\s\S]*What resolves it: send NIGHT to this wallet's address/u);
+    expect(noDustAfterTheDeadline(0n)).toMatch(
+      /holds no NIGHT[\s\S]*What resolves it: send NIGHT to this wallet's address/u
+    );
     expect(noDustAfterTheDeadline(0n)).not.toMatch(/failing to sync/u);
     expect(noDustAfterTheDeadline(5n)).toMatch(/holds 5 NIGHT, registered for DUST generation[\s\S]*failing to sync/u);
     dustPerBuild = [0n];

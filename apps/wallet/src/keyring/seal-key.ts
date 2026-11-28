@@ -31,12 +31,15 @@ export function keyringSealKeyFor(identity: Identity, ask: Pick<KeyringRequest, 
 }
 
 /** The parent both keys come from: the seed's keyring authority. Read here so the wallet can refuse to send it. */
-export const keyringParentFor = (identity: Identity): Uint8Array => identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
+export const keyringParentFor = (identity: Identity): Uint8Array =>
+  identity.authority(Purposes.Keyring, KEYRING_PARENT_INDEX);
 
 /**
  * **THE OLD KEY, FOR ONE THING ONLY**: opening a copy of the saved keys sealed before this key existed, and only the
  * one copy this device last opened that way, on a device whose mark does not say it has seen a copy under the new key
  * (`held-keyring.ts`). It seals nothing.
  */
-export const keyringKeyBeforeTheSeal = (identity: Identity, ask: Pick<KeyringRequest, 'requester' | 'person'>): Uint8Array =>
-  keyringKeyFor(identity, ask);
+export const keyringKeyBeforeTheSeal = (
+  identity: Identity,
+  ask: Pick<KeyringRequest, 'requester' | 'person'>
+): Uint8Array => keyringKeyFor(identity, ask);

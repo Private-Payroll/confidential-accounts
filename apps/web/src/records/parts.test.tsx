@@ -13,14 +13,23 @@ function Shown({ date, moment }: { date: string; moment: string }) {
   return <p data-day={day(date)} data-moment={when(moment)} />;
 }
 const shown = (date: string, moment: string) => {
-  const { container } = render(<KitProvider languages={LANGUAGES} pick="en"><Shown date={date} moment={moment} /></KitProvider>);
+  const { container } = render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <Shown date={date} moment={moment} />
+    </KitProvider>
+  );
   const p = container.querySelector('p')!;
   return { day: p.getAttribute('data-day'), moment: p.getAttribute('data-moment') };
 };
 const inZone = (zone: string, run: () => void) => {
   const was = process.env.TZ;
   process.env.TZ = zone;
-  try { run(); } finally { if (was === undefined) delete process.env.TZ; else process.env.TZ = was; }
+  try {
+    run();
+  } finally {
+    if (was === undefined) delete process.env.TZ;
+    else process.env.TZ = was;
+  }
 };
 
 describe('a calendar date and a moment', () => {
@@ -32,9 +41,13 @@ describe('a calendar date and a moment', () => {
   });
 
   /* RED WHEN: a moment is shown in UTC, or without its time, instead of in the viewer's own zone. */
-  it('shows a moment with its time in the viewer\'s own zone', () => {
-    inZone('America/Los_Angeles', () => expect(shown('2026-10-03', '2026-10-03T02:30:00Z').moment).toMatch(/^Oct 2, 2026.*7:30\s?PM$/));
-    inZone('Pacific/Auckland', () => expect(shown('2026-10-03', '2026-10-03T02:30:00Z').moment).toMatch(/^Oct 3, 2026.*3:30\s?PM$/));
+  it("shows a moment with its time in the viewer's own zone", () => {
+    inZone('America/Los_Angeles', () =>
+      expect(shown('2026-10-03', '2026-10-03T02:30:00Z').moment).toMatch(/^Oct 2, 2026.*7:30\s?PM$/)
+    );
+    inZone('Pacific/Auckland', () =>
+      expect(shown('2026-10-03', '2026-10-03T02:30:00Z').moment).toMatch(/^Oct 3, 2026.*3:30\s?PM$/)
+    );
   });
 
   /* RED WHEN: text that is not a calendar date or a moment is shown as a date, or throws. */

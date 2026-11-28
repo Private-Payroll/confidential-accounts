@@ -27,7 +27,8 @@ type VaultRead = { readonly read: VaultOnChainOnTheWire } | { readonly failed: u
 /** A vault's own answer, settled when the ask that answers it lands, apart from every other vault's. */
 type Settles = { readonly settled: Promise<VaultRead> };
 
-const short = (asked: number, reads: unknown) => new Error(`an answer held ${String(Array.isArray(reads) ? reads.length : reads)} entries for the ${asked} asked`);
+const short = (asked: number, reads: unknown) =>
+  new Error(`an answer held ${String(Array.isArray(reads) ? reads.length : reads)} entries for the ${asked} asked`);
 
 /** One vault asked alone: its read, or the failure of its own ask. */
 const oneVaultRead = async (builder: Pick<VaultBuilderClient, 'vaultsOnChain'>, ask: VaultsAsk): Promise<VaultRead> => {
@@ -85,34 +86,50 @@ interface KeptReads {
  * round of a page's opening), so a vault that does not answer never joins the healthy vaults' ask again.
  */
 export function vaultsReadInTheView(
-  view: () => Pick<CompanyView<unknown>, 'layer'>, builder: Pick<VaultBuilderClient, 'vaultsOnChain'>,
+  view: () => Pick<CompanyView<unknown>, 'layer'>,
+  builder: Pick<VaultBuilderClient, 'vaultsOnChain'>
 ): VaultsReadOnce {
   const declared = new Set<string>();
   const failed = new Set<string>();
   const keptIn = (indexer: Indexer, account: string | undefined): Promise<KeptReads> => {
-    const ask = (vaults: readonly string[]): VaultsAsk => (account === undefined ? { vaults, indexer } : { vaults, account, indexer });
+    const ask = (vaults: readonly string[]): VaultsAsk =>
+      account === undefined ? { vaults, indexer } : { vaults, account, indexer };
     return view().layer(`chain-read:vaults:${account ?? ''}:${indexer.indexerUri}`, async (): Promise<KeptReads> => ({
       ask,
-      joined: new JoinedAsks<string, Settles>((v) => v, (vaults) => eachVaultRead(builder, ask(vaults))),
+      joined: new JoinedAsks<string, Settles>(
+        (v) => v,
+        (vaults) => eachVaultRead(builder, ask(vaults))
+      ),
       inTheJoin: new Set<string>(),
-      alone: new Map<string, Promise<VaultRead>>(),
+      alone: new Map<string, Promise<VaultRead>>()
     }));
   };
-  const noted = (v: string) => (r: VaultRead): VaultRead => {
-    if ('failed' in r) failed.add(v); else failed.delete(v);
-    return r;
-  };
+  const noted =
+    (v: string) =>
+    (r: VaultRead): VaultRead => {
+      if ('failed' in r) failed.add(v);
+      else failed.delete(v);
+      return r;
+    };
   const answerOf = (kept: KeptReads, v: string): Promise<VaultRead> => {
     if (kept.inTheJoin.has(v) || !failed.has(v)) {
       kept.inTheJoin.add(v);
-      return kept.joined.get(v).then((s) => s.settled).then(noted(v));
+      return kept.joined
+        .get(v)
+        .then((s) => s.settled)
+        .then(noted(v));
     }
     let own = kept.alone.get(v);
-    if (own === undefined) { own = oneVaultRead(builder, kept.ask([v])).then(noted(v)); kept.alone.set(v, own); }
+    if (own === undefined) {
+      own = oneVaultRead(builder, kept.ask([v])).then(noted(v));
+      kept.alone.set(v, own);
+    }
     return own;
   };
   return {
-    declare: (vaults) => { for (const v of vaults) declared.add(v.toLowerCase()); },
+    declare: (vaults) => {
+      for (const v of vaults) declared.add(v.toLowerCase());
+    },
     read: async (vault, indexer, account) => {
       const kept = await keptIn(indexer, account === undefined ? undefined : String(account).toLowerCase());
       const mine = String(vault).toLowerCase();
@@ -120,7 +137,7 @@ export function vaultsReadInTheView(
       /* The declared vaults join the same ask; each is awaited only by its own reader, and no answer ever rejects. */
       for (const v of declared) if (v !== mine && !failed.has(v)) void answerOf(kept, v);
       return theVaultRead(await own);
-    },
+    }
   };
 }
 

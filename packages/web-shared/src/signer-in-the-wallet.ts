@@ -11,7 +11,11 @@ import type { Openable } from './wallet-sign-in.js';
 import type { ActOutcome } from './wallet-act.js';
 
 /** The company an action on a signer is asked on, as the page names it. */
-interface CompanyAsked { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress }
+interface CompanyAsked {
+  readonly record: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+}
 
 /**
  * A proposal to seat a private address, as the page shows it before it is approved: its name in the company's records,
@@ -19,7 +23,12 @@ interface CompanyAsked { readonly record: string; readonly company: CompanyLabel
  * rights and the coin key of the address). The wallet opens the proposal itself and approves nothing else.
  */
 type ApproveSignerAsk = CompanyAsked & {
-  readonly proposal: string; readonly name: string; readonly role: string; readonly address: string; readonly scope: string; readonly coinKey: string;
+  readonly proposal: string;
+  readonly name: string;
+  readonly role: string;
+  readonly address: string;
+  readonly scope: string;
+  readonly coinKey: string;
 };
 
 /**
@@ -28,12 +37,29 @@ type ApproveSignerAsk = CompanyAsked & {
  * with how the action ended.
  */
 export function approveSignerInTheWallet(
-  ask: ApproveSignerAsk, walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+  ask: ApproveSignerAsk,
+  walletOrigin: string,
+  opts: { readonly onStep?: (at: StepAt) => void } = {},
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
-  return actOnACompanyInTheWallet({
-    name: 'approve-proposal', record: ask.record, company: ask.company, account: ask.account, proposal: ask.proposal, kind: 'add-signer',
-    personName: ask.name, role: ask.role, address: ask.address.toLowerCase(), scope: ask.scope.toLowerCase(), coinKey: ask.coinKey.toLowerCase(),
-  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+  return actOnACompanyInTheWallet(
+    {
+      name: 'approve-proposal',
+      record: ask.record,
+      company: ask.company,
+      account: ask.account,
+      proposal: ask.proposal,
+      kind: 'add-signer',
+      personName: ask.name,
+      role: ask.role,
+      address: ask.address.toLowerCase(),
+      scope: ask.scope.toLowerCase(),
+      coinKey: ask.coinKey.toLowerCase()
+    },
+    walletOrigin,
+    { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) },
+    view
+  );
 }
 
 /** A signer waiting to be admitted, as the page shows them: their request's id in the company, and their name. */
@@ -45,9 +71,22 @@ type AdmitSignerAsk = CompanyAsked & { readonly signer: string; readonly name: s
  * ask for. Resolves with how the action ended.
  */
 export function admitSignerInTheWallet(
-  ask: AdmitSignerAsk, walletOrigin: string, opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+  ask: AdmitSignerAsk,
+  walletOrigin: string,
+  opts: { readonly onStep?: (at: StepAt) => void } = {},
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
-  return actOnACompanyInTheWallet({
-    name: 'admit-signer', record: ask.record, company: ask.company, account: ask.account, signer: ask.signer, personName: ask.name,
-  }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
+  return actOnACompanyInTheWallet(
+    {
+      name: 'admit-signer',
+      record: ask.record,
+      company: ask.company,
+      account: ask.account,
+      signer: ask.signer,
+      personName: ask.name
+    },
+    walletOrigin,
+    { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) },
+    view
+  );
 }

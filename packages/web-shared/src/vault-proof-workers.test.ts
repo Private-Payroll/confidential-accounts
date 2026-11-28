@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  KEPT_IDLE_MS, PROOF_CEILING_MS, oneThreadWhenAThreadDoesNotLoad, proofProviderOnWorkers, provedTransaction, provingOnWorkers,
+  KEPT_IDLE_MS,
+  PROOF_CEILING_MS,
+  oneThreadWhenAThreadDoesNotLoad,
+  proofProviderOnWorkers,
+  provedTransaction,
+  provingOnWorkers
 } from './vault-proof-workers.js';
 import { ProvingMaterialRefused } from './key-material.js';
 import { whyItFailed } from './why-it-failed.js';
@@ -8,10 +13,10 @@ import type { ProofWorkerLike } from './vault-proof-workers.js';
 
 /* The SDK's provider proves a transaction by calling back into the proving provider; a stand-in transaction here does the calling. */
 vi.mock('@midnight-ntwrk/midnight-js-types', async (original) => ({
-  ...await original<object>(),
+  ...(await original<object>()),
   createLedger9ProofProvider: (provider: unknown) => ({
-    proveTx: (tx: { prove(p: unknown): Promise<unknown> }) => tx.prove(provider),
-  }),
+    proveTx: (tx: { prove(p: unknown): Promise<unknown> }) => tx.prove(provider)
+  })
 }));
 
 /*
@@ -29,31 +34,60 @@ class AThread {
   terminated = false;
   private onMessage: ((e: { data: never }) => void)[] = [];
   private onError: ((e: { message?: string }) => void)[] = [];
-  constructor() { AThread.made.push(this); }
-  postMessage(m: unknown): void { this.sent.push(m); }
+  constructor() {
+    AThread.made.push(this);
+  }
+  postMessage(m: unknown): void {
+    this.sent.push(m);
+  }
   addEventListener(type: 'message' | 'error', l: (e: { data: never } & { message?: string }) => void): void {
     if (type === 'message') this.onMessage.push(l as (e: { data: never }) => void);
     else this.onError.push(l as (e: { message?: string }) => void);
   }
-  terminate(): void { this.terminated = true; }
-  says(data: unknown): void { for (const l of this.onMessage) l({ data } as never); }
-  breaks(message: string): void { for (const l of this.onError) l({ message }); }
-  get orders(): unknown[] { return this.sent.filter((m) => (m as { op: string }).op !== 'answer'); }
+  terminate(): void {
+    this.terminated = true;
+  }
+  says(data: unknown): void {
+    for (const l of this.onMessage) l({ data } as never);
+  }
+  breaks(message: string): void {
+    for (const l of this.onError) l({ message });
+  }
+  get orders(): unknown[] {
+    return this.sent.filter((m) => (m as { op: string }).op !== 'answer');
+  }
 }
 
 const source = () => ({
-  lookupKey: vi.fn(async (loc: string) => ({ proverKey: new Uint8Array([1]), verifierKey: new Uint8Array([2]), ir: new Uint8Array([3]), loc }) as never),
-  getParams: vi.fn(async (k: number) => new Uint8Array([k])),
+  lookupKey: vi.fn(
+    async (loc: string) =>
+      ({ proverKey: new Uint8Array([1]), verifierKey: new Uint8Array([2]), ir: new Uint8Array([3]), loc }) as never
+  ),
+  getParams: vi.fn(async (k: number) => new Uint8Array([k]))
 });
 /** Timers the test runs by hand. */
 const handTimers = () => {
   const pending = new Map<number, { run: () => void; ms: number }>();
   let next = 1;
   return {
-    set: (run: () => void, ms: number) => { const id = next++; pending.set(id, { run, ms }); return id; },
-    clear: (id: unknown) => { pending.delete(id as number); },
-    fire: (ms: number) => { for (const [id, t] of [...pending]) if (t.ms === ms) { pending.delete(id); t.run(); } },
-    get count() { return pending.size; },
+    set: (run: () => void, ms: number) => {
+      const id = next++;
+      pending.set(id, { run, ms });
+      return id;
+    },
+    clear: (id: unknown) => {
+      pending.delete(id as number);
+    },
+    fire: (ms: number) => {
+      for (const [id, t] of [...pending])
+        if (t.ms === ms) {
+          pending.delete(id);
+          t.run();
+        }
+    },
+    get count() {
+      return pending.size;
+    }
   };
 };
 
@@ -62,8 +96,14 @@ const clockTimers = () => {
   let next = 1;
   const live = new Map<number, { run: () => void; at: number }>();
   return {
-    set: (run: () => void, ms: number) => { const id = next++; live.set(id, { run, at: now + ms }); return id; },
-    clear: (id: unknown) => { live.delete(id as number); },
+    set: (run: () => void, ms: number) => {
+      const id = next++;
+      live.set(id, { run, at: now + ms });
+      return id;
+    },
+    clear: (id: unknown) => {
+      live.delete(id as number);
+    },
     advance: (ms: number) => {
       const target = now + ms;
       for (;;) {
@@ -74,21 +114,30 @@ const clockTimers = () => {
         due[1].run();
       }
       now = target;
-    },
+    }
   };
 };
 const spawnThread = () => new AThread() as unknown as ProofWorkerLike;
 const bytes = (n: number) => new Uint8Array([n]);
 const circuit = (n: number) => `midnight/zswap/circuit${n}`;
-const finishes = (t: AThread, value: unknown = bytes(0)): void => { t.says({ op: 'ready' }); t.says({ op: 'result', value }); };
-const settle = async (): Promise<void> => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); };
+const finishes = (t: AThread, value: unknown = bytes(0)): void => {
+  t.says({ op: 'ready' });
+  t.says({ op: 'result', value });
+};
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 6; i += 1) await Promise.resolve();
+};
 const DEPOSIT = `contract:${'54'.repeat(32)}/deposit?vk=${'aa'.repeat(32)}`;
 const OUTPUT = 'midnight/zswap/output';
 
-afterEach(() => { AThread.made = []; vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  AThread.made = [];
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
-describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
-  it('the ledger\'s calls asked together run together, each on its own thread, each answered with its own proof', async () => {
+describe("THE PAGE PROVES A DEPOSIT'S PROOFS ON THREADS OF THEIR OWN", () => {
+  it("the ledger's calls asked together run together, each on its own thread, each answered with its own proof", async () => {
     const p = provingOnWorkers(source(), () => new AThread() as unknown as ProofWorkerLike, handTimers());
     const check = p.check(new Uint8Array([1]), DEPOSIT);
     const output = p.prove(new Uint8Array([2]), OUTPUT, undefined);
@@ -97,10 +146,15 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     const [a, b] = AThread.made as [AThread, AThread];
     /* Nothing is posted before a thread says it is listening. */
     expect(a.orders).toEqual([]);
-    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'ready' });
+    b.says({ op: 'ready' });
     /* RED WHEN: a thread is handed anything but the bytes the ledger's call carried. */
-    expect(a.orders).toEqual([{ op: 'check', keyLocation: DEPOSIT, preimage: new Uint8Array([1]), overwriteBindingInput: undefined }]);
-    expect(b.orders).toEqual([{ op: 'prove', keyLocation: OUTPUT, preimage: new Uint8Array([2]), overwriteBindingInput: undefined }]);
+    expect(a.orders).toEqual([
+      { op: 'check', keyLocation: DEPOSIT, preimage: new Uint8Array([1]), overwriteBindingInput: undefined }
+    ]);
+    expect(b.orders).toEqual([
+      { op: 'prove', keyLocation: OUTPUT, preimage: new Uint8Array([2]), overwriteBindingInput: undefined }
+    ]);
     b.says({ op: 'result', value: new Uint8Array([22]) });
     a.says({ op: 'result', value: [1n, undefined] });
     /* RED WHEN: answers cross between calls - a transaction with a proof in the wrong place. */
@@ -118,12 +172,17 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     const proof = p.prove(new Uint8Array([1]), DEPOSIT, 42n);
     /* RED WHEN: the proof starts a new thread rather than the one kept from the check. */
     expect(AThread.made).toHaveLength(1);
-    expect(t.orders.at(-1)).toEqual({ op: 'prove', keyLocation: DEPOSIT, preimage: new Uint8Array([1]), overwriteBindingInput: 42n });
+    expect(t.orders.at(-1)).toEqual({
+      op: 'prove',
+      keyLocation: DEPOSIT,
+      preimage: new Uint8Array([1]),
+      overwriteBindingInput: 42n
+    });
     t.says({ op: 'result', value: new Uint8Array([9]) });
     expect(await proof).toEqual(new Uint8Array([9]));
   });
 
-  it('the material a thread asks for comes from the vault worker\'s source, and an answer it could not give is said', async () => {
+  it("the material a thread asks for comes from the vault worker's source, and an answer it could not give is said", async () => {
     const s = source();
     s.getParams.mockRejectedValueOnce(new Error('the parameters for k=15 are not served'));
     const p = provingOnWorkers(s, () => new AThread() as unknown as ProofWorkerLike, handTimers());
@@ -135,14 +194,19 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     await settle();
     /* RED WHEN: a thread is answered from anywhere but the source the vault worker checks and caches. */
     expect(s.lookupKey).toHaveBeenCalledWith(OUTPUT);
-    expect(t.sent).toContainEqual({ op: 'answer', askId: 1, ok: false, error: 'the parameters for k=15 are not served' });
+    expect(t.sent).toContainEqual({
+      op: 'answer',
+      askId: 1,
+      ok: false,
+      error: 'the parameters for k=15 are not served'
+    });
     expect((t.sent.find((m) => (m as { askId?: number }).askId === 0) as { ok: boolean }).ok).toBe(true);
     /* The ledger reads the verifier key straight from the source, as the in-thread prover does. */
     await p.lookupKey(DEPOSIT);
     expect(s.lookupKey).toHaveBeenLastCalledWith(DEPOSIT);
   });
 
-  it('a thread that failed, broke or ran past the ceiling is never used again, and the failure is the proof\'s', async () => {
+  it("a thread that failed, broke or ran past the ceiling is never used again, and the failure is the proof's", async () => {
     const timers = handTimers();
     const p = provingOnWorkers(source(), () => new AThread() as unknown as ProofWorkerLike, timers);
     const failed = p.prove(new Uint8Array([1]), OUTPUT);
@@ -151,17 +215,23 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     /* Each failure says what happened, that nothing was sent and what to do; the thread's own words stay underneath. */
     const said = async (p2: Promise<unknown>) => whyItFailed(await p2.catch((e: unknown) => e));
     /* RED WHEN: a failed proof reaches the page in the prover's internal words alone, with no next step. */
-    expect(await said(failed)).toMatch(/^This device could not work out the proof for this transaction, so nothing was sent\. Reload the page and try again\. Underneath that: no proof$/u);
+    expect(await said(failed)).toMatch(
+      /^This device could not work out the proof for this transaction, so nothing was sent\. Reload the page and try again\. Underneath that: no proof$/u
+    );
     const broke = p.prove(new Uint8Array([1]), OUTPUT);
     AThread.made[1]!.says({ op: 'ready' });
     AThread.made[1]!.breaks('the thread stopped');
     /* RED WHEN: a thread that stopped is told to the page as its internal event and nothing else. */
-    expect(await said(broke)).toMatch(/^This device stopped working out the proof for this transaction before it finished, so nothing was sent\. Try again.*Underneath that: the thread stopped$/u);
+    expect(await said(broke)).toMatch(
+      /^This device stopped working out the proof for this transaction before it finished, so nothing was sent\. Try again.*Underneath that: the thread stopped$/u
+    );
     const slow = p.prove(new Uint8Array([1]), OUTPUT);
     AThread.made[2]!.says({ op: 'ready' });
     timers.fire(PROOF_CEILING_MS);
     /* RED WHEN: a proof past the ceiling says only that the ceiling passed. */
-    expect(await said(slow)).toMatch(/^Working out the proof for this transaction took more than ten minutes, so this device stopped and nothing was sent\. Try again.*Underneath that: the prove did not finish within ten minutes$/u);
+    expect(await said(slow)).toMatch(
+      /^Working out the proof for this transaction took more than ten minutes, so this device stopped and nothing was sent\. Try again.*Underneath that: the prove did not finish within ten minutes$/u
+    );
     /* RED WHEN: a thread that loaded and then broke is read as one that could not load, and every proof after it is moved to one thread. */
     expect(p.didNotLoad).toBe(false);
     /* RED WHEN: a thread in an unknown state is kept and handed the next proof. */
@@ -174,15 +244,20 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     const p = provingOnWorkers(source(), () => new AThread() as unknown as ProofWorkerLike, timers);
     const one = p.prove(new Uint8Array([1]), OUTPUT);
     const two = p.prove(new Uint8Array([2]), OUTPUT);
-    for (const t of AThread.made) { t.says({ op: 'ready' }); t.says({ op: 'result', value: new Uint8Array([0]) }); }
-    await one; await two;
+    for (const t of AThread.made) {
+      t.says({ op: 'ready' });
+      t.says({ op: 'result', value: new Uint8Array([0]) });
+    }
+    await one;
+    await two;
     /* RED WHEN: every finished thread is kept, each holding the memory it proved in. */
     expect(p.idle).toBe(1);
     timers.fire(KEPT_IDLE_MS);
     expect(p.idle).toBe(0);
     expect(AThread.made.every((t) => t.terminated)).toBe(true);
     const three = p.prove(new Uint8Array([3]), DEPOSIT);
-    AThread.made[2]!.says({ op: 'ready' }); AThread.made[2]!.says({ op: 'result', value: new Uint8Array([0]) });
+    AThread.made[2]!.says({ op: 'ready' });
+    AThread.made[2]!.says({ op: 'result', value: new Uint8Array([0]) });
     await three;
     p.stop();
     expect(AThread.made[2]!.terminated).toBe(true);
@@ -196,7 +271,7 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
     expect(AThread.made).toHaveLength(0);
   });
 
-  it('where the vault worker cannot start a thread, it proves on the vault worker\'s own thread', async () => {
+  it("where the vault worker cannot start a thread, it proves on the vault worker's own thread", async () => {
     const oneThread = { proveTx: async () => 'proved on one thread' };
     /* RED WHEN: a browser without threads in a worker is handed a provider that can never answer. */
     expect(await proofProviderOnWorkers(source(), {}, async () => oneThread)).toBe(oneThread);
@@ -222,11 +297,18 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
         if (tx === 'b') this.didNotLoad = true;
         throw new Error('no thread');
       },
-      stop() { this.stopped += 1; },
+      stop() {
+        this.stopped += 1;
+      }
     };
     const prover = oneThreadWhenAThreadDoesNotLoad(onWorkers, async () => {
       onOneThreadMade += 1;
-      return { proveTx: async (tx: unknown) => { proved.push(`one:${String(tx)}`); return `proof of ${String(tx)}`; } };
+      return {
+        proveTx: async (tx: unknown) => {
+          proved.push(`one:${String(tx)}`);
+          return `proof of ${String(tx)}`;
+        }
+      };
     });
     /* A proof that failed for its own reason is said, and not tried again on one thread. */
     await expect(prover.proveTx('a')).rejects.toThrow('no thread');
@@ -242,7 +324,7 @@ describe('THE PAGE PROVES A DEPOSIT\'S PROOFS ON THREADS OF THEIR OWN', () => {
   });
 });
 
-describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
+describe("THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE'S CORES", () => {
   /* RED WHEN: more proofs than the device has cores run at once, or a finished proof's thread stays alive beside the new one. */
   it('a proof asked beyond the cores waits, and the thread a finished proof leaves is let go for it', async () => {
     const timers = handTimers();
@@ -253,7 +335,8 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
 
     expect(AThread.made).toHaveLength(2);
     const [a, b] = AThread.made as [AThread, AThread];
-    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'ready' });
+    b.says({ op: 'ready' });
     expect(timers.count).toBe(2);
     a.says({ op: 'result', value: bytes(11) });
     expect(await first).toEqual(bytes(11));
@@ -263,8 +346,11 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
     expect(a.terminated).toBe(true);
     expect(AThread.made.filter((t) => !t.terminated)).toHaveLength(2);
     c.says({ op: 'ready' });
-    expect(c.orders).toEqual([{ op: 'prove', keyLocation: circuit(3), preimage: bytes(3), overwriteBindingInput: undefined }]);
-    b.says({ op: 'result', value: bytes(22) }); c.says({ op: 'result', value: bytes(33) });
+    expect(c.orders).toEqual([
+      { op: 'prove', keyLocation: circuit(3), preimage: bytes(3), overwriteBindingInput: undefined }
+    ]);
+    b.says({ op: 'result', value: bytes(22) });
+    c.says({ op: 'result', value: bytes(33) });
     expect(await second).toEqual(bytes(22));
     expect(await third).toEqual(bytes(33));
     expect(AThread.made.filter((t) => !t.terminated).length).toBeLessThanOrEqual(2);
@@ -324,13 +410,17 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
    * RED WHEN: a device reporting many cores starts more than four proof threads, each holding about 330 MB,
    * or the cores it reports below four are not read, or the number taken when it says nothing is not two.
    */
-  it('the threads are held to the cores the worker\'s scope reports, to four however many it reports, and to two where it does not say', async () => {
+  it("the threads are held to the cores the worker's scope reports, to four however many it reports, and to two where it does not say", async () => {
     vi.useFakeTimers();
     vi.stubGlobal('Worker', AThread);
-    const tx = (n: number) => ({ prove: (provider: { prove(p: Uint8Array, k: string): Promise<unknown> }) => provider.prove(bytes(n), circuit(n)) });
+    const tx = (n: number) => ({
+      prove: (provider: { prove(p: Uint8Array, k: string): Promise<unknown> }) => provider.prove(bytes(n), circuit(n))
+    });
     const asks = async (navigator: unknown, proofs: number): Promise<number> => {
       AThread.made = [];
-      const prover = await proofProviderOnWorkers(source(), { Worker: AThread, navigator } as never, async () => ({ proveTx: async () => 'one thread' }));
+      const prover = await proofProviderOnWorkers(source(), { Worker: AThread, navigator } as never, async () => ({
+        proveTx: async () => 'one thread'
+      }));
       for (let n = 1; n <= proofs; n += 1) void prover.proveTx(tx(n) as never).catch(() => {});
       return AThread.made.length;
     };
@@ -340,7 +430,15 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
     expect(await asks({ hardwareConcurrency: 4 }, 6)).toBe(4);
     expect(await asks({ hardwareConcurrency: 16 }, 5)).toBe(4);
     expect(await asks({ hardwareConcurrency: 32 }, 12)).toBe(4);
-    for (const unsaid of [undefined, {}, { hardwareConcurrency: 0 }, { hardwareConcurrency: Number.NaN }, { hardwareConcurrency: -4 }, { hardwareConcurrency: 1.5 }, { hardwareConcurrency: '8' }]) {
+    for (const unsaid of [
+      undefined,
+      {},
+      { hardwareConcurrency: 0 },
+      { hardwareConcurrency: Number.NaN },
+      { hardwareConcurrency: -4 },
+      { hardwareConcurrency: 1.5 },
+      { hardwareConcurrency: '8' }
+    ]) {
       expect(await asks(unsaid, 5)).toBe(2);
     }
   });
@@ -354,7 +452,7 @@ describe('THE PAGE HOLDS THE PROOF THREADS TO THE DEVICE\'S CORES', () => {
     const prover = await proofProviderOnWorkers(source(), { Worker: AThread }, inThread);
     const pair = {
       prove: (provider: { prove(p: Uint8Array, k: string): Promise<unknown> }) =>
-        Promise.all([provider.prove(bytes(1), circuit(1)), provider.prove(bytes(2), circuit(2))]),
+        Promise.all([provider.prove(bytes(1), circuit(1)), provider.prove(bytes(2), circuit(2))])
     };
 
     const proved = prover.proveTx(pair as never);
@@ -378,14 +476,18 @@ describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND T
     void p.prove(bytes(1), circuit(1)).catch(() => {});
     void p.prove(bytes(2), circuit(2)).catch(() => {});
     const [a, b] = AThread.made as [AThread, AThread];
-    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'ready' });
+    b.says({ op: 'ready' });
     a.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
     b.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(2) });
     a.says({ op: 'getParams', askId: 1, k: 9 });
     b.says({ op: 'getParams', askId: 1, k: 15 });
     await settle();
 
-    const answered = (t: AThread, askId: number) => t.sent.filter((m) => (m as { op: string; askId?: number }).op === 'answer' && (m as { askId: number }).askId === askId) as { ok: boolean; value: { loc?: string } | Uint8Array }[];
+    const answered = (t: AThread, askId: number) =>
+      t.sent.filter(
+        (m) => (m as { op: string; askId?: number }).op === 'answer' && (m as { askId: number }).askId === askId
+      ) as { ok: boolean; value: { loc?: string } | Uint8Array }[];
     expect(answered(a, 0)).toHaveLength(1);
     expect(answered(b, 0)).toHaveLength(1);
     expect((answered(a, 0)[0]!.value as { loc: string }).loc).toBe(circuit(1));
@@ -409,7 +511,9 @@ describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND T
     expect(p.didNotLoad).toBe(false);
     AThread.made[1]!.says({ op: 'ready' });
     expect(AThread.made[0]!.orders).toHaveLength(1);
-    expect(AThread.made[1]!.orders).toEqual([{ op: 'prove', keyLocation: circuit(1), preimage: bytes(2), overwriteBindingInput: undefined }]);
+    expect(AThread.made[1]!.orders).toEqual([
+      { op: 'prove', keyLocation: circuit(1), preimage: bytes(2), overwriteBindingInput: undefined }
+    ]);
     AThread.made[1]!.says({ op: 'result', value: bytes(6) });
     expect(await next).toEqual(bytes(6));
   });
@@ -422,7 +526,8 @@ describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND T
     void p.prove(bytes(1), circuit(1)).catch(() => {});
     void p.prove(bytes(2), circuit(2)).catch(() => {});
     const [a, b] = AThread.made as [AThread, AThread];
-    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'ready' });
+    b.says({ op: 'ready' });
     a.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
     b.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(2) });
     await settle();
@@ -433,12 +538,13 @@ describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND T
   });
 
   /* RED WHEN: a second circuit's kept thread replaces or refuses the first's. */
-  it('one thread is kept for each circuit at once, and each is the one its circuit\'s next proof uses', async () => {
+  it("one thread is kept for each circuit at once, and each is the one its circuit's next proof uses", async () => {
     const p = provingOnWorkers(source(), spawnThread, handTimers(), 2);
     const first = p.prove(bytes(1), circuit(1));
     const second = p.prove(bytes(2), circuit(2));
     for (const t of AThread.made) finishes(t);
-    await first; await second;
+    await first;
+    await second;
 
     expect(p.idle).toBe(2);
     const [a, b] = AThread.made as [AThread, AThread];
@@ -446,12 +552,22 @@ describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND T
     void p.prove(bytes(4), circuit(2)).catch(() => {});
 
     expect(AThread.made).toHaveLength(2);
-    expect(a.orders.at(-1)).toEqual({ op: 'prove', keyLocation: circuit(1), preimage: bytes(3), overwriteBindingInput: undefined });
-    expect(b.orders.at(-1)).toEqual({ op: 'prove', keyLocation: circuit(2), preimage: bytes(4), overwriteBindingInput: undefined });
+    expect(a.orders.at(-1)).toEqual({
+      op: 'prove',
+      keyLocation: circuit(1),
+      preimage: bytes(3),
+      overwriteBindingInput: undefined
+    });
+    expect(b.orders.at(-1)).toEqual({
+      op: 'prove',
+      keyLocation: circuit(2),
+      preimage: bytes(4),
+      overwriteBindingInput: undefined
+    });
   });
 
   /* RED WHEN: a time limit or a kept thread's timer is left running after the proof ended or the page stopped. */
-  it('a proof\'s time limit is cleared when it ends either way, and a kept thread\'s time is cleared when it is let go', async () => {
+  it("a proof's time limit is cleared when it ends either way, and a kept thread's time is cleared when it is let go", async () => {
     const timers = handTimers();
     const p = provingOnWorkers(source(), spawnThread, timers, 2);
     const done = p.prove(bytes(1), circuit(1));
@@ -496,14 +612,22 @@ describe('EACH ANSWER REACHES THE THREAD THAT ASKED, AND EVERY KEPT THREAD AND T
 
 describe('A PROOF IS GIVEN TEN MINUTES OF SILENCE, AND A REFUSED KEY IS SAID AS IT WAS REFUSED', () => {
   const MINUTE = 60_000;
-  const outcome = (proof: Promise<unknown>) => proof.then(() => 'proved', (e: unknown) => e);
+  const outcome = (proof: Promise<unknown>) =>
+    proof.then(
+      () => 'proved',
+      (e: unknown) => e
+    );
 
   /* RED WHEN: ten minutes run from the start of the proof while its thread waits for a key. */
   it('a thread that asks the page for its key is given ten more minutes from the ask', async () => {
     const clock = clockTimers();
     const s = source();
     s.lookupKey.mockImplementation(() => new Promise<never>(() => {}));
-    const proof = outcome(new Promise((resolve) => { resolve(provingOnWorkers(s, spawnThread, clock, 1).prove(bytes(1), circuit(1))); }));
+    const proof = outcome(
+      new Promise((resolve) => {
+        resolve(provingOnWorkers(s, spawnThread, clock, 1).prove(bytes(1), circuit(1)));
+      })
+    );
     const t = AThread.made[0]!;
     t.says({ op: 'ready' });
     clock.advance(9 * MINUTE);
@@ -521,7 +645,12 @@ describe('A PROOF IS GIVEN TEN MINUTES OF SILENCE, AND A REFUSED KEY IS SAID AS 
     const clock = clockTimers();
     const s = source();
     let arrive: (v: never) => void = () => {};
-    s.lookupKey.mockImplementation(() => new Promise<never>((resolve) => { arrive = resolve; }));
+    s.lookupKey.mockImplementation(
+      () =>
+        new Promise<never>((resolve) => {
+          arrive = resolve;
+        })
+    );
     const p = provingOnWorkers(s, spawnThread, clock, 1);
     const proof = outcome(p.prove(bytes(1), circuit(1)));
     const t = AThread.made[0]!;
@@ -560,7 +689,12 @@ describe('A PROOF IS GIVEN TEN MINUTES OF SILENCE, AND A REFUSED KEY IS SAID AS 
     const clock = clockTimers();
     const s = source();
     let refuse: (e: Error) => void = () => {};
-    s.lookupKey.mockImplementation(() => new Promise<never>((_resolve, reject) => { refuse = reject; }));
+    s.lookupKey.mockImplementation(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          refuse = reject;
+        })
+    );
     const p = provingOnWorkers(s, spawnThread, clock, 1);
     const proof = outcome(p.prove(bytes(1), circuit(1)));
     const t = AThread.made[0]!;
@@ -580,13 +714,18 @@ describe('A PROOF IS GIVEN TEN MINUTES OF SILENCE, AND A REFUSED KEY IS SAID AS 
   /* RED WHEN: a refusal of a key reaches the screen as a failure to work out the proof, or another failure is shown as a refusal. */
   it('a proof that failed because the device refused its key is rejected with that refusal, and any other failure is not', async () => {
     const s = source();
-    const refusal = new ProvingMaterialRefused('other-bytes-served', circuit(1), 'The key served for this circuit is not this build\'s.');
+    const refusal = new ProvingMaterialRefused(
+      'other-bytes-served',
+      circuit(1),
+      "The key served for this circuit is not this build's."
+    );
     s.lookupKey.mockRejectedValueOnce(refusal).mockRejectedValueOnce(new Error('the network dropped'));
     const p = provingOnWorkers(s, spawnThread, handTimers(), 2);
     const refused = outcome(p.prove(bytes(1), circuit(1)));
     const dropped = outcome(p.prove(bytes(2), circuit(2)));
     const [a, b] = AThread.made as [AThread, AThread];
-    a.says({ op: 'ready' }); b.says({ op: 'ready' });
+    a.says({ op: 'ready' });
+    b.says({ op: 'ready' });
     a.says({ op: 'lookupKey', askId: 0, keyLocation: circuit(1) });
     await settle();
     a.says({ op: 'failure', error: refusal.message });
@@ -603,11 +742,19 @@ describe('A PROOF IS GIVEN TEN MINUTES OF SILENCE, AND A REFUSED KEY IS SAID AS 
 
 describe('A TRANSACTION A BUILDER MADE IS PROVED AS MIDNIGHT.JS TAKES IT', () => {
   it('a ledger transaction is sealed into an unproven handle, a handle goes as it is, and the proven handle comes back', async () => {
-    const [{ LedgerTransaction }, L] = await Promise.all([import('@midnight-ntwrk/midnight-js-types'), import('@midnightntwrk/ledger-v9')]);
+    const [{ LedgerTransaction }, L] = await Promise.all([
+      import('@midnight-ntwrk/midnight-js-types'),
+      import('@midnightntwrk/ledger-v9')
+    ]);
     const raw = L.Transaction.fromParts('undeployed');
     const handed: unknown[] = [];
     const proven = LedgerTransaction.fromBytes('v9', 'Unproven', raw.serialize());
-    const prover = { proveTx: async (tx: unknown) => { handed.push(tx); return proven; } };
+    const prover = {
+      proveTx: async (tx: unknown) => {
+        handed.push(tx);
+        return proven;
+      }
+    };
     expect(await provedTransaction(prover, raw)).toBe(proven);
     const sealed = handed[0] as { era: string; stage: string; serialize(): Uint8Array };
     /* RED WHEN: the SDK is handed the ledger's own object, which it refuses, or a handle of another stage or ledger. */
@@ -621,14 +768,22 @@ describe('A TRANSACTION A BUILDER MADE IS PROVED AS MIDNIGHT.JS TAKES IT', () =>
 
   it('something that is not a transaction is refused before it is proved, and a proof that is not one is refused after', async () => {
     const asked: unknown[] = [];
-    const prover = { proveTx: async (tx: unknown) => { asked.push(tx); return new Uint8Array([1]); } };
+    const prover = {
+      proveTx: async (tx: unknown) => {
+        asked.push(tx);
+        return new Uint8Array([1]);
+      }
+    };
     /* RED WHEN: anything is handed to the prover that is not a transaction. */
-    await expect(provedTransaction(prover, { notATransaction: true })).rejects.toThrow(/is not a transaction, so nothing was proved or sent/);
+    await expect(provedTransaction(prover, { notATransaction: true })).rejects.toThrow(
+      /is not a transaction, so nothing was proved or sent/
+    );
     expect(asked).toEqual([]);
     const { LedgerTransaction } = await import('@midnight-ntwrk/midnight-js-types');
     const L = await import('@midnightntwrk/ledger-v9');
     /* RED WHEN: an answer that is not a transaction is passed on as one, and bytes nobody proved are sent. */
-    await expect(provedTransaction(prover, LedgerTransaction.seal('v9', 'Unproven', L.Transaction.fromParts('undeployed'))))
-      .rejects.toThrow(/came back as something other than a transaction/);
+    await expect(
+      provedTransaction(prover, LedgerTransaction.seal('v9', 'Unproven', L.Transaction.fromParts('undeployed')))
+    ).rejects.toThrow(/came back as something other than a transaction/);
   });
 });

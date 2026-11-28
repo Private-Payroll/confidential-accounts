@@ -27,17 +27,28 @@ const reported = async (r: Rehearsal) => ({
   facade: (await firstValueFrom(r.facade.state())).activeProtocolVersion,
   shielded: (await firstValueFrom(r.facade.shielded.state)).protocolVersion,
   unshielded: (await firstValueFrom(r.facade.unshielded.state)).protocolVersion,
-  dust: (await firstValueFrom(r.facade.dust.state)).protocolVersion,
+  dust: (await firstValueFrom(r.facade.dust.state)).protocolVersion
 });
 
 describe('a rehearsal on the live fork schedule stamps each part with the version the chain is on', () => {
-  it('a wallet synced past ledger-v9 reports ledger-v9\'s version in all three parts and in the facade', async () => {
-    const rehearsal = await startRehearsal(ours, 0, { ledgerNineFrom: LEDGER_NINE, chainVersion: LEDGER_NINE, withoutDust: true });
+  it("a wallet synced past ledger-v9 reports ledger-v9's version in all three parts and in the facade", async () => {
+    const rehearsal = await startRehearsal(ours, 0, {
+      ledgerNineFrom: LEDGER_NINE,
+      chainVersion: LEDGER_NINE,
+      withoutDust: true
+    });
     try {
       /* RED WHEN: the private or the DUST part is still reported at the first version after it has synced past ledger-v9,
        * which makes the facade stamp everything it builds with the first version and refuse it. */
-      expect(await reported(rehearsal)).toEqual({ facade: LEDGER_NINE, shielded: LEDGER_NINE, unshielded: LEDGER_NINE, dust: LEDGER_NINE });
-    } finally { await rehearsal.stop(); }
+      expect(await reported(rehearsal)).toEqual({
+        facade: LEDGER_NINE,
+        shielded: LEDGER_NINE,
+        unshielded: LEDGER_NINE,
+        dust: LEDGER_NINE
+      });
+    } finally {
+      await rehearsal.stop();
+    }
   });
 
   it('a wallet held on the earlier ledger, with the chain not yet past ledger-v9, is reported below it', async () => {
@@ -45,12 +56,16 @@ describe('a rehearsal on the live fork schedule stamps each part with the versio
     try {
       /* RED WHEN: a wallet the chain has not carried to ledger-v9 is reported as having reached it. */
       expect((await reported(rehearsal)).facade).toBeLessThan(LEDGER_NINE);
-    } finally { await rehearsal.stop(); }
+    } finally {
+      await rehearsal.stop();
+    }
   });
 
   it('a rehearsal that pays for DUST on the live schedule is refused while the chain is still on the earlier ledger', async () => {
     /* RED WHEN: the live schedule is not given to the facade, so a rehearsal of a wallet the chain has not carried to
      * ledger-v9 starts as though it had. */
-    await expect(startRehearsal(ours, 0, { ledgerNineFrom: LEDGER_NINE })).rejects.toThrow(/stamped 0|protocol version 0/u);
+    await expect(startRehearsal(ours, 0, { ledgerNineFrom: LEDGER_NINE })).rejects.toThrow(
+      /stamped 0|protocol version 0/u
+    );
   });
 });

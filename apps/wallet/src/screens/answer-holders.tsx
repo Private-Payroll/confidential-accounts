@@ -32,11 +32,21 @@ import type { Consent } from '../framing.js';
 
 /** How this screen reads the account. Replaceable so a test can answer. */
 export type HoldersReader = (
-  account: AccountAddress, label: CompanyLabel, movements?: readonly string[], roles?: readonly string[],
+  account: AccountAddress,
+  label: CompanyLabel,
+  movements?: readonly string[],
+  roles?: readonly string[]
 ) => Promise<HoldersOnChain>;
 
-export const liveHoldersReader: HoldersReader = (account, label, movements, roles) => holdersOnChain(
-  account, label, fromIndexerAt(INDEXER_HTTP_URL), deployFromIndexerAt(INDEXER_HTTP_URL), movements, roles);
+export const liveHoldersReader: HoldersReader = (account, label, movements, roles) =>
+  holdersOnChain(
+    account,
+    label,
+    fromIndexerAt(INDEXER_HTTP_URL),
+    deployFromIndexerAt(INDEXER_HTTP_URL),
+    movements,
+    roles
+  );
 
 /** The indexer this wallet reads the chain through, handed back with every answer so the page reads its vaults there too. */
 const THIS_WALLETS_INDEXER = Object.freeze({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
@@ -44,14 +54,19 @@ const THIS_WALLETS_INDEXER = Object.freeze({ indexerUri: INDEXER_HTTP_URL, index
 type Stage = { of: 'reading' } | { of: 'sent' } | { of: 'refused'; says: string };
 
 /** Why the read gives no answer, in the person's words. */
-const why = (read: HoldersOnChain): string => (read.of === 'no-account'
-  ? 'There is no company account at the address the page names.'
-  : read.of === 'other-label'
-    ? 'The account the page names is not this company’s.'
-    : 'This wallet could not read the company’s account from the network. Try again in a minute.');
+const why = (read: HoldersOnChain): string =>
+  read.of === 'no-account'
+    ? 'There is no company account at the address the page names.'
+    : read.of === 'other-label'
+      ? 'The account the page names is not this company’s.'
+      : 'This wallet could not read the company’s account from the network. Try again in a minute.';
 
 export function AnswerHolders({
-  request, channel, consent, now = Date.now, readHolders = liveHoldersReader,
+  request,
+  channel,
+  consent,
+  now = Date.now,
+  readHolders = liveHoldersReader
 }: {
   readonly request: HoldersRequest;
   readonly channel: Channel | null;
@@ -77,16 +92,29 @@ export function AnswerHolders({
       }
       settled.current = request;
       try {
-        const sent = channel.answer(holdersAnswerFor(request, read.holders as AccountHolders, now(), read.payments, THIS_WALLETS_INDEXER, read.roles));
-        setStage(sent === false
-          ? { of: 'refused', says: 'This page had already been answered, so nothing more was sent.' }
-          : { of: 'sent' });
+        const sent = channel.answer(
+          holdersAnswerFor(
+            request,
+            read.holders as AccountHolders,
+            now(),
+            read.payments,
+            THIS_WALLETS_INDEXER,
+            read.roles
+          )
+        );
+        setStage(
+          sent === false
+            ? { of: 'refused', says: 'This page had already been answered, so nothing more was sent.' }
+            : { of: 'sent' }
+        );
       } catch (e) {
         channel.refuse('unreadable');
         setStage({ of: 'refused', says: e instanceof RecordsKeyRefused ? e.message : 'Nothing has been handed back.' });
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [allowed, channel, request, readHolders, now]);
 
   /* Before anything is answered, a page this wallet will not answer yet is said plainly; nothing is asked of the person. */
@@ -100,7 +128,9 @@ export function AnswerHolders({
   if (stage.of === 'refused') {
     return (
       <StatusAlert tone="danger" title="This wallet could not say who holds the company">
-        <p className="m-0" data-holders-refused>{stage.says}</p>
+        <p className="m-0" data-holders-refused>
+          {stage.says}
+        </p>
       </StatusAlert>
     );
   }

@@ -61,14 +61,14 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const disagreement = (
   readsNoWitness: readonly string[],
   circuitsDriven: readonly string[],
-  declaredAsReadingNone: ReadonlySet<string>,
+  declaredAsReadingNone: ReadonlySet<string>
 ): { treatedAsNeedingState: string[]; treatedAsNeedingNone: string[] } => {
   const derived = new Set(readsNoWitness.filter((name) => circuitsDriven.includes(name)));
   return {
     /* Reads nothing, and this client hands it a key anyway. The silent one. */
     treatedAsNeedingState: [...derived].filter((name) => !declaredAsReadingNone.has(name)).sort(),
     /* Reads something, and this client hands it nothing. The loud one. */
-    treatedAsNeedingNone: [...declaredAsReadingNone].filter((name) => !derived.has(name)).sort(),
+    treatedAsNeedingNone: [...declaredAsReadingNone].filter((name) => !derived.has(name)).sort()
   };
 };
 
@@ -82,19 +82,19 @@ describe('the circuits that read no witness', () => {
    */
   const judged = () => [...DEPLOYED_CIRCUITS];
 
-  it('is DERIVED from the compiled contract and agrees with the set the client checks with',
-    async () => {
-      const model = await account();
-      const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
+  it('is DERIVED from the compiled contract and agrees with the set the client checks with', async () => {
+    const model = await account();
+    const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-      expect(disagreement(readsNone, judged(), CIRCUITS_THAT_READ_NO_WITNESS),
-        'the contract and the set this client checks calls against no longer agree. A circuit '
-        + 'under "treatedAsNeedingState" reads nothing and is being handed the calling device\'s '
-        + 'record anyway, which succeeds and then has that record written back after the call '
-        + 'settles; one under "treatedAsNeedingNone" reads a witness and is being handed nothing, '
-        + 'which runs it against no private state at all')
-        .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: [] });
-    });
+    expect(
+      disagreement(readsNone, judged(), CIRCUITS_THAT_READ_NO_WITNESS),
+      'the contract and the set this client checks calls against no longer agree. A circuit ' +
+        'under "treatedAsNeedingState" reads nothing and is being handed the calling device\'s ' +
+        'record anyway, which succeeds and then has that record written back after the call ' +
+        'settles; one under "treatedAsNeedingNone" reads a witness and is being handed nothing, ' +
+        'which runs it against no private state at all'
+    ).toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: [] });
+  });
 
   /**
    * **THE DERIVATION HAS TO HAVE FOUND SOMETHING.** Without this, the case
@@ -103,15 +103,27 @@ describe('the circuits that read no witness', () => {
    */
   it('the artefact reader actually distinguishes the two, measured on this contract', async () => {
     const model = await account();
-    const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name).sort();
-    const readsSome = model.circuits.filter((c) => c.witnesses.length > 0).map((c) => c.name).sort();
+    const readsNone = model.circuits
+      .filter((c) => c.witnesses.length === 0)
+      .map((c) => c.name)
+      .sort();
+    const readsSome = model.circuits
+      .filter((c) => c.witnesses.length > 0)
+      .map((c) => c.name)
+      .sort();
 
-    expect(readsNone.length, 'no circuit on this contract reads no witness, which cannot be true '
-      + 'while the sweep exists').toBeGreaterThan(0);
-    expect(readsSome.length, 'no circuit on this contract reads any witness, so the reader is not '
-      + 'seeing through the helper the signer checks live in').toBeGreaterThan(0);
-    expect(readsSome, 'the two calls this whole product rests on stopped reading a signer witness')
-      .toEqual(expect.arrayContaining(['approve', 'propose']));
+    expect(
+      readsNone.length,
+      'no circuit on this contract reads no witness, which cannot be true ' + 'while the sweep exists'
+    ).toBeGreaterThan(0);
+    expect(
+      readsSome.length,
+      'no circuit on this contract reads any witness, so the reader is not ' +
+        'seeing through the helper the signer checks live in'
+    ).toBeGreaterThan(0);
+    expect(readsSome, 'the two calls this whole product rests on stopped reading a signer witness').toEqual(
+      expect.arrayContaining(['approve', 'propose'])
+    );
   });
 
   /**
@@ -124,8 +136,10 @@ describe('the circuits that read no witness', () => {
     const model = await account();
     const declared = new Set(model.circuits.map((c) => c.name));
 
-    expect(driven().filter((name) => !declared.has(name)),
-      'a prepared step names a circuit this contract does not declare').toEqual([]);
+    expect(
+      driven().filter((name) => !declared.has(name)),
+      'a prepared step names a circuit this contract does not declare'
+    ).toEqual([]);
   });
 
   /**
@@ -146,26 +160,27 @@ describe('the circuits that read no witness', () => {
    * the person asked for, after a proof.
    */
   it('pairs every prepared step with the circuit it calls, by value', () => {
-    expect(CIRCUIT_FOR_STEP,
-      'a prepared step now calls a different circuit. If that is deliberate, the contract is '
-      + 'what decides whether it is right - change this line last, not first')
-      .toEqual({
-        propose: 'propose',
-        proposeRun: 'propose',
-        approve: 'approve',
-        cancel: 'cancel',
-        removeSigner: 'removeSignerAndSetThreshold',
-        setThreshold: 'setThreshold',
-        setVaultThreshold: 'setVaultThreshold',
-        closeExpiredRun: 'closeExpiredRun',
-        sealPayKey: 'sealPayKey',
-        setPolicy: 'setPolicy',
-        clearRun: 'clearRun',
-        holdRun: 'holdRun',
-        releaseHold: 'releaseHold',
-        reseatSigner: 'reseatSigner',
-        setPolicyBar: 'setPolicyBar',
-      });
+    expect(
+      CIRCUIT_FOR_STEP,
+      'a prepared step now calls a different circuit. If that is deliberate, the contract is ' +
+        'what decides whether it is right - change this line last, not first'
+    ).toEqual({
+      propose: 'propose',
+      proposeRun: 'propose',
+      approve: 'approve',
+      cancel: 'cancel',
+      removeSigner: 'removeSignerAndSetThreshold',
+      setThreshold: 'setThreshold',
+      setVaultThreshold: 'setVaultThreshold',
+      closeExpiredRun: 'closeExpiredRun',
+      sealPayKey: 'sealPayKey',
+      setPolicy: 'setPolicy',
+      clearRun: 'clearRun',
+      holdRun: 'holdRun',
+      releaseHold: 'releaseHold',
+      reseatSigner: 'reseatSigner',
+      setPolicyBar: 'setPolicyBar'
+    });
   });
 
   /* ---------------- the negative controls ---------------- */
@@ -179,18 +194,22 @@ describe('the circuits that read no witness', () => {
    * witness today, which is why they are the example.
    */
   it.each(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault', 'closeExpiredRun'])(
-    'reports it when %s falls off the client\'s set while still reading nothing',
+    "reports it when %s falls off the client's set while still reading nothing",
     async (dropped) => {
       const model = await account();
       const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-      expect(readsNone, `${dropped} no longer reads no witness, so this control is about the wrong `
-        + 'circuit').toContain(dropped);
+      expect(
+        readsNone,
+        `${dropped} no longer reads no witness, so this control is about the wrong ` + 'circuit'
+      ).toContain(dropped);
 
       const narrowed = new Set([...CIRCUITS_THAT_READ_NO_WITNESS].filter((n) => n !== dropped));
-      expect(disagreement(readsNone, judged(), narrowed))
-        .toEqual({ treatedAsNeedingState: [dropped], treatedAsNeedingNone: [] });
-    },
+      expect(disagreement(readsNone, judged(), narrowed)).toEqual({
+        treatedAsNeedingState: [dropped],
+        treatedAsNeedingNone: []
+      });
+    }
   );
 
   /**
@@ -205,10 +224,14 @@ describe('the circuits that read no witness', () => {
     const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
     const asItWasBefore = new Set(['closeExpiredRun']);
 
-    expect(disagreement(readsNone, driven(), asItWasBefore))
-      .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: [] });
-    expect(disagreement(readsNone, judged(), asItWasBefore))
-      .toEqual({ treatedAsNeedingState: ['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault'], treatedAsNeedingNone: [] });
+    expect(disagreement(readsNone, driven(), asItWasBefore)).toEqual({
+      treatedAsNeedingState: [],
+      treatedAsNeedingNone: []
+    });
+    expect(disagreement(readsNone, judged(), asItWasBefore)).toEqual({
+      treatedAsNeedingState: ['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault'],
+      treatedAsNeedingNone: []
+    });
   });
 
   /** **THE LOUD DIRECTION, WATCHED.** A circuit that reads a witness on the list. */
@@ -216,8 +239,10 @@ describe('the circuits that read no witness', () => {
     const model = await account();
     const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-    expect(disagreement(readsNone, judged(), new Set([...CIRCUITS_THAT_READ_NO_WITNESS, 'approve'])))
-      .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: ['approve'] });
+    expect(disagreement(readsNone, judged(), new Set([...CIRCUITS_THAT_READ_NO_WITNESS, 'approve']))).toEqual({
+      treatedAsNeedingState: [],
+      treatedAsNeedingNone: ['approve']
+    });
   });
 
   /** And an EMPTY list, with every circuit that reads nothing reported. */
@@ -225,11 +250,16 @@ describe('the circuits that read no witness', () => {
     const model = await account();
     const readsNone = model.circuits.filter((c) => c.witnesses.length === 0).map((c) => c.name);
 
-    expect(disagreement(readsNone, judged(), new Set()))
-      .toEqual({
-        treatedAsNeedingState: ['approveVaultChange', 'closeExpiredRun', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault'],
-        treatedAsNeedingNone: [],
-      });
+    expect(disagreement(readsNone, judged(), new Set())).toEqual({
+      treatedAsNeedingState: [
+        'approveVaultChange',
+        'closeExpiredRun',
+        'recordBatchFromVault',
+        'recordPaymentFromVault',
+        'retireVault'
+      ],
+      treatedAsNeedingNone: []
+    });
   });
 
   /**
@@ -243,7 +273,9 @@ describe('the circuits that read no witness', () => {
       .filter((c) => c.witnesses.length === 0 && c.name !== 'closeExpiredRun')
       .map((c) => c.name);
 
-    expect(disagreement(readsNone, judged(), CIRCUITS_THAT_READ_NO_WITNESS))
-      .toEqual({ treatedAsNeedingState: [], treatedAsNeedingNone: ['closeExpiredRun'] });
+    expect(disagreement(readsNone, judged(), CIRCUITS_THAT_READ_NO_WITNESS)).toEqual({
+      treatedAsNeedingState: [],
+      treatedAsNeedingNone: ['closeExpiredRun']
+    });
   });
 });

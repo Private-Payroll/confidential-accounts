@@ -10,7 +10,10 @@ export const ON_CHAIN = { none: 'none', holds: 'holds', unread: 'unread' } as co
 type OnChainSide = (typeof ON_CHAIN)[keyof typeof ON_CHAIN];
 
 /** What a vault's chain read shows it holding, side by side: its notes, and its public balances. */
-export interface MoneyOnChain { readonly notes: OnChainSide; readonly public: OnChainSide }
+export interface MoneyOnChain {
+  readonly notes: OnChainSide;
+  readonly public: OnChainSide;
+}
 
 /** A vault this device could not read: both sides unread, never empty. */
 export const MONEY_UNREAD: MoneyOnChain = Object.freeze({ notes: ON_CHAIN.unread, public: ON_CHAIN.unread });
@@ -26,7 +29,11 @@ export function moneyOnChainOf(read: VaultOnChainOnTheWire): MoneyOnChain {
   if (!read.onChain) return MONEY_UNREAD;
   return {
     notes: read.notes === undefined ? ON_CHAIN.unread : read.notes.length === 0 ? ON_CHAIN.none : ON_CHAIN.holds,
-    public: read.publicBalances === undefined ? ON_CHAIN.unread
-      : read.publicBalances.some((b) => heldAmount(b.amount)) ? ON_CHAIN.holds : ON_CHAIN.none,
+    public:
+      read.publicBalances === undefined
+        ? ON_CHAIN.unread
+        : read.publicBalances.some((b) => heldAmount(b.amount))
+          ? ON_CHAIN.holds
+          : ON_CHAIN.none
   };
 }

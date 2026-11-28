@@ -21,7 +21,11 @@ const fieldBytesOf = (n: bigint): Uint8Array => {
 };
 
 const sha256Of = (...parts: Uint8Array[]): Uint8Array =>
-  new Uint8Array(createHash('sha256').update(Buffer.concat(parts.map((p) => Buffer.from(p)))).digest());
+  new Uint8Array(
+    createHash('sha256')
+      .update(Buffer.concat(parts.map((p) => Buffer.from(p))))
+      .digest()
+  );
 
 /** The hash a signer's four pay-record key parts share (`payKeyWrapBaseOf`). */
 export const wrapBaseOf = (account: Uint8Array, sk: Uint8Array): Uint8Array =>

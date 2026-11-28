@@ -14,11 +14,11 @@ const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   purpose: 'To pay you, we need to know who you are.',
   wants: [
     { attribute: 'given-name', required: true },
-    { attribute: 'email', required: false, reason: 'For your payslip.' },
+    { attribute: 'email', required: false, reason: 'For your payslip.' }
   ],
   nonce: 'n1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 
 describe('§5.3 — THE ORIGIN IS OBSERVED, NEVER CLAIMED', () => {
@@ -32,7 +32,7 @@ describe('§5.3 — THE ORIGIN IS OBSERVED, NEVER CLAIMED', () => {
      * would leave a dishonest one free to try again. */
     for (const payload of [
       wire({ requester: { name: 'A', rdns: 'a', origin: 'https://someone-else.example' } }),
-      wire({ origin: 'https://someone-else.example' }),
+      wire({ origin: 'https://someone-else.example' })
     ]) {
       try {
         parseRequest(payload, ORIGIN, NOW);
@@ -47,9 +47,9 @@ describe('§5.3 — THE ORIGIN IS OBSERVED, NEVER CLAIMED', () => {
   it('even an origin that AGREES with the observed one is refused', () => {
     /* The field is not checked, it is absent. A field that is sometimes read
      * is a field that can be made to be read. */
-    expect(() => parseRequest(
-      wire({ requester: { name: 'A', rdns: 'a', origin: ORIGIN } }), ORIGIN, NOW))
-      .toThrow(RequestError);
+    expect(() => parseRequest(wire({ requester: { name: 'A', rdns: 'a', origin: ORIGIN } }), ORIGIN, NOW)).toThrow(
+      RequestError
+    );
   });
 
   it('an origin nobody could authenticate is refused before anything is shown', () => {
@@ -73,8 +73,7 @@ describe('the request is parsed, never guessed', () => {
   it('a want that does not say whether it is required is refused, never defaulted', () => {
     /* Required and optional are shown differently and the difference is not
      * the wallet's to guess. */
-    expect(() => parseRequest(
-      wire({ wants: [{ attribute: 'given-name' }] }), ORIGIN, NOW)).toThrow(RequestError);
+    expect(() => parseRequest(wire({ wants: [{ attribute: 'given-name' }] }), ORIGIN, NOW)).toThrow(RequestError);
   });
 
   it('an expired request is refused', () => {
@@ -86,23 +85,33 @@ describe('the request is parsed, never guessed', () => {
   });
 
   it('the same attribute twice is refused', () => {
-    expect(() => parseRequest(wire({
-      wants: [
-        { attribute: 'email', required: true },
-        { attribute: 'email', required: false },
-      ],
-    }), ORIGIN, NOW)).toThrow(RequestError);
+    expect(() =>
+      parseRequest(
+        wire({
+          wants: [
+            { attribute: 'email', required: true },
+            { attribute: 'email', required: false }
+          ]
+        }),
+        ORIGIN,
+        NOW
+      )
+    ).toThrow(RequestError);
   });
 });
 
 describe('§3.4 — the requester cannot define an attribute', () => {
   it('an unknown name is SHOWN as unknown and never becomes an attribute', () => {
-    const request = parseRequest(wire({
-      wants: [
-        { attribute: 'given-name', required: true },
-        { attribute: 'national-insurance-number', required: true },
-      ],
-    }), ORIGIN, NOW);
+    const request = parseRequest(
+      wire({
+        wants: [
+          { attribute: 'given-name', required: true },
+          { attribute: 'national-insurance-number', required: true }
+        ]
+      }),
+      ORIGIN,
+      NOW
+    );
     const rows = asked(request, REGISTRY);
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.known)).toEqual([true, false]);
@@ -130,40 +139,70 @@ describe('§3.4 — the requester cannot define an attribute', () => {
    */
   it('A REQUEST THAT NAMES AN ADDRESS IS NOT SERVED THAT ADDRESS', () => {
     /* The one that costs money: a payer proposing the payee's own address. */
-    expect(() => parseRequest(wire({
-      wants: [{
-        attribute: 'receiving-address',
-        required: true,
-        address: 'mn_shield-addr_undeployed1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
-      }],
-    }), ORIGIN, NOW)).toThrow(/never what the answer is/u);
+    expect(() =>
+      parseRequest(
+        wire({
+          wants: [
+            {
+              attribute: 'receiving-address',
+              required: true,
+              address: 'mn_shield-addr_undeployed1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+            }
+          ]
+        }),
+        ORIGIN,
+        NOW
+      )
+    ).toThrow(/never what the answer is/u);
 
     /* And on the request itself, where no kind of ask may name one. */
-    expect(() => parseRequest(wire({
-      wants: [{ attribute: 'receiving-address', required: true }],
-      address: 'mn_shield-addr_undeployed1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
-    }), ORIGIN, NOW)).toThrow(/telling somebody where their own money goes/u);
+    expect(() =>
+      parseRequest(
+        wire({
+          wants: [{ attribute: 'receiving-address', required: true }],
+          address: 'mn_shield-addr_undeployed1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+        }),
+        ORIGIN,
+        NOW
+      )
+    ).toThrow(/telling somebody where their own money goes/u);
 
     /* A sign-in and an unlock have no `wants` to hide one in, and the refusal
      * is read before the kind is, so it covers all three. */
-    expect(() => parseAsk(wire({
-      kind: 'sign-in', address: 'mn_shield-addr_undeployed1qqqq',
-    }), ORIGIN, NOW)).toThrow(RequestError);
+    expect(() =>
+      parseAsk(
+        wire({
+          kind: 'sign-in',
+          address: 'mn_shield-addr_undeployed1qqqq'
+        }),
+        ORIGIN,
+        NOW
+      )
+    ).toThrow(RequestError);
 
     /* THE CODES ARE THEIR OWN, because a refusal that named the wrong place
      * would tell a requester something untrue about its own message. */
     try {
-      parseRequest(wire({
-        wants: [{ attribute: 'given-name', required: true, address: 'anything' }],
-      }), ORIGIN, NOW);
+      parseRequest(
+        wire({
+          wants: [{ attribute: 'given-name', required: true, address: 'anything' }]
+        }),
+        ORIGIN,
+        NOW
+      );
       expect.unreachable('a want carrying an address is refused');
     } catch (e) {
       expect((e as RequestError).code).toBe('a-want-proposes-a-value');
     }
     try {
-      parseRequest(wire({
-        wants: [{ attribute: 'given-name', required: true }], address: 'anything',
-      }), ORIGIN, NOW);
+      parseRequest(
+        wire({
+          wants: [{ attribute: 'given-name', required: true }],
+          address: 'anything'
+        }),
+        ORIGIN,
+        NOW
+      );
       expect.unreachable('a request carrying an address is refused');
     } catch (e) {
       expect((e as RequestError).code).toBe('proposes-an-address');
@@ -171,25 +210,41 @@ describe('§3.4 — the requester cannot define an attribute', () => {
   });
 
   it('a rule sent alongside a name is refused, and our definition is untouched', () => {
-    expect(() => parseRequest(wire({
-      wants: [{
-        attribute: 'given-name', required: true, validate: { of: 'text', maxLength: 2 },
-        selfAssertable: false, sensitivity: 'sensitive',
-      }],
-    }), ORIGIN, NOW)).toThrow(/is asked for with a 'validate' beside it/u);
+    expect(() =>
+      parseRequest(
+        wire({
+          wants: [
+            {
+              attribute: 'given-name',
+              required: true,
+              validate: { of: 'text', maxLength: 2 },
+              selfAssertable: false,
+              sensitivity: 'sensitive'
+            }
+          ]
+        }),
+        ORIGIN,
+        NOW
+      )
+    ).toThrow(/is asked for with a 'validate' beside it/u);
     /* §3.4 — the registry is ours, and nothing that arrived over a wire has
      * touched it. Stronger than before: the request was never served at all. */
     expect(REGISTRY.definitionOf('given-name')!.validate).toEqual({
-      of: 'text', minLength: 1, maxLength: 100,
+      of: 'text',
+      minLength: 1,
+      maxLength: 100
     });
   });
 
   it('AND THE THREE FIELDS A WANT MAY CARRY STILL PASS', () => {
-    const request = parseRequest(wire({
-      wants: [{ attribute: 'given-name', required: true, reason: 'for your payslip' }],
-    }), ORIGIN, NOW);
-    expect(Object.keys(request.wants[0]!).sort())
-      .toEqual(['attribute', 'reason', 'required']);
+    const request = parseRequest(
+      wire({
+        wants: [{ attribute: 'given-name', required: true, reason: 'for your payslip' }]
+      }),
+      ORIGIN,
+      NOW
+    );
+    expect(Object.keys(request.wants[0]!).sort()).toEqual(['attribute', 'reason', 'required']);
   });
 });
 
@@ -199,10 +254,19 @@ describe('the channel observes the origin and answers only there', () => {
     const states: ChannelState[] = [];
     const view: ChannelWindow = {
       opener: opener as unknown as ChannelWindow['opener'],
-      addEventListener: (_t, h) => { handlers.push(h); },
-      removeEventListener: () => { /* not exercised here */ },
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* not exercised here */
+      }
     };
-    const channel = listen(view, () => NOW, (s) => states.push(s), ORIGIN);
+    const channel = listen(
+      view,
+      () => NOW,
+      (s) => states.push(s),
+      ORIGIN
+    );
     const deliver = (event: Partial<MessageEvent>): void => {
       for (const h of handlers) h(event as MessageEvent);
     };
@@ -249,12 +313,13 @@ describe('the channel observes the origin and answers only there', () => {
     deliver({
       source: opener as never,
       origin: ORIGIN,
-      data: wire({ purpose: 'Actually we want everything.' }),
+      data: wire({ purpose: 'Actually we want everything.' })
     });
     const requests = states.filter((s) => s.of === 'request');
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.of === 'request' && requests[0]!.request.purpose)
-      .toBe('To pay you, we need to know who you are.');
+    expect(requests[0]!.of === 'request' && requests[0]!.request.purpose).toBe(
+      'To pay you, we need to know who you are.'
+    );
   });
 
   it('a refusal says only that it was refused', () => {
@@ -264,7 +329,8 @@ describe('the channel observes the origin and answers only there', () => {
     channel.refuse('declined');
     const last = opener.postMessage.mock.calls[opener.postMessage.mock.calls.length - 1]!;
     expect(last[0]).toEqual({
-      schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined',
+      schema: 'midnight-identity/disclosure-refused/v1',
+      reason: 'declined'
     });
     expect(last[1]).toBe(ORIGIN);
   });
@@ -281,7 +347,7 @@ describe('the channel observes the origin and answers only there', () => {
     deliver({
       source: opener as never,
       origin: ORIGIN,
-      data: wire({ requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } }),
+      data: wire({ requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } })
     });
     channel.refuse('declined');
     const last = opener.postMessage.mock.calls[opener.postMessage.mock.calls.length - 1]!;
@@ -295,7 +361,7 @@ describe('the channel observes the origin and answers only there', () => {
     deliver({
       source: opener as never,
       origin: ORIGIN,
-      data: wire({ requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } }),
+      data: wire({ requester: { name: 'A', rdns: 'a', origin: 'https://elsewhere.example' } })
     });
     const last = states[states.length - 1]!;
     expect(last.of).toBe('refused');
@@ -303,7 +369,7 @@ describe('the channel observes the origin and answers only there', () => {
   });
 });
 
-describe('AN ASKER SAYS IT KNOWS THE WALLET\'S WORD FOR BEING AT WORK', () => {
+describe("AN ASKER SAYS IT KNOWS THE WALLET'S WORD FOR BEING AT WORK", () => {
   it('only by naming exactly that message, and saying so widens nothing else', () => {
     const plain = parseAsk(wire(), ORIGIN, NOW);
     /* RED WHEN: an ask that said nothing is marked as hearing progress, or the field appears on every ask. */

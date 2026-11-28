@@ -28,21 +28,48 @@ import type { RoundOnChain, SignerMaterial } from '../../../../packages/web-shar
 import { standingNow, type ProposalFile } from '../../../../packages/web-shared/src/governance-from-the-chain.js';
 import { companyAnchorsOnChain } from '../chain/view-doors.js';
 import {
-  approveRecoveryHere, carryOutRecoveryHere, raiseRecoveryHere, recoveryFileOf, recoveryPartsOf, RecoveryNotCarriedOut, RecoveryWindowNotRead, type RecoveryDoors,
-  type RecoveryParts,
+  approveRecoveryHere,
+  carryOutRecoveryHere,
+  raiseRecoveryHere,
+  recoveryFileOf,
+  recoveryPartsOf,
+  RecoveryNotCarriedOut,
+  RecoveryWindowNotRead,
+  type RecoveryDoors,
+  type RecoveryParts
 } from '../../../../packages/web-shared/src/records-recovered-here.js';
-import type { CheckedHeadsStore, HeadersKeptStore, RecoveryWindowsKeptStore } from '../../../../packages/web-shared/src/tree-kept-here.js';
+import type {
+  CheckedHeadsStore,
+  HeadersKeptStore,
+  RecoveryWindowsKeptStore
+} from '../../../../packages/web-shared/src/tree-kept-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import {
-  FeeRefused, sentFromTheOwnWallet, type Handed, type OwnWalletDoors,
+  FeeRefused,
+  sentFromTheOwnWallet,
+  type Handed,
+  type OwnWalletDoors
 } from '../chain/sent-straight-to-the-chain.js';
 import type { CompanyChain } from './company-reach.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type Held, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type Held,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { companyReachHead, seatOfThePin } from './company-reach-head.js';
 
 export {
-  moreThanTheFeeRefusal, notOneCallRefusal, ownWalletFrom, type OwnWalletDoors, type OwnWalletFacade,
+  moreThanTheFeeRefusal,
+  notOneCallRefusal,
+  ownWalletFrom,
+  type OwnWalletDoors,
+  type OwnWalletFacade
 } from '../chain/sent-straight-to-the-chain.js';
 import { signerMaterialOf } from '../../../../packages/web-shared/src/private-state.js';
 
@@ -50,7 +77,11 @@ import { signerMaterialOf } from '../../../../packages/web-shared/src/private-st
 export interface RecoveryReach {
   readonly chain: () => CompanyChain;
   readonly builder: () => VaultBuilderClient;
-  readonly kept: () => { readonly checked: CheckedHeadsStore; readonly headers: HeadersKeptStore; readonly windows: RecoveryWindowsKeptStore };
+  readonly kept: () => {
+    readonly checked: CheckedHeadsStore;
+    readonly headers: HeadersKeptStore;
+    readonly windows: RecoveryWindowsKeptStore;
+  };
   readonly ownWallet: (identity: Identity, account: number) => OwnWalletDoors;
   readonly now: () => number;
   readonly pause: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -72,7 +103,8 @@ interface ChainOnlyReach {
 const HEX64 = /^[0-9a-f]{64}$/u;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.recovery.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.recovery.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
 
@@ -84,7 +116,9 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(
  * asked of the service.
  */
 async function chainOnlyReachFor(ctx: StepContext, reach: RecoveryReach): Promise<ChainOnlyReach> {
-  const refuse = (key: string): never => { throw new StepRefused(why(key)); };
+  const refuse = (key: string): never => {
+    throw new StepRefused(why(key));
+  };
   const chain = reach.chain();
   const builder = reach.builder();
   const read = async (label: CompanyLabel, account: AccountAddress): Promise<AccountHoldersRead> => {
@@ -94,12 +128,13 @@ async function chainOnlyReachFor(ctx: StepContext, reach: RecoveryReach): Promis
   };
   const head = await companyReachHead(ctx, refuse, {
     seats: async (l, a) => (await read(l, a)).seats,
-    leafOf: async (p) => (await builder.ownSeat({ signingSecret: p.signingSecret, blinding: p.blinding, scope: p.scope })).toLowerCase(),
-    chain,
+    leafOf: async (p) =>
+      (await builder.ownSeat({ signingSecret: p.signingSecret, blinding: p.blinding, scope: p.scope })).toLowerCase(),
+    chain
   });
   const { accountId, label, account } = head;
   const seat = head.keyring.open().read().accounts[accountId] ?? refuse('no-seat');
-  const scope = typeof seat.scope === 'string' && HEX64.test(seat.scope) ? seat.scope as Hex : refuse('no-seat');
+  const scope = typeof seat.scope === 'string' && HEX64.test(seat.scope) ? (seat.scope as Hex) : refuse('no-seat');
   const holders = (): Promise<AccountHoldersRead> => read(label, account);
   const held = await holders();
   await seatOfThePin(ctx.held.identity, head, { ...seat, scope }, refuse);
@@ -110,7 +145,8 @@ async function chainOnlyReachFor(ctx: StepContext, reach: RecoveryReach): Promis
 }
 
 /** The approvals a recovery is carried out at, as the account counts them: the higher of its hold, its threshold and its seat bar. */
-const neededFor = (round: RoundOnChain, held: AccountHoldersRead): number => Math.max(round.needed ?? 0, held.approvals, held.seatBar);
+const neededFor = (round: RoundOnChain, held: AccountHoldersRead): number =>
+  Math.max(round.needed ?? 0, held.approvals, held.seatBar);
 
 /** What one window of a recovery carries from step to step. */
 interface Recovering {
@@ -126,10 +162,20 @@ const DIGITS = /^(?:0|[1-9][0-9]{0,15})$/u;
 const fileFrom = (intent: ActIntent): ProposalFile | null => {
   const f = intent.fields;
   if (FILE_FIELDS.some((k) => f[k] === undefined || f[k] === '')) return null;
-  if (!['proposal', 'salt', 'lastRecovery', 'resumesFrom', 'root'].every((k) => HEX64.test(f[k]!)) || !DIGITS.test(f['seq']!) || !DIGITS.test(f['latest']!)) return null;
+  if (
+    !['proposal', 'salt', 'lastRecovery', 'resumesFrom', 'root'].every((k) => HEX64.test(f[k]!)) ||
+    !DIGITS.test(f['seq']!) ||
+    !DIGITS.test(f['latest']!)
+  )
+    return null;
   return recoveryFileOf({
-    company: f['record']!, account: f['account']!, chainId: f['proposal']!, salt: f['salt']!, latest: f['latest']!, lastRecovery: f['lastRecovery']!,
-    resumesFrom: { seq: Number(f['seq']), head: f['resumesFrom']!, root: f['root']! },
+    company: f['record']!,
+    account: f['account']!,
+    chainId: f['proposal']!,
+    salt: f['salt']!,
+    latest: f['latest']!,
+    lastRecovery: f['lastRecovery']!,
+    resumesFrom: { seq: Number(f['seq']), head: f['resumesFrom']!, root: f['root']! }
   });
 };
 
@@ -138,13 +184,25 @@ const fileFrom = (intent: ActIntent): ProposalFile | null => {
  * the send. The call always goes straight to the chain from the person's own wallet (`sentFromTheOwnWallet`), and
  * the action is told when it leaves, so a stop after it says it may be on the chain.
  */
-function doorsFor(ctx: StepContext, r: ChainOnlyReach, reach: RecoveryReach, circuit: string, handed: Handed): RecoveryDoors {
+function doorsFor(
+  ctx: StepContext,
+  r: ChainOnlyReach,
+  reach: RecoveryReach,
+  circuit: string,
+  handed: Handed
+): RecoveryDoors {
   const account = ctx.held.account;
   const kept = reach.kept();
   return {
-    accountId: r.accountId, account: r.account, material: r.material, indexer: r.chain.indexer, builder: r.builder,
+    accountId: r.accountId,
+    account: r.account,
+    material: r.material,
+    indexer: r.chain.indexer,
+    builder: r.builder,
     onChain: () => companyAnchorsOnChain(r.builder, r.account, r.chain.indexer),
-    checked: kept.checked, headers: kept.headers, window: () => kept.windows.read(r.accountId),
+    checked: kept.checked,
+    headers: kept.headers,
+    window: () => kept.windows.read(r.accountId),
     send: {
       ownWallet: {
         send: async (tx: string) => {
@@ -152,19 +210,28 @@ function doorsFor(ctx: StepContext, r: ChainOnlyReach, reach: RecoveryReach, cir
           const own = reach.ownWallet(ctx.held.identity, account);
           try {
             /* The person chose their own wallet for this in the window, which is their yes to its fee. */
-            await sentFromTheOwnWallet(own, tx, { kind: 'account-call', contract: r.account, circuit }, reach.now, () => !ctx.signal.aborted, handed, {
-              handedOver: () => ctx.sentByTheWallet?.(), ownWalletChosen: true,
-            });
+            await sentFromTheOwnWallet(
+              own,
+              tx,
+              { kind: 'account-call', contract: r.account, circuit },
+              reach.now,
+              () => !ctx.signal.aborted,
+              handed,
+              {
+                handedOver: () => ctx.sentByTheWallet?.(),
+                ownWalletChosen: true
+              }
+            );
           } finally {
             await own.stop?.().catch(() => undefined);
           }
         },
         /* The person chose this in the window, under the passkey: it is never asked again. */
-        chosen: async () => true,
-      },
+        chosen: async () => true
+      }
     },
     watch: { sleep: (ms: number) => reach.pause(ms, ctx.signal), ...reach.watch },
-    now: () => new Date(reach.now()),
+    now: () => new Date(reach.now())
   };
 }
 
@@ -175,15 +242,23 @@ const refusedAs = (e: unknown, handed: Handed, notDone: string): never => {
   if (handed.noDust === true) throw new StepRefused(why('no-dust'), code);
   if (e instanceof RecoveryNotCarriedOut) throw new StepRefused(why('still-open', { says: said(e) }), code);
   if (e instanceof RecoveryWindowNotRead) throw new StepRefused(why('window-unread', { says: said(e) }), code);
-  throw new StepRefused(why(handed.over && !(e instanceof FeeRefused) ? 'may-be-sent' : notDone, { says: said(e) }), code);
+  throw new StepRefused(
+    why(handed.over && !(e instanceof FeeRefused) ? 'may-be-sent' : notDone, { says: said(e) }),
+    code
+  );
 };
 
 /** The parts of the recovery's file, all public, so the page can make the file again to save and hand on. */
 const partsTold = (file: ProposalFile): Record<string, string | number> => {
   const p: RecoveryParts = recoveryPartsOf(file);
   return {
-    proposal: p.chainId, salt: p.salt, latest: p.latest, lastRecovery: p.lastRecovery,
-    resumesFrom: p.resumesFrom.head, root: p.resumesFrom.root, seq: p.resumesFrom.seq,
+    proposal: p.chainId,
+    salt: p.salt,
+    latest: p.latest,
+    lastRecovery: p.lastRecovery,
+    resumesFrom: p.resumesFrom.head,
+    root: p.resumesFrom.root,
+    seq: p.resumesFrom.seq
   };
 };
 
@@ -192,7 +267,7 @@ const seatStep = (reach: RecoveryReach, here: Recovering, title: Words): ActionS
   run: async (ctx) => {
     if (ctx.held.account === undefined) throw new StepRefused(why('no-account'));
     here.r = await chainOnlyReachFor(ctx, reach);
-  },
+  }
 });
 
 /**
@@ -200,7 +275,12 @@ const seatStep = (reach: RecoveryReach, here: Recovering, title: Words): ActionS
  * WAITS**: where it stands is read from the chain; a recovery the chain does
  * not hold open is refused, and one short of its approvals sends nothing.
  */
-const carryStep = (reach: RecoveryReach, here: Recovering, title: Words, told: () => Record<string, string | number>): ActionStep => ({
+const carryStep = (
+  reach: RecoveryReach,
+  here: Recovering,
+  title: Words,
+  told: () => Record<string, string | number>
+): ActionStep => ({
   title,
   run: async (ctx) => {
     const r = here.r!;
@@ -225,7 +305,7 @@ const carryStep = (reach: RecoveryReach, here: Recovering, title: Words, told: (
       refusedAs(e, handed, 'not-carried');
     }
     ctx.tell({ state: 'carried-out', ...count });
-  },
+  }
 });
 
 /** The lines every recovery window shows: the two choices the passkey approves, and that nothing else is sent. */
@@ -233,15 +313,23 @@ const choicesShown = (): ShownLine[] => [
   { key: 'act.recovery.shown.without-the-service', from: 'action' },
   { key: 'act.recovery.shown.own-wallet', from: 'action' },
   { key: 'act.recovery.shown.carry', from: 'action' },
-  { key: 'act.recovery.shown.nothing-else', from: 'action' },
+  { key: 'act.recovery.shown.nothing-else', from: 'action' }
 ];
 
 /** The lines a recovery opened from its file shows, from the parts the page handed in. */
 const fileShown = (intent: ActIntent): ShownLine[] => {
   const latest = Number(intent.fields['latest'] ?? '');
   return [
-    { key: 'act.recovery.shown.file', values: { proposal: intent.fields['proposal'] ?? '', seq: intent.fields['seq'] ?? '' }, from: 'page' },
-    { key: 'act.recovery.shown.until', values: { until: Number.isSafeInteger(latest) ? new Date(latest * 1000).toISOString() : '' }, from: 'page' },
+    {
+      key: 'act.recovery.shown.file',
+      values: { proposal: intent.fields['proposal'] ?? '', seq: intent.fields['seq'] ?? '' },
+      from: 'page'
+    },
+    {
+      key: 'act.recovery.shown.until',
+      values: { until: Number.isSafeInteger(latest) ? new Date(latest * 1000).toISOString() : '' },
+      from: 'page'
+    }
   ];
 };
 
@@ -251,7 +339,7 @@ const STEPS = ['raise', 'carry'] as const;
 const RECOVERY_CHECKS: readonly Words[] = Object.freeze([
   { key: 'act.recovery.check.seat' },
   { key: 'act.recovery.check.standing' },
-  { key: 'act.recovery.check.fee-only' },
+  { key: 'act.recovery.check.fee-only' }
 ]);
 
 /**
@@ -282,7 +370,11 @@ async function givenUpShown(reach: RecoveryReach | undefined, intent: ActIntent)
     const { landed } = await companyAnchorsOnChain(reach.builder(), account, reach.chain().indexer);
     const at = landed.findIndex((l) => l.head.toLowerCase() === from.head.toLowerCase());
     if (at < 0) return unread;
-    return { key: 'act.recovery.shown.given-up', values: { count: landed.length - 1 - at, seq: from.seq }, from: 'wallet' };
+    return {
+      key: 'act.recovery.shown.given-up',
+      values: { count: landed.length - 1 - at, seq: from.seq },
+      from: 'wallet'
+    };
   } catch {
     return unread;
   }
@@ -291,7 +383,8 @@ async function givenUpShown(reach: RecoveryReach | undefined, intent: ActIntent)
 /** Refused before the window opens: no wallet account to pay the fee, a step this action does not take, or a file not whole. */
 const checkOf = (intent: ActIntent, held: Pick<Held, 'account'>): Words | null => {
   const step = intent.fields['step'] ?? '';
-  if (!(STEPS as readonly string[]).includes(step) || !DIGITS.test(intent.fields['latest'] ?? '')) return why('not-a-recovery');
+  if (!(STEPS as readonly string[]).includes(step) || !DIGITS.test(intent.fields['latest'] ?? ''))
+    return why('not-a-recovery');
   if (step === 'carry' && fileFrom(intent) === null) return why('not-a-recovery');
   if (held.account === undefined) return why('no-account');
   return null;
@@ -310,12 +403,16 @@ export function recoveryAction(reach: RecoveryReach): ActionDefinition {
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
       ...(intent.fields['step'] === 'raise'
         ? [
-          { key: 'act.recovery.shown.raise', from: 'action' as const },
-          { key: 'act.recovery.shown.until', values: { until: new Date(Number(intent.fields['latest'] ?? 0) * 1000).toISOString() }, from: 'page' as const },
-        ]
+            { key: 'act.recovery.shown.raise', from: 'action' as const },
+            {
+              key: 'act.recovery.shown.until',
+              values: { until: new Date(Number(intent.fields['latest'] ?? 0) * 1000).toISOString() },
+              from: 'page' as const
+            }
+          ]
         : fileShown(intent)),
       await givenUpShown(reach, intent),
-      ...choicesShown(),
+      ...choicesShown()
     ],
     checks: RECOVERY_CHECKS,
     check: async (intent, held) => checkOf(intent, held),
@@ -331,7 +428,8 @@ export function recoveryAction(reach: RecoveryReach): ActionDefinition {
           const handed: Handed = { over: false };
           try {
             const { file } = await raiseRecoveryHere(doorsFor(ctx, here.r!, reach, 'propose', handed), {
-              latest: new Date(Number(intent.fields['latest']) * 1000), withoutTheService: true,
+              latest: new Date(Number(intent.fields['latest']) * 1000),
+              withoutTheService: true
             });
             here.file = file;
           } catch (e) {
@@ -339,10 +437,10 @@ export function recoveryAction(reach: RecoveryReach): ActionDefinition {
           }
           /* Told now, so the page keeps the file's salt even when carrying it out is refused: nothing else holds it. */
           ctx.tell(partsTold(here.file!));
-        },
+        }
       };
       return [seat, raise, carry];
-    },
+    }
   } satisfies ActionDefinition);
 }
 
@@ -358,11 +456,22 @@ export function recoveryKind(reach: RecoveryReach | undefined) {
     chainOnly: true as const,
     fields: FILE_FIELDS,
     checks: RECOVERY_CHECKS,
-    shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [...fileShown(intent), await givenUpShown(reach, intent), ...choicesShown()],
+    shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
+      ...fileShown(intent),
+      await givenUpShown(reach, intent),
+      ...choicesShown()
+    ],
     check: (intent: ActIntent): Words | null => (fileFrom(intent) === null ? why('not-a-recovery') : null),
     steps: (intent: ActIntent): readonly ActionStep[] => {
       if (reach === undefined) {
-        return [{ title: { key: 'act.recovery.step.seat' }, run: async () => { throw new StepRefused(why('no-own-wallet')); } }];
+        return [
+          {
+            title: { key: 'act.recovery.step.seat' },
+            run: async () => {
+              throw new StepRefused(why('no-own-wallet'));
+            }
+          }
+        ];
       }
       const here: Recovering = { r: null, file: fileFrom(intent) };
       const approve: ActionStep = {
@@ -381,9 +490,13 @@ export function recoveryKind(reach: RecoveryReach | undefined) {
           } catch (e) {
             if (!(e instanceof ApprovalNotOwed && e.why === 'counted')) refusedAs(e, handed, 'not-approved');
           }
-        },
+        }
       };
-      return [seatStep(reach, here, { key: 'act.recovery.step.seat' }), approve, carryStep(reach, here, { key: 'act.recovery.step.carry' }, () => ({}))];
-    },
+      return [
+        seatStep(reach, here, { key: 'act.recovery.step.seat' }),
+        approve,
+        carryStep(reach, here, { key: 'act.recovery.step.carry' }, () => ({}))
+      ];
+    }
   });
 }

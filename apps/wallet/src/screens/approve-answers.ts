@@ -8,9 +8,39 @@ import type { ApproveState, WhatIsAsked } from './approve-state.js';
 import { answerDisclosure } from './approve-answer-disclosure.js';
 
 export function useAnswers(a: ApproveInputs & ApproveState & WhatIsAsked) {
-  const { identity, port, now, channel, profile, setProfile, subwallet, picked, refused, setProblem, setSentAt, thisWallet, request, rows } = a;
+  const {
+    identity,
+    port,
+    now,
+    channel,
+    profile,
+    setProfile,
+    subwallet,
+    picked,
+    refused,
+    setProblem,
+    setSentAt,
+    thisWallet,
+    request,
+    rows
+  } = a;
   const approve = useCallback((): void => {
-    answerDisclosure({ request, profile, channel, rows, picked, refused, subwallet, identity, port, now, thisWallet, setProblem, setProfile, setSentAt });
+    answerDisclosure({
+      request,
+      profile,
+      channel,
+      rows,
+      picked,
+      refused,
+      subwallet,
+      identity,
+      port,
+      now,
+      thisWallet,
+      setProblem,
+      setProfile,
+      setSentAt
+    });
   }, [request, profile, channel, rows, picked, refused, subwallet, identity, port, now, thisWallet]);
   return { approve };
 }

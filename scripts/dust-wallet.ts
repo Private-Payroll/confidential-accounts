@@ -47,8 +47,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  appliedOverhead, arrivedOverhead, feeFloorFrom, feeFloorVerdict,
-  type FeeFloorReading, type FeeFloorReason,
+  appliedOverhead,
+  arrivedOverhead,
+  feeFloorFrom,
+  feeFloorVerdict,
+  type FeeFloorReading,
+  type FeeFloorReason
 } from './dust-fee-floor.js';
 import { dustViewCovers, dustViewHeight } from '../src/midnight/sponsor.js';
 import { projectionsDustWallet } from '../src/midnight/projections-dust-wallet.js';
@@ -83,13 +87,18 @@ export const dustCachePath = (root: string, network: string, masterSeed: string)
 type IndexerPost = (url: string, init: RequestInit) => Promise<{ json(): Promise<unknown> }>;
 
 /** The newest block the indexer holds, read now: `fields` of it, by GraphQL over HTTP. */
-async function newestBlock(indexerHttpUrl: string, fields: string, post: IndexerPost): Promise<Readonly<Record<string, unknown>>> {
+async function newestBlock(
+  indexerHttpUrl: string,
+  fields: string,
+  post: IndexerPost
+): Promise<Readonly<Record<string, unknown>>> {
   const answer = await post(indexerHttpUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query: `query { block { ${fields} } }` }),
+    body: JSON.stringify({ query: `query { block { ${fields} } }` })
   });
-  const block = ((await answer.json()) as { data?: { block?: Readonly<Record<string, unknown>> | null } } | null)?.data?.block;
+  const block = ((await answer.json()) as { data?: { block?: Readonly<Record<string, unknown>> | null } } | null)?.data
+    ?.block;
   if (!block) throw new Error('the indexer named no newest block');
   return block;
 }
@@ -110,23 +119,48 @@ export async function networkHeightAt(indexerHttpUrl: string, post: IndexerPost 
  * (and calls `onSynced`), then nothing. Returns a function that stops it early. The timer never keeps the process alive.
  */
 export function reportSync(
-  subWallet: any, label: string, note: (line: string) => void, everyMs = 10_000, onSynced: () => unknown = () => {},
+  subWallet: any,
+  label: string,
+  note: (line: string) => void,
+  everyMs = 10_000,
+  onSynced: () => unknown = () => {}
 ): () => void {
   let latest: any = null;
   const started = Date.now();
-  const subscription = subWallet?.state?.subscribe?.({ next: (s: any) => { latest = s?.progress ?? null; } });
-  const stop = () => { clearInterval(timer); try { subscription?.unsubscribe?.(); } catch { /* already closed */ } };
+  const subscription = subWallet?.state?.subscribe?.({
+    next: (s: any) => {
+      latest = s?.progress ?? null;
+    }
+  });
+  const stop = () => {
+    clearInterval(timer);
+    try {
+      subscription?.unsubscribe?.();
+    } catch {
+      /* already closed */
+    }
+  };
   const timer = setInterval(() => {
     const seconds = String(Math.round((Date.now() - started) / 1000)).padStart(3);
     let synced = false;
-    try { synced = !!latest?.isStrictlyComplete?.(); } catch { /* unreadable reads as not synced */ }
+    try {
+      synced = !!latest?.isStrictlyComplete?.();
+    } catch {
+      /* unreadable reads as not synced */
+    }
     if (synced) {
       note(`  ${seconds}s  ${label} synced`);
       stop();
-      try { void Promise.resolve(onSynced()).catch(() => {}); } catch { /* a failed save costs the cache, not the run */ }
+      try {
+        void Promise.resolve(onSynced()).catch(() => {});
+      } catch {
+        /* a failed save costs the cache, not the run */
+      }
       return;
     }
-    note(`  ${seconds}s  ${label} syncing: ${latest?.appliedIndex ?? '?'} of ${latest?.highestRelevantWalletIndex ?? '?'}`);
+    note(
+      `  ${seconds}s  ${label} syncing: ${latest?.appliedIndex ?? '?'} of ${latest?.highestRelevantWalletIndex ?? '?'}`
+    );
   }, everyMs);
   (timer as any).unref?.();
   return stop;
@@ -180,14 +214,21 @@ export const recordsProjections = (serialized: string): boolean => {
 };
 
 /** Reads the fee floor back off the DUST wallet a built wallet carries, and judges it. */
-async function feeFloorOf(wallet: any, networkId: string, how: 'restored' | 'fresh', detail: string): Promise<DustInstall> {
+async function feeFloorOf(
+  wallet: any,
+  networkId: string,
+  how: 'restored' | 'fresh',
+  detail: string
+): Promise<DustInstall> {
   let measureWith: { dustV1: any; ledgerV9: any } | null = null;
   try {
     measureWith = {
       dustV1: await import('@midnightntwrk/wallet-sdk/dust/v1'),
-      ledgerV9: await import('@midnightntwrk/ledger-v9'),
+      ledgerV9: await import('@midnightntwrk/ledger-v9')
     };
-  } catch { /* the reading is skipped; the wallet is not */ }
+  } catch {
+    /* the reading is skipped; the wallet is not */
+  }
   const arrived = arrivedOverhead(wallet?.wallet?.dust);
   let applied: { value: bigint | null; problem?: string } = { value: null };
   const installedParams = (wallet?.wallet?.dust as any)?.constructor?.configuration?.costParameters;
@@ -195,7 +236,7 @@ async function feeFloorOf(wallet: any, networkId: string, how: 'restored' | 'fre
     applied = appliedOverhead(installedParams, {
       makeTransacting: (c: any, g: any) => measureWith.dustV1.Transacting.makeDefaultTransactingCapability(c, g),
       newTransaction: () => measureWith.ledgerV9.Transaction.fromParts(networkId),
-      params: () => measureWith.ledgerV9.LedgerParameters.initialParameters(),
+      params: () => measureWith.ledgerV9.LedgerParameters.initialParameters()
     });
   }
   const problem = DUST_FEE_FLOOR_PROBLEM ?? arrived.problem;
@@ -203,20 +244,24 @@ async function feeFloorOf(wallet: any, networkId: string, how: 'restored' | 'fre
     passed: DUST_FEE_FLOOR,
     arrived: arrived.value,
     applied: applied.value,
-    ...(problem ? { problem } : {}),
+    ...(problem ? { problem } : {})
   };
   const verdict = feeFloorVerdict(reading);
   return {
     how: verdict.ok ? how : 'refused',
     detail: detail ? `${verdict.line}, ${detail}` : verdict.line,
     feeFloor: reading,
-    reason: verdict.reason,
+    reason: verdict.reason
   };
 }
 
 /** Where the shielded or unshielded wallet's state is cached, beside the DUST wallet's. */
-export const walletCachePath = (root: string, network: string, masterSeed: string, surface: 'shielded' | 'unshielded') =>
-  join(root, '.wallet-state', `${surface}-${network}-${masterSeed.slice(0, 16)}.state`);
+export const walletCachePath = (
+  root: string,
+  network: string,
+  masterSeed: string,
+  surface: 'shielded' | 'unshielded'
+) => join(root, '.wallet-state', `${surface}-${network}-${masterSeed.slice(0, 16)}.state`);
 
 /**
  * Starts a wallet from its cache when the cache is young enough and the library accepts it, otherwise afresh. A
@@ -225,7 +270,10 @@ export const walletCachePath = (root: string, network: string, masterSeed: strin
  * library refuses is named: the file is what is wrong, and this run's save replaces it.
  */
 async function fromCache(
-  what: string, cache: string, restore: (saved: string) => any, start: () => Promise<any>,
+  what: string,
+  cache: string,
+  restore: (saved: string) => any,
+  start: () => Promise<any>
 ): Promise<{ wallet: any; how: 'restored' | 'fresh'; detail: string }> {
   let why = '';
   if (existsSync(cache)) {
@@ -234,17 +282,24 @@ async function fromCache(
     const maxAgeMs = Number(process.env.MIDNIGHT_DUST_CACHE_MAX_AGE_MS || 3 * 60 * 60_000);
     const ageMs = Date.now() - statSync(cache).mtimeMs;
     if (what === 'DUST' && ageMs > maxAgeMs) {
-      why = `the cached ${what} state was ${(ageMs / 3_600_000).toFixed(1)}h old and was NOT used — a stale view `
-        + 'builds a proof the node rejects (error 170), so this run resyncs';
+      why =
+        `the cached ${what} state was ${(ageMs / 3_600_000).toFixed(1)}h old and was NOT used — a stale view ` +
+        'builds a proof the node rejects (error 170), so this run resyncs';
     } else {
       const saved = readFileSync(cache, 'utf8');
       try {
         const restored = saved.trim() ? restore(saved) : null;
-        if (restored) return { wallet: restored, how: 'restored', detail: `resumed from a state ${(ageMs / 60_000).toFixed(0)} min old` };
+        if (restored)
+          return {
+            wallet: restored,
+            how: 'restored',
+            detail: `resumed from a state ${(ageMs / 60_000).toFixed(0)} min old`
+          };
       } catch (e: any) {
-        why = `the cached ${what} state in ${cache} was refused by the wallet library (${String(e?.message ?? e).slice(0, 120)}); `
-          + 'the file is what is wrong, not the wallet or the fee floor. It was not used, this run resyncs, and '
-          + 'its save replaces the file; to keep it, move it aside before then';
+        why =
+          `the cached ${what} state in ${cache} was refused by the wallet library (${String(e?.message ?? e).slice(0, 120)}); ` +
+          'the file is what is wrong, not the wallet or the fee floor. It was not used, this run resyncs, and ' +
+          'its save replaces the file; to keep it, move it aside before then';
       }
     }
   }
@@ -274,7 +329,7 @@ export async function buildWalletWithDust(
   masterSeed: string,
   network: string,
   root: string,
-  options: { note?: (line: string) => void } = {},
+  options: { note?: (line: string) => void } = {}
 ): Promise<WalletWithDust> {
   const note = options.note ?? ((line: string) => console.log(line));
   const tk: any = await import('@midnight-ntwrk/testkit-js');
@@ -282,30 +337,40 @@ export async function buildWalletWithDust(
   const { LedgerParameters } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const builder = tk.FluentWalletBuilder.forEnvironment(cfg);
   const baseConfig = builder?.config;
-  if (!baseConfig) throw new Error('could not read the wallet configuration off the testkit\'s builder');
+  if (!baseConfig) throw new Error("could not read the wallet configuration off the testkit's builder");
   if (!baseConfig.txHistoryStorage) {
     throw new Error(
-      'the wallet configuration carries no history store, so no wallet was built. A DUST wallet given a fresh,\n'
-        + '  empty store would never show its own payments in the wallet\'s history, and as a fee payer it would refuse\n'
-        + '  every fee after its first. Nothing has been submitted. This is a change in the testkit\'s shape, not a\n'
-        + '  chain or funding problem, and starting again will not clear it.');
+      'the wallet configuration carries no history store, so no wallet was built. A DUST wallet given a fresh,\n' +
+        "  empty store would never show its own payments in the wallet's history, and as a fee payer it would refuse\n" +
+        "  every fee after its first. Nothing has been submitted. This is a change in the testkit's shape, not a\n" +
+        '  chain or funding problem, and starting again will not clear it.'
+    );
   }
   const seeds = tk.WalletSeeds.fromMasterSeed(masterSeed);
   const keystore = sdk.createKeystore({ kind: 'schnorr', secret: seeds.unshielded }, builder.networkId);
   const shieldedConfig = { ...baseConfig, ...SHIELDED_READ };
   const shieldedFile = walletCachePath(root, network, masterSeed, 'shielded');
-  const shieldedStart = await fromCache('shielded', shieldedFile,
+  const shieldedStart = await fromCache(
+    'shielded',
+    shieldedFile,
     (saved) => sdk.ShieldedWallet(shieldedConfig).restore(saved),
-    () => tk.WalletFactory.createShieldedWallet(shieldedConfig, seeds.shielded));
+    () => tk.WalletFactory.createShieldedWallet(shieldedConfig, seeds.shielded)
+  );
   const shielded = shieldedStart.wallet;
   note(`shielded wallet ${shieldedStart.how} — ${shieldedStart.detail}`);
   // As WalletFactory.createUnshieldedWallet builds it: its own, empty history store.
-  const unshieldedStart = await fromCache('unshielded', walletCachePath(root, network, masterSeed, 'unshielded'),
-    (saved) => sdk.UnshieldedWallet({
-      ...baseConfig,
-      txHistoryStorage: new sdk.InMemoryTransactionHistoryStorage(sdk.WalletEntrySchema, sdk.mergeWalletEntries),
-    }).restore(saved),
-    () => tk.WalletFactory.createUnshieldedWallet(baseConfig, keystore));
+  const unshieldedStart = await fromCache(
+    'unshielded',
+    walletCachePath(root, network, masterSeed, 'unshielded'),
+    (saved) =>
+      sdk
+        .UnshieldedWallet({
+          ...baseConfig,
+          txHistoryStorage: new sdk.InMemoryTransactionHistoryStorage(sdk.WalletEntrySchema, sdk.mergeWalletEntries)
+        })
+        .restore(saved),
+    () => tk.WalletFactory.createUnshieldedWallet(baseConfig, keystore)
+  );
   const unshielded = unshieldedStart.wallet;
   note(`unshielded wallet ${unshieldedStart.how} — ${unshieldedStart.detail}`);
   // Mirrors WalletFactory.createDustWallet, with the fee floor set.
@@ -314,25 +379,30 @@ export async function buildWalletWithDust(
     costParameters: {
       ledgerParams: tk.DEFAULT_DUST_OPTIONS.ledgerParams,
       additionalFeeOverhead: DUST_FEE_FLOOR,
-      feeBlocksMargin: tk.DEFAULT_DUST_OPTIONS.feeBlocksMargin,
-    },
+      feeBlocksMargin: tk.DEFAULT_DUST_OPTIONS.feeBlocksMargin
+    }
   };
   const Dust = await projectionsDustWallet(dustConfig);
-  const dustStart = await fromCache('DUST', dustCachePath(root, network, masterSeed), (saved) => Dust.restore(saved),
-    () => Dust.startWithSeed(seeds.dust, LedgerParameters.initialParameters().dust));
+  const dustStart = await fromCache(
+    'DUST',
+    dustCachePath(root, network, masterSeed),
+    (saved) => Dust.restore(saved),
+    () => Dust.startWithSeed(seeds.dust, LedgerParameters.initialParameters().dust)
+  );
   const started = { dust: dustStart.wallet, how: dustStart.how, detail: dustStart.detail };
   const facade = await tk.WalletFactory.createWalletFacade(baseConfig, shielded, unshielded, started.dust);
   const wallet = await tk.MidnightWalletProvider.withWallet(logger, cfg, facade, seeds, keystore);
   reportSync(started.dust, 'dust wallet', note);
   // Saved the moment it is synced, so a run stopped after the replay keeps it.
   reportSync(shielded, 'shielded wallet', note, 10_000, () => saveState(shieldedFile, shielded));
-  const how = started.how === 'fresh'
-    ? `${started.detail}, syncing by projections (this wallet's own DUST, read from the indexer)`
-    : started.detail;
+  const how =
+    started.how === 'fresh'
+      ? `${started.detail}, syncing by projections (this wallet's own DUST, read from the indexer)`
+      : started.detail;
   return {
     wallet,
     installed: await feeFloorOf(wallet, String(dustConfig.networkId ?? ''), started.how, how),
-    forkV9: BigInt(baseConfig.forks?.v9 ?? 0),
+    forkV9: BigInt(baseConfig.forks?.v9 ?? 0)
   };
 }
 
@@ -345,7 +415,7 @@ export async function facadeAtLedger9(
   facade: any,
   forkV9: bigint,
   note: (line: string) => void,
-  o: { pollMs?: number; printMs?: number; now?: () => number; sleep?: (ms: number) => Promise<unknown> } = {},
+  o: { pollMs?: number; printMs?: number; now?: () => number; sleep?: (ms: number) => Promise<unknown> } = {}
 ): Promise<void> {
   const sleep = o.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = o.now ?? (() => Date.now());
@@ -354,8 +424,10 @@ export async function facadeAtLedger9(
   while (BigInt(facade.currentVersion()) < forkV9) {
     if (now() - printed >= (o.printMs ?? 10_000)) {
       printed = now();
-      note(`  ${String(Math.round((printed - started) / 1000)).padStart(3)}s  the wallet writes for protocol version `
-        + `${facade.currentVersion()}, not yet ledger 9 (${forkV9}); the shielded wallet is still replaying ledger 8`);
+      note(
+        `  ${String(Math.round((printed - started) / 1000)).padStart(3)}s  the wallet writes for protocol version ` +
+          `${facade.currentVersion()}, not yet ledger 9 (${forkV9}); the shielded wallet is still replaying ledger 8`
+      );
     }
     await sleep(o.pollMs ?? 1_000);
   }
@@ -372,10 +444,13 @@ export async function registrationSidesSynced(
   facade: any,
   forkV9: bigint,
   note: (line: string) => void,
-  o: { pollMs?: number; printMs?: number; now?: () => number; sleep?: (ms: number) => Promise<unknown> } = {},
+  o: { pollMs?: number; printMs?: number; now?: () => number; sleep?: (ms: number) => Promise<unknown> } = {}
 ): Promise<{ unshielded: any; dust: any }> {
   await facadeAtLedger9(facade, forkV9, note, o);
-  const [unshielded, dust] = await Promise.all([facade.unshielded.waitForSyncedState(), facade.dust.waitForSyncedState()]);
+  const [unshielded, dust] = await Promise.all([
+    facade.unshielded.waitForSyncedState(),
+    facade.dust.waitForSyncedState()
+  ]);
   return { unshielded, dust };
 }
 
@@ -404,7 +479,7 @@ export async function saveWalletState(
   wallet: any,
   masterSeed: string,
   network: string,
-  root: string,
+  root: string
 ): Promise<number | null> {
   let dustFile: string | null = null;
   try {
@@ -412,11 +487,13 @@ export async function saveWalletState(
     if (typeof serialized === 'string' && recordsProjections(serialized)) {
       dustFile = dustCachePath(root, network, masterSeed);
     }
-  } catch { /* no DUST state to save */ }
+  } catch {
+    /* no DUST state to save */
+  }
   const sizes = await Promise.all([
     dustFile ? saveState(dustFile, wallet.wallet.dust) : Promise.resolve(null),
     saveState(walletCachePath(root, network, masterSeed, 'shielded'), wallet?.wallet?.shielded),
-    saveState(walletCachePath(root, network, masterSeed, 'unshielded'), wallet?.wallet?.unshielded),
+    saveState(walletCachePath(root, network, masterSeed, 'unshielded'), wallet?.wallet?.unshielded)
   ]);
   const written = sizes.filter((n): n is number => n !== null);
   return written.length ? written.reduce((a, b) => a + b, 0) : null;
@@ -447,13 +524,18 @@ export const dustProgressKnown = (p: any): boolean => {
  * block (`dustViewCovers`). A pass reports progress before its state update lands, so a complete reading at the
  * block the wait began at may be from before the pass that would show the newest DUST.
  */
-export const dustCaughtUp = (p: unknown, movedFrom: bigint): boolean => dustViewCovers(dustViewHeight(p), movedFrom + 1n);
+export const dustCaughtUp = (p: unknown, movedFrom: bigint): boolean =>
+  dustViewCovers(dustViewHeight(p), movedFrom + 1n);
 
 export const dustProgressOf = (s: any) => s?.dust?.state?.progress ?? s?.dust?.progress;
 
 /** The block height a DUST view's last pass recorded, finished or not, read now: where a catch-up wait begins. */
 export const dustMovedFrom = (s: any): bigint => {
-  try { return BigInt(dustProgressOf(s)?.highestIndex ?? 0n); } catch { return 0n; }
+  try {
+    return BigInt(dustProgressOf(s)?.highestIndex ?? 0n);
+  } catch {
+    return 0n;
+  }
 };
 
 /* ------------------------------------------------------------------ *
@@ -472,8 +554,7 @@ export const dustIndexerHttpOf = (dust: any): string | null => {
 
 /** Where the view stood when a strict wait ended. */
 export type AtTipOutcome =
-  | { readonly ok: true; readonly applied: bigint; readonly tip: bigint }
-  | { readonly ok: false; readonly why: string };
+  { readonly ok: true; readonly applied: bigint; readonly tip: bigint } | { readonly ok: false; readonly why: string };
 
 export interface AtTipOptions {
   /** How long the view's block may stand still before the view counts as stalled. */
@@ -499,7 +580,7 @@ export async function waitForDustAtTip(
   live: { state: () => any },
   tipNow: () => Promise<bigint>,
   note: (s: string) => void,
-  o: AtTipOptions = {},
+  o: AtTipOptions = {}
 ): Promise<AtTipOutcome> {
   const stallMs = o.stallMs ?? 60_000;
   const totalMs = o.totalMs ?? 20 * 60_000;
@@ -514,7 +595,10 @@ export async function waitForDustAtTip(
   try {
     tip = await tipNow();
   } catch (e) {
-    return { ok: false, why: `the indexer could not say how far the network's DUST has got: ${String((e as Error)?.message ?? e)}` };
+    return {
+      ok: false,
+      why: `the indexer could not say how far the network's DUST has got: ${String((e as Error)?.message ?? e)}`
+    };
   }
   let last = appliedNow();
   let movedAt = started;
@@ -523,12 +607,21 @@ export async function waitForDustAtTip(
     const applied = appliedNow();
     if (applied !== null && dustViewCovers(applied, tip)) return { ok: true, applied, tip };
     const t = now();
-    if (applied !== last) { last = applied; movedAt = t; }
+    if (applied !== last) {
+      last = applied;
+      movedAt = t;
+    }
     if (t - movedAt >= stallMs) {
-      return { ok: false, why: `the wallet's view of the network's DUST has not moved for ${Math.round(stallMs / 1000)} s (${describeDustView(applied, tip)})` };
+      return {
+        ok: false,
+        why: `the wallet's view of the network's DUST has not moved for ${Math.round(stallMs / 1000)} s (${describeDustView(applied, tip)})`
+      };
     }
     if (t - started >= totalMs) {
-      return { ok: false, why: `the wallet's view of the network's DUST did not reach the network's within ${Math.round(totalMs / 60_000)} minutes (${describeDustView(applied, tip)})` };
+      return {
+        ok: false,
+        why: `the wallet's view of the network's DUST did not reach the network's within ${Math.round(totalMs / 60_000)} minutes (${describeDustView(applied, tip)})`
+      };
     }
     if (t - printed >= printMs) {
       printed = t;
@@ -555,11 +648,17 @@ export function dustNumbers(state: any, tip: bigint | null): string {
     }
   };
   let balance = '?';
-  try { balance = String(dust.balance(new Date())); } catch { /* stays ? */ }
-  return `${describeDustView(dustViewHeight(dustProgressOf(state)), tip)}; `
-    + `${count(() => dust.availableCoins)} coins free to spend, `
-    + `${count(() => dust.state.pendingDust)} booked by the wallet, `
-    + `${count(() => dust.state.state.utxos)} unbooked in the ledger state; balance ${balance}`;
+  try {
+    balance = String(dust.balance(new Date()));
+  } catch {
+    /* stays ? */
+  }
+  return (
+    `${describeDustView(dustViewHeight(dustProgressOf(state)), tip)}; ` +
+    `${count(() => dust.availableCoins)} coins free to spend, ` +
+    `${count(() => dust.state.pendingDust)} booked by the wallet, ` +
+    `${count(() => dust.state.state.utxos)} unbooked in the ledger state; balance ${balance}`
+  );
 }
 
 /**
@@ -582,9 +681,9 @@ export async function waitForDustCatchUp(
   note: (s: string) => void,
   describe: (s: any) => string,
   timeoutMs = 5 * 60_000,
-  o: { sleep?: (ms: number) => Promise<unknown>; now?: () => number } = {},
+  o: { sleep?: (ms: number) => Promise<unknown>; now?: () => number } = {}
 ): Promise<boolean> {
-  const sleep = o.sleep ?? ((ms: number) => new Promise(r => setTimeout(r, ms)));
+  const sleep = o.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = o.now ?? (() => Date.now());
   const movedFrom = dustMovedFrom(live.state());
   const caughtUp = () => dustCaughtUp(dustProgressOf(live.state()), movedFrom);
@@ -609,4 +708,3 @@ export async function waitForDustCatchUp(
   }
   return true;
 }
-

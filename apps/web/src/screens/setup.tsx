@@ -1,11 +1,35 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Alert, AlertDescription, Badge, Button, ComingSoon, Progress, SectionLoading, Tabs, TabsContent, TabsList, TabsTrigger, useText } from 'vaults-ui';
+import {
+  Alert,
+  AlertDescription,
+  Badge,
+  Button,
+  ComingSoon,
+  Progress,
+  SectionLoading,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  useText
+} from 'vaults-ui';
 import { readVaultRows } from '../adapters/vault-rows.js';
 import { CompanyRecordsProvider, useCompanyView } from '../records/company-records.js';
 import { SessionProvider, useSession } from '../session.js';
 import { STEP, type StepId } from '../setup/step-ids.js';
-import { blockedBy, firstOpen, isDoneForGood, nextAfter, skippedFor, skipStep, STANDING, standingOf, useCreationFact, useInvitedFact } from '../setup/standing.js';
+import {
+  blockedBy,
+  firstOpen,
+  isDoneForGood,
+  nextAfter,
+  skippedFor,
+  skipStep,
+  STANDING,
+  standingOf,
+  useCreationFact,
+  useInvitedFact
+} from '../setup/standing.js';
 import { EVERY_STEP, isBuiltStep, takeAsked, type SetupFacts } from '../setup/steps.js';
 
 /**
@@ -39,11 +63,16 @@ import { EVERY_STEP, isBuiltStep, takeAsked, type SetupFacts } from '../setup/st
  * (its component) and the People step's done fact.
  */
 export function Setup() {
-  return <CompanyRecordsProvider><SetupSteps /></CompanyRecordsProvider>;
+  return (
+    <CompanyRecordsProvider>
+      <SetupSteps />
+    </CompanyRecordsProvider>
+  );
 }
 
 function SetupSteps() {
-  const t = useText(), view = useCompanyView();
+  const t = useText(),
+    view = useCompanyView();
   const session = useSession();
   const { person } = session;
   const [asked] = useState(() => takeAsked());
@@ -53,7 +82,9 @@ function SetupSteps() {
    * wizard, and every step in it, see no company until the new one is created
    * and shown.
    */
-  const [shownWhenAsked, setShownWhenAsked] = useState(() => (asked?.newCompany === true ? session.company : undefined));
+  const [shownWhenAsked, setShownWhenAsked] = useState(() =>
+    asked?.newCompany === true ? session.company : undefined
+  );
   const company = shownWhenAsked !== undefined && session.company === shownWhenAsked ? null : session.company;
   const [vaults, setVaults] = useState<SetupFacts['vaults']>(null);
   const [, setSkips] = useState(0);
@@ -66,16 +97,25 @@ function SetupSteps() {
   const [chosen, setCurrent] = useState<StepId>(() => asked?.step ?? firstOpen(facts, skipped));
   /* Whether the step shown was chosen, by the person or by whoever opened the wizard, rather than picked from what was known at the start. */
   const [moved, setMoved] = useState(asked !== null);
-  const choose = (id: StepId): void => { setMoved(true); setCurrent(id); };
-  const startNewCompany = (): void => { setStarted(null); setShownWhenAsked(session.company); choose(STEP.createCompany); };
+  const choose = (id: StepId): void => {
+    setMoved(true);
+    setCurrent(id);
+  };
+  const startNewCompany = (): void => {
+    setStarted(null);
+    setShownWhenAsked(session.company);
+    choose(STEP.createCompany);
+  };
   const skipWhyId = useId();
   const continueWhyId = useId();
 
   const read = useCallback(async () => {
     /* Vaults that could not be read are read as none created: the step stays open, and is never shown done on a guess. */
-    setVaults(view === null ? null : await readVaultRows(person.id, view) ?? []);
+    setVaults(view === null ? null : ((await readVaultRows(person.id, view)) ?? []));
   }, [person.id, view]);
-  useEffect(() => { void read(); }, [read]);
+  useEffect(() => {
+    void read();
+  }, [read]);
 
   /*
    * The step shown is the one chosen, unless it is done for good: then it is
@@ -83,7 +123,7 @@ function SetupSteps() {
    * the wizard is on the step after it.
    */
   const chosenIndex = EVERY_STEP.findIndex((s) => s.id === chosen);
-  const current = isDoneForGood(EVERY_STEP[chosenIndex]!, facts) ? nextAfter(chosenIndex, facts) ?? chosen : chosen;
+  const current = isDoneForGood(EVERY_STEP[chosenIndex]!, facts) ? (nextAfter(chosenIndex, facts) ?? chosen) : chosen;
   const index = EVERY_STEP.findIndex((s) => s.id === current);
   const step = EVERY_STEP[index]!;
   const standings = EVERY_STEP.map((s) => standingOf(s, facts, skipped));
@@ -91,25 +131,42 @@ function SetupSteps() {
   /* What the company has done is read after the wizard is drawn; until it is, whether a step is done for good is not known. */
   const reading = creation === null || (company !== null && vaults === null);
   /* Once what is known arrives, a wizard nobody has steered opens at the first step neither done nor skipped, as that now reads. */
-  useEffect(() => { if (!reading && !moved) setCurrent(firstOpen(facts, skipped)); }, [reading]);
+  useEffect(() => {
+    if (!reading && !moved) setCurrent(firstOpen(facts, skipped));
+  }, [reading]);
   const closed = EVERY_STEP.map((s, i) => forGood[i]! || (reading && s.cannotBeUndone));
   const doneCount = standings.filter((s) => s === STANDING.done).length;
   const blocker = reading ? null : blockedBy(index, facts);
   const blockedStep = blocker === null ? null : EVERY_STEP.find((s) => s.id === blocker)!;
   const waitsFor = blockedStep === null ? '' : blockedStep.name(t);
   const waits = t('setup.blocked', { step: waitsFor });
-  const next = (): void => { const n = nextAfter(index, facts); if (n !== null) choose(n); };
-  const skip = (): void => { skipStep(company, current); setSkips((n) => n + 1); next(); };
+  const next = (): void => {
+    const n = nextAfter(index, facts);
+    if (n !== null) choose(n);
+  };
+  const skip = (): void => {
+    skipStep(company, current);
+    setSkips((n) => n + 1);
+    next();
+  };
   /* Why Skip and Continue cannot be used, or null when they can; the first reason that holds. */
-  const skipWhy = !step.skippable ? t('setup.skip.cannot')
-    : blocker !== null ? waits
-      : forGood[index] ? t('setup.skip.done')
-        : closed[index] ? t('setup.skip.reading')
+  const skipWhy = !step.skippable
+    ? t('setup.skip.cannot')
+    : blocker !== null
+      ? waits
+      : forGood[index]
+        ? t('setup.skip.done')
+        : closed[index]
+          ? t('setup.skip.reading')
           : null;
-  const continueWhy = blocker !== null ? waits
-    : standings[index] !== STANDING.done ? t('setup.continue.notDone')
-      : nextAfter(index, facts) === null ? t('setup.continue.last')
-        : null;
+  const continueWhy =
+    blocker !== null
+      ? waits
+      : standings[index] !== STANDING.done
+        ? t('setup.continue.notDone')
+        : nextAfter(index, facts) === null
+          ? t('setup.continue.last')
+          : null;
   /*
    * A step done for good is shown only when no step after it is open (the
    * fallback above). Even then its action is not drawn, so it is never
@@ -129,13 +186,27 @@ function SetupSteps() {
         <TabsList aria-label={t('page.setup.name')} data-setup-steps>
           {EVERY_STEP.map((s, i) => (
             <TabsTrigger
-              key={s.id} value={s.id} disabled={closed[i]} aria-disabled={!reading && blockedBy(i, facts) !== null ? true : undefined} className="aria-disabled:opacity-50"
-              data-step={s.id} data-standing={standings[i]} data-done-for-good={forGood[i] ? '' : undefined}
+              key={s.id}
+              value={s.id}
+              disabled={closed[i]}
+              aria-disabled={!reading && blockedBy(i, facts) !== null ? true : undefined}
+              className="aria-disabled:opacity-50"
+              data-step={s.id}
+              data-standing={standings[i]}
+              data-done-for-good={forGood[i] ? '' : undefined}
             >
               <HugeiconsIcon icon={s.icon} strokeWidth={2} className="size-4" />
               <span>{s.name(t)}</span>
-              {standings[i] === STANDING.done ? <Badge variant="secondary" data-done>{t('setup.done')}</Badge> : null}
-              {standings[i] === STANDING.skipped ? <Badge variant="outline" data-skipped>{t('setup.skipped')}</Badge> : null}
+              {standings[i] === STANDING.done ? (
+                <Badge variant="secondary" data-done>
+                  {t('setup.done')}
+                </Badge>
+              ) : null}
+              {standings[i] === STANDING.skipped ? (
+                <Badge variant="outline" data-skipped>
+                  {t('setup.skipped')}
+                </Badge>
+              ) : null}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -146,24 +217,42 @@ function SetupSteps() {
             {soon === null || blocker !== null ? null : <ComingSoon explanation={soon} />}
           </div>
           <p className="max-w-prose text-sm text-muted-foreground">{step.line(t)}</p>
-          {forGood[index]
-            ? <p className="max-w-prose text-sm" data-step-done-for-good>{t('setup.doneForGood')}</p>
-            : blockedStep !== null
-              ? (
-                <Alert className="max-w-prose" data-step-blocked={blockedStep.id}>
-                  <AlertDescription>{waits}</AlertDescription>
-                  <div><Button variant="outline" onClick={() => choose(blockedStep.id)} data-lead-to={blockedStep.id}>{t('setup.blocked.go', { step: waitsFor })}</Button></div>
-                </Alert>
-              )
-            : soon !== null
-              ? <p className="max-w-prose text-sm text-muted-foreground" data-coming-soon-step>{soon}</p>
-              : Action === null
-                ? <SectionLoading rows={2} data-step-reading="" />
-                : (
-                  <>
-                    <SessionProvider session={{ ...session, company }}><Action leadTo={choose} onChanged={(startedCompany) => { if (startedCompany !== undefined) setStarted(startedCompany); reloadRecords(); void read(); void reread(startedCompany); }} creation={creationCompany} startNewCompany={startNewCompany} /></SessionProvider>
-                  </>
-                )}
+          {forGood[index] ? (
+            <p className="max-w-prose text-sm" data-step-done-for-good>
+              {t('setup.doneForGood')}
+            </p>
+          ) : blockedStep !== null ? (
+            <Alert className="max-w-prose" data-step-blocked={blockedStep.id}>
+              <AlertDescription>{waits}</AlertDescription>
+              <div>
+                <Button variant="outline" onClick={() => choose(blockedStep.id)} data-lead-to={blockedStep.id}>
+                  {t('setup.blocked.go', { step: waitsFor })}
+                </Button>
+              </div>
+            </Alert>
+          ) : soon !== null ? (
+            <p className="max-w-prose text-sm text-muted-foreground" data-coming-soon-step>
+              {soon}
+            </p>
+          ) : Action === null ? (
+            <SectionLoading rows={2} data-step-reading="" />
+          ) : (
+            <>
+              <SessionProvider session={{ ...session, company }}>
+                <Action
+                  leadTo={choose}
+                  onChanged={(startedCompany) => {
+                    if (startedCompany !== undefined) setStarted(startedCompany);
+                    reloadRecords();
+                    void read();
+                    void reread(startedCompany);
+                  }}
+                  creation={creationCompany}
+                  startNewCompany={startNewCompany}
+                />
+              </SessionProvider>
+            </>
+          )}
         </TabsContent>
       </Tabs>
       <footer className="mt-auto flex flex-col gap-3 border-t pt-4" data-setup-bar>
@@ -172,16 +261,45 @@ function SetupSteps() {
           getValueLabel={() => t('setup.progress', { done: doneCount, count: EVERY_STEP.length })}
           data-progress
         />
-        <span className="text-sm text-muted-foreground" data-progress-words>{t('setup.progress', { done: doneCount, count: EVERY_STEP.length })}</span>
+        <span className="text-sm text-muted-foreground" data-progress-words>
+          {t('setup.progress', { done: doneCount, count: EVERY_STEP.length })}
+        </span>
         {skipWhy === null && continueWhy === null ? null : (
           <div className="flex flex-col gap-1" data-why-bar>
-            {skipWhy === null ? null : <span id={skipWhyId} className="text-xs text-muted-foreground" data-why-disabled={oneWhy ? 'skip continue' : 'skip'}>{skipWhy}</span>}
-            {continueWhy === null || oneWhy ? null : <span id={continueWhyId} className="text-xs text-muted-foreground" data-why-disabled="continue">{continueWhy}</span>}
+            {skipWhy === null ? null : (
+              <span
+                id={skipWhyId}
+                className="text-xs text-muted-foreground"
+                data-why-disabled={oneWhy ? 'skip continue' : 'skip'}
+              >
+                {skipWhy}
+              </span>
+            )}
+            {continueWhy === null || oneWhy ? null : (
+              <span id={continueWhyId} className="text-xs text-muted-foreground" data-why-disabled="continue">
+                {continueWhy}
+              </span>
+            )}
           </div>
         )}
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="ghost" disabled={skipWhy !== null} aria-describedby={skipWhy === null ? undefined : skipWhyId} onClick={skip} data-action="skip">{t('setup.skip')}</Button>
-          <Button disabled={continueWhy !== null} aria-describedby={continueWhy === null ? undefined : continueDescribedBy} onClick={next} data-action="continue">{t('setup.continue')}</Button>
+          <Button
+            variant="ghost"
+            disabled={skipWhy !== null}
+            aria-describedby={skipWhy === null ? undefined : skipWhyId}
+            onClick={skip}
+            data-action="skip"
+          >
+            {t('setup.skip')}
+          </Button>
+          <Button
+            disabled={continueWhy !== null}
+            aria-describedby={continueWhy === null ? undefined : continueDescribedBy}
+            onClick={next}
+            data-action="continue"
+          >
+            {t('setup.continue')}
+          </Button>
         </div>
       </footer>
     </div>

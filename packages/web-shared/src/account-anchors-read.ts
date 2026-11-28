@@ -16,28 +16,62 @@ import type { VouchingRun } from './account-calls-read.js';
 /** Thrown, with nothing built or sent, when an anchor call - or a recovery, `recovery` - cannot be made as this device would send it. */
 export class AnchorNotBuilt extends Error {
   constructor(why: string, options?: { cause?: unknown; recovery?: boolean }) {
-    super(`${options?.recovery === true ? 'the recovery of the company\'s records was not carried out' : 'the company\'s records were not anchored'}: ${why}. `
-      + 'Nothing was built or sent.', options);
+    super(
+      `${options?.recovery === true ? "the recovery of the company's records was not carried out" : "the company's records were not anchored"}: ${why}. ` +
+        'Nothing was built or sent.',
+      options
+    );
     this.name = 'AnchorNotBuilt';
   }
 }
 
 export const anchorPure = (deps: Pick<GovernedCallDeps, 'accountPure'>) => {
-  const { anchorKey, anchorHeadOf, anchorHeldOf, anchorRecoveredOf, anchorTagOf, anchorSeatKey, signerPublicKey, vacantSlot, slotOf } = deps.accountPure;
-  if (typeof anchorKey !== 'function' || typeof anchorHeadOf !== 'function' || typeof anchorHeldOf !== 'function'
-    || typeof anchorRecoveredOf !== 'function' || typeof anchorTagOf !== 'function' || typeof anchorSeatKey !== 'function'
-    || typeof signerPublicKey !== 'function' || typeof vacantSlot !== 'function' || typeof slotOf !== 'function') {
-    throw new AnchorNotBuilt('this device was not given the account\'s functions for its record anchor. Reload the page to use the '
-      + 'current build');
+  const {
+    anchorKey,
+    anchorHeadOf,
+    anchorHeldOf,
+    anchorRecoveredOf,
+    anchorTagOf,
+    anchorSeatKey,
+    signerPublicKey,
+    vacantSlot,
+    slotOf
+  } = deps.accountPure;
+  if (
+    typeof anchorKey !== 'function' ||
+    typeof anchorHeadOf !== 'function' ||
+    typeof anchorHeldOf !== 'function' ||
+    typeof anchorRecoveredOf !== 'function' ||
+    typeof anchorTagOf !== 'function' ||
+    typeof anchorSeatKey !== 'function' ||
+    typeof signerPublicKey !== 'function' ||
+    typeof vacantSlot !== 'function' ||
+    typeof slotOf !== 'function'
+  ) {
+    throw new AnchorNotBuilt(
+      "this device was not given the account's functions for its record anchor. Reload the page to use the " +
+        'current build'
+    );
   }
-  return { anchorKey, anchorHeadOf, anchorHeldOf, anchorRecoveredOf, anchorTagOf, anchorSeatKey, signerPublicKey, vacantSlot, slotOf };
+  return {
+    anchorKey,
+    anchorHeadOf,
+    anchorHeldOf,
+    anchorRecoveredOf,
+    anchorTagOf,
+    anchorSeatKey,
+    signerPublicKey,
+    vacantSlot,
+    slotOf
+  };
 };
 
 /** A signer tree's root as a header names it: the field, as 64 hex digits, big-endian. */
 const rootHexOf = (field: bigint): string => field.toString(16).padStart(64, '0');
 export const rootOfHex = (hex: string): { field: bigint } => {
   const h = String(hex).toLowerCase();
-  if (!HEX64.test(h)) throw new AnchorNotBuilt('the batch does not name the root of the account\'s signers as it was judged');
+  if (!HEX64.test(h))
+    throw new AnchorNotBuilt("the batch does not name the root of the account's signers as it was judged");
   return { field: BigInt(`0x${h}`) };
 };
 
@@ -48,7 +82,10 @@ export const rootOfHex = (hex: string): { field: bigint } => {
  */
 export function signerRootOf(deps: Pick<GovernedCallDeps, 'accountTree'>, signers: readonly string[]): string {
   const T = deps.accountTree;
-  if (T === undefined) throw new AnchorNotBuilt('this device was not given the account\'s signer tree. Reload the page to use the current build');
+  if (T === undefined)
+    throw new AnchorNotBuilt(
+      "this device was not given the account's signer tree. Reload the page to use the current build"
+    );
   const bytes = new T.CompactTypeBytes(32);
   let tree = new T.StateBoundedMerkleTree(10) as { update(index: bigint, leaf: unknown): unknown };
   signers.forEach((leaf, slot) => {
@@ -56,7 +93,7 @@ export function signerRootOf(deps: Pick<GovernedCallDeps, 'accountTree'>, signer
     tree = tree.update(BigInt(slot), { value: bytes.toValue(b), alignment: bytes.alignment() }) as typeof tree;
   });
   const root = (tree as unknown as { rehash(): { root(): { value: unknown } | undefined } }).rehash().root();
-  if (root === undefined) throw new AnchorNotBuilt('the root of the account\'s signers could not be worked out');
+  if (root === undefined) throw new AnchorNotBuilt("the root of the account's signers could not be worked out");
   return rootHexOf(T.CompactTypeMerkleTreeDigest.fromValue(root.value).field);
 }
 
@@ -77,24 +114,26 @@ export function signersMakeTheirRoot(deps: Pick<GovernedCallDeps, 'accountTree'>
  * path leads, the account's vacant-slot leaf in every other.
  */
 export function batchHoldersIn(
-  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>, accountState: Uint8Array,
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  accountState: Uint8Array
 ): BatchHolders {
   const P = anchorPure(deps);
-  if (deps.accountLedger === undefined) throw new AnchorNotBuilt('this device was not given the account\'s reader');
+  if (deps.accountLedger === undefined) throw new AnchorNotBuilt("this device was not given the account's reader");
   const view = deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as {
     threshold: bigint;
     signers: { root(): { field: bigint } | undefined; firstFree(): bigint; findPathForLeaf(leaf: Uint8Array): unknown };
     signerLeaves: Iterable<Uint8Array>;
   };
   const root = view.signers.root();
-  if (root === undefined) throw new AnchorNotBuilt('the account\'s signers could not be read from its state');
+  if (root === undefined) throw new AnchorNotBuilt("the account's signers could not be read from its state");
   const free = Number(view.signers.firstFree());
   const vacant = hexOf(P.vacantSlot());
   const signers: string[] = Array.from({ length: free }, () => vacant);
   for (const leaf of view.signerLeaves) {
     const path = view.signers.findPathForLeaf(leaf);
     const slot = path === undefined ? -1 : Number(P.slotOf(path));
-    if (!(slot >= 0 && slot < free)) throw new AnchorNotBuilt('a seated signer\'s slot could not be read from the account\'s state');
+    if (!(slot >= 0 && slot < free))
+      throw new AnchorNotBuilt("a seated signer's slot could not be read from the account's state");
     signers[slot] = hexOf(leaf);
   }
   return { approvals: Number(view.threshold), signerRoot: rootHexOf(root.field), signers };
@@ -106,10 +145,11 @@ export function batchHoldersIn(
  * seat that moved it there, null before the first.
  */
 const headInState = (
-  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>, accountState: Uint8Array,
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  accountState: Uint8Array
 ): { readonly head: string; readonly tag: string | null } => {
   const P = anchorPure(deps);
-  if (deps.accountLedger === undefined) throw new AnchorNotBuilt('this device was not given the account\'s reader');
+  if (deps.accountLedger === undefined) throw new AnchorNotBuilt("this device was not given the account's reader");
   const view = deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as {
     signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
   };
@@ -117,7 +157,7 @@ const headInState = (
   const seat = P.anchorSeatKey();
   return {
     head: view.signerRoles.member(key) ? hexOf(view.signerRoles.lookup(key)) : hexOf(ZERO_32),
-    tag: view.signerRoles.member(seat) ? hexOf(view.signerRoles.lookup(seat)) : null,
+    tag: view.signerRoles.member(seat) ? hexOf(view.signerRoles.lookup(seat)) : null
   };
 };
 
@@ -130,12 +170,15 @@ const headInState = (
  * account refuses any other - and that refusal lands after the fee is paid.
  */
 export function lastRecoveryIn(
-  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>, accountState: Uint8Array,
+  deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
+  accountState: Uint8Array
 ): string {
   const key = deps.accountPure.lastRecoveryKey;
   if (deps.accountLedger === undefined || typeof key !== 'function') {
-    throw new Error('this device was not given the account\'s reader for its latest recovery, so no recovery was raised or carried out. '
-      + 'Reload the page to use the current build');
+    throw new Error(
+      "this device was not given the account's reader for its latest recovery, so no recovery was raised or carried out. " +
+        'Reload the page to use the current build'
+    );
   }
   const view = deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as {
     signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
@@ -156,7 +199,11 @@ export function seatsNamedBy(deps: Pick<GovernedCallDeps, 'accountPure'>, signer
  * recovery - the head it resumes from.
  */
 export interface HeadStepAsked {
-  readonly previous: string; readonly batch: string; readonly held: BatchHolders; readonly tag: string; readonly resumesFrom?: string;
+  readonly previous: string;
+  readonly batch: string;
+  readonly held: BatchHolders;
+  readonly tag: string;
+  readonly resumesFrom?: string;
 }
 
 /**
@@ -172,11 +219,12 @@ export function anchorHeadsAfter(
   input: {
     readonly after: readonly HeadStepAsked[];
     readonly holders?: readonly BatchHolders[];
-  },
+  }
 ): { after: string[]; seats: (string[] | null)[]; holderSeats: (string[] | null)[] } {
   const P = anchorPure(deps);
   /* A batch whose holders the account's own functions refuse - a root that is no field element - folds to the empty head, which no batch on the chain's path ever leaves, so it is passed over and never believed. */
-  const seatsOf = (held: BatchHolders): string[] | null => (signersMakeTheirRoot(deps, held) ? seatsNamedBy(deps, held.signers) : null);
+  const seatsOf = (held: BatchHolders): string[] | null =>
+    signersMakeTheirRoot(deps, held) ? seatsNamedBy(deps, held.signers) : null;
   const headAfter = (x: HeadStepAsked): string => {
     try {
       const previous = bytesOf('head', String(x.previous).toLowerCase());
@@ -184,9 +232,14 @@ export function anchorHeadsAfter(
       const tag = bytesOf('tag', String(x.tag).toLowerCase());
       const approvals = BigInt(x.held.approvals);
       const root = rootOfHex(x.held.signerRoot);
-      return hexOf(P.anchorHeadOf(previous, x.resumesFrom === undefined
-        ? P.anchorHeldOf(batch, approvals, root, tag)
-        : P.anchorRecoveredOf(batch, approvals, root, tag, bytesOf('head', String(x.resumesFrom).toLowerCase()))));
+      return hexOf(
+        P.anchorHeadOf(
+          previous,
+          x.resumesFrom === undefined
+            ? P.anchorHeldOf(batch, approvals, root, tag)
+            : P.anchorRecoveredOf(batch, approvals, root, tag, bytesOf('head', String(x.resumesFrom).toLowerCase()))
+        )
+      );
     } catch {
       return hexOf(ZERO_32);
     }
@@ -194,7 +247,7 @@ export function anchorHeadsAfter(
   return {
     after: input.after.map(headAfter),
     seats: input.after.map((x) => seatsOf(x.held)),
-    holderSeats: (input.holders ?? []).map(seatsOf),
+    holderSeats: (input.holders ?? []).map(seatsOf)
   };
 }
 
@@ -280,7 +333,11 @@ export interface AccountDeployed {
 export function accountDeployedIn(
   deps: Pick<GovernedCallDeps, 'runtimeState'>,
   steps: ReadonlyArray<{ readonly kind: string; readonly state: Uint8Array }>,
-  seatsIn: (state: Uint8Array) => { readonly seats: readonly string[]; readonly committee: readonly CommitteeKey[]; readonly threshold: number },
+  seatsIn: (state: Uint8Array) => {
+    readonly seats: readonly string[];
+    readonly committee: readonly CommitteeKey[];
+    readonly threshold: number;
+  }
 ): AccountDeployed | null {
   const first = steps[0];
   if (first === undefined || first.kind !== 'deploy') return null;
@@ -289,13 +346,15 @@ export function accountDeployedIn(
   const authority = authorityIn(state);
   if ('why' in authority) throw new Error(`how the company's account was deployed cannot be read: ${authority.why}`);
   const second = new Set<string>(CREATION_STEPS.second);
-  const ranSecondStep = state.operations().some((op) => second.has(typeof op === 'string' ? op : new TextDecoder().decode(op)));
+  const ranSecondStep = state
+    .operations()
+    .some((op) => second.has(typeof op === 'string' ? op : new TextDecoder().decode(op)));
   return {
     seats: held.seats.map((s) => String(s).toLowerCase()),
     committee: held.committee.map((k) => ({ tag: String(k.tag), value: String(k.value).toLowerCase() })),
     threshold: Number(held.threshold),
     updates: Number(authority.counter),
-    ranSecondStep,
+    ranSecondStep
   };
 }
 
@@ -311,10 +370,12 @@ export function accountDeployedIn(
 export function anchorsLandedIn(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
   steps: ReadonlyArray<{
-    readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number };
-    readonly entryPoint?: string; readonly succeeded?: boolean;
+    readonly state: Uint8Array;
+    readonly block: { readonly height: number; readonly at: number };
+    readonly entryPoint?: string;
+    readonly succeeded?: boolean;
   }>,
-  seatBarIn: (state: Uint8Array) => number,
+  seatBarIn: (state: Uint8Array) => number
 ): AnchorLanded[] {
   const landed: AnchorLanded[] = [];
   const blocks = new Map<number, (typeof steps)[number][]>();
@@ -332,10 +393,22 @@ export function anchorsLandedIn(
     const named = block.some((x) => x.entryPoint !== undefined);
     const calls = block.filter((x) => x.entryPoint === 'anchor' || x.entryPoint === 'recoverAnchor');
     const seatBar = seatBarIn(step.state);
-    if (!Number.isSafeInteger(seatBar) || seatBar < 1) throw new AnchorNotBuilt('the approvals a change of who is seated needs could not be read from the account\'s state');
+    if (!Number.isSafeInteger(seatBar) || seatBar < 1)
+      throw new AnchorNotBuilt(
+        "the approvals a change of who is seated needs could not be read from the account's state"
+      );
     landed.push({
-      head, seatBar, ...(tag === null ? {} : { tag }), height: step.block.height, at: step.block.at,
-      ...(named ? { anchorsInBlock: calls.length, recovered: calls.some((x) => x.entryPoint === 'recoverAnchor' && x.succeeded === true) } : {}),
+      head,
+      seatBar,
+      ...(tag === null ? {} : { tag }),
+      height: step.block.height,
+      at: step.block.at,
+      ...(named
+        ? {
+            anchorsInBlock: calls.length,
+            recovered: calls.some((x) => x.entryPoint === 'recoverAnchor' && x.succeeded === true)
+          }
+        : {})
     });
     before = head;
   }

@@ -17,7 +17,13 @@ import { answerOpenedWith } from '../../../src/core/answer-opened.js';
 import { assetIdBytes, NO_ASSET } from '../../../src/core/assets.js';
 import type { PendingSignerPayload, SealedAccount, SealedProposal } from '../../../src/core/types.js';
 import type { StateChange } from '../../../src/core/ledger.js';
-import { paysCommitmentOf, proposalFilingRefusal, raiseByOf, VAULT_START_KINDS, type RetirementTerms } from '../../../src/core/proposal-filing.js';
+import {
+  paysCommitmentOf,
+  proposalFilingRefusal,
+  raiseByOf,
+  VAULT_START_KINDS,
+  type RetirementTerms
+} from '../../../src/core/proposal-filing.js';
 import { companyRecordKey, FILING_REFUSAL, notOnTheChainNow } from '../../../src/midnight/seat-directory.js';
 import { proposalEntry } from '../../../src/midnight/record-manifest.js';
 import { vouchedRefusal } from '../../../src/midnight/record-tree.js';
@@ -25,12 +31,14 @@ import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wi
 import type { GovernanceOnTheWire, OpenedRound } from './governed-call-builder.js';
 import type { GovernedCallService } from './governed-call-on-device.js';
 import { judgeIn, kindAsked, listedHere, refusedForItsKey } from './vault-page-doors.js';
-import {
-  NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads,
-} from './roster-here.js';
+import { NO_ROSTER_RECORD, provedSeatsOf, refuseASeatNotForTheInvited, type SeatingReads } from './roster-here.js';
 import { invitationByAddressRefusal, linkInvitationRefusal, NOT_APPROVED_SAID } from './invitation-signed-by-a-seat.js';
 import { wholeThreshold } from '../../../src/core/vault-approvers.js';
-import { approvedInvitationRefusal, seatByAddressChangeOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import {
+  approvedInvitationRefusal,
+  seatByAddressChangeOf,
+  type SignedSeatInvitation
+} from '../../../src/core/invitation.js';
 import { runRebuiltHere, signedStateHere, type CompanyRecordsHere } from './run-rebuilt-here.js';
 import { RoundRefusedHere, refuseWhatNoRoundMay } from './raise-checks-here.js';
 import { oneOffMadeHere, OneOffRefused } from './one-off-here.js';
@@ -70,7 +78,9 @@ export class NotOpenedOnThisDevice extends Error {
  * signed filing. A filing that does not check is refused, saying so.
  */
 export async function believedFilerHere(
-  records: RecordsForTheRound, accountId: string, rec: { readonly id: string; readonly keyEpoch: number; readonly filedBy?: { readonly publicKey: string } },
+  records: RecordsForTheRound,
+  accountId: string,
+  rec: { readonly id: string; readonly keyEpoch: number; readonly filedBy?: { readonly publicKey: string } }
 ): Promise<string | null> {
   if (rec.filedBy === undefined) return null;
   let here: Awaited<ReturnType<RecordsForTheRound['directory']>> | null = null;
@@ -78,21 +88,41 @@ export async function believedFilerHere(
   if (why === null) {
     here = await records.directory({ records: [{ store: 'proposal', kind: 'proposal', id: rec.id }] });
     why = judgeIn(here)(
-      rec.filedBy.publicKey as Hex, 'proposal', companyRecordKey('proposal', rec.id), proposalEntry(accountId, rec as never), true, rec.keyEpoch);
+      rec.filedBy.publicKey as Hex,
+      'proposal',
+      companyRecordKey('proposal', rec.id),
+      proposalEntry(accountId, rec as never),
+      true,
+      rec.keyEpoch
+    );
   }
   if (why !== null) {
     const filer = rec.filedBy.publicKey.toLowerCase();
     const seat = here?.dir.seats.find((x) => x.signingKey === filer);
-    const passedOver = why === FILING_REFUSAL['past-its-boundary'] && seat !== undefined && seat.retired !== null
-      && notOnTheChainNow(seat, here!.holders) !== null;
-    throw new NotOpenedOnThisDevice(`This device does not believe the company's record of this proposal (${why}). Do not `
-      + 'act on it.', passedOver ? { passedOver: true } : undefined);
+    const passedOver =
+      why === FILING_REFUSAL['past-its-boundary'] &&
+      seat !== undefined &&
+      seat.retired !== null &&
+      notOnTheChainNow(seat, here!.holders) !== null;
+    throw new NotOpenedOnThisDevice(
+      `This device does not believe the company's record of this proposal (${why}). Do not ` + 'act on it.',
+      passedOver ? { passedOver: true } : undefined
+    );
   }
   return rec.filedBy.publicKey.toLowerCase();
 }
 
 /** Kinds a device here approves or raises. Any other is refused before anything is read out of it, unless it is opened to be withdrawn. */
-const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'transfer', 'add-signer', 'remove-signer', 'set-threshold', 'set-vault-threshold', 'set-spending-policy', 'set-policy-bar']);
+const KINDS_A_DEVICE_ACTS_ON = new Set([
+  'payroll',
+  'transfer',
+  'add-signer',
+  'remove-signer',
+  'set-threshold',
+  'set-vault-threshold',
+  'set-spending-policy',
+  'set-policy-bar'
+]);
 
 /**
  * A removal's retirement terms as its proposal seals them, in their shape, or null: a record of the last versions
@@ -101,16 +131,32 @@ const KINDS_A_DEVICE_ACTS_ON = new Set(['payroll', 'transfer', 'add-signer', 're
  */
 const retirementTermsOf = (x: unknown): RetirementTerms | null => {
   const t = x as Partial<RetirementTerms> | null;
-  if (t === null || typeof t !== 'object' || typeof t.filedUpTo !== 'object' || t.filedUpTo === null
-    || !Object.values(t.filedUpTo).every((v) => Number.isSafeInteger(v) && v >= 0)
-    || !Number.isSafeInteger(t.threshold) || (t.threshold as number) < 1
-    || (t.atHead !== undefined && (typeof t.atHead !== 'string' || !/^[0-9a-f]{64}$/u.test(t.atHead)))) return null;
+  if (
+    t === null ||
+    typeof t !== 'object' ||
+    typeof t.filedUpTo !== 'object' ||
+    t.filedUpTo === null ||
+    !Object.values(t.filedUpTo).every((v) => Number.isSafeInteger(v) && v >= 0) ||
+    !Number.isSafeInteger(t.threshold) ||
+    (t.threshold as number) < 1 ||
+    (t.atHead !== undefined && (typeof t.atHead !== 'string' || !/^[0-9a-f]{64}$/u.test(t.atHead)))
+  )
+    return null;
   const st = t.statement;
-  if (st !== undefined && (st === null || typeof st !== 'object' || typeof st.recordsKey !== 'string' || typeof st.seat !== 'string'
-    || typeof st.signature !== 'string')) return null;
+  if (
+    st !== undefined &&
+    (st === null ||
+      typeof st !== 'object' ||
+      typeof st.recordsKey !== 'string' ||
+      typeof st.seat !== 'string' ||
+      typeof st.signature !== 'string')
+  )
+    return null;
   return {
-    filedUpTo: { ...t.filedUpTo }, threshold: t.threshold as number, ...(t.atHead === undefined ? {} : { atHead: t.atHead }),
-    ...(st === undefined ? {} : { statement: { recordsKey: st.recordsKey, seat: st.seat, signature: st.signature } }),
+    filedUpTo: { ...t.filedUpTo },
+    threshold: t.threshold as number,
+    ...(t.atHead === undefined ? {} : { atHead: t.atHead }),
+    ...(st === undefined ? {} : { statement: { recordsKey: st.recordsKey, seat: st.seat, signature: st.signature } })
   };
 };
 
@@ -124,42 +170,75 @@ const bytesOfHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu)!.m
  * saying what resolves it, when this page was not given that derivation or the identity is not the one they make.
  */
 async function withdrawalOpenedHere(
-  records: RecordsForTheRound | undefined, accountId: string,
+  records: RecordsForTheRound | undefined,
+  accountId: string,
   rec: {
-    readonly id: string; readonly chainId: string; readonly digest: string; readonly keyEpoch: number; readonly createdAt: string;
+    readonly id: string;
+    readonly chainId: string;
+    readonly digest: string;
+    readonly keyEpoch: number;
+    readonly createdAt: string;
     readonly filedBy?: { readonly publicKey: string };
   },
-  envelope: { readonly kind: string; readonly summary: string; readonly vault: string }, salt: string, leaf: unknown,
+  envelope: { readonly kind: string; readonly summary: string; readonly vault: string },
+  salt: string,
+  leaf: unknown
 ): Promise<OpenedRound> {
   /* A removal names the leaf it takes off, so whether that signer's retirement is already filed can be read before it is withdrawn. */
-  const removes = envelope.kind === 'remove-signer' && typeof leaf === 'string' && HEX64.test(leaf.toLowerCase()) ? leaf.toLowerCase() : null;
+  const removes =
+    envelope.kind === 'remove-signer' && typeof leaf === 'string' && HEX64.test(leaf.toLowerCase())
+      ? leaf.toLowerCase()
+      : null;
   if (envelope.kind === 'remove-signer' && removes === null) {
-    throw new NotOpenedOnThisDevice('This proposal does not say which signer it removes, so this device cannot tell whether '
-      + 'withdrawing it is safe. Do not act on it.', { kind: envelope.kind });
+    throw new NotOpenedOnThisDevice(
+      'This proposal does not say which signer it removes, so this device cannot tell whether ' +
+        'withdrawing it is safe. Do not act on it.',
+      { kind: envelope.kind }
+    );
   }
   const identity = records?.roundIdentity;
   if (identity === undefined || typeof identity.proposalIdOf !== 'function') {
-    throw new NotOpenedOnThisDevice('This page cannot work out a proposal\'s identity on the chain, so it cannot check which '
-      + 'proposal it would withdraw. Reload the page to get the current version.', { kind: envelope.kind });
+    throw new NotOpenedOnThisDevice(
+      "This page cannot work out a proposal's identity on the chain, so it cannot check which " +
+        'proposal it would withdraw. Reload the page to get the current version.',
+      { kind: envelope.kind }
+    );
   }
   const digest = String(rec.digest).toLowerCase();
   const vault = String(envelope.vault).toLowerCase();
   const chainId = String(rec.chainId).toLowerCase();
-  if (![digest, vault, chainId].every((h) => HEX64.test(h))
-    || hexOfBytes(identity.proposalIdOf(bytesOfHex(digest), bytesOfHex(vault), bytesOfHex(salt))) !== chainId) {
-    throw new NotOpenedOnThisDevice('This proposal\'s identity on the chain is not the one its own record makes, so this device '
-      + 'does not know which proposal a withdrawal would close. Do not act on it.', { kind: envelope.kind });
+  if (
+    ![digest, vault, chainId].every((h) => HEX64.test(h)) ||
+    hexOfBytes(identity.proposalIdOf(bytesOfHex(digest), bytesOfHex(vault), bytesOfHex(salt))) !== chainId
+  ) {
+    throw new NotOpenedOnThisDevice(
+      "This proposal's identity on the chain is not the one its own record makes, so this device " +
+        'does not know which proposal a withdrawal would close. Do not act on it.',
+      { kind: envelope.kind }
+    );
   }
-  const filedBy = rec.filedBy === undefined ? null : await (async () => {
-    if (records === undefined) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s directory, so it cannot check who wrote this '
-        + 'proposal down. Reload the page to get the current version.', { kind: envelope.kind });
-    }
-    return believedFilerHere(records, accountId, rec);
-  })();
+  const filedBy =
+    rec.filedBy === undefined
+      ? null
+      : await (async () => {
+          if (records === undefined) {
+            throw new NotOpenedOnThisDevice(
+              "This page cannot read the company's directory, so it cannot check who wrote this " +
+                'proposal down. Reload the page to get the current version.',
+              { kind: envelope.kind }
+            );
+          }
+          return believedFilerHere(records, accountId, rec);
+        })();
   return {
-    chainId: rec.chainId, digest: rec.digest, vault: envelope.vault, salt, summary: envelope.summary, kind: envelope.kind,
-    ...(filedBy === null ? {} : { filedBy, raiseBy: raiseByOf(rec.createdAt) }), ...(removes === null ? {} : { removes }),
+    chainId: rec.chainId,
+    digest: rec.digest,
+    vault: envelope.vault,
+    salt,
+    summary: envelope.summary,
+    kind: envelope.kind,
+    ...(filedBy === null ? {} : { filedBy, raiseBy: raiseByOf(rec.createdAt) }),
+    ...(removes === null ? {} : { removes })
   };
 }
 
@@ -168,9 +247,10 @@ async function withdrawalOpenedHere(
  * wallet, by the approval of a vault's set-up step (or by setting the vault up), where who its secret is sealed to is
  * checked. The wallet never withdraws one, and an adoption raised before a signer was removed is never carried out.
  */
-const VAULT_START_HERE_NOT = 'This proposal sets up one of the company\'s vaults, and it is approved only in the wallet, by the '
-  + 'approval of a vault\'s set-up step or by setting the vault up, where who its secret is sealed to is checked. Nothing was '
-  + 'approved here. Approve it from the vault\'s set-up step instead; it is never withdrawn.';
+const VAULT_START_HERE_NOT =
+  "This proposal sets up one of the company's vaults, and it is approved only in the wallet, by the " +
+  "approval of a vault's set-up step or by setting the vault up, where who its secret is sealed to is checked. Nothing was " +
+  "approved here. Approve it from the vault's set-up step instead; it is never withdrawn.";
 
 /**
  * **THE PERSON WAITING FOR THE SEAT A LINK OR CODE PROPOSAL ADDS**, read from
@@ -179,16 +259,24 @@ const VAULT_START_HERE_NOT = 'This proposal sets up one of the company\'s vaults
  * built or approved.
  */
 async function waitingForTheSeatHere(
-  service: GovernedCallService, accountId: string, viewingKey: KeysHeld, signerId: unknown,
-  records: RecordsForTheRound | undefined, leaves: SeatingReads['leaves'] | undefined,
+  service: GovernedCallService,
+  accountId: string,
+  viewingKey: KeysHeld,
+  signerId: unknown,
+  records: RecordsForTheRound | undefined,
+  leaves: SeatingReads['leaves'] | undefined
 ): Promise<PendingSignerPayload> {
   if (!service.sealedAccount) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s list of signers, so it cannot check this '
-      + 'proposal. Reload the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's list of signers, so it cannot check this " +
+        'proposal. Reload the page to get the current version.'
+    );
   }
   let found: PendingSignerPayload | undefined;
   try {
-    const sealedAccount = await service.sealedAccount!(accountId) as SealedAccount & { roster?: SealedCompanyRecord | null };
+    const sealedAccount = (await service.sealedAccount!(accountId)) as SealedAccount & {
+      roster?: SealedCompanyRecord | null;
+    };
     /* The signers are read only from the company's roster record, never from a list on its account record. */
     if ((sealedAccount.roster ?? null) === null) throw new NotOpenedOnThisDevice(NO_ROSTER_RECORD);
     const signers = openAccount(sealedAccount, viewingKey, sealedAccount.roster).signers;
@@ -213,8 +301,10 @@ async function waitingForTheSeatHere(
     if (named?.status === 'pending') {
       const box = sealedAccount.pendingSigners.find((p) => p.id === named.id);
       if (!box) {
-        throw new SeatKeyNotFromTheInvitee('This person\'s acceptance could not be found. Access was not granted and '
-          + 'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.');
+        throw new SeatKeyNotFromTheInvitee(
+          "This person's acceptance could not be found. Access was not granted and " +
+            'nothing was sent. Reload the page; if they are still shown as waiting, press Grant access again.'
+        );
       }
       let opened: { readonly value: PendingSignerPayload; readonly key: Hex };
       try {
@@ -226,30 +316,47 @@ async function waitingForTheSeatHere(
       refuseASeatKeyNotFromTheInvitee(opened.key, accountId, waiting);
       /* The person invited, by a seat this device believes, and a leaf made for their wallet: checked again on every open. */
       if (records === undefined || leaves === undefined) {
-        throw new NotOpenedOnThisDevice('This page cannot check who this seat is for, or that its keys are made for their '
-          + 'wallet, so it cannot act on it. Reload the page to get the current version.');
+        throw new NotOpenedOnThisDevice(
+          'This page cannot check who this seat is for, or that its keys are made for their ' +
+            'wallet, so it cannot act on it. Reload the page to get the current version.'
+        );
       }
       const believed = await records.directory();
       await refuseASeatNotForTheInvited(sealedAccount, viewingKey, box, waiting, {
-        seats: provedSeatsOf(believed.dir.seats), onTheChain: believed.holders.seats, leaves,
+        seats: provedSeatsOf(believed.dir.seats),
+        onTheChain: believed.holders.seats,
+        leaves
       });
       /* The same keys as somebody already on the list is the same person twice, or a copy. */
-      if (signers.some((x) => x.id !== named.id && (x.signingPublicKey === waiting.signingPublicKey
-        || (x.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase()))) {
-        throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they '
-          + 'cannot be given access under this name. Access was not granted and nothing was sent. Do not give this '
-          + 'person access: they need a new invitation, and check with them that they were the one who accepted.');
+      if (
+        signers.some(
+          (x) =>
+            x.id !== named.id &&
+            (x.signingPublicKey === waiting.signingPublicKey ||
+              (x.leafCommitment ?? '').toLowerCase() === waiting.leafCommitment.toLowerCase())
+        )
+      ) {
+        throw new SeatKeyNotFromTheInvitee(
+          'These keys already belong to another signer on this company, so they ' +
+            'cannot be given access under this name. Access was not granted and nothing was sent. Do not give this ' +
+            'person access: they need a new invitation, and check with them that they were the one who accepted.'
+        );
       }
       found = waiting;
     }
   } catch (e) {
     if (e instanceof SeatKeyNotFromTheInvitee || e instanceof NotOpenedOnThisDevice) throw e;
-    throw new NotOpenedOnThisDevice('This device cannot read the company\'s list of signers, so it cannot check this '
-      + 'proposal. Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
+    throw new NotOpenedOnThisDevice(
+      "This device cannot read the company's list of signers, so it cannot check this " +
+        'proposal. Reload the page and try again. If it happens again, do not act on this proposal.',
+      { cause: e }
+    );
   }
   if (found === undefined) {
-    throw new NotOpenedOnThisDevice('The person this proposal gives access to is not waiting for a seat on the company\'s '
-      + 'list of signers. Withdraw this proposal, then grant access again.');
+    throw new NotOpenedOnThisDevice(
+      "The person this proposal gives access to is not waiting for a seat on the company's " +
+        'list of signers. Withdraw this proposal, then grant access again.'
+    );
   }
   return found;
 }
@@ -270,33 +377,57 @@ async function waitingForTheSeatHere(
  * they accepted (`linkInvitationRefusal`).
  */
 async function addSignerOpenedHere(
-  service: GovernedCallService, accountId: string, viewingKey: KeysHeld, rec: { readonly chainId: string },
-  body: { readonly signerId?: unknown; readonly invite?: unknown; readonly invited?: unknown }, salt: string,
-  records: RecordsForTheRound | undefined, leaves: SeatingReads['leaves'] | undefined,
+  service: GovernedCallService,
+  accountId: string,
+  viewingKey: KeysHeld,
+  rec: { readonly chainId: string },
+  body: { readonly signerId?: unknown; readonly invite?: unknown; readonly invited?: unknown },
+  salt: string,
+  records: RecordsForTheRound | undefined,
+  leaves: SeatingReads['leaves'] | undefined
 ): Promise<GovernanceOnTheWire> {
   const invite = body.invite as { address?: unknown; scope?: unknown } | undefined;
-  if (typeof invite?.address !== 'string' || !HEX64.test(invite.address.toLowerCase())
-    || typeof invite.scope !== 'string' || !HEX64.test(invite.scope.toLowerCase())) {
-    throw new NotOpenedOnThisDevice('This proposal does not say which address it invites, or with which rights. Withdraw it '
-      + 'and invite the person again.');
+  if (
+    typeof invite?.address !== 'string' ||
+    !HEX64.test(invite.address.toLowerCase()) ||
+    typeof invite.scope !== 'string' ||
+    !HEX64.test(invite.scope.toLowerCase())
+  ) {
+    throw new NotOpenedOnThisDevice(
+      'This proposal does not say which address it invites, or with which rights. Withdraw it ' +
+        'and invite the person again.'
+    );
   }
   /* A proposal that seats somebody waiting, or whose invitation names a leaf, is for the person waiting under that name. */
-  const forOneWaiting = body.signerId !== undefined || (body.invited as { terms?: { leaf?: unknown } } | undefined)?.terms?.leaf !== undefined;
-  const waiting = forOneWaiting ? await waitingForTheSeatHere(service, accountId, viewingKey, body.signerId, records, leaves) : null;
+  const forOneWaiting =
+    body.signerId !== undefined ||
+    (body.invited as { terms?: { leaf?: unknown } } | undefined)?.terms?.leaf !== undefined;
+  const waiting = forOneWaiting
+    ? await waitingForTheSeatHere(service, accountId, viewingKey, body.signerId, records, leaves)
+    : null;
   if (records === undefined) {
-    throw new NotOpenedOnThisDevice('This page cannot check which seat signed this invitation, so it cannot act on it. Reload '
-      + 'the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      'This page cannot check which seat signed this invitation, so it cannot act on it. Reload ' +
+        'the page to get the current version.'
+    );
   }
   /*
    * The address and rights sealed beside the invitation are the raiser's word; the invitation is the inviting seat's.
    * The two must agree, and what this device approves is made from the signed one.
    */
-  const why = invitationByAddressRefusal(accountId, body.invited, invite, provedSeatsOf((await records.directory()).dir.seats));
+  const why = invitationByAddressRefusal(
+    accountId,
+    body.invited,
+    invite,
+    provedSeatsOf((await records.directory()).dir.seats)
+  );
   if (why !== null) throw new NotOpenedOnThisDevice(why);
   const invited = body.invited as SignedSeatInvitation;
   const unbound = approvedInvitationRefusal(invited, { salt, chainId: rec.chainId });
   if (unbound !== null) {
-    throw new NotOpenedOnThisDevice(`${NOT_APPROVED_SAID[unbound]}, so this device does not approve it. Do not approve it. Withdraw it, and invite the person again.`);
+    throw new NotOpenedOnThisDevice(
+      `${NOT_APPROVED_SAID[unbound]}, so this device does not approve it. Do not approve it. Withdraw it, and invite the person again.`
+    );
   }
   const notTheirs = waiting === null ? null : linkInvitationRefusal(accountId, invited, waiting, null);
   if (notTheirs !== null) throw new NotOpenedOnThisDevice(notTheirs);
@@ -309,8 +440,17 @@ type Envelope = { kind: string; summary: string; vault: string; sealedPayload: S
 
 /** A proposal's sealed body as this device opened it: what each kind of proposal carries. */
 type ProposalBody = {
-  signerId?: unknown; newThreshold?: unknown; vault?: unknown; assetKey?: unknown; commitment?: unknown; newPolicyBar?: unknown;
-  leaf?: unknown; retirement?: unknown; oneOff?: unknown; invite?: unknown; invited?: unknown;
+  signerId?: unknown;
+  newThreshold?: unknown;
+  vault?: unknown;
+  assetKey?: unknown;
+  commitment?: unknown;
+  newPolicyBar?: unknown;
+  leaf?: unknown;
+  retirement?: unknown;
+  oneOff?: unknown;
+  invite?: unknown;
+  invited?: unknown;
   __change?: StateChange;
 };
 
@@ -319,55 +459,84 @@ type ProposalBody = {
  * from the proposal's opened body; a proposal of another kind carries none.
  */
 async function governanceOpenedHere(
-  service: GovernedCallService, accountId: string, viewingKey: KeysHeld, rec: SealedProposal, envelope: Envelope, change: StateChange,
-  body: ProposalBody, records: RecordsForTheRound | undefined, leaves: SeatingReads['leaves'] | undefined,
+  service: GovernedCallService,
+  accountId: string,
+  viewingKey: KeysHeld,
+  rec: SealedProposal,
+  envelope: Envelope,
+  change: StateChange,
+  body: ProposalBody,
+  records: RecordsForTheRound | undefined,
+  leaves: SeatingReads['leaves'] | undefined
 ): Promise<{ readonly governance: GovernanceOnTheWire | undefined; readonly retirement: RetirementTerms | undefined }> {
   let governance: GovernanceOnTheWire | undefined;
   let retirement: RetirementTerms | undefined;
   if (envelope.kind === 'remove-signer') {
     /* The leaf is the proposal's own, sealed inside it; who it is and whether to remove it is judged where the removal is made. */
     if (typeof body.leaf !== 'string' || !HEX64.test(body.leaf.toLowerCase())) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which signer it removes. Withdraw it and raise the removal again.');
+      throw new NotOpenedOnThisDevice(
+        'This proposal does not say which signer it removes. Withdraw it and raise the removal again.'
+      );
     }
     if (body.retirement !== undefined) {
       const terms = retirementTermsOf(body.retirement);
       if (terms === null) {
-        throw new NotOpenedOnThisDevice('This proposal\'s retirement of the leaving signer is not in its shape, so this device '
-          + 'cannot sign it. Withdraw it and raise the removal again.');
+        throw new NotOpenedOnThisDevice(
+          "This proposal's retirement of the leaving signer is not in its shape, so this device " +
+            'cannot sign it. Withdraw it and raise the removal again.'
+        );
       }
       retirement = terms;
     }
     /* The threshold the company is left at, sealed beside the leaf: none or 0 keeps the one in force. */
     const t = body.newThreshold;
     if (t !== undefined && (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which threshold it leaves the company at once the signer is removed. '
-        + 'Withdraw it and raise the removal again.');
+      throw new NotOpenedOnThisDevice(
+        'This proposal does not say which threshold it leaves the company at once the signer is removed. ' +
+          'Withdraw it and raise the removal again.'
+      );
     }
-    governance = { kind: 'remove-signer', leaf: body.leaf.toLowerCase(), ...(t === undefined || t === 0 ? {} : { threshold: String(t) }) };
+    governance = {
+      kind: 'remove-signer',
+      leaf: body.leaf.toLowerCase(),
+      ...(t === undefined || t === 0 ? {} : { threshold: String(t) })
+    };
   } else if (envelope.kind === 'add-signer') {
     governance = await addSignerOpenedHere(service, accountId, viewingKey, rec, body, change.salt, records, leaves);
   } else if (envelope.kind === 'set-threshold') {
     if (!wholeThreshold(body.newThreshold)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals it requires. Withdraw it and make the '
-        + 'change again.');
+      throw new NotOpenedOnThisDevice(
+        'This proposal does not say how many approvals it requires. Withdraw it and make the ' + 'change again.'
+      );
     }
     governance = { kind: 'threshold', threshold: String(body.newThreshold) };
   } else if (envelope.kind === 'set-vault-threshold') {
     if (!wholeThreshold(body.newThreshold) || typeof body.vault !== 'string' || !HEX64.test(body.vault)) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which vault it is for, or how many approvals that vault '
-        + 'would need. Withdraw it and make the change again.');
+      throw new NotOpenedOnThisDevice(
+        'This proposal does not say which vault it is for, or how many approvals that vault ' +
+          'would need. Withdraw it and make the change again.'
+      );
     }
     governance = { kind: 'vault-threshold', vault: body.vault, threshold: String(body.newThreshold) };
   } else if (envelope.kind === 'set-spending-policy') {
     if (![body.vault, body.assetKey, body.commitment].every((v) => typeof v === 'string' && HEX64.test(v))) {
-      throw new NotOpenedOnThisDevice('This proposal does not say which vault and currency its spending policy is for, or '
-        + 'which policy. Withdraw it and set the policy again.');
+      throw new NotOpenedOnThisDevice(
+        'This proposal does not say which vault and currency its spending policy is for, or ' +
+          'which policy. Withdraw it and set the policy again.'
+      );
     }
-    governance = { kind: 'spending-policy', vault: body.vault as string, assetKey: body.assetKey as string, commitment: body.commitment as string };
+    governance = {
+      kind: 'spending-policy',
+      vault: body.vault as string,
+      assetKey: body.assetKey as string,
+      commitment: body.commitment as string
+    };
   } else if (envelope.kind === 'set-policy-bar') {
     if (typeof body.newPolicyBar !== 'number' || !Number.isInteger(body.newPolicyBar) || body.newPolicyBar < 1) {
-      throw new NotOpenedOnThisDevice('This proposal does not say how many approvals a change to a spending policy would '
-        + 'need. Withdraw it and make the change again.');
+      throw new NotOpenedOnThisDevice(
+        'This proposal does not say how many approvals a change to a spending policy would ' +
+          'need. Withdraw it and make the change again.'
+      );
     }
     governance = { kind: 'policy-bar', bar: String(body.newPolicyBar) };
   }
@@ -376,14 +545,23 @@ async function governanceOpenedHere(
 
 /** A payroll run or a one-off payment as this device makes it again from the company's records; other kinds make none. */
 async function madeOpenedHere(
-  records: RecordsForTheRound | undefined, accountId: string, viewingKey: KeysHeld, rec: SealedProposal, envelope: Envelope,
-  change: StateChange, body: ProposalBody, filedBy: string | null, forARaise: boolean,
+  records: RecordsForTheRound | undefined,
+  accountId: string,
+  viewingKey: KeysHeld,
+  rec: SealedProposal,
+  envelope: Envelope,
+  change: StateChange,
+  body: ProposalBody,
+  filedBy: string | null,
+  forARaise: boolean
 ): Promise<OpenedRound['made']> {
   let made: OpenedRound['made'];
   if (envelope.kind === 'payroll') {
     if (records === undefined || !wholeRecords(records)) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s records a payroll run is checked against, so it '
-        + `cannot ${forARaise ? 'raise' : 'approve'} one. Reload the page to get the current version.`);
+      throw new NotOpenedOnThisDevice(
+        "This page cannot read the company's records a payroll run is checked against, so it " +
+          `cannot ${forARaise ? 'raise' : 'approve'} one. Reload the page to get the current version.`
+      );
     }
     const rebuilt = await runRebuiltHere(records, accountId, rec.id, viewingKey);
     made = rebuilt.made;
@@ -394,12 +572,19 @@ async function madeOpenedHere(
      * payments of the run as built again here from the company's sealed records.
      */
     if (rec.filedBy !== undefined) {
-      const paying = rebuilt.made.retry === undefined ? rebuilt.made.facts : rebuilt.made.retry.map((i) => rebuilt.made.facts[i]!);
+      const paying =
+        rebuilt.made.retry === undefined ? rebuilt.made.facts : rebuilt.made.retry.map((i) => rebuilt.made.facts[i]!);
       const { assetBlinding } = await signedStateHere(records, accountId, viewingKey);
-      const pays = paysCommitmentOf({ vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) }, change.salt, assetBlinding);
+      const pays = paysCommitmentOf(
+        { vault: envelope.vault, asset: String(change.asset), payments: paying.map(paymentChecked) },
+        change.salt,
+        assetBlinding
+      );
       if (String(rec.pays ?? '').toLowerCase() !== pays) {
-        throw new NotOpenedOnThisDevice('What the company\'s record of this proposal says it pays is not what this device '
-          + 'builds the run to pay, from the vault it names. Do not act on it.');
+        throw new NotOpenedOnThisDevice(
+          "What the company's record of this proposal says it pays is not what this device " +
+            'builds the run to pay, from the vault it names. Do not act on it.'
+        );
       }
     }
     /*
@@ -411,26 +596,41 @@ async function madeOpenedHere(
      */
     try {
       await refuseWhatNoRoundMay(records, accountId, viewingKey, {
-        run: rebuilt.run, leg: rebuilt.leg, made: rebuilt.made, filedBy: rec.filedBy?.publicKey ?? '', proposal: rec.id,
-        vault: envelope.vault,
+        run: rebuilt.run,
+        leg: rebuilt.leg,
+        made: rebuilt.made,
+        filedBy: rec.filedBy?.publicKey ?? '',
+        proposal: rec.id,
+        vault: envelope.vault
       });
     } catch (e) {
       if (!(e instanceof RoundRefusedHere)) throw e;
-      throw new NotOpenedOnThisDevice(`${e.message}. Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who `
-        + 'raised it.', { cause: e });
+      throw new NotOpenedOnThisDevice(
+        `${e.message}. Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who ` + 'raised it.',
+        { cause: e }
+      );
     }
   } else if (envelope.kind === 'transfer') {
     /* A one-off payment: made again from the record it names, which must name this proposal, its vault, its currency and its filer. */
     if (records === undefined || filedBy === null) {
-      throw new NotOpenedOnThisDevice('This page cannot check who raised this one-off payment against the company\'s records, so it '
-        + `cannot ${forARaise ? 'raise' : 'approve'} it. Reload the page to get the current version.`);
+      throw new NotOpenedOnThisDevice(
+        "This page cannot check who raised this one-off payment against the company's records, so it " +
+          `cannot ${forARaise ? 'raise' : 'approve'} it. Reload the page to get the current version.`
+      );
     }
     try {
-      made = await oneOffMadeHere(records as Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments' | 'vendors'>, accountId,
-        { id: rec.id, chainId: rec.chainId, filedBy }, { vault: envelope.vault, named: body.oneOff, asset: String(change.asset) });
+      made = await oneOffMadeHere(
+        records as Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments' | 'vendors'>,
+        accountId,
+        { id: rec.id, chainId: rec.chainId, filedBy },
+        { vault: envelope.vault, named: body.oneOff, asset: String(change.asset) }
+      );
     } catch (e) {
       if (!(e instanceof OneOffRefused)) throw e;
-      throw new NotOpenedOnThisDevice(`${e.message} Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who raised it.`, { cause: e });
+      throw new NotOpenedOnThisDevice(
+        `${e.message} Do not ${forARaise ? 'send' : 'approve'} it, and tell the person who raised it.`,
+        { cause: e }
+      );
     }
   }
   return made;
@@ -469,7 +669,11 @@ async function madeOpenedHere(
  * opened here, never from anything the service says in the clear.
  */
 export async function openTheRoundHere(
-  service: GovernedCallService, accountId: string, proposalId: string, viewingKey: KeysHeld, forARaise: boolean,
+  service: GovernedCallService,
+  accountId: string,
+  proposalId: string,
+  viewingKey: KeysHeld,
+  forARaise: boolean,
   records?: RecordsForTheRound,
   /** The leaf each opening makes, in this device's vault worker: a seat's leaf is approved here only as its opening makes it. */
   leaves?: SeatingReads['leaves'],
@@ -486,20 +690,28 @@ export async function openTheRoundHere(
    * is refused with its kind as soon as its record is open, before a payroll run is made again or its payments are
    * checked, so one run that fails its own checks never holds up an approval of something else.
    */
-  onlyKind?: string,
+  onlyKind?: string
 ): Promise<OpenedRound> {
   if (!service.sealedProposals) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot check this proposal. Reload '
-      + 'the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's records, so it cannot check this proposal. Reload " +
+        'the page to get the current version.'
+    );
   }
   /* A proposal the company's records name and the service leaves out of its list is withheld, not withdrawn (`listedHere`). */
   const served = await service.sealedProposals(accountId);
-  const listed = records === undefined ? served : listedHere(await records.directory(kindAsked('proposal')), 'proposal', served, 'proposal');
+  const listed =
+    records === undefined
+      ? served
+      : listedHere(await records.directory(kindAsked('proposal')), 'proposal', served, 'proposal');
   const rec = listed.find((r) => r.id === proposalId);
-  if (rec === undefined && records !== undefined) refusedForItsKey(listed as { leftOut?: ReadonlyMap<string, string> }, proposalId, 'proposal');
+  if (rec === undefined && records !== undefined)
+    refusedForItsKey(listed as { leftOut?: ReadonlyMap<string, string> }, proposalId, 'proposal');
   if (!rec || rec.accountId !== accountId) {
-    throw new NotOpenedOnThisDevice('This company\'s records hold no proposal by that name. It may have been withdrawn. '
-      + 'Reload the page to see where it stands.');
+    throw new NotOpenedOnThisDevice(
+      "This company's records hold no proposal by that name. It may have been withdrawn. " +
+        'Reload the page to see where it stands.'
+    );
   }
   let envelope: Envelope;
   let body: ProposalBody;
@@ -508,27 +720,37 @@ export async function openTheRoundHere(
     key = keyOf(viewingKey, rec.keyEpoch);
     envelope = openRecord('proposals', rec.accountId, rec.sealed, key);
     if (onlyKind !== undefined && envelope.kind !== onlyKind) {
-      throw new NotOpenedOnThisDevice(`This proposal is not the kind asked for (${onlyKind}), so it was not checked further here.`,
-        { kind: envelope.kind });
+      throw new NotOpenedOnThisDevice(
+        `This proposal is not the kind asked for (${onlyKind}), so it was not checked further here.`,
+        { kind: envelope.kind }
+      );
     }
     if (!forAWithdrawal && VAULT_START_KINDS.includes(envelope.kind)) {
       throw new NotOpenedOnThisDevice(VAULT_START_HERE_NOT, { kind: envelope.kind });
     }
     if (!forAWithdrawal && !KINDS_A_DEVICE_ACTS_ON.has(envelope.kind)) {
-      throw new NotOpenedOnThisDevice('This page acts on payroll runs, one-off payments from a vault, access for new signers, removing '
-        + 'a signer, changes to the approvals required by the company or by one of its vaults, and vaults\' spending policies, and this '
-        + 'proposal is none of those, so it cannot be approved from this device yet. Leave it unapproved.', { kind: envelope.kind });
+      throw new NotOpenedOnThisDevice(
+        'This page acts on payroll runs, one-off payments from a vault, access for new signers, removing ' +
+          "a signer, changes to the approvals required by the company or by one of its vaults, and vaults' spending policies, and this " +
+          'proposal is none of those, so it cannot be approved from this device yet. Leave it unapproved.',
+        { kind: envelope.kind }
+      );
     }
     body = parseCanonical(unseal(envelope.sealedPayload, key));
   } catch (e) {
     if (e instanceof NotOpenedOnThisDevice) throw e;
-    throw new NotOpenedOnThisDevice('This device cannot read the company\'s record of this proposal, so it cannot check it. '
-      + 'Reload the page and try again. If it happens again, do not act on this proposal.', { cause: e });
+    throw new NotOpenedOnThisDevice(
+      "This device cannot read the company's record of this proposal, so it cannot check it. " +
+        'Reload the page and try again. If it happens again, do not act on this proposal.',
+      { cause: e }
+    );
   }
   const change = body.__change;
   if (!change || typeof change.salt !== 'string' || !HEX64.test(change.salt)) {
-    throw new NotOpenedOnThisDevice('This proposal\'s record is incomplete, so this device cannot check it. Withdraw the '
-      + 'proposal and raise it again.');
+    throw new NotOpenedOnThisDevice(
+      "This proposal's record is incomplete, so this device cannot check it. Withdraw the " +
+        'proposal and raise it again.'
+    );
   }
   if (forAWithdrawal) return withdrawalOpenedHere(records, accountId, rec, envelope, change.salt, body.leaf);
   /*
@@ -537,9 +759,22 @@ export async function openTheRoundHere(
    * checked first. One reached through this door would skip that check, so it is refused here.
    */
   if (envelope.kind === 'payroll' && String(change.asset).toLowerCase() === NO_ASSET) {
-    throw new NotOpenedOnThisDevice(`This proposal pays nothing: ${VAULT_START_HERE_NOT.replace(/^This proposal /u, 'it ')}`, { kind: envelope.kind });
+    throw new NotOpenedOnThisDevice(
+      `This proposal pays nothing: ${VAULT_START_HERE_NOT.replace(/^This proposal /u, 'it ')}`,
+      { kind: envelope.kind }
+    );
   }
-  const { governance, retirement } = await governanceOpenedHere(service, accountId, viewingKey, rec, envelope, change, body, records, leaves);
+  const { governance, retirement } = await governanceOpenedHere(
+    service,
+    accountId,
+    viewingKey,
+    rec,
+    envelope,
+    change,
+    body,
+    records,
+    leaves
+  );
   /*
    * **A PROPOSAL A SEAT'S DEVICE WROTE DOWN IS BELIEVED ONLY AS THAT SEAT FILED
    * IT**: its filing signed by a key this device's own read of the company's
@@ -551,8 +786,10 @@ export async function openTheRoundHere(
   let filedBy: string | null = null;
   if (rec.filedBy !== undefined) {
     if (records === undefined) {
-      throw new NotOpenedOnThisDevice('This page cannot read the company\'s directory, so it cannot check who wrote this '
-        + 'proposal down. Reload the page to get the current version.');
+      throw new NotOpenedOnThisDevice(
+        "This page cannot read the company's directory, so it cannot check who wrote this " +
+          'proposal down. Reload the page to get the current version.'
+      );
     }
     filedBy = await believedFilerHere(records, accountId, rec);
   }
@@ -571,22 +808,35 @@ export async function openTheRoundHere(
   let vouched: OpenedRound['vouched'];
   if (envelope.kind === 'payroll' && vouchedRefusal(change.vouched) === null) {
     const head = change.vouched!.head.toLowerCase();
-    const kept = await records?.checked?.() ?? null;
-    vouched = { head: head as Hex, r: change.vouched!.r.toLowerCase() as Hex, checkedHere: kept !== null && kept.heads.some((h) => h.toLowerCase() === head) };
+    const kept = (await records?.checked?.()) ?? null;
+    vouched = {
+      head: head as Hex,
+      r: change.vouched!.r.toLowerCase() as Hex,
+      checkedHere: kept !== null && kept.heads.some((h) => h.toLowerCase() === head)
+    };
   }
   let half: OpenedRound['half'];
   if (forARaise) {
     /* The account's own name for the asset, which is what the asset witness answers with. */
     const named = { assetId: assetIdBytes(change.asset) };
-    half = { assetId: hexOfBytes(named.assetId), changeAmount: String(change.amount), changeBatchDigest: change.batchDigest };
+    half = {
+      assetId: hexOfBytes(named.assetId),
+      changeAmount: String(change.amount),
+      changeBatchDigest: change.batchDigest
+    };
   }
   return {
-    chainId: rec.chainId, digest: rec.digest, vault: envelope.vault, salt: change.salt, summary: envelope.summary,
+    chainId: rec.chainId,
+    digest: rec.digest,
+    vault: envelope.vault,
+    salt: change.salt,
+    summary: envelope.summary,
     ...(vouched === undefined ? {} : { vouched }),
-    ...(governance === undefined ? {} : { governance }), ...(half === undefined ? {} : { half }),
+    ...(governance === undefined ? {} : { governance }),
+    ...(half === undefined ? {} : { half }),
     ...(retirement === undefined ? {} : { retirement }),
-    ...(made === undefined ? {} : { made }), ...(filedBy === null ? {} : { filedBy }),
-    ...(forARaise && filedBy !== null ? { raiseBy: raiseByOf(rec.createdAt) } : {}),
+    ...(made === undefined ? {} : { made }),
+    ...(filedBy === null ? {} : { filedBy }),
+    ...(forARaise && filedBy !== null ? { raiseBy: raiseByOf(rec.createdAt) } : {})
   };
 }
-

@@ -53,35 +53,48 @@ import { ErrorNote, Moon, StatusNote, WalletNameField } from '../components/ui.j
  */
 export function Recover({ find = liveFind }: { readonly find?: RegistryFinder } = {}): ReactNode {
   const {
-    recovery, offerRecoveryPiece, withdrawRecoveryPiece, finishRecovery, abandonRecovery,
-    resetRecovery, busy, error, phase, wallets,
+    recovery,
+    offerRecoveryPiece,
+    withdrawRecoveryPiece,
+    finishRecovery,
+    abandonRecovery,
+    resetRecovery,
+    busy,
+    error,
+    phase,
+    wallets
   } = useSession();
   const [replacedNote, setReplacedNote] = useState<string | null>(null);
 
   const state = recovery === null ? null : progress(recovery);
 
-  if (state && state.state === 'completed') return <RecoveryFinished recovery={recovery} phase={phase} error={error} find={find} />;
+  if (state && state.state === 'completed')
+    return <RecoveryFinished recovery={recovery} phase={phase} error={error} find={find} />;
 
-  if (state && state.state === 'cancelled') return <RecoveryStopped recovery={recovery} resetRecovery={resetRecovery} />;
+  if (state && state.state === 'cancelled')
+    return <RecoveryStopped recovery={recovery} resetRecovery={resetRecovery} />;
 
   return (
     <>
       <h1>Recover an account.</h1>
       <p className="lede">
-        Enter your pieces from their cards, one at a time. How many are needed is
-        written on the pieces themselves — there is nothing to remember — and pieces
-        from a different set are refused rather than quietly rebuilding the wrong
-        account.
+        Enter your pieces from their cards, one at a time. How many are needed is written on the pieces themselves —
+        there is nothing to remember — and pieces from a different set are refused rather than quietly rebuilding the
+        wrong account.
       </p>
       <p className="faint small">
-        Gathered pieces live only on this screen until recovery finishes: a reload
-        drops them and you start again. That is deliberate — several pieces together
-        are the whole account, and this wallet refuses to store that. If the last
-        piece you need is on another machine, take your cards <em>there</em> and
-        gather them on it — this half-finished recovery cannot travel.
+        Gathered pieces live only on this screen until recovery finishes: a reload drops them and you start again. That
+        is deliberate — several pieces together are the whole account, and this wallet refuses to store that. If the
+        last piece you need is on another machine, take your cards <em>there</em> and gather them on it — this
+        half-finished recovery cannot travel.
       </p>
 
-      <PieceEntry offerRecoveryPiece={offerRecoveryPiece} busy={busy} replacedNote={replacedNote} setReplacedNote={setReplacedNote} />
+      <PieceEntry
+        offerRecoveryPiece={offerRecoveryPiece}
+        busy={busy}
+        replacedNote={replacedNote}
+        setReplacedNote={setReplacedNote}
+      />
 
       {state && recovery && (
         <section className="card" aria-label="Recovery progress">
@@ -97,16 +110,17 @@ export function Recover({ find = liveFind }: { readonly find?: RegistryFinder } 
                 <button
                   type="button"
                   className="quiet"
-                  onClick={() => { setReplacedNote(null); withdrawRecoveryPiece(piece.holder); }}
+                  onClick={() => {
+                    setReplacedNote(null);
+                    withdrawRecoveryPiece(piece.holder);
+                  }}
                 >
                   Take it back out
                 </button>
               </div>
             ))}
           </div>
-          {state.state === 'ready' && (
-            <FinishHere busy={busy} finishRecovery={finishRecovery} wallets={wallets} />
-          )}
+          {state.state === 'ready' && <FinishHere busy={busy} finishRecovery={finishRecovery} wallets={wallets} />}
           <p style={{ marginTop: '0.9rem', marginBottom: 0 }}>
             <button type="button" className="quiet" onClick={abandonRecovery}>
               Stop this recovery (drops the gathered pieces)
@@ -125,7 +139,12 @@ export function Recover({ find = liveFind }: { readonly find?: RegistryFinder } 
 }
 
 /** The recovery done: the account rebuilt, and whether this machine's passkey opens it. */
-function RecoveryFinished({ recovery, phase, error, find }: Pick<Session, 'recovery' | 'phase' | 'error'> & { readonly find: RegistryFinder }): ReactNode {
+function RecoveryFinished({
+  recovery,
+  phase,
+  error,
+  find
+}: Pick<Session, 'recovery' | 'phase' | 'error'> & { readonly find: RegistryFinder }): ReactNode {
   /* The rebuild and the gate are two different facts, and this
    * screen says each as its own. The rebuild is done — that is what
    * `completed` means. Whether THIS MACHINE can open the account is the
@@ -136,12 +155,18 @@ function RecoveryFinished({ recovery, phase, error, find }: Pick<Session, 'recov
     <div className="hero">
       <Moon large />
       <h1>
-        {opened && <><span className="ok" aria-hidden="true">✓</span>{' '}</>}
+        {opened && (
+          <>
+            <span className="ok" aria-hidden="true">
+              ✓
+            </span>{' '}
+          </>
+        )}
         The account is back{opened ? '.' : ' — one step left.'}
       </h1>
       <p className="lede">
-        Rebuilt from {recovery?.usedCount} pieces and sealed on this machine. The
-        pieces themselves stay wherever they are — this changed nothing about them.
+        Rebuilt from {recovery?.usedCount} pieces and sealed on this machine. The pieces themselves stay wherever they
+        are — this changed nothing about them.
       </p>
       {phase.name === 'unlocked' ? (
         <>
@@ -151,19 +176,20 @@ function RecoveryFinished({ recovery, phase, error, find }: Pick<Session, 'recov
       ) : (
         <>
           <p className="warn-text small">
-            The passkey for this machine was <strong>not</strong> made — that step
-            did not finish:
+            The passkey for this machine was <strong>not</strong> made — that step did not finish:
           </p>
           <ErrorNote message={error} />
           <p className="muted small">
-            The account itself is safely sealed here. The wallet screen offers
-            &ldquo;Make a new passkey for this wallet&rdquo; — that finishes the job.
+            The account itself is safely sealed here. The wallet screen offers &ldquo;Make a new passkey for this
+            wallet&rdquo; — that finishes the job.
           </p>
         </>
       )}
       <p>
         <a href={hrefOf('home')}>
-          <button type="button" className="primary">Go to your wallet</button>
+          <button type="button" className="primary">
+            Go to your wallet
+          </button>
         </a>
       </p>
     </div>
@@ -176,18 +202,26 @@ function RecoveryStopped({ recovery, resetRecovery }: Pick<Session, 'recovery' |
     <>
       <h1>This recovery was stopped.</h1>
       <p className="lede">
-        {recovery?.cancelledBecause ?? 'Cancelled.'} The pieces it had gathered were
-        dropped — a cancelled recovery keeps nothing (that is the rule, not an
-        accident). The pieces themselves are untouched, wherever they live.
+        {recovery?.cancelledBecause ?? 'Cancelled.'} The pieces it had gathered were dropped — a cancelled recovery
+        keeps nothing (that is the rule, not an accident). The pieces themselves are untouched, wherever they live.
       </p>
-      <button type="button" onClick={resetRecovery}>Start a new recovery</button>
-      <p style={{ marginTop: '1.25rem' }}><a href={hrefOf('home')}>← Back</a></p>
+      <button type="button" onClick={resetRecovery}>
+        Start a new recovery
+      </button>
+      <p style={{ marginTop: '1.25rem' }}>
+        <a href={hrefOf('home')}>← Back</a>
+      </p>
     </>
   );
 }
 
 /** The card a piece is entered on, from its letters and where it came from. */
-function PieceEntry({ offerRecoveryPiece, busy, replacedNote, setReplacedNote }: Pick<Session, 'offerRecoveryPiece' | 'busy'> & {
+function PieceEntry({
+  offerRecoveryPiece,
+  busy,
+  replacedNote,
+  setReplacedNote
+}: Pick<Session, 'offerRecoveryPiece' | 'busy'> & {
   readonly replacedNote: string | null;
   readonly setReplacedNote: (note: string | null) => void;
 }): ReactNode {
@@ -201,10 +235,12 @@ function PieceEntry({ offerRecoveryPiece, busy, replacedNote, setReplacedNote }:
     setHolder('');
     /* A replacement is said out loud — the count not moving would
      * otherwise be the only clue that a piece was swapped rather than added. */
-    setReplacedNote(result.replaced === null
-      ? null
-      : `That replaced the piece already entered from “${result.replaced}” — `
-        + 'two pieces from one place count once.');
+    setReplacedNote(
+      result.replaced === null
+        ? null
+        : `That replaced the piece already entered from “${result.replaced}” — ` +
+            'two pieces from one place count once.'
+    );
   };
 
   return (
@@ -228,12 +264,7 @@ function PieceEntry({ offerRecoveryPiece, busy, replacedNote, setReplacedNote }:
         style={{ marginTop: '0.5rem', width: '100%' }}
       />
       <div style={{ marginTop: '0.75rem' }}>
-        <button
-          type="button"
-          className="primary"
-          disabled={text.trim() === '' || busy !== null}
-          onClick={add}
-        >
+        <button type="button" className="primary" disabled={text.trim() === '' || busy !== null} onClick={add}>
           Add this piece
         </button>
       </div>
@@ -247,7 +278,11 @@ function PieceEntry({ offerRecoveryPiece, busy, replacedNote, setReplacedNote }:
 }
 
 /** Once enough pieces are in: the wallet's name, the finish, and what this browser already holds beside it. */
-function FinishHere({ busy, finishRecovery, wallets }: Pick<Session, 'busy' | 'finishRecovery' | 'wallets'>): ReactNode {
+function FinishHere({
+  busy,
+  finishRecovery,
+  wallets
+}: Pick<Session, 'busy' | 'finishRecovery' | 'wallets'>): ReactNode {
   /* A WALLET COMING BACK, WHICH IS NOT THE SAME QUESTION AS A NEW ONE.
    * The person may or may not remember what they called it, and this browser
    * usually has never heard of it; so the field is offered empty, and leaving
@@ -266,54 +301,52 @@ function FinishHere({ busy, finishRecovery, wallets }: Pick<Session, 'busy' | 'f
   return (
     <div style={{ marginTop: '0.75rem' }}>
       {/* Above every finish button, because all of them run the
-        * ceremony that fixes the new passkey's label for good. */}
+       * ceremony that fixes the new passkey's label for good. */}
       <WalletNameField
         label="What you call this wallet (optional)"
         value={walletName}
         onChange={setWalletName}
-        hint={(
+        hint={
           <>
-            Optional. Names are not part of the pieces, so a recovered wallet
-            arrives without one; what you type here goes on the passkey this
-            machine is about to make, and a passkey&rsquo;s label can never be
-            changed afterwards. Left empty, a name this browser already holds
-            for this same wallet is kept.
+            Optional. Names are not part of the pieces, so a recovered wallet arrives without one; what you type here
+            goes on the passkey this machine is about to make, and a passkey&rsquo;s label can never be changed
+            afterwards. Left empty, a name this browser already holds for this same wallet is kept.
           </>
-        )}
+        }
       />
       <button
         type="button"
         className="primary big"
         disabled={busy !== null}
-        onClick={() => { void finishRecovery(walletName); }}
+        onClick={() => {
+          void finishRecovery(walletName);
+        }}
       >
         Put the account back on this machine
       </button>
       {already.length === 0 ? (
         <p className="faint small" style={{ marginTop: '0.5rem' }}>
-          Nothing is stored in this browser, so nothing is replaced. A new
-          passkey is made for this machine as part of finishing.
+          Nothing is stored in this browser, so nothing is replaced. A new passkey is made for this machine as part of
+          finishing.
         </p>
       ) : (
         <>
           {/* SAID BEFORE THE CEREMONY, AND IT IS NOW GOOD NEWS.
-            * The two warning paragraphs and the confirm that stood
-            * here refused a destruction that can no longer happen. */}
+           * The two warning paragraphs and the confirm that stood
+           * here refused a destruction that can no longer happen. */}
           <p className="small" style={{ marginTop: '0.5rem' }}>
             <strong>
-              This browser already holds {already.length === 1
-                ? 'one wallet' : `${already.length} wallets`}: {already.join(', ')}.
+              This browser already holds {already.length === 1 ? 'one wallet' : `${already.length} wallets`}:{' '}
+              {already.join(', ')}.
             </strong>{' '}
-            The recovered account is added <em>beside</em> {already.length === 1
-              ? 'it' : 'them'}. Nothing stored here is replaced and nothing here
-            is lost — this browser holds several wallets and opens one at a time,
-            and after finishing the recovered one is the one that is open.
+            The recovered account is added <em>beside</em> {already.length === 1 ? 'it' : 'them'}. Nothing stored here
+            is replaced and nothing here is lost — this browser holds several wallets and opens one at a time, and after
+            finishing the recovered one is the one that is open.
           </p>
           <p className="faint small">
-            If these pieces belong to a wallet this browser already holds,
-            finishing re-seals that same wallet rather than adding a second copy
-            of it — and the passkey made here replaces the one it had. A new
-            passkey is made for this machine either way.
+            If these pieces belong to a wallet this browser already holds, finishing re-seals that same wallet rather
+            than adding a second copy of it — and the passkey made here replaces the one it had. A new passkey is made
+            for this machine either way.
           </p>
         </>
       )}

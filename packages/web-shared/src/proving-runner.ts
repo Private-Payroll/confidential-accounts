@@ -133,12 +133,13 @@ export const provingRunner = (capability: ProvingCapability, send: SendProven): 
          * not keep - is proved again rather than reported as possibly sent.
          */
         throw new NothingWasSent(
-          'this approval has no finished proof on this device to send, so nothing was sent. '
-          + 'It will be proved again.');
+          'this approval has no finished proof on this device to send, so nothing was sent. ' +
+            'It will be proved again.'
+        );
       }
       const codec = await capability.transactionCodec();
       return send(job, codec.serializeProven(provenTx));
-    },
+    }
 
     /*
      * **NO `recover` YET, AND WHAT THAT COSTS IS SAID HERE.** A recovery

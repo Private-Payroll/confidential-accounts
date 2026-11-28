@@ -29,17 +29,41 @@ const threeVersionsFiled = async () => {
     return { status: 200, body: { record: 'pool', filed: filed.at(-1) ?? null } };
   };
   const believeAll: FreshJudge = async () => Object.assign(() => null, {});
-  const filer = new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_refused'), SIGNING.secret, believeAll);
+  const filer = new HttpSealedPoolStore(
+    'pool',
+    storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_refused'),
+    SIGNING.secret,
+    believeAll
+  );
   for (const version of [1, 2, 3]) {
-    await filer.put(VAULT, sealPool(VAULT, { notes: [] } as never, [{ id: 'aa'.repeat(32), wrappingPublicKey: WRAPPING.publicKey }], version, 'pool'));
+    await filer.put(
+      VAULT,
+      sealPool(
+        VAULT,
+        { notes: [] } as never,
+        [{ id: 'aa'.repeat(32), wrappingPublicKey: WRAPPING.publicKey }],
+        version,
+        'pool'
+      )
+    );
   }
   /* A store whose company's records refuse the versions named, each with its reason. */
-  const refusing = (...versions: number[]) => new HttpSealedPoolStore('pool', storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_refused'), null, async () => Object.assign(
-    (_filer: unknown, _kind: unknown, _key: unknown, read: { version?: number }) => (versions.includes(read.version ?? 0) ? 'its filer was not seated' : null), {}));
+  const refusing = (...versions: number[]) =>
+    new HttpSealedPoolStore(
+      'pool',
+      storeReachOver(readRoutesOverSend(send, { directory: 'empty', newest: 'none-entered' }), 'acc_refused'),
+      null,
+      async () =>
+        Object.assign(
+          (_filer: unknown, _kind: unknown, _key: unknown, read: { version?: number }) =>
+            versions.includes(read.version ?? 0) ? 'its filer was not seated' : null,
+          {}
+        )
+    );
   return { refusing };
 };
 
-describe('a version the company\'s records do not believe', () => {
+describe("a version the company's records do not believe", () => {
   it('IS NAMED WITH WHY FOR A REBUILD, AND EVERY VERSION BELIEVED IS KEPT, IN ORDER', async () => {
     const { refusing } = await threeVersionsFiled();
     const read = await refusing(2).versionsBelieved(VAULT);
@@ -53,11 +77,13 @@ describe('a version the company\'s records do not believe', () => {
     const { refusing } = await threeVersionsFiled();
     /* RED WHEN: a reader that files or spends on the list is handed a list with a version quietly missing. */
     await expect(refusing(2).versions(VAULT)).rejects.toBeInstanceOf(FilingNotBelieved);
-    await expect(refusing(2, 3).versions(VAULT)).rejects.toThrow(/version 2 of this pool is not believed, because its filer was not seated/);
+    await expect(refusing(2, 3).versions(VAULT)).rejects.toThrow(
+      /version 2 of this pool is not believed, because its filer was not seated/
+    );
     expect((await refusing().versions(VAULT)).map((v) => v.version)).toEqual([1, 2, 3]);
   });
 
-  it('WHEN IT IS THE NEWEST, IS STILL REFUSED BY THE READ OF THE NEWEST, AND NAMED BY THE REBUILD\'S LIST', async () => {
+  it("WHEN IT IS THE NEWEST, IS STILL REFUSED BY THE READ OF THE NEWEST, AND NAMED BY THE REBUILD'S LIST", async () => {
     const { refusing } = await threeVersionsFiled();
     /* RED WHEN: the newest version is read though the company's records do not believe it. */
     await expect(refusing(3).get(VAULT)).rejects.toThrow(/version 3 of this pool is not believed/);

@@ -18,8 +18,12 @@ export function RetireVault({ vault }: { vault: string }) {
       <p className="text-muted-foreground">{t('vault.retire.again')}</p>
       <PanelFooter>
         <div className="flex flex-col items-start gap-2">
-          <Button variant="destructive" disabled={act.phase !== null || act.done} data-action="retire"
-            onClick={() => act.start((person, company, onStep) => retireVault(person, company, vault, onStep))}>
+          <Button
+            variant="destructive"
+            disabled={act.phase !== null || act.done}
+            data-action="retire"
+            onClick={() => act.start((person, company, onStep) => retireVault(person, company, vault, onStep))}
+          >
             {t('vault.retire')}
           </Button>
           <ActedSays phase={act.phase} result={act.result} done={t('vault.retire.done')} />

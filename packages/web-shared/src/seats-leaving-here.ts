@@ -16,7 +16,13 @@ import { signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { proposalsListedHere, standingOnChainHere } from './run-rebuilt-here.js';
 import { believedFilerHere, openTheRoundHere, type RecordsForTheRound } from './round-opened-here.js';
 import { blockingProposalSaid, passedOverAs } from './blocking-proposal-said.js';
-import { kindAsked, listedHere, pastTheRaisedBoundary, refusedForItsKey, type LeavingBoundaries } from './vault-page-doors.js';
+import {
+  kindAsked,
+  listedHere,
+  pastTheRaisedBoundary,
+  refusedForItsKey,
+  type LeavingBoundaries
+} from './vault-page-doors.js';
 import type { GovernanceDoors, GovernedThroughTheRecords } from './company-change-on-device.js';
 import type { GovernedCallDoors, GovernedCallService } from './governed-call-on-device.js';
 
@@ -29,12 +35,18 @@ import type { GovernedCallDoors, GovernedCallService } from './governed-call-on-
  * A removal raised and not yet approved holds no rise up: one that rises under
  * it is refused at its next approval and raised again (`removalRefusalHere`).
  */
-const removalUnderWayHere = async (doors: GovernanceDoors, viewingKey: KeysHeld, own?: string): Promise<string | null> => {
+const removalUnderWayHere = async (
+  doors: GovernanceDoors,
+  viewingKey: KeysHeld,
+  own?: string
+): Promise<string | null> => {
   const here = await doors.records!.directory();
   if (here.dir.seats.some((x) => x.retired !== null && x.seat !== own && here.holders.seats.includes(x.seat))) {
-    return 'a signer\'s seat is retired in the company\'s directory and the chain still holds it';
+    return "a signer's seat is retired in the company's directory and the chain still holds it";
   }
-  return (await removalsApprovedHere(doors, viewingKey)).some((r) => r.leaf !== own) ? 'a removal of a signer is approved and not yet carried out' : null;
+  return (await removalsApprovedHere(doors, viewingKey)).some((r) => r.leaf !== own)
+    ? 'a removal of a signer is approved and not yet carried out'
+    : null;
 };
 
 /**
@@ -54,18 +66,33 @@ const removalUnderWayHere = async (doors: GovernanceDoors, viewingKey: KeysHeld,
  * pay key) raises no bar and waits for nothing here.
  */
 export async function refuseABarRaisedDuringARemoval(
-  doors: GovernanceDoors, viewingKey: KeysHeld, change: GovernedThroughTheRecords, highestBand?: number,
+  doors: GovernanceDoors,
+  viewingKey: KeysHeld,
+  change: GovernedThroughTheRecords,
+  highestBand?: number
 ): Promise<void> {
-  const asked = change.kind === 'threshold' || change.kind === 'vault-threshold' ? Number(change.threshold)
-    : change.kind === 'policy-bar' ? Number(change.bar)
-      : change.kind === 'spending-policy' ? highestBand ?? Number.POSITIVE_INFINITY
-        : (change.kind === 'remove-signer' || change.kind === 'add-signer') && Number(change.threshold ?? '0') > 0 ? Number(change.threshold) : null;
+  const asked =
+    change.kind === 'threshold' || change.kind === 'vault-threshold'
+      ? Number(change.threshold)
+      : change.kind === 'policy-bar'
+        ? Number(change.bar)
+        : change.kind === 'spending-policy'
+          ? (highestBand ?? Number.POSITIVE_INFINITY)
+          : (change.kind === 'remove-signer' || change.kind === 'add-signer') && Number(change.threshold ?? '0') > 0
+            ? Number(change.threshold)
+            : null;
   if (asked === null || doors.records === undefined) return;
   if (asked <= (await doors.records.directory()).holders.seatBar) return;
-  const why = await removalUnderWayHere(doors, viewingKey, change.kind === 'remove-signer' ? change.leaf.toLowerCase() : undefined);
+  const why = await removalUnderWayHere(
+    doors,
+    viewingKey,
+    change.kind === 'remove-signer' ? change.leaf.toLowerCase() : undefined
+  );
   if (why !== null) {
-    throw new Error(`This change would raise the approvals a change of who is seated needs while ${why}, which could leave that `
-      + 'removal unable ever to be carried out. Nothing was sent. Carry out or withdraw the removal first, then make this change.');
+    throw new Error(
+      `This change would raise the approvals a change of who is seated needs while ${why}, which could leave that ` +
+        'removal unable ever to be carried out. Nothing was sent. Carry out or withdraw the removal first, then make this change.'
+    );
   }
 }
 
@@ -73,7 +100,9 @@ export async function refuseABarRaisedDuringARemoval(
  * What reading who is leaving needs: the service's proposals, the company's records and who the chain seats. Only the
  * records' directory and the chain's standing of each proposal are read.
  */
-export type LeavingReads = Pick<GovernedCallDoors, 'service' | 'accountId' | 'leaves'> & { readonly records?: RecordsForTheRound };
+export type LeavingReads = Pick<GovernedCallDoors, 'service' | 'accountId' | 'leaves'> & {
+  readonly records?: RecordsForTheRound;
+};
 
 /** Why who is leaving could not be read in full, so nothing that must exclude them goes ahead. */
 export class LeavingNotRead extends Error {
@@ -95,13 +124,17 @@ export class LeavingNotRead extends Error {
  * opened only far enough to read its kind unless it is a removal, so a run that fails its own checks holds up nothing.
  */
 export const removalsOpenHere = async (
-  doors: LeavingReads, viewingKey: KeysHeld, open = true, strict = false,
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  open = true,
+  strict = false
 ): Promise<{ id: string; leaf: string; opened: OpenedRound; status: string }[]> => {
   if (doors.records === undefined || !doors.service.sealedProposals) {
     if (strict) throw new LeavingNotRead('this page reads no proposals or records of the company');
     return [];
   }
-  if (strict && doors.records.roundsOnChain === undefined) throw new LeavingNotRead('this page cannot read where the company\'s proposals stand on the chain');
+  if (strict && doors.records.roundsOnChain === undefined)
+    throw new LeavingNotRead("this page cannot read where the company's proposals stand on the chain");
   const served = await doors.service.sealedProposals(doors.accountId);
   const named = await doors.records.directory(kindAsked('proposal'));
   const listed = await standingOnChainHere(doors.records, listedHere(named, 'proposal', served, 'proposal'));
@@ -109,8 +142,19 @@ export const removalsOpenHere = async (
   for (const p of listed) {
     if (p.accountId !== doors.accountId || (open && p.status !== 'open')) continue;
     try {
-      const opened = await openTheRoundHere(doors.service, doors.accountId, p.id, viewingKey, false, doors.records, doors.leaves, false, 'remove-signer');
-      if (opened.governance?.kind === 'remove-signer') out.push({ id: p.id, leaf: opened.governance.leaf.toLowerCase(), opened, status: p.status });
+      const opened = await openTheRoundHere(
+        doors.service,
+        doors.accountId,
+        p.id,
+        viewingKey,
+        false,
+        doors.records,
+        doors.leaves,
+        false,
+        'remove-signer'
+      );
+      if (opened.governance?.kind === 'remove-signer')
+        out.push({ id: p.id, leaf: opened.governance.leaf.toLowerCase(), opened, status: p.status });
     } catch (e) {
       /*
        * One this device cannot open names no removal it acts on, unless every removal must be known; one its sealed
@@ -135,13 +179,19 @@ type RemovalOnChain = { id: string; leaf: string; opened: OpenedRound; round: Ro
  * up. None where this device cannot read the chain's standing; with `strict`,
  * that refuses with `LeavingNotRead` (`removalsOpenHere`).
  */
-const removalsRaisedHere = async (doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<RemovalOnChain[]> => {
+const removalsRaisedHere = async (
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  strict = false
+): Promise<RemovalOnChain[]> => {
   const open = await removalsOpenHere(doors, viewingKey, true, strict);
   if (open.length === 0) return [];
   const read = await doors.records?.roundsOnChain?.(open.map((r) => r.opened.chainId.toLowerCase()));
   return open.flatMap((r) => {
     const round = read?.[r.opened.chainId.toLowerCase()];
-    return round !== undefined && (round.held === 'open' || round.held === 'cleared') && round.raisedAt !== undefined ? [{ ...r, round }] : [];
+    return round !== undefined && (round.held === 'open' || round.held === 'cleared') && round.raisedAt !== undefined
+      ? [{ ...r, round }]
+      : [];
   });
 };
 
@@ -160,15 +210,24 @@ const removalsRaisedHere = async (doors: LeavingReads, viewingKey: KeysHeld, str
  * removal as approved, never as one leaving nobody; with `strict`, it refuses
  * with `LeavingNotRead`.
  */
-const removalsApprovedHere = async (doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<RemovalOnChain[]> => {
+const removalsApprovedHere = async (
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  strict = false
+): Promise<RemovalOnChain[]> => {
   const raised = await removalsRaisedHere(doors, viewingKey, strict);
   if (raised.length === 0) return raised;
   const bar = (await doors.records!.directory()).holders?.seatBar;
   if (!Number.isSafeInteger(bar) || (bar as number) < 1) {
-    if (strict) throw new LeavingNotRead('your wallet\'s read of the company\'s account did not say how many approvals a change of who is seated needs');
+    if (strict)
+      throw new LeavingNotRead(
+        "your wallet's read of the company's account did not say how many approvals a change of who is seated needs"
+      );
     return raised;
   }
-  return raised.filter((r) => r.round.outrun !== true && r.round.approvals >= Math.max(bar as number, r.round.needed ?? 0));
+  return raised.filter(
+    (r) => r.round.outrun !== true && r.round.approvals >= Math.max(bar as number, r.round.needed ?? 0)
+  );
 };
 
 /**
@@ -188,15 +247,19 @@ const removalsApprovedHere = async (doors: LeavingReads, viewingKey: KeysHeld, s
  * cannot read refuses with `LeavingNotRead` rather than leave a seat out.
  */
 export async function leavingBoundariesHere(
-  doors: LeavingReads, viewingKey: KeysHeld, strict = false, raised = false,
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  strict = false,
+  raised = false
 ): Promise<LeavingBoundaries> {
   const out = new Map<string, Readonly<Record<string, number>>>();
   if (doors.records === undefined) {
-    if (strict) throw new LeavingNotRead('this page cannot read the company\'s records');
+    if (strict) throw new LeavingNotRead("this page cannot read the company's records");
     return out;
   }
   const here = await doors.records.directory();
-  const named = raised ? (await removalsRaisedHere(doors, viewingKey, strict)).filter((r) => r.round.outrun !== true)
+  const named = raised
+    ? (await removalsRaisedHere(doors, viewingKey, strict)).filter((r) => r.round.outrun !== true)
     : await removalsApprovedHere(doors, viewingKey, strict);
   for (const r of named) {
     const seat = here.dir.seats.find((x) => x.seat === r.leaf);
@@ -215,7 +278,11 @@ export async function leavingBoundariesHere(
  * under, and what changes the company's key without that seat. With `strict`,
  * as `leavingBoundariesHere`.
  */
-export async function seatsLeavingHere(doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<ReadonlySet<string>> {
+export async function seatsLeavingHere(
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  strict = false
+): Promise<ReadonlySet<string>> {
   return new Set((await leavingBoundariesHere(doors, viewingKey, strict)).keys());
 }
 
@@ -229,7 +296,11 @@ export async function seatsLeavingHere(doors: LeavingReads, viewingKey: KeysHeld
  * so nothing the chain acts on rests on a record that is passed over once the
  * removal is approved. With `strict`, as `leavingBoundariesHere`.
  */
-export async function seatsUnderARaisedRemovalHere(doors: LeavingReads, viewingKey: KeysHeld, strict = false): Promise<ReadonlySet<string>> {
+export async function seatsUnderARaisedRemovalHere(
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  strict = false
+): Promise<ReadonlySet<string>> {
   return new Set((await leavingBoundariesHere(doors, viewingKey, strict, true)).keys());
 }
 
@@ -251,13 +322,18 @@ export async function seatsUnderARaisedRemovalHere(doors: LeavingReads, viewingK
  * The one exception is a removal of a signer (`exemptFromWhoFiled`); a run is never exempt.
  */
 export const refuseWhatALeaverFiledHere = async (
-  doors: LeavingReads, viewingKey: KeysHeld, proposalId: string, opened: OpenedRound,
+  doors: LeavingReads,
+  viewingKey: KeysHeld,
+  proposalId: string,
+  opened: OpenedRound
 ): Promise<void> => {
   const filer = typeof opened.filedBy === 'string' ? opened.filedBy.toLowerCase() : null;
   if (filer === null) {
-    throw new Error('This device holds no signed filing of this proposal in the company\'s records, so who raised it cannot be '
-      + 'said, and a proposal raised by a signer on their way out is not approved or carried out. Nothing was sent. Reload the '
-      + 'page and open it again; if it happens again, whoever raised it raises it again from their own device.');
+    throw new Error(
+      "This device holds no signed filing of this proposal in the company's records, so who raised it cannot be " +
+        'said, and a proposal raised by a signer on their way out is not approved or carried out. Nothing was sent. Reload the ' +
+        'page and open it again; if it happens again, whoever raised it raises it again from their own device.'
+    );
   }
   if (exemptFromWhoFiled(opened)) return;
   let boundaries: LeavingBoundaries;
@@ -265,12 +341,30 @@ export const refuseWhatALeaverFiledHere = async (
     boundaries = await leavingBoundariesHere(doors, viewingKey, true, true);
   } catch (e) {
     if (!(e instanceof LeavingNotRead)) throw e;
-    throw new Error(`This is not approved or carried out while ${e.message}. Nothing was sent.${e.blocking ? '' : ' Read the chain again, then try again.'}`);
+    throw new Error(
+      `This is not approved or carried out while ${e.message}. Nothing was sent.${e.blocking ? '' : ' Read the chain again, then try again.'}`
+    );
   }
-  if (!pastTheRaisedBoundary(boundaries, filer, boundaryKeyOfEntry({ store: 'proposal', kind: 'proposal', id: proposalId, version: 1, digest: '' } as ManifestEntryBody), 1)) return;
-  throw new Error('This was raised by a signer whose removal is raised, after it was raised, and what they file now is passed over '
-    + 'once their removal is approved. Nothing was sent. Do not approve or carry it out; once the removal is carried out, a '
-    + 'signer who stays raises it again, or once it is withdrawn, approve it then.');
+  if (
+    !pastTheRaisedBoundary(
+      boundaries,
+      filer,
+      boundaryKeyOfEntry({
+        store: 'proposal',
+        kind: 'proposal',
+        id: proposalId,
+        version: 1,
+        digest: ''
+      } as ManifestEntryBody),
+      1
+    )
+  )
+    return;
+  throw new Error(
+    'This was raised by a signer whose removal is raised, after it was raised, and what they file now is passed over ' +
+      'once their removal is approved. Nothing was sent. Do not approve or carry it out; once the removal is carried out, a ' +
+      'signer who stays raises it again, or once it is withdrawn, approve it then.'
+  );
 };
 
 /**
@@ -292,19 +386,26 @@ const exemptFromWhoFiled = (opened: OpenedRound): boolean => opened.governance?.
  * believe is refused, saying what resolves it.
  */
 export async function refuseARunALeaverRaisedHere(
-  records: RecordsForTheRound, accountId: string, viewingKey: KeysHeld, proposalId: string,
+  records: RecordsForTheRound,
+  accountId: string,
+  viewingKey: KeysHeld,
+  proposalId: string
 ): Promise<void> {
   const proposals = records.proposals;
   if (proposals === undefined) {
-    throw new Error('This page cannot read the company\'s proposals, so it cannot say who raised this run, and a run raised by a '
-      + 'signer on their way out is not charged or paid. Nothing was sent. Reload the page to get the current version.');
+    throw new Error(
+      "This page cannot read the company's proposals, so it cannot say who raised this run, and a run raised by a " +
+        'signer on their way out is not charged or paid. Nothing was sent. Reload the page to get the current version.'
+    );
   }
   const listed = await proposalsListedHere({ ...records, proposals });
   const rec = listed.find((p) => p.id === proposalId && p.accountId === accountId);
   if (rec === undefined) {
     refusedForItsKey(listed, proposalId, 'proposal');
-    throw new Error('The company\'s records hold no proposal by that name, so who raised this run cannot be said, and it is not '
-      + 'charged or paid. Nothing was sent. Reload the page to see where it stands.');
+    throw new Error(
+      "The company's records hold no proposal by that name, so who raised this run cannot be said, and it is not " +
+        'charged or paid. Nothing was sent. Reload the page to see where it stands.'
+    );
   }
   const filedBy = await believedFilerHere(records, accountId, rec);
   /* Only the company's proposals are read through this service: which removals are raised. */
@@ -321,6 +422,6 @@ export async function refuseARunALeaverRaisedHere(
 export async function ownRemovalApprovedHere(doors: GovernanceDoors, viewingKey: KeysHeld): Promise<string | null> {
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
   return (await seatsLeavingHere(doors, viewingKey)).has(mine)
-    ? 'a removal of this signer\'s seat is approved, so this device files nothing more for the company: a signer who stays files it instead'
+    ? "a removal of this signer's seat is approved, so this device files nothing more for the company: a signer who stays files it instead"
     : null;
 }

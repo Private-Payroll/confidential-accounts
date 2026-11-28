@@ -5,7 +5,13 @@
  * the deposit's window with the whole margin for clocks kept, however long the build took.
  */
 import { describe, expect, it } from 'vitest';
-import { DEPOSIT_TIME_TO_LIVE_MS, type DepositInFlight, DepositMayOutliveItsWindow, DepositNotYetSeen, depositIntoCompanyVault } from './vault-private-deposit.js';
+import {
+  DEPOSIT_TIME_TO_LIVE_MS,
+  type DepositInFlight,
+  DepositMayOutliveItsWindow,
+  DepositNotYetSeen,
+  depositIntoCompanyVault
+} from './vault-private-deposit.js';
 import { type PaymentInFlight } from './vault-payment-in-flight.js';
 import { checkWhatThisBrowserDeposited } from './check-what-this-browser-sent.js';
 import { openCompanyVaultPool } from './vault-pool-opened.js';
@@ -15,7 +21,17 @@ import { MemorySealedPoolStore, openPool, type SealedPool } from '../../../src/m
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 import {
-  ACCOUNT, LABEL, VAULT, builder, inFlightInMemory, indexerOf, nothingToCheck, pacing, serviceFrom, view, walletReadsTheVault,
+  ACCOUNT,
+  LABEL,
+  VAULT,
+  builder,
+  inFlightInMemory,
+  indexerOf,
+  nothingToCheck,
+  pacing,
+  serviceFrom,
+  view,
+  walletReadsTheVault
 } from './vault-operation.test-support.js';
 
 const wrapping = recordsKeypairFrom(new Uint8Array(32).fill(6));
@@ -42,32 +58,63 @@ const aCompany = async () => {
   const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
   const service = serviceFrom([], [], {
     chain: async () => view({ heldByCommittee: true, started: true, state: 'AAAA', notes: [], everCreated: [] }),
-    deposit: async () => { w.sent += 1; throw new Error('the connection dropped'); },
+    deposit: async () => {
+      w.sent += 1;
+      throw new Error('the connection dropped');
+    }
   });
   const builtAt: number[] = [];
   const b: VaultBuilderClient = {
     ...builder([]),
-    deposit: async (i) => { w.built.push(i.coin); builtAt.push(w.now); return { tx: `P${w.built.length}` }; },
+    deposit: async (i) => {
+      w.built.push(i.coin);
+      builtAt.push(w.now);
+      return { tx: `P${w.built.length}` };
+    },
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: `held:${i.coin.nonce}` }),
     readTransaction: async (i) => {
       const n = Number(/^P(\d+)/u.exec(i.transaction)?.[1] ?? 0);
       const coin = w.built[n - 1];
       return {
-        identifiers: [], timeToLive: w.ttl(builtAt[n - 1] ?? w.now), calls: [{ address: VAULT, entryPoint: 'deposit', segments: [0] }],
-        coinsForContracts: coin === undefined ? [] : [{ contract: VAULT, commitment: `out:${coin.nonce}` }], publicTakes: [],
+        identifiers: [],
+        timeToLive: w.ttl(builtAt[n - 1] ?? w.now),
+        calls: [{ address: VAULT, entryPoint: 'deposit', segments: [0] }],
+        coinsForContracts: coin === undefined ? [] : [{ contract: VAULT, commitment: `out:${coin.nonce}` }],
+        publicTakes: []
       };
-    },
+    }
   };
   const inFlight = inFlightInMemory<DepositInFlight>();
   const doors = {
-    ...pacing, ...walletReadsTheVault, service, indexer: indexerOf(service), me, myRecordsKey: 'ff'.repeat(32), records, signers,
-    company: LABEL, account: ACCOUNT, builder: b, clock: () => w.now, inFlight, payments: inFlightInMemory<PaymentInFlight>(),
-    pay: async (ask: { transaction: string }) => { w.asked += 1; return { transaction: `${ask.transaction}+coins`, leaves: [] }; },
+    ...pacing,
+    ...walletReadsTheVault,
+    service,
+    indexer: indexerOf(service),
+    me,
+    myRecordsKey: 'ff'.repeat(32),
+    records,
+    signers,
+    company: LABEL,
+    account: ACCOUNT,
+    builder: b,
+    clock: () => w.now,
+    inFlight,
+    payments: inFlightInMemory<PaymentInFlight>(),
+    pay: async (ask: { transaction: string }) => {
+      w.asked += 1;
+      return { transaction: `${ask.transaction}+coins`, leaves: [] };
+    }
   };
   await openCompanyVaultPool(doors, VAULT, nothingToCheck);
   const lines = async () => {
     const rec = await journal.get(VAULT);
-    return rec === null ? [] : (openPool(rec, 'ada', wrapping.secret, { record: 'deposit-journal' }) as { notes: Array<{ nonce: string; ended?: true }> }).notes;
+    return rec === null
+      ? []
+      : (
+          openPool(rec, 'ada', wrapping.secret, { record: 'deposit-journal' }) as {
+            notes: Array<{ nonce: string; ended?: true }>;
+          }
+        ).notes;
   };
   return { w, doors, journal, inFlight, lines };
 };
@@ -75,7 +122,15 @@ const aCompany = async () => {
 describe('A DEPOSIT STOPPED AFTER ITS COIN IS FILED AND BEFORE IT IS HANDED OVER', () => {
   it('a deposit whose build fails ends its journal line, and no check says it is on its way', async () => {
     const c = await aCompany();
-    const doors = { ...c.doors, builder: { ...c.doors.builder, deposit: async () => { throw new Error('the proof could not be made'); } } };
+    const doors = {
+      ...c.doors,
+      builder: {
+        ...c.doors.builder,
+        deposit: async () => {
+          throw new Error('the proof could not be made');
+        }
+      }
+    };
     await expect(depositIntoCompanyVault(doors, VAULT, MONEY)).rejects.toThrow(/the proof could not be made/u);
     /* RED WHEN: a deposit whose build failed after its coin was filed is left on its way in the vault's journal. */
     expect((await c.lines()).map((l) => l.ended)).toEqual([true]);
@@ -87,10 +142,16 @@ describe('A DEPOSIT STOPPED AFTER ITS COIN IS FILED AND BEFORE IT IS HANDED OVER
   it('a deposit whose coin cannot be read off the vault worker ends its journal line', async () => {
     const c = await aCompany();
     /* The worker answers while the coin is chosen, and stops once the deposit is built. */
-    const doors = { ...c.doors, builder: { ...c.doors.builder, commitments: async (i: Parameters<VaultBuilderClient['commitments']>[0]) => {
-      if (c.w.built.length > 0) throw new Error('the vault worker stopped');
-      return c.doors.builder.commitments(i);
-    } } };
+    const doors = {
+      ...c.doors,
+      builder: {
+        ...c.doors.builder,
+        commitments: async (i: Parameters<VaultBuilderClient['commitments']>[0]) => {
+          if (c.w.built.length > 0) throw new Error('the vault worker stopped');
+          return c.doors.builder.commitments(i);
+        }
+      }
+    };
     await expect(depositIntoCompanyVault(doors, VAULT, MONEY)).rejects.toThrow(/the vault worker stopped/u);
     /* RED WHEN: a deposit stopped reading its coin's commitments is left on its way in the vault's journal. */
     expect((await c.lines()).map((l) => l.ended)).toEqual([true]);
@@ -98,7 +159,15 @@ describe('A DEPOSIT STOPPED AFTER ITS COIN IS FILED AND BEFORE IT IS HANDED OVER
 
   it('a deposit that cannot be kept on this device ends its journal line', async () => {
     const c = await aCompany();
-    const doors = { ...c.doors, inFlight: { ...c.inFlight, claim: async () => { throw new Error('this browser\'s storage is full'); } } };
+    const doors = {
+      ...c.doors,
+      inFlight: {
+        ...c.inFlight,
+        claim: async () => {
+          throw new Error("this browser's storage is full");
+        }
+      }
+    };
     await expect(depositIntoCompanyVault(doors, VAULT, MONEY)).rejects.toThrow(/storage is full/u);
     /* RED WHEN: a deposit that could not be kept on this device is left on its way in the vault's journal. */
     expect((await c.lines()).map((l) => l.ended)).toEqual([true]);
@@ -108,12 +177,23 @@ describe('A DEPOSIT STOPPED AFTER ITS COIN IS FILED AND BEFORE IT IS HANDED OVER
   it('a line that cannot be marked is said in the refusal, beside what stopped the deposit', async () => {
     const c = await aCompany();
     const stopped = new Error('the proof could not be made.');
-    const doors = { ...c.doors, builder: { ...c.doors.builder, deposit: async () => { c.journal.refuse = new Error('the service did not answer'); throw stopped; } } };
+    const doors = {
+      ...c.doors,
+      builder: {
+        ...c.doors.builder,
+        deposit: async () => {
+          c.journal.refuse = new Error('the service did not answer');
+          throw stopped;
+        }
+      }
+    };
     const e = await depositIntoCompanyVault(doors, VAULT, MONEY).catch((x: unknown) => x);
     /* RED WHEN: a line left on its way because it could not be marked is passed over in silence. */
     expect(e).toBeInstanceOf(DepositLineNotEnded);
     expect((e as DepositLineNotEnded).stopped).toBe(stopped);
-    expect((e as Error).message).toMatch(/^the proof could not be made\. This deposit's line .* could not be marked as never sent \(the service did not answer\), so until its window passes a check of this vault may say it is still on its way\. It was not sent and cannot arrive\.$/u);
+    expect((e as Error).message).toMatch(
+      /^the proof could not be made\. This deposit's line .* could not be marked as never sent \(the service did not answer\), so until its window passes a check of this vault may say it is still on its way\. It was not sent and cannot arrive\.$/u
+    );
     c.journal.refuse = null;
     expect((await c.lines()).map((l) => l.ended)).toEqual([undefined]);
   });
@@ -121,10 +201,16 @@ describe('A DEPOSIT STOPPED AFTER ITS COIN IS FILED AND BEFORE IT IS HANDED OVER
   it('a stop the deposit already ended its line for still says so when the line cannot be marked', async () => {
     const c = await aCompany();
     c.w.ttl = () => Number.POSITIVE_INFINITY;
-    const doors = { ...c.doors, builder: { ...c.doors.builder, deposit: async (i: Parameters<VaultBuilderClient['deposit']>[0]) => {
-      c.journal.refuse = new Error('the service did not answer');
-      return c.doors.builder.deposit(i);
-    } } };
+    const doors = {
+      ...c.doors,
+      builder: {
+        ...c.doors.builder,
+        deposit: async (i: Parameters<VaultBuilderClient['deposit']>[0]) => {
+          c.journal.refuse = new Error('the service did not answer');
+          return c.doors.builder.deposit(i);
+        }
+      }
+    };
     const e = await depositIntoCompanyVault(doors, VAULT, MONEY).catch((x: unknown) => x);
     /* RED WHEN: a deposit refused for its window whose line could not be marked does not say the line still reads as on its way. */
     expect(e).toBeInstanceOf(DepositLineNotEnded);
@@ -133,21 +219,27 @@ describe('A DEPOSIT STOPPED AFTER ITS COIN IS FILED AND BEFORE IT IS HANDED OVER
 });
 
 describe('THE BUILT DEPOSIT ENDS INSIDE ITS WINDOW WITH THE WHOLE MARGIN FOR CLOCKS KEPT', () => {
-  it('a slow build whose transaction ends past the window counted from its coin\'s filing is not sent, and its line is ended', async () => {
+  it("a slow build whose transaction ends past the window counted from its coin's filing is not sent, and its line is ended", async () => {
     const c = await aCompany();
     /* The build takes ten minutes and ends a minute past the window counted from when the coin was chosen. */
     c.w.ttl = () => NOW + DEPOSIT_TIME_TO_LIVE_MS + 60_000;
-    const doors = { ...c.doors, builder: { ...c.doors.builder, deposit: async (i: Parameters<VaultBuilderClient['deposit']>[0]) => {
-      c.w.now += 10 * 60_000;
-      return c.doors.builder.deposit(i);
-    } } };
+    const doors = {
+      ...c.doors,
+      builder: {
+        ...c.doors.builder,
+        deposit: async (i: Parameters<VaultBuilderClient['deposit']>[0]) => {
+          c.w.now += 10 * 60_000;
+          return c.doors.builder.deposit(i);
+        }
+      }
+    };
     /* RED WHEN: a deposit that could land after a reader whose clock runs ahead says it never will is sent. */
     await expect(depositIntoCompanyVault(doors, VAULT, MONEY)).rejects.toBeInstanceOf(DepositMayOutliveItsWindow);
     expect(c.w.asked).toBe(0);
     expect((await c.lines()).map((l) => l.ended)).toEqual([true]);
   });
 
-  it('a transaction ending exactly at the window counted from its coin\'s filing goes ahead', async () => {
+  it("a transaction ending exactly at the window counted from its coin's filing goes ahead", async () => {
     const c = await aCompany();
     c.w.ttl = () => NOW + DEPOSIT_TIME_TO_LIVE_MS;
     /* RED WHEN: a deposit that ends inside its window, with the margin for clocks kept, is refused. */

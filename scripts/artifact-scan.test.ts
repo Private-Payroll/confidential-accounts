@@ -31,7 +31,7 @@ import {
   queriesIn,
   readContract,
   spanEnd,
-  topLevelStrings,
+  topLevelStrings
 } from './artifact-scan.js';
 import { fileURLToPath } from 'node:url';
 
@@ -147,7 +147,9 @@ describe('the three refusals the header calls load-bearing actually refuse', () 
     // nothing but this proves it would ever fire.
     const one = 'const _descriptor_9 = new __compactRuntime.CompactTypeUnsignedInteger(255n, 1);';
     expect(indexDescriptor(one)).toBe('_descriptor_9');
-    expect(() => indexDescriptor('const _descriptor_9 = new __compactRuntime.CompactTypeBytes(32);')).toThrow(/exactly ONE/);
+    expect(() => indexDescriptor('const _descriptor_9 = new __compactRuntime.CompactTypeBytes(32);')).toThrow(
+      /exactly ONE/
+    );
     expect(() => indexDescriptor(one + '\n' + one.replace('_9', '_12'))).toThrow(/found 2/);
   });
 
@@ -159,9 +161,19 @@ describe('the three refusals the header calls load-bearing actually refuse', () 
     const accessor = (name: string, idx: number) =>
       `${name}: { isEmpty() { return q(c, p, [{ dup: { n: 0 } }, { idx: { path: [{ tag: 'value', value: { value: ${desc}.toValue(${idx}n) } }] } }]); } }`;
     const moduleText = `export function ledger(x) { return { ${accessor('alpha', 0)}, ${accessor('beta', 1)} }; }`;
-    expect(indicesFromLedgerFn(moduleText, desc)).toEqual(new Map([['alpha', 0], ['beta', 1]]));
+    expect(indicesFromLedgerFn(moduleText, desc)).toEqual(
+      new Map([
+        ['alpha', 0],
+        ['beta', 1]
+      ])
+    );
     const swapped = `export function ledger(x) { return { ${accessor('alpha', 1)}, ${accessor('beta', 0)} }; }`;
-    expect(indicesFromLedgerFn(swapped, desc)).toEqual(new Map([['alpha', 1], ['beta', 0]]));
+    expect(indicesFromLedgerFn(swapped, desc)).toEqual(
+      new Map([
+        ['alpha', 1],
+        ['beta', 0]
+      ])
+    );
     // Which is what `readContract` compares against `contract-info.json`; the
     // two maps above differ, so the comparison there has something to find.
     expect(indicesFromLedgerFn(moduleText, desc)).not.toEqual(indicesFromLedgerFn(swapped, desc));
@@ -171,7 +183,9 @@ describe('the three refusals the header calls load-bearing actually refuse', () 
     // This is the check that caught the vault's kernel access before the stack
     // model existed. It has no test of its own until here.
     const ops = `{ dup: { n: 0 } }, { idx: { path: [ { tag: 'value', value: { value: ${D}.toValue(9n) } }] } }`;
-    expect(() => queriesIn(`queryLedgerState(${array(ops)})`, D, 4, 'Fixture._x_0')).toThrow(/addresses ledger field 9, and this contract has 4 fields/);
+    expect(() => queriesIn(`queryLedgerState(${array(ops)})`, D, 4, 'Fixture._x_0')).toThrow(
+      /addresses ledger field 9, and this contract has 4 fields/
+    );
     expect(() => queriesIn(`queryLedgerState(${array(ops)})`, D, 12, 'Fixture._x_0')).not.toThrow();
   });
 });
@@ -187,18 +201,41 @@ describe('the real artifacts, read end to end', () => {
       // Slots 0-13, in declaration order; slot 14 is deliberately empty and is
       // the guard's margin, not inventory. The compiled contract reads each
       // field by its slot, so a field added, moved or removed turns this red.
-      'signers', 'approvals', 'openProposals', 'approvalCounts', 'movements', 'threshold',
-      'thresholds', 'vaults', 'runWindow', 'signerLeaves', 'retiredAt', 'proposalHolds',
-      'successor', 'signerRoles',
+      'signers',
+      'approvals',
+      'openProposals',
+      'approvalCounts',
+      'movements',
+      'threshold',
+      'thresholds',
+      'vaults',
+      'runWindow',
+      'signerLeaves',
+      'retiredAt',
+      'proposalHolds',
+      'successor',
+      'signerRoles'
     ]);
     // DECLARATION ORDER. The seven `reserved` maps are reserved: the
     // constructor's emitted `initialState` writes them, and no circuit reads or
     // writes them, so they appear here and in the constructor list below and
     // nowhere else.
     expect(vault.fields.map((f) => f.name)).toEqual([
-      'account', 'notes', 'unshieldedTokens', 'payments', 'reserved0', 'nonceCommitment',
-      'splitJournal', 'secretCopies', 'reserved1', 'reserved2', 'reserved3', 'reserved4',
-      'reserved5', 'reserved6', 'retired',
+      'account',
+      'notes',
+      'unshieldedTokens',
+      'payments',
+      'reserved0',
+      'nonceCommitment',
+      'splitJournal',
+      'secretCopies',
+      'reserved1',
+      'reserved2',
+      'reserved3',
+      'reserved4',
+      'reserved5',
+      'reserved6',
+      'retired'
     ]);
   });
 
@@ -223,11 +260,22 @@ describe('the real artifacts, read end to end', () => {
     const account = await readContract(ROOT, ARTIFACTS[0]!);
     const approve = account.circuits.find((c) => c.name === 'approve');
     expect(approve?.witnesses.map((w) => w.witness).sort()).toEqual([
-      'localSecretKey', 'runOpening', 'signerBlinding', 'signerPath', 'signerRights', 'signerScope',
+      'localSecretKey',
+      'runOpening',
+      'signerBlinding',
+      'signerPath',
+      'signerRights',
+      'signerScope'
     ]);
     expect(approve?.witnesses.every((w) => w.via.length > 0)).toBe(true);
     // And the cross-contract callees read no witness at all, by design.
-    for (const name of ['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault', 'closeExpiredRun']) {
+    for (const name of [
+      'approveVaultChange',
+      'recordBatchFromVault',
+      'recordPaymentFromVault',
+      'retireVault',
+      'closeExpiredRun'
+    ]) {
       expect(account.circuits.find((c) => c.name === name)?.witnesses).toEqual([]);
     }
   });
@@ -236,8 +284,12 @@ describe('the real artifacts, read end to end', () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]!);
     const calls = vault.circuits.flatMap((c) => c.calls.map((x) => `${c.name} → ${x.circuit}`)).sort();
     expect(calls).toEqual([
-      'batchPayout → recordBatchFromVault', 'payout → recordPaymentFromVault', 'payoutUnshielded → recordPaymentFromVault', 'retire → retireVault',
-      'setNonceSecret → approveVaultChange', 'splitNote → approveVaultChange',
+      'batchPayout → recordBatchFromVault',
+      'payout → recordPaymentFromVault',
+      'payoutUnshielded → recordPaymentFromVault',
+      'retire → retireVault',
+      'setNonceSecret → approveVaultChange',
+      'splitNote → approveVaultChange'
     ]);
     const account = await readContract(ROOT, ARTIFACTS[0]!);
     expect(account.circuits.flatMap((c) => c.calls)).toEqual([]);
@@ -251,9 +303,21 @@ describe('the real artifacts, read end to end', () => {
     const vault = await readContract(ROOT, ARTIFACTS[1]!);
     expect(vault.ctor).not.toBeNull();
     expect(vault.ctor?.writes.map((w) => w.field).sort()).toEqual([
-      'account', 'nonceCommitment', 'notes', 'payments', 'reserved0', 'reserved1', 'reserved2',
-      'reserved3', 'reserved4', 'reserved5', 'reserved6', 'retired', 'secretCopies', 'splitJournal',
-      'unshieldedTokens',
+      'account',
+      'nonceCommitment',
+      'notes',
+      'payments',
+      'reserved0',
+      'reserved1',
+      'reserved2',
+      'reserved3',
+      'reserved4',
+      'reserved5',
+      'reserved6',
+      'retired',
+      'secretCopies',
+      'splitJournal',
+      'unshieldedTokens'
     ]);
     // And no CIRCUIT writes `account`: only the constructor sets the vault's account.
     expect(vault.circuits.filter((c) => c.writes.some((w) => w.field === 'account'))).toEqual([]);
@@ -267,7 +331,7 @@ describe('the real artifacts, read end to end', () => {
     expect(account.ctor?.writes).toHaveLength(account.fields.length);
   });
 
-  it('the helper chain printed is the contract\'s own route to the read, because it is a claim about the route', async () => {
+  it("the helper chain printed is the contract's own route to the read, because it is a claim about the route", async () => {
     const account = await readContract(ROOT, ARTIFACTS[0]!);
     const approve = account.circuits.find((c) => c.name === 'approve');
     const signers = approve?.reads.find((r) => r.field === 'signers');
@@ -303,8 +367,8 @@ describe('the real artifacts, read end to end', () => {
     expect(vault.circuits.find((c) => c.name === 'deposit')?.asserts.map((a) => a.message)).toEqual([
       'a deposit of nothing is not a deposit',
       'this vault has been retired, so it takes no more money',
-      'this vault takes no money yet: the company\'s account has not adopted it and approved its first nonce secret',
-      'this vault takes no money yet: not every signer\'s sealed copy of its secret is on the chain',
+      "this vault takes no money yet: the company's account has not adopted it and approved its first nonce secret",
+      "this vault takes no money yet: not every signer's sealed copy of its secret is on the chain"
     ]);
     expect(vault.circuits.find((c) => c.name === 'depositUnshielded')?.asserts.length).toBeGreaterThan(0);
   });
@@ -353,9 +417,7 @@ describe('the real artifacts, read end to end', () => {
     const facts = [...account.keys.values()];
     expect(facts.length).toBeGreaterThan(5);
     for (const fact of facts) {
-      expect(Object.keys(fact).sort()).toEqual(
-        fact.measured ? ['bytes', 'measured', 'sha256'] : ['measured', 'why'],
-      );
+      expect(Object.keys(fact).sort()).toEqual(fact.measured ? ['bytes', 'measured', 'sha256'] : ['measured', 'why']);
     }
   });
 });

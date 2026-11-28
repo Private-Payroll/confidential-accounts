@@ -29,13 +29,19 @@ export const seatMayFileIn = (here: DirectoryHere, signingKey: string, kind: Fil
 
 /** Why the seat may not file, in a sentence with no capital and no stop: `roleMayNot` when its role is why. */
 export const mayNotFileSaid = (no: MayNotFile, roleMayNot: string): string => {
-  if (no.refused === 'no-seat') return 'the company\'s directory, as this device reads it, holds no seat under your keys';
+  if (no.refused === 'no-seat')
+    return "the company's directory, as this device reads it, holds no seat under your keys";
   if (no.refused === 'not-believed') return `your seat is not one this device believes: ${no.off}`;
   return roleMayNot;
 };
 
 /** The seat that signs with `signingKey`, if it may file a record of `kind`; otherwise why not, `roleMayNot` when its role is why. */
-export const seatThatMayFileHere = (here: DirectoryHere, signingKey: string, kind: FiledKind, roleMayNot: string): DirectorySeat | string => {
+export const seatThatMayFileHere = (
+  here: DirectoryHere,
+  signingKey: string,
+  kind: FiledKind,
+  roleMayNot: string
+): DirectorySeat | string => {
   const s = seatMayFileIn(here, signingKey, kind);
   return 'refused' in s ? mayNotFileSaid(s, roleMayNot) : s;
 };
@@ -48,12 +54,17 @@ const rolesThatFile = (kind: FiledKind): readonly string[] => ROLES.filter((r) =
  * what resolves it. `why` is that the seat is in no directory entry, that this device does not believe it, or that its
  * role does not file the kind. `read` is the directory read the caller already holds or makes.
  */
-export async function mayFileHere(read: () => Promise<DirectoryHere>, signingKey: string, kind: FiledKind): Promise<{ readonly why: MayNotFile['refused']; readonly says: string } | null> {
+export async function mayFileHere(
+  read: () => Promise<DirectoryHere>,
+  signingKey: string,
+  kind: FiledKind
+): Promise<{ readonly why: MayNotFile['refused']; readonly says: string } | null> {
   const s = seatMayFileIn(await read(), signingKey, kind);
   if (!('refused' in s)) return null;
   const files = `(${rolesThatFile(kind).join(', ')})`;
-  const says = s.refused === 'role'
-    ? `Your seat's role, ${String(s.seat.role)}, may not file ${kind} records. A seat whose role may file them ${files} must make this change.`
-    : `${refusalSaid(mayNotFileSaid(s, ''))}. A seat this device believes, whose role files ${kind} records ${files}, must make this change.`;
+  const says =
+    s.refused === 'role'
+      ? `Your seat's role, ${String(s.seat.role)}, may not file ${kind} records. A seat whose role may file them ${files} must make this change.`
+      : `${refusalSaid(mayNotFileSaid(s, ''))}. A seat this device believes, whose role files ${kind} records ${files}, must make this change.`;
   return { why: s.refused, says };
 }

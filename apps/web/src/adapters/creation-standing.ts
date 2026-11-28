@@ -2,7 +2,12 @@ import { canOpenCompanies, currentUser, type CompanyCreationState } from 'vaults
 import { AuthError } from 'vaults-web-shared/service-transport.js';
 import { sourceOnPage } from 'vaults-web-shared/company-view-on-page.js';
 import {
-  companyAwaitingItsSecondPress, companyBeingCreated, companyBeingCreatedLabel, companyCreationStanding, keptCreationShowsItsKeyCommitted, walletShowsPayKeyCommitted,
+  companyAwaitingItsSecondPress,
+  companyBeingCreated,
+  companyBeingCreatedLabel,
+  companyCreationStanding,
+  keptCreationShowsItsKeyCommitted,
+  walletShowsPayKeyCommitted
 } from 'vaults-web-shared/company-creation.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { SERVICE_READ_BOUND_MS, SERVICE_READ_BOUND_SECONDS } from 'vaults-web-shared/read-bound.js';
@@ -15,7 +20,6 @@ import { ACCOUNT_ORIGIN } from './session.js';
  * another, about the pair the service names, which is the service's word. With the saved keys shut nothing is
  * confirmed, because a kept creation cannot be seen. A screen asks here and nowhere else, and is handed codes.
  */
-
 
 /** The mark a company carries in a list. Only this one exists: a company without it is shown as every other. */
 export const CREATION_MARK = { notFinished: 'not-finished' } as const;
@@ -30,7 +34,9 @@ export type Stage = (typeof STAGE)[keyof typeof STAGE];
  * (it carries the mark), whether the next step is built from what this browser keeps so shut saved keys must be opened
  * first, and the stage it waits on while the chain works.
  */
-export const CREATION_STANDINGS: Readonly<Record<CompanyCreationState, { owesTheChain: boolean; needsTheKeys: boolean; stage: Stage }>> = {
+export const CREATION_STANDINGS: Readonly<
+  Record<CompanyCreationState, { owesTheChain: boolean; needsTheKeys: boolean; stage: Stage }>
+> = {
   'not-created': { owesTheChain: false, needsTheKeys: true, stage: STAGE.read },
   'deploy-sent': { owesTheChain: true, needsTheKeys: false, stage: STAGE.deploy },
   'deploy-expired': { owesTheChain: true, needsTheKeys: true, stage: STAGE.deploy },
@@ -39,7 +45,7 @@ export const CREATION_STANDINGS: Readonly<Record<CompanyCreationState, { owesThe
   'finish-sent': { owesTheChain: true, needsTheKeys: false, stage: STAGE.finish },
   'pay-key-owed': { owesTheChain: true, needsTheKeys: true, stage: STAGE.key },
   finished: { owesTheChain: false, needsTheKeys: true, stage: STAGE.shown },
-  unknown: { owesTheChain: false, needsTheKeys: false, stage: STAGE.read },
+  unknown: { owesTheChain: false, needsTheKeys: false, stage: STAGE.read }
 };
 
 /** Why the service could not be read for a company: the person is signed out (the service answered 401), or the read failed or ran out of time. */
@@ -80,7 +86,10 @@ interface Unread {
 
 const wasUnread = (r: Read | Unread): r is Unread => (r as Unread).failure !== undefined;
 
-let reads: { signIn: object | null; byCompany: Map<string, Promise<Read | Unread>> } = { signIn: null, byCompany: new Map() };
+let reads: { signIn: object | null; byCompany: Map<string, Promise<Read | Unread>> } = {
+  signIn: null,
+  byCompany: new Map()
+};
 
 /** What was read since this sign-in; signing out, signing in again, or another person signing in, starts from nothing. */
 const readsForThisSignIn = (): Map<string, Promise<Read | Unread>> => {
@@ -99,9 +108,16 @@ async function walletShowsTheKeyCommitted(companyId: string): Promise<boolean | 
   try {
     if (companyBeingCreated(companyId)) return await keptCreationShowsItsKeyCommitted(companyId, ACCOUNT_ORIGIN);
     /* A company with no view yet: its account read alone, through the page's one transport. */
-    const sealed = (await sourceOnPage(companyId).account()) as { companyLabel?: unknown; contractAddress?: unknown } | null;
+    const sealed = (await sourceOnPage(companyId).account()) as {
+      companyLabel?: unknown;
+      contractAddress?: unknown;
+    } | null;
     if (typeof sealed?.companyLabel !== 'string' || typeof sealed.contractAddress !== 'string') return null;
-    return await walletShowsPayKeyCommitted(ACCOUNT_ORIGIN, sealed.companyLabel as CompanyLabel, sealed.contractAddress as AccountAddress);
+    return await walletShowsPayKeyCommitted(
+      ACCOUNT_ORIGIN,
+      sealed.companyLabel as CompanyLabel,
+      sealed.contractAddress as AccountAddress
+    );
   } catch {
     return null;
   }
@@ -112,8 +128,19 @@ class ServiceRanOutOfTime extends Error {}
 /** The service's answer, or a refusal once SERVICE_READ_BOUND_MS has passed without one. */
 function withinTheBound<T>(work: Promise<T>): Promise<T> {
   return new Promise<T>((answer, refuse) => {
-    const timer = setTimeout(() => { refuse(new ServiceRanOutOfTime()); }, SERVICE_READ_BOUND_MS);
-    work.then((v) => { clearTimeout(timer); answer(v); }, (e: unknown) => { clearTimeout(timer); refuse(e); });
+    const timer = setTimeout(() => {
+      refuse(new ServiceRanOutOfTime());
+    }, SERVICE_READ_BOUND_MS);
+    work.then(
+      (v) => {
+        clearTimeout(timer);
+        answer(v);
+      },
+      (e: unknown) => {
+        clearTimeout(timer);
+        refuse(e);
+      }
+    );
   });
 }
 
@@ -138,12 +165,17 @@ function readOf(companyId: string): Promise<Read | Unread> {
   if (had !== undefined) return had;
   const read = readOnce(companyId);
   held.set(companyId, read);
-  void read.then((r) => { if (wasUnread(r) || !r.settled) { if (held.get(companyId) === read) held.delete(companyId); } });
+  void read.then((r) => {
+    if (wasUnread(r) || !r.settled) {
+      if (held.get(companyId) === read) held.delete(companyId);
+    }
+  });
   return read;
 }
 
 /** The label the wallet drew for the creation this browser keeps for that company: the keyring's own, read when shown. Null for no company. */
-export const keptCreationLabel = (companyId: string | null): string | null => (companyId === null ? null : companyBeingCreatedLabel(companyId));
+export const keptCreationLabel = (companyId: string | null): string | null =>
+  companyId === null ? null : companyBeingCreatedLabel(companyId);
 
 /**
  * What this tab keeps of a company's creation, known at once and without the
@@ -155,7 +187,14 @@ export const keptCreationLabel = (companyId: string | null): string | null => (c
 export function creationHere(companyId: string | null): CompanyCreation {
   const id = companyId;
   const kept = id !== null && companyBeingCreated(id);
-  return { company: id, standing: null, awaitingSecondPress: kept && companyAwaitingItsSecondPress(id) !== null, kept, confirmedFinished: false, mark: null };
+  return {
+    company: id,
+    standing: null,
+    awaitingSecondPress: kept && companyAwaitingItsSecondPress(id) !== null,
+    kept,
+    confirmedFinished: false,
+    mark: null
+  };
 }
 
 /**
@@ -168,15 +207,27 @@ export function creationHere(companyId: string | null): CompanyCreation {
  */
 export async function creationOf(companyId: string | null): Promise<CompanyCreation> {
   const id = companyId;
-  if (id === null) return { company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null };
+  if (id === null)
+    return {
+      company: null,
+      standing: null,
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    };
   const read = await readOf(id);
   const kept = companyBeingCreated(id);
   const awaitingSecondPress = kept && companyAwaitingItsSecondPress(id) !== null;
   const standing = wasUnread(read) ? null : read.standing;
   const owed = standing !== null && (CREATION_STANDINGS[standing].owesTheChain || (standing === 'not-created' && kept));
   return {
-    company: id, standing, awaitingSecondPress, kept,
-    confirmedFinished: !wasUnread(read) && read.confirmed, mark: owed ? CREATION_MARK.notFinished : null,
-    ...(wasUnread(read) ? { failure: read.failure } : {}),
+    company: id,
+    standing,
+    awaitingSecondPress,
+    kept,
+    confirmedFinished: !wasUnread(read) && read.confirmed,
+    mark: owed ? CREATION_MARK.notFinished : null,
+    ...(wasUnread(read) ? { failure: read.failure } : {})
   };
 }

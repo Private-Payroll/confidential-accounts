@@ -70,7 +70,12 @@ export type GovernanceOnTheWire =
    * account carries this one out only while that is still its latest, so a
    * recovery approved before another is carried out can never be used after it.
    */
-  | { readonly kind: 'recover-anchor'; readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string }
+  | {
+      readonly kind: 'recover-anchor';
+      readonly resumesFrom: string;
+      readonly latest: string;
+      readonly lastRecovery: string;
+    }
   /** A vault taken out of the company's account; the vault itself carries it out, whatever it holds. */
   | { readonly kind: 'retire-vault'; readonly vault: string };
 
@@ -79,41 +84,55 @@ export type GovernanceOnTheWire =
  * address: the proposal a vault's creation raises from the device that made it.
  * Its payload is made the same way, by the contract's own function.
  */
-interface AdoptionOnTheWire { readonly kind: 'adopt-vault'; readonly vault: string }
+interface AdoptionOnTheWire {
+  readonly kind: 'adopt-vault';
+  readonly vault: string;
+}
 
 /**
  * **THE COMPANY'S ACCOUNT COMMITTED TO ITS PAY-RECORD KEY**, named by the
  * commitment to the key: the proposal a company's creation raises from its
  * founding signer's device. Its payload is made by the contract's own function.
  */
-interface PayKeyOnTheWire { readonly kind: 'pay-key'; readonly commitment: string }
+interface PayKeyOnTheWire {
+  readonly kind: 'pay-key';
+  readonly commitment: string;
+}
 
 /** Any change a governance round on the account makes: a seat, a threshold, a vault adopted, or the pay-record key committed. */
 export type RoundChangeOnTheWire = GovernanceOnTheWire | AdoptionOnTheWire | PayKeyOnTheWire;
 
 /** Raising a payroll run. */
 export interface RaiseRunOrder {
-  readonly circuit: 'propose'; readonly run: RunOnTheWire; readonly half: RaiseHalfOnTheWire;
+  readonly circuit: 'propose';
+  readonly run: RunOnTheWire;
+  readonly half: RaiseHalfOnTheWire;
   /** The identity the service wrote the proposal down under; the device recomputes it and refuses a mismatch. */
   readonly proposal: string;
 }
 
 /** Raising a round that seats a signer or changes the account's threshold. */
 export interface RaiseGovernanceOrder {
-  readonly circuit: 'propose'; readonly governance: GovernanceOnTheWire; readonly half: RaiseHalfOnTheWire;
+  readonly circuit: 'propose';
+  readonly governance: GovernanceOnTheWire;
+  readonly half: RaiseHalfOnTheWire;
   /** The identity the service wrote the proposal down under; the device recomputes it and refuses a mismatch. */
   readonly proposal: string;
 }
 
 /** Raising the proposal that adopts a new vault, with the identity this device made for it. */
 export interface RaiseAdoptionOrder {
-  readonly circuit: 'propose'; readonly adoption: AdoptionOnTheWire; readonly half: RaiseHalfOnTheWire;
+  readonly circuit: 'propose';
+  readonly adoption: AdoptionOnTheWire;
+  readonly half: RaiseHalfOnTheWire;
   readonly proposal: string;
 }
 
 /** Raising the proposal that commits the account to its pay-record key, with the identity this device made for it. */
 export interface RaisePayKeyOrder {
-  readonly circuit: 'propose'; readonly payKey: PayKeyOnTheWire; readonly half: RaiseHalfOnTheWire;
+  readonly circuit: 'propose';
+  readonly payKey: PayKeyOnTheWire;
+  readonly half: RaiseHalfOnTheWire;
   readonly proposal: string;
 }
 
@@ -128,28 +147,41 @@ export type GovernedCallOrder =
   | RaiseAdoptionOrder
   | RaisePayKeyOrder
   | {
-    readonly circuit: 'approve'; readonly proposal: string;
-    /**
-     * For a seat or a threshold change: the change this person was asked to
-     * approve and the salt the proposal's identity was made with. The identity is
-     * remade from them and an approval of any other proposal is refused.
-     */
-    readonly of?: { readonly governance: RoundChangeOnTheWire; readonly proposalSalt: string };
-  }
+      readonly circuit: 'approve';
+      readonly proposal: string;
+      /**
+       * For a seat or a threshold change: the change this person was asked to
+       * approve and the salt the proposal's identity was made with. The identity is
+       * remade from them and an approval of any other proposal is refused.
+       */
+      readonly of?: { readonly governance: RoundChangeOnTheWire; readonly proposalSalt: string };
+    }
   /**
    * Taking a seated signer's leaf off the account, on an approved removal, and setting the threshold to `threshold`, or
    * keeping the one in force when it is "0". A seat is never carried out here: the invitee takes it.
    */
   | {
-    readonly circuit: 'removeSignerAndSetThreshold'; readonly leaf: string; readonly threshold: string;
-    readonly proposal: string; readonly proposalSalt: string; readonly removing: true;
-  }
-  | { readonly circuit: 'setThreshold'; readonly threshold: string; readonly proposal: string; readonly proposalSalt: string }
+      readonly circuit: 'removeSignerAndSetThreshold';
+      readonly leaf: string;
+      readonly threshold: string;
+      readonly proposal: string;
+      readonly proposalSalt: string;
+      readonly removing: true;
+    }
+  | {
+      readonly circuit: 'setThreshold';
+      readonly threshold: string;
+      readonly proposal: string;
+      readonly proposalSalt: string;
+    }
   /** Carrying out an approved change of one vault's own approvals needed. */
   | {
-    readonly circuit: 'setVaultThreshold'; readonly vault: string; readonly threshold: string;
-    readonly proposal: string; readonly proposalSalt: string;
-  }
+      readonly circuit: 'setVaultThreshold';
+      readonly vault: string;
+      readonly threshold: string;
+      readonly proposal: string;
+      readonly proposalSalt: string;
+    }
   /**
    * Carrying out an approved spending policy: the vault and the commitment the
    * proposal names, and the three the circuit reads off this device - the
@@ -157,10 +189,15 @@ export type GovernedCallOrder =
    * opening, which must make the commitment.
    */
   | {
-    readonly circuit: 'setPolicy'; readonly vault: string; readonly commitment: string;
-    readonly proposal: string; readonly proposalSalt: string;
-    readonly asset: string; readonly assetBlinding: string; readonly policy: PolicyOpeningOnTheWire;
-  }
+      readonly circuit: 'setPolicy';
+      readonly vault: string;
+      readonly commitment: string;
+      readonly proposal: string;
+      readonly proposalSalt: string;
+      readonly asset: string;
+      readonly assetBlinding: string;
+      readonly policy: PolicyOpeningOnTheWire;
+    }
   /** Carrying out an approved change to the approvals any change to a spending policy needs. */
   | { readonly circuit: 'setPolicyBar'; readonly bar: string; readonly proposal: string; readonly proposalSalt: string }
   /**
@@ -175,9 +212,12 @@ export type GovernedCallOrder =
    * seal also writes the commitment, under the approved round named.
    */
   | {
-    readonly circuit: 'sealPayKey'; readonly wrap: readonly string[]; readonly commitment: string;
-    readonly proposal: string; readonly proposalSalt: string;
-  };
+      readonly circuit: 'sealPayKey';
+      readonly wrap: readonly string[];
+      readonly commitment: string;
+      readonly proposal: string;
+      readonly proposalSalt: string;
+    };
 
 /**
  * **WHAT THIS DEVICE OPENED ITSELF** from the company's records, with the
@@ -239,20 +279,36 @@ export interface OpenedRound {
 
 /** Each value, as the person reading a refusal would name it. */
 const SAID: Readonly<Record<string, string>> = {
-  'proposal identity': 'proposal', salt: 'proposal', change: 'proposal', vault: 'proposal',
-  'run vault': 'account this run pays from', leaf: 'signer being removed', invitation: 'person being invited',
-  threshold: 'number of approvals required', 'vault adopted': 'vault being adopted', 'pay-record key': 'company\'s pay-record key',
-  run: 'payroll run', asset: 'token', amount: 'amount',
-  'payments digest': 'list of payments', policy: 'spending policy',
+  'proposal identity': 'proposal',
+  salt: 'proposal',
+  change: 'proposal',
+  vault: 'proposal',
+  'run vault': 'account this run pays from',
+  leaf: 'signer being removed',
+  invitation: 'person being invited',
+  threshold: 'number of approvals required',
+  'vault adopted': 'vault being adopted',
+  'pay-record key': "company's pay-record key",
+  run: 'payroll run',
+  asset: 'token',
+  amount: 'amount',
+  'payments digest': 'list of payments',
+  policy: 'spending policy',
   'policy bar': 'number of approvals a change to a spending policy needs',
-  recovery: 'recovery of the company\'s records',
+  recovery: "recovery of the company's records"
 };
 /** What not to do if the refusal comes back, for each call a device makes. */
 const IF_AGAIN: Readonly<Record<string, string>> = {
-  approve: 'do not approve it', propose: 'do not send it', removeSignerAndSetThreshold: 'do not remove this signer',
-  setThreshold: 'do not make this change', adopt: 'do not adopt this vault', sealPayKey: 'do not seal this key',
-  setVaultThreshold: 'do not make this change', cancel: 'do not withdraw it',
-  setPolicy: 'do not set this policy', setPolicyBar: 'do not make this change',
+  approve: 'do not approve it',
+  propose: 'do not send it',
+  removeSignerAndSetThreshold: 'do not remove this signer',
+  setThreshold: 'do not make this change',
+  adopt: 'do not adopt this vault',
+  sealPayKey: 'do not seal this key',
+  setVaultThreshold: 'do not make this change',
+  cancel: 'do not withdraw it',
+  setPolicy: 'do not set this policy',
+  setPolicyBar: 'do not make this change'
 };
 
 /**
@@ -261,11 +317,14 @@ const IF_AGAIN: Readonly<Record<string, string>> = {
  * it in the words of the page it is shown on.
  */
 export class NotWhatThisDeviceOpened extends Error {
-  constructor(readonly value: string, circuit: string) {
+  constructor(
+    readonly value: string,
+    circuit: string
+  ) {
     super(
-      `the ${SAID[value] ?? 'proposal'} the service sent to this device does not match the company's own record of this `
-        + 'proposal, which this device read itself. Nothing was built or sent. Reload the page and try again. If it '
-        + `happens again, ${IF_AGAIN[circuit] ?? 'do not act on it'}.`,
+      `the ${SAID[value] ?? 'proposal'} the service sent to this device does not match the company's own record of this ` +
+        'proposal, which this device read itself. Nothing was built or sent. Reload the page and try again. If it ' +
+        `happens again, ${IF_AGAIN[circuit] ?? 'do not act on it'}.`
     );
     this.name = 'NotWhatThisDeviceOpened';
   }
@@ -276,8 +335,8 @@ export class RecordDoesNotAddUp extends Error {
   readonly value = 'record';
   constructor(circuit: string) {
     super(
-      'the company\'s record of this proposal does not add up, so this device will not act on it. Nothing was built or '
-        + `sent. Reload the page and try again. If it happens again, ${IF_AGAIN[circuit] ?? 'do not act on it'}.`,
+      "the company's record of this proposal does not add up, so this device will not act on it. Nothing was built or " +
+        `sent. Reload the page and try again. If it happens again, ${IF_AGAIN[circuit] ?? 'do not act on it'}.`
     );
     this.name = 'RecordDoesNotAddUp';
   }

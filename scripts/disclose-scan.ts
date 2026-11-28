@@ -110,9 +110,7 @@ function link(files: readonly { readonly text: string; readonly file?: string }[
 
   // Innermost wins, so a nested body's sites are not also its parent's.
   const owner = (file: number, at: number) =>
-    bodies
-      .filter((b) => b.file === file && at >= b.from && at < b.to)
-      .sort((a, b) => b.from - a.from)[0];
+    bodies.filter((b) => b.file === file && at >= b.from && at < b.to).sort((a, b) => b.from - a.from)[0];
 
   const own = new Map<string, DiscloseSite[]>();
   const calls = new Map<string, Set<string>>();
@@ -145,14 +143,23 @@ function link(files: readonly { readonly text: string; readonly file?: string }[
       let end = openParen;
       for (let i = openParen; i < code.length; i += 1) {
         if (code[i] === '(') d += 1;
-        else if (code[i] === ')') { d -= 1; if (d === 0) { end = i; break; } }
+        else if (code[i] === ')') {
+          d -= 1;
+          if (d === 0) {
+            end = i;
+            break;
+          }
+        }
       }
       const where = entry.file;
       own.get(b.name)?.push({
         ...(where === undefined ? {} : { file: where }),
         line: lineOf(code, at),
-        text: text.slice(openParen + 1, end).replace(/\s+/g, ' ').trim(),
-        via: [],
+        text: text
+          .slice(openParen + 1, end)
+          .replace(/\s+/g, ' ')
+          .trim(),
+        via: []
       });
     }
   });
@@ -187,7 +194,10 @@ function bodiesOf(code: string, file: number): Body[] {
       let d = 0;
       for (let i = parenAt; i < code.length; i += 1) {
         if (code[i] === '(') d += 1;
-        else if (code[i] === ')') { d -= 1; if (d === 0) return i + 1; }
+        else if (code[i] === ')') {
+          d -= 1;
+          if (d === 0) return i + 1;
+        }
       }
       return -1;
     })();
@@ -208,5 +218,7 @@ function bodiesOf(code: string, file: number): Body[] {
 
 /** A contract read whole: its main file and every file it brings in (`scripts/contract-sources.mjs`), each site naming its file. */
 export function scanSourceFile(root: string, rel: string): SourceCircuit[] {
-  return link(contractSources(root, rel).map((file: string) => ({ file, text: readFileSync(join(root, file), 'utf8') })));
+  return link(
+    contractSources(root, rel).map((file: string) => ({ file, text: readFileSync(join(root, file), 'utf8') }))
+  );
 }

@@ -6,6 +6,10 @@
 import { describe } from 'vitest';
 import { setUpActionsCounted } from './actions-set-up-first.test-support.js';
 
-describe('WITHDRAWING, RAISING AND ADMITTING A SIGNER EACH READ THE SAME AT EVERY SIZE OF THE COMPANY', { timeout: 160_000 }, () => {
-  setUpActionsCounted(import.meta.url);
-});
+describe(
+  'WITHDRAWING, RAISING AND ADMITTING A SIGNER EACH READ THE SAME AT EVERY SIZE OF THE COMPANY',
+  { timeout: 160_000 },
+  () => {
+    setUpActionsCounted(import.meta.url);
+  }
+);

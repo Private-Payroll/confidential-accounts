@@ -7,7 +7,13 @@ import { privateStateFor, leafOfDevice, COMPANY_LABEL } from '../../../../contra
 import { payKeyRoundOf } from '../../../../src/midnight/pay-key-round.js';
 import { newWrappingKeypair } from '../../../../src/core/crypto.js';
 import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
-import { accountBuilderDeps, answerAccountAsk, startAccountBuilder, type AccountBuilderAsk, type AccountBuildingDeps } from './account-builder.js';
+import {
+  accountBuilderDeps,
+  answerAccountAsk,
+  startAccountBuilder,
+  type AccountBuilderAsk,
+  type AccountBuildingDeps
+} from './account-builder.js';
 
 /*
  * The wallet's account builder, asked as its worker is asked. What it proves
@@ -21,8 +27,20 @@ describe('the account circuits the wallet proves', () => {
   it('are every circuit a signer governs the account with, the two that anchor its records, the charge of a payment to its period, and the seat an invited person takes', () => {
     // RED WHEN: a circuit a seat action needs is left out of what the wallet proves, so that action can only be proved on the page; or a vault under a spending policy cannot be paid from the wallet; or a person invited cannot take their seat from their own wallet
     expect([...ACCOUNT_CIRCUITS_THE_WALLET_PROVES].sort()).toEqual([
-      'adopt', 'anchor', 'approve', 'cancel', 'clearRun', 'propose', 'recoverAnchor', 'removeSignerAndSetThreshold', 'sealPayKey', 'seatInvited',
-      'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold',
+      'adopt',
+      'anchor',
+      'approve',
+      'cancel',
+      'clearRun',
+      'propose',
+      'recoverAnchor',
+      'removeSignerAndSetThreshold',
+      'sealPayKey',
+      'seatInvited',
+      'setPolicy',
+      'setPolicyBar',
+      'setThreshold',
+      'setVaultThreshold'
     ]);
   });
 });
@@ -34,8 +52,14 @@ describe('the builder in its worker', () => {
     let listener: ((e: { data: unknown }) => void) | null = null;
     const answers: unknown[] = [];
     const scope = {
-      addEventListener: (_t: 'message', l: (e: { data: unknown }) => void) => { events.push('listening'); listener = l; },
-      postMessage: (m: unknown) => { events.push((m as { kind?: string }).kind ?? 'answer'); if ((m as { kind?: string }).kind === undefined) answers.push(m); },
+      addEventListener: (_t: 'message', l: (e: { data: unknown }) => void) => {
+        events.push('listening');
+        listener = l;
+      },
+      postMessage: (m: unknown) => {
+        events.push((m as { kind?: string }).kind ?? 'answer');
+        if ((m as { kind?: string }).kind === undefined) answers.push(m);
+      }
     };
     const deps = vi.fn(async () => ({}) as AccountBuildingDeps);
     startAccountBuilder(scope, deps);
@@ -52,9 +76,14 @@ describe('the builder in its worker', () => {
     // RED WHEN: a refused call escapes the builder instead of answering, so the starter waits for an answer that never comes
     const prove = vi.fn();
     const ask = {
-      id: 7, ask: 'governed-call', network: 'undeployed', account: 'not an account', order: { circuit: 'cancel', proposal: '00'.repeat(32) },
+      id: 7,
+      ask: 'governed-call',
+      network: 'undeployed',
+      account: 'not an account',
+      order: { circuit: 'cancel', proposal: '00'.repeat(32) },
       material: { signingSecret: '01'.repeat(32), blinding: '02'.repeat(32), scope: '03'.repeat(32) },
-      chain: { accountState: '', parameters: '' }, opened: {} as never,
+      chain: { accountState: '', parameters: '' },
+      opened: {} as never
     } as unknown as AccountBuilderAsk;
     const answer = await answerAccountAsk(async () => ({ prove }) as unknown as AccountBuildingDeps, ask);
     expect(answer).toMatchObject({ id: 7, ok: false, error: expect.stringMatching(/not for a company account/u) });
@@ -65,17 +94,29 @@ describe('the builder in its worker', () => {
     // RED WHEN: the standing is worked out from another key than the pay-record key asked about, so the proposal it names is not the company's
     const founder = privateStateFor(1);
     const init = await new (accountModule as any).Contract(witnesses).initialState(
-      runtime.createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), COMPANY_LABEL);
+      runtime.createConstructorContext(founder, '0'.repeat(64)),
+      leafOfDevice(founder),
+      COMPANY_LABEL
+    );
     const key = hex(new Uint8Array(randomBytes(32)));
     const account = 'c0'.repeat(32);
     const answer = await answerAccountAsk(accountBuilderDeps(), {
-      id: 3, ask: 'pay-key-standing', account, key,
+      id: 3,
+      ask: 'pay-key-standing',
+      account,
+      key,
       accountState: Buffer.from(init.currentContractState.serialize()).toString('base64'),
-      signingSecret: hex(founder.secretKey), wrappingPublicKey: newWrappingKeypair().publicKey,
+      signingSecret: hex(founder.secretKey),
+      wrappingPublicKey: newWrappingKeypair().publicKey
     });
     if (!answer.ok || answer.ask !== 'pay-key-standing') throw new Error(`no standing: ${JSON.stringify(answer)}`);
     const round = payKeyRoundOf((accountModule as any).pureCircuits, key as never);
-    expect(answer.standing.round).toMatchObject({ proposal: round.proposal, commitment: round.commitment, salt: round.salt, open: false });
+    expect(answer.standing.round).toMatchObject({
+      proposal: round.proposal,
+      commitment: round.commitment,
+      salt: round.salt,
+      open: false
+    });
     expect(answer.standing.committed).toBeNull();
     expect(answer.standing.sealedMine).toBe(false);
     expect(answer.standing.noVault).toBe(hex((accountModule as any).pureCircuits.noVault()));

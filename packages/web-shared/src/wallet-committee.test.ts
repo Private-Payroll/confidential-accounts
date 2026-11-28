@@ -7,7 +7,12 @@ import { parseAsk, type CommitteeRequest } from 'midnight-identity/profile/reque
 import { committeeKeyFor } from 'midnight-identity/profile/committee-key';
 import { committeeSignaturesFor, type ChainRead } from 'midnight-identity/profile/committee-sign';
 import { READY_PING } from 'midnight-identity/profile/channel';
-import { askWalletToSignCommittee, askWalletToSignTheRequest, committeeAsk, WalletDidNotSign } from './wallet-committee.js';
+import {
+  askWalletToSignCommittee,
+  askWalletToSignTheRequest,
+  committeeAsk,
+  WalletDidNotSign
+} from './wallet-committee.js';
 import { committeeRequestFor, joinedBy, superAdminRequestBytes } from 'midnight-identity/profile/committee-sign';
 import type { SuperAdminRequestAsk } from 'midnight-identity/profile/request';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
@@ -30,35 +35,72 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
     closed: false,
     postMessage: (message: unknown) => {
       asked.push(message);
-      queueMicrotask(() => listeners.forEach((l) => l({ origin: WALLET, source: wallet, data: answer(message) } as unknown as MessageEvent)));
+      queueMicrotask(() =>
+        listeners.forEach((l) =>
+          l({ origin: WALLET, source: wallet, data: answer(message) } as unknown as MessageEvent)
+        )
+      );
     },
     close: () => {},
-    focus: () => {},
+    focus: () => {}
   } as unknown as WalletWindow;
   const view = {
-    open: () => { queueMicrotask(() => listeners.forEach((l) => l({ origin: WALLET, source: wallet, data: { schema: READY_PING } } as unknown as MessageEvent))); return wallet; },
-    addEventListener: (_t: string, l: (e: MessageEvent) => void) => { listeners.push(l); },
+    open: () => {
+      queueMicrotask(() =>
+        listeners.forEach((l) =>
+          l({ origin: WALLET, source: wallet, data: { schema: READY_PING } } as unknown as MessageEvent)
+        )
+      );
+      return wallet;
+    },
+    addEventListener: (_t: string, l: (e: MessageEvent) => void) => {
+      listeners.push(l);
+    },
     removeEventListener: () => {},
     setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
-    clearTimeout: (t: unknown) => clearTimeout(t as never),
+    clearTimeout: (t: unknown) => clearTimeout(t as never)
   } as unknown as Openable;
   return { view, asked };
 };
 const to = { committee: [mine, other].sort((a, b) => (a.value < b.value ? -1 : 1)), threshold: 2 };
-const contracts = [{ contract: 'vault' as const, address: VAULT, counter: '2', now: { committee: [mine], threshold: 1 } }];
-const input = { company: CO, account: ACCOUNT, to, contracts, atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+const contracts = [
+  { contract: 'vault' as const, address: VAULT, counter: '2', now: { committee: [mine], threshold: 1 } }
+];
+const input = {
+  company: CO,
+  account: ACCOUNT,
+  to,
+  contracts,
+  atOrigin: US,
+  name: 'Us',
+  rdns: 'example.us',
+  nonce: 'n1',
+  now: () => 1_000
+};
 /* The chain as the wallet reads it: the account holds the committee the hand-over installs; the vault is pinned to it. */
 const chain: ChainRead = new Map([
   [ACCOUNT, { of: 'read', committee: to.committee, threshold: 2, counter: 1n, pinnedTo: null }],
-  [VAULT, { of: 'read', committee: [mine], threshold: 1, counter: 2n, pinnedTo: ACCOUNT }],
+  [VAULT, { of: 'read', committee: [mine], threshold: 1, counter: 2n, pinnedTo: ACCOUNT }]
 ]);
 /** The wallet's own parser and signer, answering the ask as it arrives. */
-const honestly = (ask: unknown) => committeeSignaturesFor(L as never, identity, parseAsk(ask, US, 1_000) as CommitteeRequest, chain, 1_000);
+const honestly = (ask: unknown) =>
+  committeeSignaturesFor(L as never, identity, parseAsk(ask, US, 1_000) as CommitteeRequest, chain, 1_000);
 
-describe('ASKING THE PERSON\'S WALLET TO SIGN A COMMITTEE CHANGE', () => {
-  it('sends an ask with no bytes to sign in it, which the wallet\'s own parser accepts', () => {
+describe("ASKING THE PERSON'S WALLET TO SIGN A COMMITTEE CHANGE", () => {
+  it("sends an ask with no bytes to sign in it, which the wallet's own parser accepts", () => {
     const wire = committeeAsk({ ...input, purpose: 'p', expiresAt: 2_000 });
-    expect(Object.keys(wire).sort()).toEqual(['account', 'company', 'contracts', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'to']);
+    expect(Object.keys(wire).sort()).toEqual([
+      'account',
+      'company',
+      'contracts',
+      'expiresAt',
+      'kind',
+      'nonce',
+      'purpose',
+      'requester',
+      'schema',
+      'to'
+    ]);
     expect((parseAsk(wire, US, 1_000) as CommitteeRequest).kind).toBe('committee');
   });
 
@@ -72,7 +114,7 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN A COMMITTEE CHANGE', () => {
       (a: any) => ({ ...a, to: { ...a.to, threshold: 1 } }),
       (a: any) => ({ ...a, company: VAULT }),
       (a: any) => ({ ...a, nonce: 'n2' }),
-      (a: any) => ({ ...a, signatures: a.signatures.map((s: any) => ({ ...s, counter: '3' })) }),
+      (a: any) => ({ ...a, signatures: a.signatures.map((s: any) => ({ ...s, counter: '3' })) })
     ]) {
       const bent = walletAnswering((ask) => bend(JSON.parse(JSON.stringify(honestly(ask)))));
       await expect(askWalletToSignCommittee(bent.view, WALLET, input)).rejects.toBeInstanceOf(WalletDidNotSign);
@@ -80,18 +122,40 @@ describe('ASKING THE PERSON\'S WALLET TO SIGN A COMMITTEE CHANGE', () => {
   });
 });
 
-describe('ASKING THE PERSON\'S WALLET TO SIGN A SUPER ADMIN\'S REQUEST TO THE SERVICE', () => {
-  const ask = { company: CO, account: ACCOUNT, record: 'acct_1', user: 'user_1', atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
-  const signs = (wire: unknown) => committeeRequestFor(L as never, identity, parseAsk(wire, US, 1_000) as SuperAdminRequestAsk, 1_000);
+describe("ASKING THE PERSON'S WALLET TO SIGN A SUPER ADMIN'S REQUEST TO THE SERVICE", () => {
+  const ask = {
+    company: CO,
+    account: ACCOUNT,
+    record: 'acct_1',
+    user: 'user_1',
+    atOrigin: US,
+    name: 'Us',
+    rdns: 'example.us',
+    nonce: 'n1',
+    now: () => 1_000
+  };
+  const signs = (wire: unknown) =>
+    committeeRequestFor(L as never, identity, parseAsk(wire, US, 1_000) as SuperAdminRequestAsk, 1_000);
 
   it('SENDS THE REQUEST PRESS THE WALLET READS, AND BELIEVES ONLY THE ANSWER TO IT', async () => {
     const good = walletAnswering(signs);
     const read = await askWalletToSignTheRequest(good.view, WALLET, ask);
     /* RED WHEN: the ask is not the request press, or names another company at the service or another person. */
-    expect(parseAsk(good.asked.find((m) => (m as { kind?: string }).kind === 'committee'), US, 1_000)).toMatchObject({ press: 'request', record: 'acct_1', user: 'user_1' });
-    expect(joinedBy(L as never, superAdminRequestBytes('acct_1', 'user_1', ACCOUNT), read.signer, read.signature)).toBe(true);
+    expect(
+      parseAsk(
+        good.asked.find((m) => (m as { kind?: string }).kind === 'committee'),
+        US,
+        1_000
+      )
+    ).toMatchObject({ press: 'request', record: 'acct_1', user: 'user_1' });
+    expect(joinedBy(L as never, superAdminRequestBytes('acct_1', 'user_1', ACCOUNT), read.signer, read.signature)).toBe(
+      true
+    );
     /* RED WHEN: an answer to another ask, or for another company, is taken. */
-    for (const bend of [(a: any) => ({ ...a, nonce: 'n2' }), (a: any) => ({ ...a, company: `co_${'ab'.repeat(32)}` })]) {
+    for (const bend of [
+      (a: any) => ({ ...a, nonce: 'n2' }),
+      (a: any) => ({ ...a, company: `co_${'ab'.repeat(32)}` })
+    ]) {
       const bent = walletAnswering((m) => bend(JSON.parse(JSON.stringify(signs(m)))));
       await expect(askWalletToSignTheRequest(bent.view, WALLET, ask)).rejects.toBeInstanceOf(WalletDidNotSign);
     }

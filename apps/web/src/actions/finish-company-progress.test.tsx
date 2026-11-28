@@ -12,10 +12,12 @@ import { ENGLISH } from '../english.test-support.js';
  * (read from the vault builder's proofs in progress while one runs), and how long it usually takes.
  */
 
-vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
+vi.hoisted(() => {
+  vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
+});
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => {
   const keyring = await real<typeof import('vaults-web-shared/keyring.js')>();
@@ -23,7 +25,7 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => {
     ...keyring,
     currentUser: () => ({ id: 'u1' }),
     resumeSession: async () => ({ id: 'u1' }),
-    canOpenCompanies: () => true,
+    canOpenCompanies: () => true
   };
 });
 vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
@@ -31,13 +33,13 @@ vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
   companyBeingCreated: () => null,
   companyBeingCreatedLabel: () => null,
   companyAwaitingItsSecondPress: () => null,
-  companyCreationStanding: async () => ({ account: null, state: 'deploy-sent' }),
+  companyCreationStanding: async () => ({ account: null, state: 'deploy-sent' })
 }));
 vi.mock('../adapters/vault-builder.js', () => ({ theCreationBuilder: async () => null }));
 /* The step drawn while the wallet's action runs: each look says it waits on the account's deploy. */
 vi.mock('../adapters/finish-company.js', async (real) => ({
   ...(await real<typeof import('../adapters/finish-company.js')>()),
-  carryOn: async () => ({ of: 'waiting', companyId: 'c-1', stage: 'deploy' }),
+  carryOn: async () => ({ of: 'waiting', companyId: 'c-1', stage: 'deploy' })
 }));
 
 const { FinishCompany } = await import('./finish-company.js');
@@ -49,28 +51,61 @@ const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 const session: Session = {
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(),
-  viewer: { signedIn: true, view: VIEWS.employee, signs: false }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-  choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}), preferencesChanged: vi.fn(),
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.employee, signs: false },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {}),
+  preferencesChanged: vi.fn()
 } as unknown as Session;
-const draw = () => render(
-  <KitProvider languages={LANGUAGES} pick="en">
-    <SessionProvider session={session}><FinishCompany leadTo={() => {}} onChanged={() => {}} /></SessionProvider>
-  </KitProvider>,
-);
-const settle = async (ms = 0) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
+const draw = () =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <SessionProvider session={session}>
+        <FinishCompany leadTo={() => {}} onChanged={() => {}} />
+      </SessionProvider>
+    </KitProvider>
+  );
+const settle = async (ms = 0) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
 /* One second at a time: the clock and the phase are read on each tick, so a change between ticks is seen at the tick after it. */
-const everySecond = async (n: number): Promise<void> => { if (n > 0) { await settle(1000); await everySecond(n - 1); } };
+const everySecond = async (n: number): Promise<void> => {
+  if (n > 0) {
+    await settle(1000);
+    await everySecond(n - 1);
+  }
+};
 const clockOf = (c: HTMLElement) => c.querySelector('[data-stage-clock]');
 const proofStartedSecondsAgo = (seconds: number) => {
   const startedAt = Date.now() - seconds * 1000;
-  const proofsInProgress = vi.fn(() => [{ ask: 'creation-again', circuit: null, startedAt, elapsedMs: Date.now() - startedAt }]);
+  const proofsInProgress = vi.fn(() => [
+    { ask: 'creation-again', circuit: null, startedAt, elapsedMs: Date.now() - startedAt }
+  ]);
   builderIsUp({ proofsInProgress } as never);
   return proofsInProgress;
 };
 
-beforeEach(() => { vi.useFakeTimers(); vi.spyOn(console, 'error').mockImplementation(() => {}); builderIsUp({} as never); lane.sending = false; });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); lane.sending = false; });
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  builderIsUp({} as never);
+  lane.sending = false;
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  lane.sending = false;
+});
 
 describe('the finishing step during its long waits', () => {
   /* RED WHEN: a proof running on this device is not said, its running time does not tick, or its usual duration is not stated. */
@@ -81,7 +116,9 @@ describe('the finishing step during its long waits', () => {
     expect(reads).toHaveBeenCalled();
     const clock = clockOf(view.container)!;
     expect(clock.getAttribute('data-stage-clock')).toBe(COMPANY_PHASE.proving);
-    expect(view.container.querySelector('[data-phase-words]')?.textContent).toBe(EN['setup.finishCompany.phase.proving']);
+    expect(view.container.querySelector('[data-phase-words]')?.textContent).toBe(
+      EN['setup.finishCompany.phase.proving']
+    );
     expect(view.container.querySelector('[data-elapsed]')?.textContent).toBe('Running for 1:15.');
     expect(view.container.querySelector('[data-usual]')?.textContent).toBe('This usually takes about 2 minutes.');
     expect(clock.getAttribute('data-usual-seconds')).toBe(String(COMPANY_USUAL_SECONDS.proving));
@@ -101,10 +138,20 @@ describe('the finishing step during its long waits', () => {
     lane.sending = false;
     await everySecond(4);
     const lines = warn.mock.calls.map((c) => c[0]);
-    expect(lines).toEqual([{ stageTime: [expect.stringMatching(/^[a-z]+$/), 'sending'], measuredSeconds: expect.any(Number), usualShownSeconds: 30 }]);
+    expect(lines).toEqual([
+      {
+        stageTime: [expect.stringMatching(/^[a-z]+$/), 'sending'],
+        measuredSeconds: expect.any(Number),
+        usualShownSeconds: 30
+      }
+    ]);
     expect(lines[0].measuredSeconds).toBeGreaterThanOrEqual(1);
     view.unmount();
-    expect(warn.mock.calls.map((c) => c[0]).at(-1)).toEqual({ stageTime: [expect.stringMatching(/^[a-z]+$/), 'waiting'], measuredSeconds: expect.any(Number), usualShownSeconds: 60 });
+    expect(warn.mock.calls.map((c) => c[0]).at(-1)).toEqual({
+      stageTime: [expect.stringMatching(/^[a-z]+$/), 'waiting'],
+      measuredSeconds: expect.any(Number),
+      usualShownSeconds: 60
+    });
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
@@ -114,12 +161,16 @@ describe('the finishing step during its long waits', () => {
     lane.sending = true;
     await everySecond(2);
     expect(clockOf(view.container)?.getAttribute('data-stage-clock')).toBe(COMPANY_PHASE.sending);
-    expect(view.container.querySelector('[data-phase-words]')?.textContent).toBe(EN['setup.finishCompany.phase.sending']);
+    expect(view.container.querySelector('[data-phase-words]')?.textContent).toBe(
+      EN['setup.finishCompany.phase.sending']
+    );
     expect(view.container.querySelector('[data-usual]')?.textContent).toBe('This usually takes about 30 seconds.');
     lane.sending = false;
     await everySecond(4);
     expect(clockOf(view.container)?.getAttribute('data-stage-clock')).toBe(COMPANY_PHASE.waiting);
-    expect(view.container.querySelector('[data-phase-words]')?.textContent).toBe(EN['setup.finishCompany.phase.waiting']);
+    expect(view.container.querySelector('[data-phase-words]')?.textContent).toBe(
+      EN['setup.finishCompany.phase.waiting']
+    );
     expect(view.container.querySelector('[data-elapsed]')?.textContent).toBe('Running for 0:03.');
     expect(view.container.querySelector('[data-usual]')?.textContent).toBe('This usually takes about a minute.');
     await everySecond(5);

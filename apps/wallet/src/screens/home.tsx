@@ -12,7 +12,14 @@ import { StatusAlert } from '../components/status.js';
 import { HeroCard } from './home-hero.js';
 import { QuickActions } from './home-shortcuts.js';
 import { RecentActivity, AllWalletsCard, PendingSendsCard } from './home-wallet-cards.js';
-import { UnsecuredNotice, RecoveredUnknownCard, PairedUnknownCard, SecuredCard, ThisDeviceCard, SetUp } from './home-securing.js';
+import {
+  UnsecuredNotice,
+  RecoveredUnknownCard,
+  PairedUnknownCard,
+  SecuredCard,
+  ThisDeviceCard,
+  SetUp
+} from './home-securing.js';
 
 /**
  * HOME — the screen that decides whether a tester continues.
@@ -67,7 +74,11 @@ import { UnsecuredNotice, RecoveredUnknownCard, PairedUnknownCard, SecuredCard, 
  *   and is reached through `shell/switcher.tsx` rather than reimplemented,
  *   which is the rule *"one switcher, two doors"*.
  */
-export function Home({ identity, secret, justRecovered = false }: {
+export function Home({
+  identity,
+  secret,
+  justRecovered = false
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
   /**
@@ -101,8 +112,7 @@ export function Home({ identity, secret, justRecovered = false }: {
    * inside the value, so nothing below can render the address without it.
    * `names` is deliberately a dependency: a rename re-derives the owner
    * everywhere at once. */
-  const owned = useMemo(
-    () => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
+  const owned = useMemo(() => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
   const secured = loadSecuredSetup(secret);
   /* The DURABLE half of §7.15's third state: an account that arrived by pairing
    * carries that fact in storage, fingerprint-checked, so a reload does not
@@ -115,7 +125,7 @@ export function Home({ identity, secret, justRecovered = false }: {
   return (
     <div className="flex flex-col gap-4">
       {/* The switch, said out loud for a screen reader — the visual half of
-        * "unmistakable" is the hero above changing name and colour. */}
+       * "unmistakable" is the hero above changing name and colour. */}
       <div role="status" aria-live="polite" className="visually-hidden">
         {`Now showing ${name}`}
       </div>
@@ -134,15 +144,15 @@ export function Home({ identity, secret, justRecovered = false }: {
       {!secured && !unknown && <UnsecuredNotice />}
 
       {/* THE ACTIONS COME OUT OF THEIR CARD AND SIT ABOVE THE
-        * MONEY. They were a card titled *"Do something"* below the
-        * balance; they are the reason a person opened the wallet. The SET and
-        * the ORDER are unchanged and so is every rule on them — this moves a
-        * row and changes no action.
-        *
-        * IT IS STILL BELOW THE AMBER ALERT. The order here
-        * was *"the one thing that can cost everything sits first"*, and the
-        * alert is gone the moment the account is secured, so nothing is
-        * permanently above the actions either. */}
+       * MONEY. They were a card titled *"Do something"* below the
+       * balance; they are the reason a person opened the wallet. The SET and
+       * the ORDER are unchanged and so is every rule on them — this moves a
+       * row and changes no action.
+       *
+       * IT IS STILL BELOW THE AMBER ALERT. The order here
+       * was *"the one thing that can cost everything sits first"*, and the
+       * alert is gone the moment the account is secured, so nothing is
+       * permanently above the actions either. */}
       <QuickActions owned={owned} />
 
       <HeroCard
@@ -156,42 +166,40 @@ export function Home({ identity, secret, justRecovered = false }: {
       />
 
       {/* THE CARRIED QUESTION — under the hero, when there is one, and nothing at all when
-        * there is not. This change PLACES the card; it does not rebuild it. */}
+       * there is not. This change PLACES the card; it does not rebuild it. */}
       <PendingSendsCard secret={secret} />
 
       {/* WHAT IS WAITING FOR YOU SOMEWHERE ELSE.
-        * BELOW THE MONEY AND ABOVE THE RECORD-KEEPING, because it is neither:
-        * it is a report about somewhere else, and it approves nothing
-        * (`../components/inbox-card.tsx`). It renders in every state including the one
-        * this build ships in — there is no inbox host, and *nothing is being
-        * asked* is a sentence a person is owed rather than an empty space.
-        *
-        * IT TAKES NO PROPS. The poller's lifetime is the unlocked phase and is
-        * owned by `app.tsx`; this card subscribes to what it finds
-        * (`../accounts/inbox-live.ts`), the way the chip and this screen both subscribe
-        * to `shell/wallets.ts` rather than being handed a copy. */}
+       * BELOW THE MONEY AND ABOVE THE RECORD-KEEPING, because it is neither:
+       * it is a report about somewhere else, and it approves nothing
+       * (`../components/inbox-card.tsx`). It renders in every state including the one
+       * this build ships in — there is no inbox host, and *nothing is being
+       * asked* is a sentence a person is owed rather than an empty space.
+       *
+       * IT TAKES NO PROPS. The poller's lifetime is the unlocked phase and is
+       * owned by `app.tsx`; this card subscribes to what it finds
+       * (`../accounts/inbox-live.ts`), the way the chip and this screen both subscribe
+       * to `shell/wallets.ts` rather than being handed a copy. */}
       <InboxCard />
 
       <RecentActivity />
 
       {/* The securing state in full — the tick and its pieces, or the two
-        * honest "this browser cannot tell" cards. The amber alert above is the
-        * only thing that appears when nothing is on record. */}
-      {secured
-        ? <SecuredCard setup={secured} />
-        : justRecovered ? <RecoveredUnknownCard />
-          : arrived !== null ? <PairedUnknownCard at={arrived.at} /> : null}
+       * honest "this browser cannot tell" cards. The amber alert above is the
+       * only thing that appears when nothing is on record. */}
+      {secured ? (
+        <SecuredCard setup={secured} />
+      ) : justRecovered ? (
+        <RecoveredUnknownCard />
+      ) : arrived !== null ? (
+        <PairedUnknownCard at={arrived.at} />
+      ) : null}
 
       <ThisDeviceCard secret={secret} />
 
       <SetUp state={secured ? 'secured' : unknown ? 'unknown' : 'unsecured'} />
 
-      <AllWalletsCard
-        identity={identity}
-        secret={secret}
-        names={names}
-        changed={checkpointsChanged}
-      />
+      <AllWalletsCard identity={identity} secret={secret} names={names} changed={checkpointsChanged} />
     </div>
   );
 }

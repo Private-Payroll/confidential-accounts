@@ -30,7 +30,11 @@ import type { AssetRegistry } from '../../../src/core/assets.js';
 import type { SealedProposal } from '../../../src/core/types.js';
 import type { buildOneOffRun, DetailsOfKind, PaidTree } from '../../../src/midnight/payout-tree.js';
 import { oneOffEntryOf, oneOffSecretsOf, type OneOffSecrets } from '../../../src/midnight/run-keys.js';
-import { verifiedCompanyFiler, type CompanyRecordKind, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  verifiedCompanyFiler,
+  type CompanyRecordKind,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import type { openOneOff, OneOffOpened } from '../../../src/midnight/one-off-record.js';
 import { ONE_OFF_KIND, ONE_OFF_VERSION, OneOffRefused } from '../../../src/midnight/one-off-kind.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
@@ -75,8 +79,14 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(
 
 /** The record served under `id` at the one version a one-off is filed as, if it is this company's one-off of that name. */
 async function fetchedHere(
-  records: Pick<OneOffRecords, 'at'>, accountId: string, id: string,
-): Promise<{ readonly rec: SealedCompanyRecord } | { readonly state: 'none' } | { readonly state: 'unread'; readonly why: string }> {
+  records: Pick<OneOffRecords, 'at'>,
+  accountId: string,
+  id: string
+): Promise<
+  | { readonly rec: SealedCompanyRecord }
+  | { readonly state: 'none' }
+  | { readonly state: 'unread'; readonly why: string }
+> {
   let rec: SealedCompanyRecord | null;
   try {
     rec = await records.at(ONE_OFF_KIND, id, ONE_OFF_VERSION);
@@ -85,21 +95,40 @@ async function fetchedHere(
   }
   if (rec === null) return { state: 'none' };
   if (rec.company !== accountId || rec.kind !== ONE_OFF_KIND || rec.id !== id || rec.version !== ONE_OFF_VERSION) {
-    return { state: 'unread', why: 'the record served under this name is another company\'s, another record, or another version than a one-off is filed as, so it is not believed. Reload the page. If it happens again, do not approve it' };
+    return {
+      state: 'unread',
+      why: "the record served under this name is another company's, another record, or another version than a one-off is filed as, so it is not believed. Reload the page. If it happens again, do not approve it"
+    };
   }
   return { rec };
 }
 
 /** Why the company's records, as `judge` reads them, do not believe `rec`'s filer, or null when they do. */
 const judgedHere = (judge: ReturnType<typeof judgeIn>, rec: SealedCompanyRecord): string | null =>
-  judge(verifiedCompanyFiler(rec), ONE_OFF_KIND, companyRecordKey(ONE_OFF_KIND, rec.id), companyRecordEntry(rec), false, rec.keyEpoch);
+  judge(
+    verifiedCompanyFiler(rec),
+    ONE_OFF_KIND,
+    companyRecordKey(ONE_OFF_KIND, rec.id),
+    companyRecordEntry(rec),
+    false,
+    rec.keyEpoch
+  );
 
-const NOT_BELIEVED = (why: string) => `this device does not believe the company's record of this one-off payment: ${why}`;
+const NOT_BELIEVED = (why: string) =>
+  `this device does not believe the company's record of this one-off payment: ${why}`;
 
 /** `rec` opened with the company's key at its epoch. */
-const openedHere = async <O>(doors: Pick<OneOffReadDoors<O>, 'keys' | 'open' | 'registry'>, rec: SealedCompanyRecord): Promise<OneOffRead<O>> => {
+const openedHere = async <O>(
+  doors: Pick<OneOffReadDoors<O>, 'keys' | 'open' | 'registry'>,
+  rec: SealedCompanyRecord
+): Promise<OneOffRead<O>> => {
   try {
-    return { state: 'read', oneOff: await doors.open(rec, keyOf(doors.keys, rec.keyEpoch), doors.registry), version: rec.version, filedBy: verifiedCompanyFiler(rec) };
+    return {
+      state: 'read',
+      oneOff: await doors.open(rec, keyOf(doors.keys, rec.keyEpoch), doors.registry),
+      version: rec.version,
+      filedBy: verifiedCompanyFiler(rec)
+    };
   } catch (e) {
     return { state: 'unread', why: said(e) };
   }
@@ -115,7 +144,10 @@ const openedHere = async <O>(doors: Pick<OneOffReadDoors<O>, 'keys' | 'open' | '
 export async function oneOffHere<O = OneOffOpened>(doors: OneOffReadDoors<O>, id: string): Promise<OneOffRead<O>> {
   const got = await fetchedHere(doors.records, doors.accountId, id);
   if (!('rec' in got)) return got;
-  const why = judgedHere(judgeIn(await doors.directory({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] })), got.rec);
+  const why = judgedHere(
+    judgeIn(await doors.directory({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] })),
+    got.rec
+  );
   if (why !== null) return { state: 'unread', why: NOT_BELIEVED(why) };
   return openedHere(doors, got.rec);
 }
@@ -179,10 +211,14 @@ const keyMarkOf = (keys: KeysHeld, epoch: number): string | null => {
 
 /** A one-off as this device rebuilds it: its tree, from its record's seed. */
 export const oneOffBuiltHere = (
-  oneOff: OneOffOpened, { detailsOf, treeOf }: Pick<OneOffsHere, 'detailsOf' | 'treeOf'>,
+  oneOff: OneOffOpened,
+  { detailsOf, treeOf }: Pick<OneOffsHere, 'detailsOf' | 'treeOf'>
 ): { readonly secrets: OneOffSecrets; readonly tree: PaidTree } => {
   const secrets = oneOffSecretsOf(oneOff.seed);
-  return { secrets, tree: treeOf({ payee: oneOff.paidTo, token: oneOff.token, amount: oneOff.amount }, secrets, detailsOf, oneOff.asset) };
+  return {
+    secrets,
+    tree: treeOf({ payee: oneOff.paidTo, token: oneOff.token, amount: oneOff.amount }, secrets, detailsOf, oneOff.asset)
+  };
 };
 
 /**
@@ -192,12 +228,23 @@ export const oneOffBuiltHere = (
  * with; otherwise the record is fetched, judged and opened, and kept.
  */
 async function believedHere(
-  door: OneOffsHere, accountId: string, id: string, judge: ReturnType<typeof judgeIn>,
-): Promise<{ readonly state: 'read'; readonly believed: OneOffBelieved } | { readonly state: 'none' } | { readonly state: 'unread'; readonly why: string }> {
+  door: OneOffsHere,
+  accountId: string,
+  id: string,
+  judge: ReturnType<typeof judgeIn>
+): Promise<
+  | { readonly state: 'read'; readonly believed: OneOffBelieved }
+  | { readonly state: 'none' }
+  | { readonly state: 'unread'; readonly why: string }
+> {
   const kept = door.kept ?? KEPT_ON_THIS_DEVICE;
   const at = `${accountId}|${id}`;
   const held = kept.get(at);
-  if (held !== undefined && judgedHere(judge, held.rec) === null && keyMarkOf(door.keys, held.rec.keyEpoch) === held.key) {
+  if (
+    held !== undefined &&
+    judgedHere(judge, held.rec) === null &&
+    keyMarkOf(door.keys, held.rec.keyEpoch) === held.key
+  ) {
     return { state: 'read', believed: held.believed };
   }
   kept.delete(at);
@@ -207,13 +254,20 @@ async function believedHere(
   if (why !== null) return { state: 'unread', why: NOT_BELIEVED(why) };
   const read = await openedHere(door, got.rec);
   if (read.state !== 'read') return read;
-  const believed: OneOffBelieved = { id, version: read.version, oneOff: read.oneOff, filedBy: read.filedBy, ...oneOffBuiltHere(read.oneOff, door) };
+  const believed: OneOffBelieved = {
+    id,
+    version: read.version,
+    oneOff: read.oneOff,
+    filedBy: read.filedBy,
+    ...oneOffBuiltHere(read.oneOff, door)
+  };
   const key = keyMarkOf(door.keys, got.rec.keyEpoch);
   if (key !== null) kept.set(at, { rec: got.rec, key, believed });
   return { state: 'read', believed };
 }
 
-const NO_DOOR = 'This page cannot read the company\'s one-off payments, so it cannot check this proposal. Reload the page to get the current version.';
+const NO_DOOR =
+  "This page cannot read the company's one-off payments, so it cannot check this proposal. Reload the page to get the current version.";
 
 /**
  * **EVERY ONE-OFF PAYMENT THE COMPANY'S RECORDS NAME, AS THIS DEVICE READS
@@ -224,15 +278,21 @@ const NO_DOOR = 'This page cannot read the company\'s one-off payments, so it ca
  * is here whatever it pays, so what the company paid is counted in full.
  */
 export async function oneOffsHere(
-  records: { readonly directory: DirectoryRead; readonly oneOffs?: OneOffsHere }, accountId: string,
-): Promise<{ readonly believed: readonly OneOffBelieved[]; readonly unread: ReadonlyArray<{ readonly id: string; readonly why: string }> }> {
+  records: { readonly directory: DirectoryRead; readonly oneOffs?: OneOffsHere },
+  accountId: string
+): Promise<{
+  readonly believed: readonly OneOffBelieved[];
+  readonly unread: ReadonlyArray<{ readonly id: string; readonly why: string }>;
+}> {
   const here = await records.directory(kindAsked('company', ONE_OFF_KIND));
   const ids = namedHere(here, 'company', ONE_OFF_KIND);
   if (ids.length === 0) return { believed: [], unread: [] };
   const door = records.oneOffs;
   if (door === undefined) {
-    throw new OneOffRefused('This page cannot read the company\'s one-off payments, and the company has made some, so what its '
-      + 'vaults have paid cannot be said here. Reload the page to get the current version.');
+    throw new OneOffRefused(
+      "This page cannot read the company's one-off payments, and the company has made some, so what its " +
+        'vaults have paid cannot be said here. Reload the page to get the current version.'
+    );
   }
   const judge = judgeIn(here);
   const believed: OneOffBelieved[] = [];
@@ -240,20 +300,38 @@ export async function oneOffsHere(
   for (const id of ids) {
     const read = await believedHere(door, accountId, id, judge);
     if (read.state === 'read') believed.push(read.believed);
-    else unread.push({ id, why: read.state === 'none' ? 'the service holds no record under the name the company\'s records give it' : read.why });
+    else
+      unread.push({
+        id,
+        why:
+          read.state === 'none' ? "the service holds no record under the name the company's records give it" : read.why
+      });
   }
   return { believed, unread };
 }
 
 /** The one-off `id`, believed on this device against the company's records for that one name, or refused. */
 async function oneOffNamedHere(
-  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs'>, accountId: string, id: string,
+  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs'>,
+  accountId: string,
+  id: string
 ): Promise<OneOffBelieved> {
   const door = records.oneOffs;
   if (door === undefined) throw new OneOffRefused(NO_DOOR);
-  const read = await believedHere(door, accountId, id, judgeIn(await records.directory({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] })));
-  if (read.state === 'none') throw new OneOffRefused('The company\'s records hold no one-off payment by the name this proposal gives. Reload the page. If it happens again, do not approve it.');
-  if (read.state === 'unread') throw new OneOffRefused(`This device does not believe the one-off payment this proposal raises: ${read.why.replace(/\.$/u, '')}.`);
+  const read = await believedHere(
+    door,
+    accountId,
+    id,
+    judgeIn(await records.directory({ records: [{ store: 'company', kind: ONE_OFF_KIND, id }] }))
+  );
+  if (read.state === 'none')
+    throw new OneOffRefused(
+      "The company's records hold no one-off payment by the name this proposal gives. Reload the page. If it happens again, do not approve it."
+    );
+  if (read.state === 'unread')
+    throw new OneOffRefused(
+      `This device does not believe the one-off payment this proposal raises: ${read.why.replace(/\.$/u, '')}.`
+    );
   return read.believed;
 }
 
@@ -278,19 +356,35 @@ const refuseAOneOffItsProposalDidNotRaise = (
   read: { readonly id?: string; readonly oneOff: OneOffOpened; readonly version: number; readonly filedBy: Hex | null },
   named: { readonly id: string; readonly version: number },
   proposal: { readonly id: string; readonly chainId: string; readonly filedBy: string | null },
-  sealed: { readonly vault: string; readonly asset: string },
+  sealed: { readonly vault: string; readonly asset: string }
 ): void => {
   const o = read.oneOff;
   if ((read.id !== undefined && read.id !== named.id) || read.version !== named.version) {
-    throw new OneOffRefused('This proposal names another one-off payment, or another version of it, than the one filed. Do not approve it. Tell the signer who proposed it.');
+    throw new OneOffRefused(
+      'This proposal names another one-off payment, or another version of it, than the one filed. Do not approve it. Tell the signer who proposed it.'
+    );
   }
   if (o.proposal.id !== proposal.id || o.proposal.chainId !== proposal.chainId.toLowerCase()) {
-    throw new OneOffRefused('The one-off payment this proposal names says it is raised by another proposal. Do not approve it. Tell the signer who proposed it.');
+    throw new OneOffRefused(
+      'The one-off payment this proposal names says it is raised by another proposal. Do not approve it. Tell the signer who proposed it.'
+    );
   }
-  if (o.vault !== sealed.vault.toLowerCase()) throw new OneOffRefused('The one-off payment this proposal names is paid from another vault. Do not approve it. Tell the signer who proposed it.');
-  if (o.asset !== sealed.asset.toLowerCase()) throw new OneOffRefused('The one-off payment this proposal names is paid in another currency. Do not approve it. Tell the signer who proposed it.');
-  if (proposal.filedBy === null || read.filedBy === null || read.filedBy.toLowerCase() !== proposal.filedBy.toLowerCase()) {
-    throw new OneOffRefused('The one-off payment this proposal names was filed by another seat than the one that raised it. Do not approve it. Tell the signer who proposed it.');
+  if (o.vault !== sealed.vault.toLowerCase())
+    throw new OneOffRefused(
+      'The one-off payment this proposal names is paid from another vault. Do not approve it. Tell the signer who proposed it.'
+    );
+  if (o.asset !== sealed.asset.toLowerCase())
+    throw new OneOffRefused(
+      'The one-off payment this proposal names is paid in another currency. Do not approve it. Tell the signer who proposed it.'
+    );
+  if (
+    proposal.filedBy === null ||
+    read.filedBy === null ||
+    read.filedBy.toLowerCase() !== proposal.filedBy.toLowerCase()
+  ) {
+    throw new OneOffRefused(
+      'The one-off payment this proposal names was filed by another seat than the one that raised it. Do not approve it. Tell the signer who proposed it.'
+    );
   }
 };
 
@@ -303,20 +397,28 @@ const refuseAOneOffItsProposalDidNotRaise = (
  * pays an invoice, which a vendor who has left may still be owed. A one-off
  * naming no vendor entry is paid to the address typed, and is never refused here.
  */
-export const oneOffVendorRefusal = (o: Pick<OneOffOpened, 'payee' | 'paidTo'>, vendors: Pick<VendorsHere, 'vendors'>): string | null => {
+export const oneOffVendorRefusal = (
+  o: Pick<OneOffOpened, 'payee' | 'paidTo'>,
+  vendors: Pick<VendorsHere, 'vendors'>
+): string | null => {
   const ref = o.payee.ref;
   if (ref === null) return null;
   const v = vendors.vendors.find((x) => x.vendor.id === ref)?.vendor;
-  if (v === undefined) return 'the vendor entry it names is not one this device believes and would pay. The vendor may have been removed or not set up yet. Ask a signer to check the vendor\'s entry';
-  if (v.address === null) return 'the vendor entry it names holds no address to pay. Ask the vendor to give an address, then propose again';
+  if (v === undefined)
+    return "the vendor entry it names is not one this device believes and would pay. The vendor may have been removed or not set up yet. Ask a signer to check the vendor's entry";
+  if (v.address === null)
+    return 'the vendor entry it names holds no address to pay. Ask the vendor to give an address, then propose again';
   const keys = payeeKeysRefusal(v.address);
   if (keys !== null) return `the vendor entry it names is not paid: ${keys}`;
   const a = v.address as unknown as Record<string, unknown>;
   const p = o.paidTo as unknown as Record<string, unknown>;
-  const same = (x: unknown, y: unknown) => typeof x === 'string' && typeof y === 'string' && x.toLowerCase() === y.toLowerCase();
-  if (!same(a.bech32, o.payee.address.trim()) || a.network !== o.payee.network) return 'it pays another address than the vendor entry it names. Do not approve it. Tell the signer who proposed it, or ask them to propose it again from the vendor\'s entry';
+  const same = (x: unknown, y: unknown) =>
+    typeof x === 'string' && typeof y === 'string' && x.toLowerCase() === y.toLowerCase();
+  if (!same(a.bech32, o.payee.address.trim()) || a.network !== o.payee.network)
+    return "it pays another address than the vendor entry it names. Do not approve it. Tell the signer who proposed it, or ask them to propose it again from the vendor's entry";
   const held = a.kind === 'shielded' ? ['coinPublicKey', 'encryptionPublicKey'] : ['userAddress'];
-  if (a.kind !== p.kind || held.some((k) => !same(a[k], p[k]))) return 'it pays other keys than the vendor entry it names. Do not approve it. Tell the signer who proposed it, or ask them to propose it again from the vendor\'s entry';
+  if (a.kind !== p.kind || held.some((k) => !same(a[k], p[k])))
+    return "it pays other keys than the vendor entry it names. Do not approve it. Tell the signer who proposed it, or ask them to propose it again from the vendor's entry";
   return null;
 };
 
@@ -327,12 +429,15 @@ export const oneOffVendorRefusal = (o: Pick<OneOffOpened, 'payee' | 'paidTo'>, v
  * naming one.
  */
 export async function refuseAOneOffToAnotherVendorHere(
-  records: Pick<CompanyRecordsHere, 'vendors'>, o: Pick<OneOffOpened, 'payee' | 'paidTo'>,
+  records: Pick<CompanyRecordsHere, 'vendors'>,
+  o: Pick<OneOffOpened, 'payee' | 'paidTo'>
 ): Promise<void> {
   if (o.payee.ref === null) return;
   if (records.vendors === undefined) {
-    throw new OneOffRefused('This one-off payment names a vendor entry, and this page cannot read the company\'s vendors, so it cannot '
-      + 'say the payment goes to them. Reload the page to get the current version.');
+    throw new OneOffRefused(
+      "This one-off payment names a vendor entry, and this page cannot read the company's vendors, so it cannot " +
+        'say the payment goes to them. Reload the page to get the current version.'
+    );
   }
   const why = oneOffVendorRefusal(o, await records.vendors());
   if (why !== null) throw new OneOffRefused(`This one-off payment is not made: ${why}.`);
@@ -349,9 +454,10 @@ export async function refuseAOneOffToAnotherVendorHere(
  * its nonce. Anything else is refused with why.
  */
 export async function oneOffMadeHere(
-  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments' | 'vendors'>, accountId: string,
+  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'payments' | 'vendors'>,
+  accountId: string,
   proposal: { readonly id: string; readonly chainId: string; readonly filedBy: string | null },
-  sealed: { readonly vault: string; readonly named: unknown; readonly asset: string },
+  sealed: { readonly vault: string; readonly named: unknown; readonly asset: string }
 ): Promise<OneOffMadeHere> {
   const named = oneOffNamedIn(sealed.named);
   if (records.oneOffs === undefined || records.payments === undefined) throw new OneOffRefused(NO_DOOR);
@@ -364,23 +470,41 @@ export async function oneOffMadeHere(
   try {
     held = (await records.payments.read([entry])).held;
   } catch (e) {
-    throw new OneOffRefused(`Your wallet could not read from the network whether this one-off payment was already paid (${said(e)}). `
-      + 'Try again in a minute.', { cause: e });
+    throw new OneOffRefused(
+      `Your wallet could not read from the network whether this one-off payment was already paid (${said(e)}). ` +
+        'Try again in a minute.',
+      { cause: e }
+    );
   }
   return {
-    kind: 'transfer', asset: o.asset, facts: { payee: o.paidTo, token: o.token, amount: o.amount }, seed: o.seed,
-    opensAt: o.run.opensAt.toString(), closesAt: o.run.closesAt.toString(), required: o.run.required.toString(),
-    wallet: { asked: [entry], held: [...held] },
+    kind: 'transfer',
+    asset: o.asset,
+    facts: { payee: o.paidTo, token: o.token, amount: o.amount },
+    seed: o.seed,
+    opensAt: o.run.opensAt.toString(),
+    closesAt: o.run.closesAt.toString(),
+    required: o.run.required.toString(),
+    wallet: { asked: [entry], held: [...held] }
   };
 }
 
 /** What a proposal's sealed body says it raises, when it is a `transfer` proposal of this company's; null when it is not one. */
 async function transferNamedHere(
-  records: Pick<CompanyRecordsHere, 'proposals'>, accountId: string, viewingKey: KeysHeld, proposalId: string,
-): Promise<{ readonly rec: SealedProposal; readonly vault: string; readonly asset: string; readonly named: { readonly id: string; readonly version: number } } | null> {
+  records: Pick<CompanyRecordsHere, 'proposals'>,
+  accountId: string,
+  viewingKey: KeysHeld,
+  proposalId: string
+): Promise<{
+  readonly rec: SealedProposal;
+  readonly vault: string;
+  readonly asset: string;
+  readonly named: { readonly id: string; readonly version: number };
+} | null> {
   if (records.proposals === undefined) {
-    throw new OneOffRefused('This page cannot read the company\'s proposals, so it cannot say whether this one is a one-off payment. '
-      + 'Reload the page to get the current version.');
+    throw new OneOffRefused(
+      "This page cannot read the company's proposals, so it cannot say whether this one is a one-off payment. " +
+        'Reload the page to get the current version.'
+    );
   }
   const rec = (await records.proposals()).find((p) => p.id === proposalId && p.accountId === accountId);
   if (rec === undefined) return null;
@@ -392,7 +516,10 @@ async function transferNamedHere(
     if (envelope.kind !== TRANSFER) return null;
     body = parseCanonical(unseal(envelope.sealedPayload, key));
   } catch (e) {
-    throw new OneOffRefused('This device cannot read the company\'s record of this proposal, so it cannot say what it pays.', { cause: e });
+    throw new OneOffRefused(
+      "This device cannot read the company's record of this proposal, so it cannot say what it pays.",
+      { cause: e }
+    );
   }
   return { rec, vault: envelope.vault, asset: String(body.__change?.asset ?? ''), named: oneOffNamedIn(body.oneOff) };
 }
@@ -407,15 +534,23 @@ async function transferNamedHere(
  * For a device that read every one-off already, as a charge does for its period.
  */
 export async function oneOffOfTheProposalHere(
-  records: Pick<CompanyRecordsHere, 'proposals'>, accountId: string, viewingKey: KeysHeld, proposalId: string,
-  believed: readonly OneOffBelieved[],
+  records: Pick<CompanyRecordsHere, 'proposals'>,
+  accountId: string,
+  viewingKey: KeysHeld,
+  proposalId: string,
+  believed: readonly OneOffBelieved[]
 ): Promise<OneOffBelieved | null> {
   const t = await transferNamedHere(records, accountId, viewingKey, proposalId);
   if (t === null) return null;
   const found = believed.find((o) => o.id === t.named.id);
-  if (found === undefined) throw new OneOffRefused('This device does not believe the one-off payment this proposal raises.');
-  refuseAOneOffItsProposalDidNotRaise(found, t.named, { id: t.rec.id, chainId: t.rec.chainId, filedBy: t.rec.filedBy?.publicKey ?? null },
-    { vault: t.vault, asset: t.asset });
+  if (found === undefined)
+    throw new OneOffRefused('This device does not believe the one-off payment this proposal raises.');
+  refuseAOneOffItsProposalDidNotRaise(
+    found,
+    t.named,
+    { id: t.rec.id, chainId: t.rec.chainId, filedBy: t.rec.filedBy?.publicKey ?? null },
+    { vault: t.vault, asset: t.asset }
+  );
   return found;
 }
 
@@ -425,12 +560,19 @@ export async function oneOffOfTheProposalHere(
  * of the company's: for a device that pays or approves that one alone.
  */
 export async function oneOffRaisedByHere(
-  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'proposals'>, accountId: string, viewingKey: KeysHeld, proposalId: string,
+  records: Pick<CompanyRecordsHere, 'directory' | 'oneOffs' | 'proposals'>,
+  accountId: string,
+  viewingKey: KeysHeld,
+  proposalId: string
 ): Promise<OneOffBelieved | null> {
   const t = await transferNamedHere(records, accountId, viewingKey, proposalId);
   if (t === null) return null;
   const found = await oneOffNamedHere(records, accountId, t.named.id);
-  refuseAOneOffItsProposalDidNotRaise(found, t.named, { id: t.rec.id, chainId: t.rec.chainId, filedBy: t.rec.filedBy?.publicKey ?? null },
-    { vault: t.vault, asset: t.asset });
+  refuseAOneOffItsProposalDidNotRaise(
+    found,
+    t.named,
+    { id: t.rec.id, chainId: t.rec.chainId, filedBy: t.rec.filedBy?.publicKey ?? null },
+    { vault: t.vault, asset: t.asset }
+  );
   return found;
 }

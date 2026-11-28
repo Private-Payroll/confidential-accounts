@@ -5,7 +5,10 @@ import { Buffer as PolyfillBuffer } from 'buffer/';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { identityFromWords, secretFromWords } from 'midnight-identity/keys/derivation';
 import {
-  GIVEN_NAME, PUBLIC_RECEIVING_ADDRESS, RECEIVING_ADDRESS, REGISTRY,
+  GIVEN_NAME,
+  PUBLIC_RECEIVING_ADDRESS,
+  RECEIVING_ADDRESS,
+  REGISTRY
 } from 'midnight-identity/profile/attributes';
 import { check } from 'midnight-identity/profile/definition';
 import { emptyProfile, selfAssert } from 'midnight-identity/profile/model';
@@ -56,12 +59,15 @@ const B = 'https://payroll-b.example';
 const FIRST_OFFERED = 2;
 const SECOND_OFFERED = 3;
 
-const shieldedOf = (account: number): string =>
-  ownedAddressFor(identity, account, {}, NETWORK).address.bech32;
+const shieldedOf = (account: number): string => ownedAddressFor(identity, account, {}, NETWORK).address.bech32;
 
 let port: WatchedPort;
-beforeEach(() => { port = watchedStore(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  port = watchedStore();
+});
+afterEach(() => {
+  cleanup();
+});
 
 const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   schema: 'midnight-identity/disclosure-request/v1',
@@ -69,11 +75,11 @@ const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   purpose: 'To pay you, we need to know where to pay you.',
   wants: [
     { attribute: GIVEN_NAME, required: true },
-    { attribute: RECEIVING_ADDRESS, required: true, reason: 'This is where your salary goes.' },
+    { attribute: RECEIVING_ADDRESS, required: true, reason: 'This is where your salary goes.' }
   ],
   nonce: 'n1',
   expiresAt: NOW + 600_000,
-  ...over,
+  ...over
 });
 
 /** What `open` hands back: the messages, and a way to AWAIT the next one. */
@@ -92,11 +98,14 @@ const open = (origin = A, data: unknown = wire()): Opened => {
   const handlers: ((event: MessageEvent) => void)[] = [];
   const view: ChannelWindow = {
     opener: opener as ChannelWindow['opener'],
-    addEventListener: (_t, h) => { handlers.push(h); },
-    removeEventListener: () => { /* torn down by cleanup */ },
+    addEventListener: (_t, h) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {
+      /* torn down by cleanup */
+    }
   };
-  render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
+  render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
   for (const h of handlers) {
     h({ source: opener, origin, data } as unknown as MessageEvent);
   }
@@ -104,8 +113,7 @@ const open = (origin = A, data: unknown = wire()): Opened => {
 };
 
 const someone = async (): Promise<void> => {
-  await save(port, identity,
-    selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Sarah', 'legal', NOW));
+  await save(port, identity, selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Sarah', 'legal', NOW));
 };
 
 const responseFrom = (sent: { message: unknown }[]): DisclosureResponse =>
@@ -160,12 +168,11 @@ const settledText = async (selector: string): Promise<string | null> => {
 /** Pick the one held first name, so the required row is answered. */
 const pickTheName = async (): Promise<void> => {
   await settle();
-  const option = document.querySelector(
-    `[data-row="${GIVEN_NAME}"] input[type="radio"]`) as HTMLElement | null;
+  const option = document.querySelector(`[data-row="${GIVEN_NAME}"] input[type="radio"]`) as HTMLElement | null;
   if (option === null) {
     throw new Error(
-      `the screen never showed an option row for ${GIVEN_NAME}. That is the defect, not a `
-      + 'wait that needed longer.');
+      `the screen never showed an option row for ${GIVEN_NAME}. That is the defect, not a ` + 'wait that needed longer.'
+    );
   }
   fireEvent.click(option);
 };
@@ -196,7 +203,7 @@ const addressIn = (response: DisclosureResponse): string | undefined => {
 };
 
 describe('§1 — a receiving address is asked for by name and worked out here', () => {
-  it('THE ADDRESS SENT IS THE CHOSEN WALLET\'S OWN, AND NOTHING HOLDS IT', async () => {
+  it("THE ADDRESS SENT IS THE CHOSEN WALLET'S OWN, AND NOTHING HOLDS IT", async () => {
     await someone();
     const channel = open();
     await saying('Who is asking');
@@ -215,8 +222,7 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     /* **NOBODY SAID IT. THIS WALLET WORKED IT OUT.** `by: 'self'` here would
      * tell the recipient the person typed something nothing they could type
      * would change. */
-    expect(response.payload.disclosed.find((s) => s.about === RECEIVING_ADDRESS)!.asserted)
-      .toEqual({ by: 'wallet' });
+    expect(response.payload.disclosed.find((s) => s.about === RECEIVING_ADDRESS)!.asserted).toEqual({ by: 'wallet' });
 
     /* **AND IT IS NOT IN `held`.** A computed fact stored as a held one is a
      * copy that goes stale the moment a different wallet is chosen. */
@@ -226,8 +232,7 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     /* A grant names HELD values, so the derived row is in the history and not
      * in the grant — `grantTo` would refuse an id nothing holds. */
     expect(opened.profile.grants[0]!.values.some((v) => v === RECEIVING_ADDRESS)).toBe(false);
-    expect(opened.profile.grants[0]!.disclosures[0]!.sent.map((s) => s.about))
-      .toContain(RECEIVING_ADDRESS);
+    expect(opened.profile.grants[0]!.disclosures[0]!.sent.map((s) => s.about)).toContain(RECEIVING_ADDRESS);
   });
 
   it('CHOOSING A DIFFERENT WALLET CHANGES THE ADDRESS THAT IS SENT', async () => {
@@ -246,8 +251,7 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     await saying('Who is asking');
     expect(await settledText('[data-derived-value]')).toBe(shieldedOf(FIRST_OFFERED));
 
-    fireEvent.change(document.getElementById('approve-subwallet')!,
-      { target: { value: String(SECOND_OFFERED) } });
+    fireEvent.change(document.getElementById('approve-subwallet')!, { target: { value: String(SECOND_OFFERED) } });
     expect(await settledText('[data-derived-value]')).toBe(shieldedOf(SECOND_OFFERED));
 
     await pickTheName();
@@ -259,61 +263,58 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     expect(response.payload.address).toBe(unshieldedAddressFor(identity, SECOND_OFFERED));
   });
 
-  it('THE CODE SHOWN IS THE CODE OF THE ADDRESS BEING SENT, AND IT MOVES WITH THE WALLET',
-    async () => {
-      /*
-       * **WHAT THE PERSON CARRIES BACK.**
-       *
-       * The address is sealed on this device and the company never sees it, so
-       * the only thing that lets the receiving end check what arrived is this
-       * code. **It is worth nothing unless it is a code OF THE VALUE ACTUALLY
-       * SENT** — a code computed from a fixed wallet while a different one is
-       * disclosed would match nothing on the far side, and a code computed from
-       * something other than the address would match everything.
-       *
-       * So this asserts the pairing from both ends: the code on screen is the
-       * fingerprint of the address in the response, and changing the wallet
-       * changes both together.
-       */
-      await someone();
-      const channel = open();
-      await saying('Who is asking');
-      /*
-       * **WAIT FOR THE VALUE, NOT FOR THE ELEMENT.** The first version waited
-       * only for the element to exist, and it went red ONCE — in a run of four
-       * files together, never when this file was run alone. **One failure is
-       * the whole of what was observed**; the diagnosis below is read off the
-       * code rather than reproduced, and it is written down for the next
-       * person who sees it rather than claimed as settled.
-       *
-       * The offered wallet is chosen by an EFFECT (`chooseSlot`), which runs
-       * once the ask and the profile are both here. The row renders before
-       * that with whichever slot was used last, so a test that waits only for
-       * the element to EXIST is racing the effect: it reads a real code for a
-       * real wallet, which is simply not the one this screen settles on.
-       *
-       * Watching for the settled value is the same discipline the test above
-       * uses for the address, and it is why that one does not flake.
-       */
-      expect(await settledText('[data-confirmation-code]'))
-        .toBe(addressFingerprint(shieldedOf(FIRST_OFFERED)));
+  it('THE CODE SHOWN IS THE CODE OF THE ADDRESS BEING SENT, AND IT MOVES WITH THE WALLET', async () => {
+    /*
+     * **WHAT THE PERSON CARRIES BACK.**
+     *
+     * The address is sealed on this device and the company never sees it, so
+     * the only thing that lets the receiving end check what arrived is this
+     * code. **It is worth nothing unless it is a code OF THE VALUE ACTUALLY
+     * SENT** — a code computed from a fixed wallet while a different one is
+     * disclosed would match nothing on the far side, and a code computed from
+     * something other than the address would match everything.
+     *
+     * So this asserts the pairing from both ends: the code on screen is the
+     * fingerprint of the address in the response, and changing the wallet
+     * changes both together.
+     */
+    await someone();
+    const channel = open();
+    await saying('Who is asking');
+    /*
+     * **WAIT FOR THE VALUE, NOT FOR THE ELEMENT.** The first version waited
+     * only for the element to exist, and it went red ONCE — in a run of four
+     * files together, never when this file was run alone. **One failure is
+     * the whole of what was observed**; the diagnosis below is read off the
+     * code rather than reproduced, and it is written down for the next
+     * person who sees it rather than claimed as settled.
+     *
+     * The offered wallet is chosen by an EFFECT (`chooseSlot`), which runs
+     * once the ask and the profile are both here. The row renders before
+     * that with whichever slot was used last, so a test that waits only for
+     * the element to EXIST is racing the effect: it reads a real code for a
+     * real wallet, which is simply not the one this screen settles on.
+     *
+     * Watching for the settled value is the same discipline the test above
+     * uses for the address, and it is why that one does not flake.
+     */
+    expect(await settledText('[data-confirmation-code]')).toBe(addressFingerprint(shieldedOf(FIRST_OFFERED)));
 
-      const picker = document.getElementById('approve-subwallet');
-      if (picker === null) throw new Error('the wallet picker is not on this screen');
-      fireEvent.change(picker, { target: { value: String(SECOND_OFFERED) } });
-      expect(await settledText('[data-confirmation-code]'))
-        .toBe(addressFingerprint(shieldedOf(SECOND_OFFERED)));
-      /* Not the first wallet's code any more — the two must never be the same
-       * string, which is `fingerprint.test.ts`'s own subject from this end. */
-      expect(document.querySelector('[data-confirmation-code]')!.textContent)
-        .not.toBe(addressFingerprint(shieldedOf(FIRST_OFFERED)));
+    const picker = document.getElementById('approve-subwallet');
+    if (picker === null) throw new Error('the wallet picker is not on this screen');
+    fireEvent.change(picker, { target: { value: String(SECOND_OFFERED) } });
+    expect(await settledText('[data-confirmation-code]')).toBe(addressFingerprint(shieldedOf(SECOND_OFFERED)));
+    /* Not the first wallet's code any more — the two must never be the same
+     * string, which is `fingerprint.test.ts`'s own subject from this end. */
+    expect(document.querySelector('[data-confirmation-code]')!.textContent).not.toBe(
+      addressFingerprint(shieldedOf(FIRST_OFFERED))
+    );
 
-      await pickTheName();
-      const response = await press(channel);
-      expect(document.querySelector('[data-confirmation-code]')).toBeNull();
-      expect(addressFingerprint(addressIn(response)!))
-        .toBe(addressFingerprint(shieldedOf(SECOND_OFFERED)));
-    });
+    await pickTheName();
+    const response = await press(channel);
+    expect(document.querySelector('[data-confirmation-code]')).toBeNull();
+    expect(addressFingerprint(addressIn(response)!)).toBe(addressFingerprint(shieldedOf(SECOND_OFFERED)));
+  });
 
   it('AND THERE IS NO CODE FOR AN ADDRESS THAT IS NOT BEING SENT', async () => {
     /* Declining the row is a normal answer here as it is anywhere else on this
@@ -322,10 +323,8 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     await someone();
     open();
     await saying('Who is asking');
-    expect(await settledText('[data-confirmation-code]'))
-      .toBe(addressFingerprint(shieldedOf(FIRST_OFFERED)));
-    fireEvent.click(document.querySelector(
-      `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`)!);
+    expect(await settledText('[data-confirmation-code]')).toBe(addressFingerprint(shieldedOf(FIRST_OFFERED)));
+    fireEvent.click(document.querySelector(`[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`)!);
     /* **AND THEN IT IS GONE.** An absence asserted after the loop has been
      * turned is stronger than one polled for: a code that is still on screen
      * when everything pending has run is a code a person could paste. */
@@ -386,16 +385,14 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     /* The fresh slot has to be the one on screen BEFORE the used one is picked,
      * or "choosing" it is a change event that never fires. */
     await settle();
-    expect((document.getElementById('approve-subwallet') as HTMLSelectElement).value)
-      .toBe(String(SECOND_OFFERED));
+    expect((document.getElementById('approve-subwallet') as HTMLSelectElement).value).toBe(String(SECOND_OFFERED));
     /* Nothing is said until the used slot is actually chosen — an inconsistent
      * warning teaches people that silence means it is fine, and a warning shown
      * about a slot nobody picked is exactly that. */
     expect(document.querySelector('[data-wallet-shared]')).toBeNull();
 
-    fireEvent.change(document.getElementById('approve-subwallet')!,
-      { target: { value: String(FIRST_OFFERED) } });
-    expect(await settledText('[data-wallet-shared]') ?? '').toContain(A);
+    fireEvent.change(document.getElementById('approve-subwallet')!, { target: { value: String(FIRST_OFFERED) } });
+    expect((await settledText('[data-wallet-shared]')) ?? '').toContain(A);
     expect(document.body.textContent).toContain('comparing notes');
 
     /* AND IT STILL GOES THROUGH. Linkability is the person's to spend. */
@@ -412,13 +409,13 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     /* The ready ping and nothing else. The address is on the screen and has not
      * left it. */
     expect(sent).toHaveLength(1);
-    expect((sent[0]!.message as { schema: string }).schema)
-      .toBe('midnight-identity/wallet-ready/v1');
+    expect((sent[0]!.message as { schema: string }).schema).toBe('midnight-identity/wallet-ready/v1');
 
     /* And declining sends the refusal rather than the address. */
     fireEvent.click(screen.getByText('Send nothing'));
     expect(sent[sent.length - 1]!.message).toEqual({
-      schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined',
+      schema: 'midnight-identity/disclosure-refused/v1',
+      reason: 'declined'
     });
     expect(JSON.stringify(sent)).not.toContain(shieldedOf(FIRST_OFFERED));
   });
@@ -429,11 +426,13 @@ describe('§1 — a receiving address is asked for by name and worked out here',
     await saying('Who is asking');
     await settle();
     const no = document.querySelector(
-      `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`) as HTMLElement | null;
+      `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`
+    ) as HTMLElement | null;
     if (no === null) {
       throw new Error(
-        `the screen never showed a way to decline ${RECEIVING_ADDRESS}. That is the defect, `
-        + 'not a wait that needed longer.');
+        `the screen never showed a way to decline ${RECEIVING_ADDRESS}. That is the defect, ` +
+          'not a wait that needed longer.'
+      );
     }
     fireEvent.click(no);
     await pickTheName();
@@ -455,7 +454,8 @@ describe('§1 — a derived attribute is derived, and checked against its own ru
     const definition = REGISTRY.definitionOf(RECEIVING_ADDRESS)!;
     expect(check(definition, unshieldedAddressFor(identity, FIRST_OFFERED)).ok).toBe(false);
     expect(check(definition, shieldedOf(FIRST_OFFERED))).toEqual({
-      ok: true, value: shieldedOf(FIRST_OFFERED),
+      ok: true,
+      value: shieldedOf(FIRST_OFFERED)
     });
   });
 
@@ -471,21 +471,23 @@ describe('§1 — a derived attribute is derived, and checked against its own ru
 
   it('AND NOBODY CAN TYPE ONE OR HAVE ONE ISSUED', () => {
     const profile = emptyProfile(NOW);
-    expect(() => selfAssert(profile, REGISTRY, RECEIVING_ADDRESS, shieldedOf(2), '', NOW))
-      .toThrow(/works it out from your own keys/u);
+    expect(() => selfAssert(profile, REGISTRY, RECEIVING_ADDRESS, shieldedOf(2), '', NOW)).toThrow(
+      /works it out from your own keys/u
+    );
   });
 });
 
 describe('money with no private form asks for the PUBLIC address, and gets nothing else', () => {
   const publicOf = (account: number): string => unshieldedAddressFor(identity, account);
-  const asking = (): Record<string, unknown> => wire({
-    wants: [
-      { attribute: GIVEN_NAME, required: true },
-      { attribute: PUBLIC_RECEIVING_ADDRESS, required: true, reason: 'This is where your salary goes.' },
-    ],
-  });
+  const asking = (): Record<string, unknown> =>
+    wire({
+      wants: [
+        { attribute: GIVEN_NAME, required: true },
+        { attribute: PUBLIC_RECEIVING_ADDRESS, required: true, reason: 'This is where your salary goes.' }
+      ]
+    });
 
-  it('THE CHOSEN WALLET\'S PUBLIC ADDRESS IS SENT, WITH ITS CODE, IN ONE PRESS, AND NO SHIELDED ADDRESS GOES', async () => {
+  it("THE CHOSEN WALLET'S PUBLIC ADDRESS IS SENT, WITH ITS CODE, IN ONE PRESS, AND NO SHIELDED ADDRESS GOES", async () => {
     await someone();
     const channel = open(A, asking());
     await saying('Who is asking');

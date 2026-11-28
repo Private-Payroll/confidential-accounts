@@ -25,9 +25,16 @@ import { evaluatePolicy } from '../../../src/core/company-policy.js';
 import { confirmationCovers, unaccountedOnChain } from '../../../src/core/already-paid.js';
 import { isLiveRound } from '../../../src/core/retry-cover.js';
 import {
-  earlierRoundOfLeg, refuseALegThatIsProposed, refuseARetryOfALegNeverOnChain, refuseARetryOverAnotherRetry,
-  refuseARetryWhileItsLegCanPay, refusePayingOnePayeeTwice, refusePeopleDecidedNotToPay, refuseRaisingOverAnotherRun,
-  unaccountedRefusalHere, type ProposalStandingRead,
+  earlierRoundOfLeg,
+  refuseALegThatIsProposed,
+  refuseARetryOfALegNeverOnChain,
+  refuseARetryOverAnotherRetry,
+  refuseARetryWhileItsLegCanPay,
+  refusePayingOnePayeeTwice,
+  refusePeopleDecidedNotToPay,
+  refuseRaisingOverAnotherRun,
+  unaccountedRefusalHere,
+  type ProposalStandingRead
 } from '../../../src/core/run-raising.js';
 import { registerFor, skippedIndices } from '../../../src/midnight/run-skips.js';
 import { assetOfLeg, legEmployees, legName, listOfRun, openSealedRun } from '../../../src/core/run-legs.js';
@@ -37,7 +44,13 @@ import type { DirectoryHere } from './vault-page-doors.js';
 import type { RunMadeHere } from './what-this-device-made.js';
 import { knownEntriesOf } from './payment-entries.js';
 import {
-  payableFactsOf, payeesHere, payrollRoundsHere, proposalsListedHere, runsListedHere, type CompanyRecordsHere, type PayeesHere,
+  payableFactsOf,
+  payeesHere,
+  payrollRoundsHere,
+  proposalsListedHere,
+  runsListedHere,
+  type CompanyRecordsHere,
+  type PayeesHere
 } from './run-rebuilt-here.js';
 import { policyForARunHere, type PolicyForARun } from './spending-policy-read-here.js';
 
@@ -102,7 +115,11 @@ export interface RaiseCheck {
 
 /** Why a round was refused by one of the checks, in the check's own words. */
 export class RoundRefusedHere extends Error {
-  constructor(readonly check: string, why: string, options?: { cause?: unknown }) {
+  constructor(
+    readonly check: string,
+    why: string,
+    options?: { cause?: unknown }
+  ) {
     super(why, options);
     this.name = 'RoundRefusedHere';
   }
@@ -112,11 +129,16 @@ export class RoundRefusedHere extends Error {
 const positionsOf = (made: RunMadeHere): readonly number[] => made.retry ?? made.facts.map((_, i) => i);
 
 /** The same payment: to the same address, in the same form, of the same token and amount. */
-const samePayment = (a: PaymentFacts, b: PaymentFacts): boolean => a.payee.kind === b.payee.kind && a.payee.bech32 === b.payee.bech32
-  && a.token.toLowerCase() === b.token.toLowerCase() && a.amount === b.amount;
+const samePayment = (a: PaymentFacts, b: PaymentFacts): boolean =>
+  a.payee.kind === b.payee.kind &&
+  a.payee.bech32 === b.payee.bech32 &&
+  a.token.toLowerCase() === b.token.toLowerCase() &&
+  a.amount === b.amount;
 
-const addressOfIn = (people: PayeesHere) => (e: { id: string }): string | null =>
-  people.people.find((p) => p.person.id === e.id)?.person.address?.bech32 ?? null;
+const addressOfIn =
+  (people: PayeesHere) =>
+  (e: { id: string }): string | null =>
+    people.people.find((p) => p.person.id === e.id)?.person.address?.bech32 ?? null;
 
 /**
  * **A LEG IS PAID BY ONE ROUND.** A leg's round is refused while the run points
@@ -131,7 +153,7 @@ const legRaisedOnce: RaiseCheck = {
   check: ({ run, leg, made, proposal }, facts) => {
     if (made.retry !== undefined) return;
     refuseALegThatIsProposed(run, leg, facts.rounds, facts.registry, proposal);
-  },
+  }
 };
 
 const noOtherRoundOfTheLeg: RaiseCheck = {
@@ -140,10 +162,12 @@ const noOtherRoundOfTheLeg: RaiseCheck = {
     if (made.retry !== undefined) return;
     const other = earlierRoundOfLeg(run, leg, facts.rounds, facts.registry, proposal);
     if (other === undefined) return;
-    throw new Error(`the ${legName(leg, facts.registry)} leg of the run for ${run.period} is written down as proposal ${other}, which may be on `
-      + 'the network, and a leg is paid by one round. Send that one, or withdraw it and raise '
-      + 'the leg again after. Withdrawing asks the network.');
-  },
+    throw new Error(
+      `the ${legName(leg, facts.registry)} leg of the run for ${run.period} is written down as proposal ${other}, which may be on ` +
+        'the network, and a leg is paid by one round. Send that one, or withdraw it and raise ' +
+        'the leg again after. Withdrawing asks the network.'
+    );
+  }
 };
 
 /**
@@ -158,7 +182,7 @@ const legNoLongerPays: RaiseCheck = {
     const legRound = pointed === undefined ? undefined : facts.standingOf(pointed);
     refuseARetryOfALegNeverOnChain(run, leg, legRound, facts.registry);
     if (legRound !== undefined) refuseARetryWhileItsLegCanPay(run, leg, legRound, facts.nowInSeconds, facts.registry);
-  },
+  }
 };
 
 /** **NOBODY A RETRY PAYS IS ON ANOTHER RETRY OF THE LEG THAT CAN STILL PAY THEM.** */
@@ -167,11 +191,17 @@ const notOnAnotherRetry: RaiseCheck = {
   check: ({ run, leg, made, proposal }, facts) => {
     if (made.retry === undefined) return;
     refuseARetryOverAnotherRetry({
-      run, leg, indices: made.retry, legRounds: facts.rounds, again: undefined, nowInSeconds: facts.nowInSeconds,
-      standingOf: (id) => facts.standingOf(id) ?? { status: 'unknown' }, registry: facts.registry,
-      ...(proposal === undefined ? {} : { self: proposal }),
+      run,
+      leg,
+      indices: made.retry,
+      legRounds: facts.rounds,
+      again: undefined,
+      nowInSeconds: facts.nowInSeconds,
+      standingOf: (id) => facts.standingOf(id) ?? { status: 'unknown' },
+      registry: facts.registry,
+      ...(proposal === undefined ? {} : { self: proposal })
     });
-  },
+  }
 };
 
 /**
@@ -189,18 +219,28 @@ const payable: RaiseCheck = {
     const positions = positionsOf(made);
     const paid = positions.map((i) => onTheLeg[i]);
     if (paid.some((e) => e === undefined) || onTheLeg.length !== made.facts.length) {
-      throw new Error(`this run names people who are not on the leg it pays, or the leg lists ${onTheLeg.length} people `
-        + `and records ${made.facts.length} payments, so who each payment is for cannot be said`);
+      throw new Error(
+        `this run names people who are not on the leg it pays, or the leg lists ${onTheLeg.length} people ` +
+          `and records ${made.facts.length} payments, so who each payment is for cannot be said`
+      );
     }
-    const now = payableFactsOf(facts.people, paid as NonNullable<(typeof paid)[number]>[], 'Leave them unpaid until their '
-      + 'record is put right.', 'This device will not raise or approve a round it would not pay.', facts.registry, run.period);
+    const now = payableFactsOf(
+      facts.people,
+      paid as NonNullable<(typeof paid)[number]>[],
+      'Leave them unpaid until their ' + 'record is put right.',
+      'This device will not raise or approve a round it would not pay.',
+      facts.registry,
+      run.period
+    );
     positions.forEach((i, at) => {
       if (!samePayment(now[at]!, made.facts[i]!)) {
-        throw new Error(`this run pays ${paid[at]!.name} at another address, in another form or another amount than this device `
-          + 'would pay them now from their record and the run. Draw the run again, or raise a retry once their record is put right');
+        throw new Error(
+          `this run pays ${paid[at]!.name} at another address, in another form or another amount than this device ` +
+            'would pay them now from their record and the run. Draw the run again, or raise a retry once their record is put right'
+        );
       }
     });
-  },
+  }
 };
 
 /**
@@ -214,7 +254,7 @@ const decidedNotToPay: RaiseCheck = {
     const register = registerFor(run.skips.decisions, run.id, run.skips.people.length);
     const notToPay = new Set(skippedIndices(register).map((i) => run.skips!.people[i]!.employeeId));
     refusePeopleDecidedNotToPay(run, leg, positionsOf(made), notToPay);
-  },
+  }
 };
 
 /** **THE COMPANY'S OWN CEILING** for the role of the seat that files the proposal, over what the proposal pays. */
@@ -222,12 +262,19 @@ const ceiling: RaiseCheck = {
   name: 'ceiling',
   check: ({ leg, made, filedBy }, facts) => {
     /* A seat its directory gives no role has every right, as the directory reads it; the ceilings are an admin's. */
-    const role = facts.directory.dir.seats.find((s) => s.signingKey.toLowerCase() === filedBy.toLowerCase())?.role as Role | null | undefined;
+    const role = facts.directory.dir.seats.find((s) => s.signingKey.toLowerCase() === filedBy.toLowerCase())?.role as
+      Role | null | undefined;
     const total = positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n);
-    const verdict = evaluatePolicy({ policy: facts.policy } as Account, assetOfLeg(leg) as AssetId, total, role ?? 'admin',
-      { state: 'unknown', why: 'not-yet-proposed' }, facts.registry);
-    if (verdict.blocked) throw new Error(verdict.reason ?? 'this company\'s own policy stops this run');
-  },
+    const verdict = evaluatePolicy(
+      { policy: facts.policy } as Account,
+      assetOfLeg(leg) as AssetId,
+      total,
+      role ?? 'admin',
+      { state: 'unknown', why: 'not-yet-proposed' },
+      facts.registry
+    );
+    if (verdict.blocked) throw new Error(verdict.reason ?? "this company's own policy stops this run");
+  }
 };
 
 /**
@@ -243,40 +290,55 @@ const ceiling: RaiseCheck = {
 /** The refusals of a payroll run, and of a one-off payment in its own words: it is one payment, in a time the wallet sets. */
 const POLICY_REFUSALS = {
   run: {
-    unread: (why: string) => `this device could not read the spending policy of the vault this run is paid from (${why}), so it `
-      + 'cannot say the vault would pay it. Reload the page and try again. If it is still unread, a signer who may set spending '
-      + 'policies and can read it re-seals it from their own device, or changes its terms',
-    currency: 'the vault this run is paid from has a spending policy, but none for the currency this run pays in, so the '
-      + 'chain would charge it to no period and the vault would not pay it. Set a policy for this currency first, or raise '
-      + 'the run from another vault',
-    period: 'this run\'s window does not lie inside one period of the spending policy of the vault it is paid from, so '
-      + 'the chain would never charge it. Choose a window that opens and closes inside one period',
-    band: 'this run\'s total is above every band of the spending policy of the vault it is paid from, so no number '
-      + 'of approvals can pay it. Pay less in one run, or change the policy',
-    limit: 'this run alone is more than the vault it is paid from may pay in one period under its spending policy. '
-      + 'Pay less in one run, or raise the limit for the period',
-    needs: (asked: string, needs: bigint) => `this run is raised needing ${asked} approvals, and its band under the spending policy of `
-      + `the vault it is paid from needs ${needs}, so the chain would not charge it. Raise it again`,
+    unread: (why: string) =>
+      `this device could not read the spending policy of the vault this run is paid from (${why}), so it ` +
+      'cannot say the vault would pay it. Reload the page and try again. If it is still unread, a signer who may set spending ' +
+      'policies and can read it re-seals it from their own device, or changes its terms',
+    currency:
+      'the vault this run is paid from has a spending policy, but none for the currency this run pays in, so the ' +
+      'chain would charge it to no period and the vault would not pay it. Set a policy for this currency first, or raise ' +
+      'the run from another vault',
+    period:
+      "this run's window does not lie inside one period of the spending policy of the vault it is paid from, so " +
+      'the chain would never charge it. Choose a window that opens and closes inside one period',
+    band:
+      "this run's total is above every band of the spending policy of the vault it is paid from, so no number " +
+      'of approvals can pay it. Pay less in one run, or change the policy',
+    limit:
+      'this run alone is more than the vault it is paid from may pay in one period under its spending policy. ' +
+      'Pay less in one run, or raise the limit for the period',
+    needs: (asked: string, needs: bigint) =>
+      `this run is raised needing ${asked} approvals, and its band under the spending policy of ` +
+      `the vault it is paid from needs ${needs}, so the chain would not charge it. Raise it again`
   },
   'one-off': {
-    unread: (why: string) => `this device could not read the vault's spending policy (${why}), so it cannot say the vault would `
-      + 'pay this payment. Reload the page and try again. If it is still unread, ask a signer who may set spending policies to '
-      + 'seal it again from their own device',
-    currency: 'the vault has a spending policy, but none for the currency this payment is in, so the vault would not pay it. '
-      + 'Set a policy for this currency first, or pay from another vault',
-    period: 'the time this payment may be made in does not lie inside one period of the vault\'s spending policy, so it would '
-      + 'never be charged. Try again once the next period has begun',
-    band: 'this payment is above every band of the vault\'s spending policy, so no number of approvals can pay it. Pay less, '
-      + 'or change the policy',
-    limit: 'this payment alone is more than the vault may pay in one period under its spending policy. Pay less, or increase the '
-      + 'limit for the period',
-    needs: (asked: string, needs: bigint) => `this payment is proposed needing ${asked} approvals, and its band under the vault's `
-      + `spending policy needs ${needs}, so it would not be charged. Propose it again`,
-  },
+    unread: (why: string) =>
+      `this device could not read the vault's spending policy (${why}), so it cannot say the vault would ` +
+      'pay this payment. Reload the page and try again. If it is still unread, ask a signer who may set spending policies to ' +
+      'seal it again from their own device',
+    currency:
+      'the vault has a spending policy, but none for the currency this payment is in, so the vault would not pay it. ' +
+      'Set a policy for this currency first, or pay from another vault',
+    period:
+      "the time this payment may be made in does not lie inside one period of the vault's spending policy, so it would " +
+      'never be charged. Try again once the next period has begun',
+    band:
+      "this payment is above every band of the vault's spending policy, so no number of approvals can pay it. Pay less, " +
+      'or change the policy',
+    limit:
+      'this payment alone is more than the vault may pay in one period under its spending policy. Pay less, or increase the ' +
+      'limit for the period',
+    needs: (asked: string, needs: bigint) =>
+      `this payment is proposed needing ${asked} approvals, and its band under the vault's ` +
+      `spending policy needs ${needs}, so it would not be charged. Propose it again`
+  }
 } as const;
 
 export const refuseWhatThePolicyWouldNotCharge = (
-  p: PolicyForARun, total: bigint, required: string, of: keyof typeof POLICY_REFUSALS = 'run',
+  p: PolicyForARun,
+  total: bigint,
+  required: string,
+  of: keyof typeof POLICY_REFUSALS = 'run'
 ): void => {
   const say = POLICY_REFUSALS[of];
   if (p.state === 'none') return;
@@ -290,8 +352,12 @@ export const refuseWhatThePolicyWouldNotCharge = (
 
 const spendingPolicy: RaiseCheck = {
   name: 'spending-policy',
-  check: ({ made }, facts) => refuseWhatThePolicyWouldNotCharge(
-    facts.spendingPolicy, positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n), String(made.required)),
+  check: ({ made }, facts) =>
+    refuseWhatThePolicyWouldNotCharge(
+      facts.spendingPolicy,
+      positionsOf(made).reduce((a, i) => a + made.facts[i]!.amount, 0n),
+      String(made.required)
+    )
 };
 
 /**
@@ -300,13 +366,13 @@ const spendingPolicy: RaiseCheck = {
  */
 const overAnotherRun: RaiseCheck = {
   name: 'over-another-run',
-  check: ({ run }, facts) => refuseRaisingOverAnotherRun(run, facts.others, facts.live, addressOfIn(facts.people)),
+  check: ({ run }, facts) => refuseRaisingOverAnotherRun(run, facts.others, facts.live, addressOfIn(facts.people))
 };
 
 /** **NO TWO PEOPLE ON THE LEG ARE PAID AT ONE ADDRESS**, so no address is paid twice for the month, by a leg or a retry. */
 const onePayeeTwice: RaiseCheck = {
   name: 'one-payee-twice',
-  check: ({ run, leg }, facts) => refusePayingOnePayeeTwice(run, leg, addressOfIn(facts.people)),
+  check: ({ run, leg }, facts) => refusePayingOnePayeeTwice(run, leg, addressOfIn(facts.people))
 };
 
 /**
@@ -322,23 +388,30 @@ const unaccounted: RaiseCheck = {
     const r = made.raising;
     const wallet = made.wallet;
     if (r === undefined || wallet === undefined) {
-      throw new Error('this device did not read what the company\'s records account for on the chain, or your wallet did not '
-        + 'read the chain, so it cannot say whether the chain holds anything these records cannot account for. Reload the page '
-        + 'and try again');
+      throw new Error(
+        "this device did not read what the company's records account for on the chain, or your wallet did not " +
+          'read the chain, so it cannot say whether the chain holds anything these records cannot account for. Reload the page ' +
+          'and try again'
+      );
     }
     const asked = new Set(wallet.asked.map((e) => e.toLowerCase()));
     const held = new Set(wallet.held.map((e) => e.toLowerCase()));
     const known = knownEntriesOf(r, facts.circuits);
     if (known.some((e) => !asked.has(e))) {
-      throw new Error('your wallet was not asked about every payment these records know about, so this device cannot say '
-        + 'whether the chain holds payments they cannot account for. Reload the page and try again');
+      throw new Error(
+        'your wallet was not asked about every payment these records know about, so this device cannot say ' +
+          'whether the chain holds payments they cannot account for. Reload the page and try again'
+      );
     }
     const paid = known.filter((e) => held.has(e)).length;
-    const found = unaccountedOnChain({ openRounds: wallet.openRounds, payments: wallet.entries }, { rounds: [...r.knownRounds], paid });
+    const found = unaccountedOnChain(
+      { openRounds: wallet.openRounds, payments: wallet.entries },
+      { rounds: [...r.knownRounds], paid }
+    );
     if (found.rounds.length === 0 && found.payments === 0) return;
     if (confirmationCovers(found, r.confirmed)) return;
     throw new Error(unaccountedRefusalHere(r.period, found));
-  },
+  }
 };
 
 /**
@@ -346,24 +419,42 @@ const unaccounted: RaiseCheck = {
  * of it, in this order. A check added here is run on both.
  */
 export const RAISE_CHECKS: readonly RaiseCheck[] = [
-  legRaisedOnce, noOtherRoundOfTheLeg, legNoLongerPays, notOnAnotherRetry,
-  payable, decidedNotToPay, ceiling, spendingPolicy, overAnotherRun, onePayeeTwice, unaccounted,
+  legRaisedOnce,
+  noOtherRoundOfTheLeg,
+  legNoLongerPays,
+  notOnAnotherRetry,
+  payable,
+  decidedNotToPay,
+  ceiling,
+  spendingPolicy,
+  overAnotherRun,
+  onePayeeTwice,
+  unaccounted
 ];
 
 /** The proposal's vault's spending policy, read for the proposal's vault, currency, total and window. */
 const policyOfTheRound = (
-  records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld, round: Pick<RoundToCheck, 'vault' | 'leg' | 'made'> | undefined,
+  records: CompanyRecordsHere,
+  accountId: string,
+  viewingKey: KeysHeld,
+  round: Pick<RoundToCheck, 'vault' | 'leg' | 'made'> | undefined
 ): Promise<PolicyForARun> => {
-  if (round === undefined) return Promise.resolve({ state: 'unread', why: 'this device was not told which round to read it for' });
+  if (round === undefined)
+    return Promise.resolve({ state: 'unread', why: 'this device was not told which round to read it for' });
   const { opensAt, closesAt } = round.made;
   if (!/^[0-9]+$/u.test(String(opensAt)) || !/^[0-9]+$/u.test(String(closesAt))) {
-    return Promise.resolve({ state: 'unread', why: 'the run\'s window is not whole seconds since the Unix epoch' });
+    return Promise.resolve({ state: 'unread', why: "the run's window is not whole seconds since the Unix epoch" });
   }
-  return policyForARunHere({ records, accountId, viewingKey }, {
-    vault: round.vault, asset: assetOfLeg(round.leg) as AssetId,
-    total: positionsOf(round.made).reduce((a, i) => a + round.made.facts[i]!.amount, 0n),
-    opensAt: BigInt(opensAt), closesAt: BigInt(closesAt),
-  });
+  return policyForARunHere(
+    { records, accountId, viewingKey },
+    {
+      vault: round.vault,
+      asset: assetOfLeg(round.leg) as AssetId,
+      total: positionsOf(round.made).reduce((a, i) => a + round.made.facts[i]!.amount, 0n),
+      opensAt: BigInt(opensAt),
+      closesAt: BigInt(closesAt)
+    }
+  );
 };
 
 /**
@@ -372,27 +463,48 @@ const policyOfTheRound = (
  * with the spending policy of `round`'s vault when a round is named.
  */
 export async function factsHere(
-  records: CompanyRecordsHere, accountId: string, run: PayrollRun, viewingKey: KeysHeld, now: Date = new Date(),
-  round?: Pick<RoundToCheck, 'vault' | 'leg' | 'made'>, read: ReadForTheRound = {},
+  records: CompanyRecordsHere,
+  accountId: string,
+  run: PayrollRun,
+  viewingKey: KeysHeld,
+  now: Date = new Date(),
+  round?: Pick<RoundToCheck, 'vault' | 'leg' | 'made'>,
+  read: ReadForTheRound = {}
 ): Promise<FactsHere> {
   const readProposals = records.proposals;
   if (readProposals === undefined) {
-    throw new Error('this page cannot read the company\'s proposals, so it cannot check a payroll round. Reload the page to get '
-      + 'the current version');
+    throw new Error(
+      "this page cannot read the company's proposals, so it cannot check a payroll round. Reload the page to get " +
+        'the current version'
+    );
   }
   const [people, directory, policy, proposals, runs, spendingPolicy] = await Promise.all([
-    payeesHere(records, listOfRun(run)), records.directory(), records.policy(), proposalsListedHere({ ...records, proposals: readProposals }, read.proposals),
+    payeesHere(records, listOfRun(run)),
+    records.directory(),
+    records.policy(),
+    proposalsListedHere({ ...records, proposals: readProposals }, read.proposals),
     runsListedHere(records),
-    read.spendingPolicy ?? policyOfTheRound(records, accountId, viewingKey, round)]);
+    read.spendingPolicy ?? policyOfTheRound(records, accountId, viewingKey, round)
+  ]);
   const nowInSeconds = BigInt(Math.floor(now.getTime() / 1000));
   const rounds = payrollRoundsHere(proposals, accountId, viewingKey, { identity: records.roundIdentity, nowInSeconds });
   const live = new Set(rounds.filter(isLiveRound).map((r) => r.runId));
-  const others = runs.filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id)).map((r) => openSealedRun(r, keysByPurpose(viewingKey).at(r.keyEpoch)))
+  const others = runs
+    .filter((r) => r.accountId === accountId && r.id !== run.id && live.has(r.id))
+    .map((r) => openSealedRun(r, keysByPurpose(viewingKey).at(r.keyEpoch)))
     .filter((r) => listOfRun(r) === listOfRun(run));
   return {
-    people, directory, policy, others, live, circuits: records.payments, registry: records.registry ?? theAssets, rounds,
+    people,
+    directory,
+    policy,
+    others,
+    live,
+    circuits: records.payments,
+    registry: records.registry ?? theAssets,
+    rounds,
     standingOf: (id) => proposals.find((p) => p.id === id && p.accountId === accountId),
-    nowInSeconds, spendingPolicy,
+    nowInSeconds,
+    spendingPolicy
   };
 }
 
@@ -402,7 +514,12 @@ export async function factsHere(
  * written down; every approving device runs it before an approval is built.
  */
 export async function refuseWhatNoRoundMay(
-  records: CompanyRecordsHere, accountId: string, viewingKey: KeysHeld, round: RoundToCheck, now?: Date, read?: ReadForTheRound,
+  records: CompanyRecordsHere,
+  accountId: string,
+  viewingKey: KeysHeld,
+  round: RoundToCheck,
+  now?: Date,
+  read?: ReadForTheRound
 ): Promise<void> {
   const facts = await factsHere(records, accountId, round.run, viewingKey, now, round, read);
   for (const c of RAISE_CHECKS) {
@@ -410,7 +527,9 @@ export async function refuseWhatNoRoundMay(
       c.check(round, facts);
     } catch (e) {
       /* Said once, by whoever refused the proposal, what was not done. */
-      const why = String((e as Error)?.message ?? e).replace(/\s*Nothing was built or sent\.\s*$/u, '').replace(/\.?\s*$/u, '');
+      const why = String((e as Error)?.message ?? e)
+        .replace(/\s*Nothing was built or sent\.\s*$/u, '')
+        .replace(/\.?\s*$/u, '');
       throw new RoundRefusedHere(c.name, why, { cause: e });
     }
   }

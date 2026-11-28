@@ -37,10 +37,12 @@ export class VaultAskFailed extends Error {
 const MINUTES = Math.round(PROOF_CEILING_MS / 60_000);
 const WORKER = 'the part of this page that builds and proves vault transactions';
 export const FAILED_BECAUSE: Record<Exclude<VaultAskFailure, 'answered'>, string> = {
-  'took-too-long': `${WORKER} said nothing for ${MINUTES} minutes, so this page stopped it. Try again with this page open `
-    + 'in front and other heavy work closed.',
+  'took-too-long':
+    `${WORKER} said nothing for ${MINUTES} minutes, so this page stopped it. Try again with this page open ` +
+    'in front and other heavy work closed.',
   stopped: `${WORKER} stopped before it answered. Try again; if it happens again, reload the page.`,
-  'unreadable-answer': `${WORKER} sent an answer this page could not read, so this page stopped it. Try again; if it `
-    + 'happens again, reload the page.',
-  'did-not-start': 'the part of this page that builds vault transactions did not start.',
+  'unreadable-answer':
+    `${WORKER} sent an answer this page could not read, so this page stopped it. Try again; if it ` +
+    'happens again, reload the page.',
+  'did-not-start': 'the part of this page that builds vault transactions did not start.'
 };

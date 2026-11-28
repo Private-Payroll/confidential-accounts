@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  LOCALHOST_FLAG, SiteRefusal, embedderFrom, frameAncestorsFor, isLoopbackOrigin,
-  localhostOriginsAllowed, relyingPartyIdFor, sharedSite, usableOrigin,
+  LOCALHOST_FLAG,
+  SiteRefusal,
+  embedderFrom,
+  frameAncestorsFor,
+  isLoopbackOrigin,
+  localhostOriginsAllowed,
+  relyingPartyIdFor,
+  sharedSite,
+  usableOrigin
 } from './origin.js';
 import { parseAsk } from './request.js';
 import { REQUEST_SCHEMA } from './request.js';
@@ -33,8 +40,13 @@ import { REQUEST_SCHEMA } from './request.js';
  */
 
 /* THE DEFAULT IS PRODUCTION. A test that wants the exception says so. */
-beforeEach(() => { vi.unstubAllEnvs(); vi.stubEnv(LOCALHOST_FLAG, ''); });
-afterEach(() => { vi.unstubAllEnvs(); });
+beforeEach(() => {
+  vi.unstubAllEnvs();
+  vi.stubEnv(LOCALHOST_FLAG, '');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const inDevelopment = () => vi.stubEnv(LOCALHOST_FLAG, '1');
 
@@ -97,7 +109,7 @@ describe('§1 — THE HOST MATCH IS EXACT, AND THESE ARE THE FIVE THAT MUST NEVE
       'http://0.0.0.0',
       'http://[::2]',
       'http://192.168.0.10:5173',
-      'http://evil.com/localhost',
+      'http://evil.com/localhost'
     ]) {
       expect(isLoopbackOrigin(origin), origin).toBe(false);
       expect(usableOrigin(origin), origin).toBe(false);
@@ -109,9 +121,13 @@ describe('§2 — THE THREE HOSTS A BROWSER CALLS SECURE WITHOUT TLS', () => {
   it('localhost, 127.0.0.1 and [::1] ARE ACCEPTED IN DEVELOPMENT, on any port', () => {
     inDevelopment();
     for (const origin of [
-      'http://localhost', 'http://localhost:8951', 'http://localhost:5173',
-      'http://127.0.0.1', 'http://127.0.0.1:5173',
-      'http://[::1]', 'http://[::1]:5173',
+      'http://localhost',
+      'http://localhost:8951',
+      'http://localhost:5173',
+      'http://127.0.0.1',
+      'http://127.0.0.1:5173',
+      'http://[::1]',
+      'http://[::1]:5173'
     ]) {
       expect(isLoopbackOrigin(origin), origin).toBe(true);
       expect(usableOrigin(origin), origin).toBe(true);
@@ -155,7 +171,7 @@ describe('§3 — IT IS PARSED, NOT PATTERN-MATCHED — always', () => {
       'http://user:pw@localhost',
       'http://LOCALHOST',
       'https://payroll.example/',
-      'https://payroll.example/path',
+      'https://payroll.example/path'
     ]) {
       expect(usableOrigin(origin), origin).toBe(false);
     }
@@ -213,10 +229,8 @@ describe('§5 — AND ALL THREE KINDS GO THROUGH IT', () => {
     purpose: 'so it can be shown to somebody',
     nonce: 'n',
     expiresAt: 60_000,
-    ...(kind === 'disclosure'
-      ? { wants: [{ attribute: 'legal-name', required: true }] }
-      : {}),
-    ...(kind === 'unlock' ? { company: `co_${'a1'.repeat(32)}` } : {}),
+    ...(kind === 'disclosure' ? { wants: [{ attribute: 'legal-name', required: true }] } : {}),
+    ...(kind === 'unlock' ? { company: `co_${'a1'.repeat(32)}` } : {})
   });
 
   it('SIGN-IN, DISCLOSURE AND UNLOCK ALL REFUSE localhost.evil.com', () => {
@@ -233,8 +247,7 @@ describe('§5 — AND ALL THREE KINDS GO THROUGH IT', () => {
   it('AND ALL THREE ACCEPT A REAL LOCALHOST ORIGIN IN DEVELOPMENT', () => {
     inDevelopment();
     for (const kind of ['sign-in', 'disclosure', 'unlock']) {
-      expect(parseAsk(ask(kind), 'http://localhost:5173', 0).requester.origin, kind)
-        .toBe('http://localhost:5173');
+      expect(parseAsk(ask(kind), 'http://localhost:5173', 0).requester.origin, kind).toBe('http://localhost:5173');
     }
   });
 
@@ -259,8 +272,12 @@ describe('§6 - A NAME BENEATH `localhost` IS A DEVELOPMENT ORIGIN, AND `localho
   it('the LAST LABEL decides: every lookalike stays refused, in development too', () => {
     inDevelopment();
     for (const origin of [
-      'http://localhost.evil.com', 'http://pp.localhost.evil.com', 'http://evil-localhost',
-      'http://xlocalhost', 'http://.localhost', 'http://app.localhostx',
+      'http://localhost.evil.com',
+      'http://pp.localhost.evil.com',
+      'http://evil-localhost',
+      'http://xlocalhost',
+      'http://.localhost',
+      'http://app.localhostx'
     ]) {
       expect(usableOrigin(origin), origin).toBe(false);
     }
@@ -286,8 +303,9 @@ describe('§7 - THE SITE TWO SURFACES SHARE IS WHAT A PASSKEY AND A SIGN-IN BELO
   });
 
   it('the RELYING PARTY is the shared site whenever an embedder is configured - never the host', () => {
-    expect(relyingPartyIdFor('identity.privatepayroll.com', 'https://app.privatepayroll.com'))
-      .toBe('privatepayroll.com');
+    expect(relyingPartyIdFor('identity.privatepayroll.com', 'https://app.privatepayroll.com')).toBe(
+      'privatepayroll.com'
+    );
     expect(relyingPartyIdFor('identity.pp.localhost', 'http://app.pp.localhost:5173')).toBe('pp.localhost');
     expect(relyingPartyIdFor('localhost', 'http://localhost:5173')).toBe('localhost');
   });
@@ -300,8 +318,7 @@ describe('§7 - THE SITE TWO SURFACES SHARE IS WHAT A PASSKEY AND A SIGN-IN BELO
 describe('§8 - WHO MAY FRAME THE WALLET', () => {
   it('no embedder is `none`; one embedder is that origin and nothing else', () => {
     expect(frameAncestorsFor(null)).toBe("frame-ancestors 'none'");
-    expect(frameAncestorsFor('https://app.privatepayroll.com'))
-      .toBe('frame-ancestors https://app.privatepayroll.com');
+    expect(frameAncestorsFor('https://app.privatepayroll.com')).toBe('frame-ancestors https://app.privatepayroll.com');
   });
 
   it('an embedder must be an origin the wallet would accept a request from at all', () => {

@@ -21,12 +21,27 @@ const ASSET = 'd'.repeat(64);
 const ADDRESS = 'mn_shield-addr_undeployed1qqqqqq';
 
 const intent = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-  name: 'one-off-payment', record: 'acc_1', company: LABEL, account: ACCOUNT, vault: VAULT, token: ASSET, amount: '250',
-  payee: ADDRESS, payeeName: 'Acme Printing', reason: 'Business cards', ...over,
+  name: 'one-off-payment',
+  record: 'acc_1',
+  company: LABEL,
+  account: ACCOUNT,
+  vault: VAULT,
+  token: ASSET,
+  amount: '250',
+  payee: ADDRESS,
+  payeeName: 'Acme Printing',
+  reason: 'Business cards',
+  ...over
 });
 const act = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'To pay a one-off payment.', nonce: 'n1', expiresAt: NOW + 600_000, intent: intent(), ...over,
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'act',
+  requester: { name: 'Payroll', rdns: 'example.payroll' },
+  purpose: 'To pay a one-off payment.',
+  nonce: 'n1',
+  expiresAt: NOW + 600_000,
+  intent: intent(),
+  ...over
 });
 const refusal = (raw: unknown): string => {
   try {
@@ -44,7 +59,17 @@ describe('a one-off payment is one act, by intent', () => {
     /* RED WHEN: the wallet runs no one-off payment by intent. */
     expect(read.kind === 'act' ? read.intent : null).toEqual({
       name: 'one-off-payment',
-      fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, vault: VAULT, token: ASSET, amount: '250', payee: ADDRESS, payeeName: 'Acme Printing', reason: 'Business cards' },
+      fields: {
+        record: 'acc_1',
+        company: LABEL,
+        account: ACCOUNT,
+        vault: VAULT,
+        token: ASSET,
+        amount: '250',
+        payee: ADDRESS,
+        payeeName: 'Acme Printing',
+        reason: 'Business cards'
+      }
     });
     /* RED WHEN: the page can hand the wallet a window, a transaction, a seed or anything else it chose for the payment. */
     for (const extra of ['opensAt', 'closesAt', 'transaction', 'seed', 'form']) {
@@ -61,55 +86,107 @@ describe('a one-off payment is one act, by intent', () => {
   });
 
   it('names a proposal already raised instead, to approve, charge and pay it', () => {
-    const read = parseAsk(act({ intent: { name: 'one-off-payment', record: 'acc_1', company: LABEL, account: ACCOUNT, proposal: 'prp_abcdefghijkl' } }), PAGE, NOW);
+    const read = parseAsk(
+      act({
+        intent: {
+          name: 'one-off-payment',
+          record: 'acc_1',
+          company: LABEL,
+          account: ACCOUNT,
+          proposal: 'prp_abcdefghijkl'
+        }
+      }),
+      PAGE,
+      NOW
+    );
     /* RED WHEN: a proposal raised on another device cannot be carried on by intent. */
-    expect(read.kind === 'act' ? read.intent.fields : null).toEqual({ record: 'acc_1', company: LABEL, account: ACCOUNT, proposal: 'prp_abcdefghijkl' });
+    expect(read.kind === 'act' ? read.intent.fields : null).toEqual({
+      record: 'acc_1',
+      company: LABEL,
+      account: ACCOUNT,
+      proposal: 'prp_abcdefghijkl'
+    });
   });
 
-  it('names the vendor entry it pays, when it pays one, by its record\'s name, and the wallet reads that entry\'s versions', () => {
+  it("names the vendor entry it pays, when it pays one, by its record's name, and the wallet reads that entry's versions", () => {
     const read = parseAsk(act({ intent: intent({ vendor: 'ven_0123456789abcdef0123' }) }), PAGE, NOW);
     /* RED WHEN: a one-off to a vendor entry cannot be asked by intent. */
     expect(read.kind === 'act' ? read.intent.fields.vendor : null).toBe('ven_0123456789abcdef0123');
     /* RED WHEN: a vendor entry is named by anything but a record's name, which could carry words the wallet would show. */
     expect(refusal(act({ intent: intent({ vendor: 'Acme Printing Ltd' }) }))).toBe('not-an-act');
     /* RED WHEN: the wallet cannot read the vendor entry a payment names from the company's records. */
-    expect(routeOf(intentShapeOf('one-off-payment')!, 'GET', '/api/accounts/acc_1/records/vendor/ven_0123456789abcdef0123/versions')).not.toBeNull();
+    expect(
+      routeOf(
+        intentShapeOf('one-off-payment')!,
+        'GET',
+        '/api/accounts/acc_1/records/vendor/ven_0123456789abcdef0123/versions'
+      )
+    ).not.toBeNull();
   });
 
-  it('may ask the page only for the company\'s records, the vault\'s records, the proposal, its charge and its payment', () => {
+  it("may ask the page only for the company's records, the vault's records, the proposal, its charge and its payment", () => {
     const shape = intentShapeOf('one-off-payment')!;
     /* RED WHEN: the raise, the approval, the charge or the payment is not counted as sent. */
     for (const [method, path] of [
-      ['POST', '/api/accounts/acc_1/proposals'], ['POST', '/api/proposals/prp_abcdefghijkl/approve'], ['POST', '/api/proposals/prp_abcdefghijkl/charge'],
-      ['POST', `/api/accounts/acc_1/vaults/${VAULT}/payout`], ['POST', `/api/accounts/acc_1/vaults/${VAULT}/public-payout`],
-      ['POST', '/api/accounts/acc_1/proven'],
+      ['POST', '/api/accounts/acc_1/proposals'],
+      ['POST', '/api/proposals/prp_abcdefghijkl/approve'],
+      ['POST', '/api/proposals/prp_abcdefghijkl/charge'],
+      ['POST', `/api/accounts/acc_1/vaults/${VAULT}/payout`],
+      ['POST', `/api/accounts/acc_1/vaults/${VAULT}/public-payout`],
+      ['POST', '/api/accounts/acc_1/proven']
     ] as const) {
       expect(routeOf(shape, method, path)?.sends, `${method} ${path}`).toBe(true);
     }
     /* RED WHEN: the one-off's record, the runs, the proposals or the vault's records cannot be read or filed. */
     for (const [method, path] of [
-      ['PUT', '/api/accounts/acc_1/records/transfer/one_0123/1'], ['GET', '/api/accounts/acc_1/records/transfer/one_0123/1'],
-      ['GET', '/api/accounts/acc_1/runs'], ['GET', '/api/accounts/acc_1/proposals'], ['POST', '/api/proposals/prp_abcdefghijkl/standing'],
-      ['PUT', `/api/vaults/${VAULT}/records/payment-journal/2`], ['POST', '/api/accounts/acc_1/manifest/entries'],
+      ['PUT', '/api/accounts/acc_1/records/transfer/one_0123/1'],
+      ['GET', '/api/accounts/acc_1/records/transfer/one_0123/1'],
+      ['GET', '/api/accounts/acc_1/runs'],
+      ['GET', '/api/accounts/acc_1/proposals'],
+      ['POST', '/api/proposals/prp_abcdefghijkl/standing'],
+      ['PUT', `/api/vaults/${VAULT}/records/payment-journal/2`],
+      ['POST', '/api/accounts/acc_1/manifest/entries']
     ] as const) {
       expect(routeOf(shape, method, path), `${method} ${path}`).not.toBeNull();
     }
     /* RED WHEN: the payment can read the service's view of the chain, the readers' keys or the saved keys, or send anything else. */
     for (const [method, path] of [
-      ['GET', '/api/accounts/acc_1/call-state'], ['GET', `/api/accounts/acc_1/vaults/${VAULT}/payout-state`], ['GET', '/api/accounts/acc_1/vault-keys'],
-      ['GET', '/api/me/keys'], ['POST', `/api/accounts/acc_1/vaults/${VAULT}/deposit`], ['POST', '/api/proposals/prp_abcdefghijkl/carry'],
-      ['POST', '/api/accounts/acc_1/runs'], ['POST', `/api/accounts/acc_1/vaults/${VAULT}/merge`],
+      ['GET', '/api/accounts/acc_1/call-state'],
+      ['GET', `/api/accounts/acc_1/vaults/${VAULT}/payout-state`],
+      ['GET', '/api/accounts/acc_1/vault-keys'],
+      ['GET', '/api/me/keys'],
+      ['POST', `/api/accounts/acc_1/vaults/${VAULT}/deposit`],
+      ['POST', '/api/proposals/prp_abcdefghijkl/carry'],
+      ['POST', '/api/accounts/acc_1/runs'],
+      ['POST', `/api/accounts/acc_1/vaults/${VAULT}/merge`]
     ] as const) {
       expect(routeOf(shape, method, path), `${method} ${path}`).toBeNull();
     }
   });
 
   it('tells the page at its end only where the payment got to, the approvals and how many it needs, and the upkeep', () => {
-    const ended = (outcome: unknown) => readActEnded({
-      schema: 'midnight-identity/act-ended/v1', nonce: 'n1', intent: 'one-off-payment', ended: 'done', step: 7, steps: 7,
-      relayed: 2, unconfirmed: 0, outcome,
-    }, { nonce: 'n1', intent: 'one-off-payment' });
-    expect(ended({ state: 'paid', approvals: 1, needed: 1, upkeep: 'done', anchored: 2 })?.outcome).toEqual({ state: 'paid', approvals: 1, needed: 1, upkeep: 'done', anchored: 2 });
+    const ended = (outcome: unknown) =>
+      readActEnded(
+        {
+          schema: 'midnight-identity/act-ended/v1',
+          nonce: 'n1',
+          intent: 'one-off-payment',
+          ended: 'done',
+          step: 7,
+          steps: 7,
+          relayed: 2,
+          unconfirmed: 0,
+          outcome
+        },
+        { nonce: 'n1', intent: 'one-off-payment' }
+      );
+    expect(ended({ state: 'paid', approvals: 1, needed: 1, upkeep: 'done', anchored: 2 })?.outcome).toEqual({
+      state: 'paid',
+      approvals: 1,
+      needed: 1,
+      upkeep: 'done',
+      anchored: 2
+    });
     /* RED WHEN: the end can carry the amount, the payee or any part the entry does not list. */
     expect(ended({ amount: 250 })).toBeNull();
     expect(ended({ payee: 'mn' })).toBeNull();
@@ -127,7 +204,12 @@ describe('a call is counted as sent only when it carries a transaction', () => {
     /* RED WHEN: a body that does not read is taken as carrying nothing, so a send it may be is not counted. */
     expect(request.sendsIn(route, '{not json')).toBe(true);
     /* RED WHEN: a route that always sends stops counting, whatever its body. */
-    expect(request.sendsIn(routeOf(shape, 'POST', `/api/accounts/acc_1/vaults/${VAULT}`.replace(`/${VAULT}`, ''))!, undefined)).toBe(true);
+    expect(
+      request.sendsIn(
+        routeOf(shape, 'POST', `/api/accounts/acc_1/vaults/${VAULT}`.replace(`/${VAULT}`, ''))!,
+        undefined
+      )
+    ).toBe(true);
     /* RED WHEN: a read is counted as a send. */
     expect(request.sendsIn(routeOf(shape, 'GET', '/api/accounts/acc_1')!, undefined)).toBe(false);
     /* RED WHEN: the page's side cannot apply the same rule. */

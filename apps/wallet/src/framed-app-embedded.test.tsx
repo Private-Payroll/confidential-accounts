@@ -11,7 +11,10 @@ vi.hoisted(() => {
 });
 
 vi.mock('midnight-identity/browser', () => ({
-  ensureBuffer: (): void => {}, passkeysAvailable: (): boolean => true, createPasskey: vi.fn(), usePasskey: vi.fn(),
+  ensureBuffer: (): void => {},
+  passkeysAvailable: (): boolean => true,
+  createPasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 import { Buffer as PolyfillBuffer } from 'buffer/';
@@ -29,9 +32,13 @@ import { ORIGINAL_SLOT } from './accounts/wallets-held.js';
  * is the only place a framed page can show where it came from.
  */
 describe('a wallet inside the page it was built for', () => {
-  it('the approval route renders, bare, with the wallet\'s own address on it', () => {
+  it("the approval route renders, bare, with the wallet's own address on it", () => {
     window.location.hash = '#/approve';
-    const { unmount } = render(<SessionProvider><App /></SessionProvider>);
+    const { unmount } = render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     expect(document.querySelector('[data-framed-refusal]')).toBeNull();
     expect(document.querySelector('[data-framed]')).not.toBeNull();
     expect(document.querySelector('header')).toBeNull();
@@ -43,7 +50,11 @@ describe('a wallet inside the page it was built for', () => {
   for (const hash of ['#/settings', '#/recover', '#/home', '#/kit']) {
     it(`${hash} is refused inside the frame`, () => {
       window.location.hash = hash;
-      const { unmount } = render(<SessionProvider><App /></SessionProvider>);
+      const { unmount } = render(
+        <SessionProvider>
+          <App />
+        </SessionProvider>
+      );
       expect(document.querySelector('[data-framed-refusal]'), hash).not.toBeNull();
       expect(document.querySelectorAll('button')).toHaveLength(0);
       unmount();
@@ -54,12 +65,27 @@ describe('a wallet inside the page it was built for', () => {
 describe('and only in the phases an approval passes through', () => {
   it('a browser holding a passkey and no wallet - whose screen starts again - is refused inside the frame', async () => {
     localStorage.clear();
-    savePasskey({
-      credentialId: 'cred-1', personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7,
-      signCount: 0, provenBySignIn: false, rpId: 'payroll.example', syncsToACloud: false, backedUpNow: false, transports: [],
-    }, ORIGINAL_SLOT);
+    savePasskey(
+      {
+        credentialId: 'cred-1',
+        personHandle: 'person-1',
+        publicKeySpki: new Uint8Array([1, 2, 3]),
+        algorithm: -7,
+        signCount: 0,
+        provenBySignIn: false,
+        rpId: 'payroll.example',
+        syncsToACloud: false,
+        backedUpNow: false,
+        transports: []
+      },
+      ORIGINAL_SLOT
+    );
     window.location.hash = '#/approve';
-    const { unmount, findByText } = render(<SessionProvider><App /></SessionProvider>);
+    const { unmount, findByText } = render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await findByText(/Everything else in your wallet opens in a tab of its own/);
     expect(document.querySelector('[data-framed-refusal]')).not.toBeNull();
     expect(document.querySelectorAll('button')).toHaveLength(0);

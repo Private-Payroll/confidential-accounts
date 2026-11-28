@@ -45,7 +45,9 @@ export function unopenableView(v: { readonly opened: Extract<Opened, { of: 'unop
     <>
       <h1>Nothing has been shared</h1>
       <StatusAlert tone={saying.tone} title={saying.title}>
-        <p className="m-0" data-unopenable-why>{saying.sentence}</p>
+        <p className="m-0" data-unopenable-why>
+          {saying.sentence}
+        </p>
         <p className="m-0">Nothing has been sent and nothing has been changed.</p>
       </StatusAlert>
     </>
@@ -60,7 +62,9 @@ export function refusedView(v: { readonly channelState: Extract<ChannelState, { 
       <StatusAlert tone="danger" title="This request was refused before you saw it">
         <p className="m-0">{channelState.error.message}</p>
       </StatusAlert>
-      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>← Your wallet</a></p>
+      <p style={{ marginTop: '1.5rem' }}>
+        <a href={hrefOf('home')}>← Your wallet</a>
+      </p>
     </>
   );
 }
@@ -99,14 +103,16 @@ export function noRequestView(v: Pick<Screen, 'view' | 'framing'>): ReactNode {
       <>
         <h1 data-waiting-for-ask>Waiting for the request</h1>
         <p className="lede">
-          The application that opened this window is still preparing what it wants to
-          ask. Nothing has been sent and nothing has been signed.
+          The application that opened this window is still preparing what it wants to ask. Nothing has been sent and
+          nothing has been signed.
         </p>
         <p className="m-0 text-sm text-muted-foreground">
-          When it arrives, this wallet will tell you where the page actually came
-          from — and nothing leaves here until you press something.
+          When it arrives, this wallet will tell you where the page actually came from — and nothing leaves here until
+          you press something.
         </p>
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>← Your wallet</a></p>
+        <p style={{ marginTop: '1.5rem' }}>
+          <a href={hrefOf('home')}>← Your wallet</a>
+        </p>
       </>
     );
   }
@@ -114,11 +120,12 @@ export function noRequestView(v: Pick<Screen, 'view' | 'framing'>): ReactNode {
     <>
       <h1>Nothing is asking</h1>
       <p className="lede">
-        Nothing is asking for anything. This screen appears when an application opens
-        your wallet to sign you in, or to ask for details about you — it will name
-        itself, and this wallet will tell you where it actually came from.
+        Nothing is asking for anything. This screen appears when an application opens your wallet to sign you in, or to
+        ask for details about you — it will name itself, and this wallet will tell you where it actually came from.
       </p>
-      <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>← Your wallet</a></p>
+      <p style={{ marginTop: '1.5rem' }}>
+        <a href={hrefOf('home')}>← Your wallet</a>
+      </p>
     </>
   );
 }

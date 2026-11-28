@@ -52,7 +52,11 @@ export interface CommitteeChangeView {
     readonly signedIndexes: readonly number[];
     readonly required: number;
   }>;
-  readonly notChangeable: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly address: string; readonly why: string }>;
+  readonly notChangeable: ReadonlyArray<{
+    readonly contract: 'account' | 'vault';
+    readonly address: string;
+    readonly why: string;
+  }>;
 }
 
 /**
@@ -66,7 +70,8 @@ export interface CommitteeTarget {
   readonly inProgress: SuperAdminChangeInProgress | null;
 }
 
-const same = (a: Key, b: Key): boolean => a.tag.toLowerCase() === b.tag.toLowerCase() && a.value.toLowerCase() === b.value.toLowerCase();
+const same = (a: Key, b: Key): boolean =>
+  a.tag.toLowerCase() === b.tag.toLowerCase() && a.value.toLowerCase() === b.value.toLowerCase();
 
 /** The contracts this person can still sign the change for: their key holds a place on the committee, and that place has not signed. */
 export function contractsForMe(view: CommitteeChangeView, mine: Key): CommitteeChangeView['contracts'] {
@@ -81,10 +86,10 @@ export function contractsForMe(view: CommitteeChangeView, mine: Key): CommitteeC
 export function nothingForMe(view: CommitteeChangeView, mine: Key): string {
   const holdsASeat = view.contracts.some((c) => c.now.committee.some((k) => same(k, mine)));
   return holdsASeat
-    ? 'you have signed the change on every contract you hold a seat on. The rest need the other super admins who hold '
-      + 'those contracts now.'
-    : 'you do not hold a seat on any contract that needs this change, so there is nothing for you to sign. The super '
-      + 'admins who hold those contracts now sign it.';
+    ? 'you have signed the change on every contract you hold a seat on. The rest need the other super admins who hold ' +
+        'those contracts now.'
+    : 'you do not hold a seat on any contract that needs this change, so there is nothing for you to sign. The super ' +
+        'admins who hold those contracts now sign it.';
 }
 
 /**
@@ -98,7 +103,11 @@ export function nothingForMe(view: CommitteeChangeView, mine: Key): string {
  * service's answer is trusted for nothing the chain or the super admins' own
  * change can say.
  */
-export function whyNotSignCommitteeChange(view: CommitteeChangeView, mine: Key, target: CommitteeTarget): string | null {
+export function whyNotSignCommitteeChange(
+  view: CommitteeChangeView,
+  mine: Key,
+  target: CommitteeTarget
+): string | null {
   return committeeChangeRefusal(view, mine, target)?.why ?? null;
 }
 
@@ -115,28 +124,36 @@ export type CommitteeChangeRefusalCode = (typeof COMMITTEE_CHANGE_REFUSAL)[keyof
  * null when the wallet may be asked. `why` is the sentence that function gives.
  */
 export function committeeChangeRefusal(
-  view: CommitteeChangeView, mine: Key, target: CommitteeTarget,
+  view: CommitteeChangeView,
+  mine: Key,
+  target: CommitteeTarget
 ): { code: CommitteeChangeRefusalCode; why: string } | null {
   const refused = (why: string) => ({ code: COMMITTEE_CHANGE_REFUSAL.refused, why });
   if (view.to === null || view.company === null) return refused(view.why ?? 'this company has no committee yet.');
   if (readCompanyLabel(view.label) === null || readAccountAddress(view.company) === null) {
-    return refused('the service did not say which company this is in a way a wallet can check - its label, and the '
-      + 'account that carries it - so no change is signed from here.');
+    return refused(
+      'the service did not say which company this is in a way a wallet can check - its label, and the ' +
+        'account that carries it - so no change is signed from here.'
+    );
   }
   /* The same rule every door that installs a committee asks, so a wallet is never asked to sign what the service refuses. */
   const notInstallable = whyNotInstallable(view.to);
   if (notInstallable !== null) return refused(`no change is signed from here: ${notInstallable}`);
   const must = target.inProgress ?? target.account;
   if (!sameCommittee(view.to, must)) {
-    return refused(target.inProgress === null
-      ? 'the service asks for a change to a committee other than the one holding the company\'s account on the chain, as '
-        + 'your wallet reads it, and no change of the super admins is in progress. Who holds the company\'s contracts '
-        + 'changes only by the super admins\' own change, never because a signer joined or left. No change is signed from here.'
-      : 'the service asks for a change to a committee other than the one the super admins\' change in progress installs. '
-        + 'No change is signed from here.');
+    return refused(
+      target.inProgress === null
+        ? "the service asks for a change to a committee other than the one holding the company's account on the chain, as " +
+            "your wallet reads it, and no change of the super admins is in progress. Who holds the company's contracts " +
+            "changes only by the super admins' own change, never because a signer joined or left. No change is signed from here."
+        : "the service asks for a change to a committee other than the one the super admins' change in progress installs. " +
+            'No change is signed from here.'
+    );
   }
-  if (view.contracts.length === 0) return refused('every contract of this company is already held by its committee as it stands now.');
-  if (contractsForMe(view, mine).length === 0) return { code: COMMITTEE_CHANGE_REFUSAL.nothingToSign, why: nothingForMe(view, mine) };
+  if (view.contracts.length === 0)
+    return refused('every contract of this company is already held by its committee as it stands now.');
+  if (contractsForMe(view, mine).length === 0)
+    return { code: COMMITTEE_CHANGE_REFUSAL.nothingToSign, why: nothingForMe(view, mine) };
   return null;
 }
 
@@ -149,12 +166,18 @@ export interface CommitteeChangeDoors {
   readonly target: () => Promise<CommitteeTarget>;
   /** Asks the wallet to sign; resolves with what it signed. */
   readonly askWallet: (ask: {
-    company: CompanyLabel; account: AccountAddress; to: CommitteeValue;
+    company: CompanyLabel;
+    account: AccountAddress;
+    to: CommitteeValue;
     contracts: Array<{ contract: 'account' | 'vault'; address: string; counter: string; now: CommitteeValue }>;
-  }) => Promise<{ signer: Key; signatures: ReadonlyArray<{ address: string; counter: string; seat: number; signature: Key }> }>;
+  }) => Promise<{
+    signer: Key;
+    signatures: ReadonlyArray<{ address: string; counter: string; seat: number; signature: Key }>;
+  }>;
   /** Hands the signatures to the service to keep; each result says how many verify and how many the contract needs. */
   readonly send: (body: {
-    to: CommitteeValue; signatures: Array<{ address: string; counter: string; index: number; signature: Key }>;
+    to: CommitteeValue;
+    signatures: Array<{ address: string; counter: string; index: number; signature: Key }>;
   }) => Promise<{ results: ReadonlyArray<Record<string, unknown>> }>;
   /** Asks the service to send one contract's update, built from the signatures it keeps. */
   readonly sendNow: (update: { address: string; counter: string; to: CommitteeValue }) => Promise<unknown>;
@@ -175,29 +198,53 @@ export class NothingToSign extends Error {
  * signatures reach that contract's threshold. Returns the keeping's results.
  */
 export async function signCommitteeChangeOnDevice(
-  doors: CommitteeChangeDoors,
+  doors: CommitteeChangeDoors
 ): Promise<{ results: ReadonlyArray<Record<string, unknown>> }> {
   const view = await doors.view();
   const mine = await doors.walletKey();
   const refused = committeeChangeRefusal(view, mine, await doors.target());
   if (refused !== null) {
-    throw refused.code === COMMITTEE_CHANGE_REFUSAL.nothingToSign ? new NothingToSign(refused.why) : new Error(refused.why);
+    throw refused.code === COMMITTEE_CHANGE_REFUSAL.nothingToSign
+      ? new NothingToSign(refused.why)
+      : new Error(refused.why);
   }
   const to = view.to!;
-  const contracts = contractsForMe(view, mine).map((c) => ({ contract: c.contract, address: c.address, counter: c.counter, now: c.now }));
+  const contracts = contractsForMe(view, mine).map((c) => ({
+    contract: c.contract,
+    address: c.address,
+    counter: c.counter,
+    now: c.now
+  }));
   const signed = await doors.askWallet({
-    company: readCompanyLabel(view.label)!, account: readAccountAddress(view.company)!, to, contracts,
+    company: readCompanyLabel(view.label)!,
+    account: readAccountAddress(view.company)!,
+    to,
+    contracts
   });
   if (!same(signed.signer, mine)) {
-    throw new Error('the wallet signed with a key other than the one it gives for this company, so nothing was handed on.');
+    throw new Error(
+      'the wallet signed with a key other than the one it gives for this company, so nothing was handed on.'
+    );
   }
   const kept = await doors.send({
     to,
-    signatures: signed.signatures.map((s) => ({ address: s.address, counter: s.counter, index: s.seat, signature: s.signature })),
+    signatures: signed.signatures.map((s) => ({
+      address: s.address,
+      counter: s.counter,
+      index: s.seat,
+      signature: s.signature
+    }))
   });
   for (const r of kept.results) {
     const c = contracts.find((x) => x.address === r.address);
-    if (c === undefined || r.state !== 'kept' || typeof r.have !== 'number' || typeof r.required !== 'number' || r.have < r.required) continue;
+    if (
+      c === undefined ||
+      r.state !== 'kept' ||
+      typeof r.have !== 'number' ||
+      typeof r.required !== 'number' ||
+      r.have < r.required
+    )
+      continue;
     await doors.sendNow({ address: c.address, counter: c.counter, to });
   }
   return kept;

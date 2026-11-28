@@ -1,10 +1,29 @@
 import { useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, Building03Icon } from '@hugeicons/core-free-icons';
-import { Alert, AlertDescription, AlertTitle, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, useText } from 'vaults-ui';
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  useText
+} from 'vaults-ui';
 import { ActRefused } from '../act-refused.js';
 import { ACTED, type ActRefusal } from '../adapters/refusal-codes.js';
-import { companyNamesFor, NO_NAMES, OF, REFUSAL, signIn, type CompanyNames, type SignInRefusal } from '../adapters/session.js';
+import {
+  companyNamesFor,
+  NO_NAMES,
+  OF,
+  REFUSAL,
+  signIn,
+  type CompanyNames,
+  type SignInRefusal
+} from '../adapters/session.js';
 import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
 import { useSessionIfAny, type Session } from '../session.js';
@@ -54,8 +73,12 @@ function ChooseACompany({ session }: { session: Session }) {
   const [refused, setRefused] = useState<{ readonly id: string; readonly why: ActRefusal } | null>(null);
   useEffect(() => {
     let alive = true;
-    void companyNamesFor(session.person.id).then((n) => { if (alive) setNames(n); });
-    return () => { alive = false; };
+    void companyNamesFor(session.person.id).then((n) => {
+      if (alive) setNames(n);
+    });
+    return () => {
+      alive = false;
+    };
   }, [session.person.id, session.companies, again]);
   /* The one press that asks the wallet for a company a page load left unopened; the names are then read again with its key released. */
   const openWithWallet = async (id: string): Promise<void> => {
@@ -69,33 +92,64 @@ function ChooseACompany({ session }: { session: Session }) {
       setAgain((n) => n + 1);
     }
   };
-  const open = (id: string): void => openCompany(id, () => { session.chooseCompany(id); session.chooseView(VIEWS.company); });
-  const create = (): void => { startSetupAt(STEP.createCompany, true); go(HOME.setup); };
+  const open = (id: string): void =>
+    openCompany(id, () => {
+      session.chooseCompany(id);
+      session.chooseView(VIEWS.company);
+    });
+  const create = (): void => {
+    startSetupAt(STEP.createCompany, true);
+    go(HOME.setup);
+  };
   return (
     <div className="flex max-w-sm flex-col gap-3" data-choose-a-company>
-      <h2 className="text-lg font-semibold">{session.companies.length === 0 ? t('landing.choose.none') : t('landing.choose.title')}</h2>
+      <h2 className="text-lg font-semibold">
+        {session.companies.length === 0 ? t('landing.choose.none') : t('landing.choose.title')}
+      </h2>
       {session.companies.length === 0 ? null : (
         <ul className="flex flex-col gap-2" data-companies>
           {session.companies.map((c) => (
             <li key={c.id} className="flex flex-col gap-1">
-              <Button variant="outline" className="h-auto w-full justify-start gap-3 py-2" onClick={() => open(c.id)} data-company={c.id}>
+              <Button
+                variant="outline"
+                className="h-auto w-full justify-start gap-3 py-2"
+                onClick={() => open(c.id)}
+                data-company={c.id}
+              >
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
                 <CompanyFacts company={c} name={names.get(c.id) ?? null} whyUnnamed={names.whyNot?.get(c.id) ?? null} />
               </Button>
               {names.whyNot?.get(c.id) !== 'not-opened-yet' ? null : (
                 <Button
-                  size="sm" variant="outline" className="self-start" disabled={pressing !== null} onClick={() => { void openWithWallet(c.id); }}
-                  aria-label={t('landing.notOpened.openLabel', { name: nameOf(c, names.get(c.id) ?? null) })} data-action="open-with-your-wallet" data-company-for={c.id}
+                  size="sm"
+                  variant="outline"
+                  className="self-start"
+                  disabled={pressing !== null}
+                  onClick={() => {
+                    void openWithWallet(c.id);
+                  }}
+                  aria-label={t('landing.notOpened.openLabel', { name: nameOf(c, names.get(c.id) ?? null) })}
+                  data-action="open-with-your-wallet"
+                  data-company-for={c.id}
                 >
                   {t('landing.notOpened.open')}
                 </Button>
               )}
-              {refused?.id !== c.id ? null : <div data-refused-for={c.id}><ActRefused why={refused.why} /></div>}
+              {refused?.id !== c.id ? null : (
+                <div data-refused-for={c.id}>
+                  <ActRefused why={refused.why} />
+                </div>
+              )}
             </li>
           ))}
         </ul>
       )}
-      <Button className="w-full" variant={session.companies.length === 0 ? 'default' : 'ghost'} onClick={create} data-action="create-company">
+      <Button
+        className="w-full"
+        variant={session.companies.length === 0 ? 'default' : 'ghost'}
+        onClick={create}
+        data-action="create-company"
+      >
         <HugeiconsIcon icon={Add01Icon} strokeWidth={2} className="size-4" />
         {t('switcher.create')}
       </Button>
@@ -115,38 +169,64 @@ function SignIn() {
     setBusy(true);
     const r = await signIn({ name: t('app.title'), purpose: t('signIn.purpose') });
     setBusy(false);
-    if (r.of === OF.refused) { setRefusal({ why: r.why, retryAfterSeconds: r.retryAfterSeconds }); return; }
+    if (r.of === OF.refused) {
+      setRefusal({ why: r.why, retryAfterSeconds: r.retryAfterSeconds });
+      return;
+    }
     await signedInNow();
   };
 
   return (
-      <>
-        <Card className="max-w-sm">
-          <CardHeader>
-            <CardTitle>{t('landing.new.title')}</CardTitle>
-            <CardDescription>{t('landing.new.body')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full" disabled={busy} onClick={() => { void start(); }} data-action="get-started">{t('landing.getStarted')}</Button>
-          </CardContent>
-        </Card>
-        <Card className="max-w-sm">
-          <CardHeader>
-            <CardTitle>{t('landing.returning.title')}</CardTitle>
-            <CardDescription>{t('landing.returning.body')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full" variant="outline" disabled={busy} onClick={() => { void start(); }} data-action="log-in">{t('landing.logIn')}</Button>
-          </CardContent>
-        </Card>
-        <p className="max-w-sm text-xs text-muted-foreground">{t('landing.howSigningInWorks')}</p>
-        {refusal === null ? null : <SignInRefused why={refusal.why} retryAfterSeconds={refusal.retryAfterSeconds} />}
-      </>
+    <>
+      <Card className="max-w-sm">
+        <CardHeader>
+          <CardTitle>{t('landing.new.title')}</CardTitle>
+          <CardDescription>{t('landing.new.body')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            className="w-full"
+            disabled={busy}
+            onClick={() => {
+              void start();
+            }}
+            data-action="get-started"
+          >
+            {t('landing.getStarted')}
+          </Button>
+        </CardContent>
+      </Card>
+      <Card className="max-w-sm">
+        <CardHeader>
+          <CardTitle>{t('landing.returning.title')}</CardTitle>
+          <CardDescription>{t('landing.returning.body')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            className="w-full"
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              void start();
+            }}
+            data-action="log-in"
+          >
+            {t('landing.logIn')}
+          </Button>
+        </CardContent>
+      </Card>
+      <p className="max-w-sm text-xs text-muted-foreground">{t('landing.howSigningInWorks')}</p>
+      {refusal === null ? null : <SignInRefused why={refusal.why} retryAfterSeconds={refusal.retryAfterSeconds} />}
+    </>
   );
 }
 
 /** The words for a refusal of the sign-in, and what to do about it, in the person's language; asked by the landing page and by the join page. */
-export function signInRefusedSays(t: ReturnType<typeof useText>, why: SignInRefusal, retryAfterSeconds: number | null): string {
+export function signInRefusedSays(
+  t: ReturnType<typeof useText>,
+  why: SignInRefusal,
+  retryAfterSeconds: number | null
+): string {
   const says: Record<SignInRefusal, string> = {
     [REFUSAL.notSetUp]: t('signIn.refused.notSetUp'),
     [REFUSAL.noWindow]: t('signIn.refused.noWindow'),
@@ -160,9 +240,12 @@ export function signInRefusedSays(t: ReturnType<typeof useText>, why: SignInRefu
     [REFUSAL.gaveUp]: t('signIn.refused.gaveUp'),
     [REFUSAL.didNotFinish]: t('signIn.refused.didNotFinish'),
     [REFUSAL.refused]: t('signIn.refused.refused'),
-    [REFUSAL.tooMany]: retryAfterSeconds === null ? t('signIn.refused.tooMany') : t('signIn.refused.tooManyWait', { count: Math.ceil(retryAfterSeconds / 60) }),
+    [REFUSAL.tooMany]:
+      retryAfterSeconds === null
+        ? t('signIn.refused.tooMany')
+        : t('signIn.refused.tooManyWait', { count: Math.ceil(retryAfterSeconds / 60) }),
     [REFUSAL.unavailable]: t('signIn.refused.unavailable'),
-    [REFUSAL.unreachable]: t('signIn.refused.unreachable'),
+    [REFUSAL.unreachable]: t('signIn.refused.unreachable')
   };
   return says[why];
 }

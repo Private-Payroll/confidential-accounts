@@ -14,64 +14,129 @@ import { accountBalancesFrom } from '../adapters/account-balances.js';
  * test says; the panel is the real one.
  */
 const state = vi.hoisted(() => ({
-  company: null as unknown, publicReads: 0, companyReads: 0, privateReads: 0, priv: { of: 'nothing-yet' } as unknown, pub: { amounts: [], unrecognised: 0 } as unknown,
+  company: null as unknown,
+  publicReads: 0,
+  companyReads: 0,
+  privateReads: 0,
+  priv: { of: 'nothing-yet' } as unknown,
+  pub: { amounts: [], unrecognised: 0 } as unknown,
   /* Who is told when the person's wallet releases a company's key to this tab. */
-  released: new Set<(accountId: string) => void>(),
+  released: new Set<(accountId: string) => void>()
 }));
 /* The page's own view and judges, with only what follows stood in for. */
 
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  watchCompanyKeyReleased: (watch: (accountId: string) => void) => { state.released.add(watch); return () => { state.released.delete(watch); }; },
+  watchCompanyKeyReleased: (watch: (accountId: string) => void) => {
+    state.released.add(watch);
+    return () => {
+      state.released.delete(watch);
+    };
+  }
 }));
 const dp = vi.hoisted(() => ({
-  now: null as unknown, watchers: new Set<() => void>(), put: [] as unknown[][], checks: [] as unknown[][], checkGate: null as Promise<unknown> | null, checkAnswer: null as unknown, keyHeld: true,
-  set(now: unknown) { this.now = now; for (const w of [...this.watchers]) w(); },
+  now: null as unknown,
+  watchers: new Set<() => void>(),
+  put: [] as unknown[][],
+  checks: [] as unknown[][],
+  checkGate: null as Promise<unknown> | null,
+  checkAnswer: null as unknown,
+  keyHeld: true,
+  set(now: unknown) {
+    this.now = now;
+    for (const w of [...this.watchers]) w();
+  }
 }));
 vi.mock('../adapters/creation-standing.js', async (real) => ({
   ...(await real<typeof import('../adapters/creation-standing.js')>()),
-  creationOf: async () => ({ company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null }),
+  creationOf: async () => ({
+    company: 'c-1',
+    standing: null,
+    awaitingSecondPress: false,
+    kept: false,
+    confirmedFinished: false,
+    mark: null
+  })
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
-  readCompany: async () => { state.companyReads += 1; return state.company; },
+  readCompany: async () => {
+    state.companyReads += 1;
+    return state.company;
+  }
 }));
 vi.mock('../adapters/company-vaults-read.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
-  readVaultPublicMoney: async () => { state.publicReads += 1; return state.pub; },
-  readVaultName: async () => null,
+  readVaultPublicMoney: async () => {
+    state.publicReads += 1;
+    return state.pub;
+  },
+  readVaultName: async () => null
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
-  readHandover: async () => ({ of: 'held' }),
+  readHandover: async () => ({ of: 'held' })
 }));
 vi.mock('../adapters/vault-private-money.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-private-money.js')>()),
-  readVaultPrivateMoney: async () => { state.privateReads += 1; return state.priv; },
+  readVaultPrivateMoney: async () => {
+    state.privateReads += 1;
+    return state.priv;
+  }
 }));
-vi.mock('../adapters/vault-rows.js', async (real) => ({ ...(await real<typeof import('../adapters/vault-rows.js')>()), readVaultRows: async () => [] }));
-vi.mock('../adapters/session.js', async (real) => ({ ...(await real<typeof import('../adapters/session.js')>()), companyNamesFor: async () => new Map() }));
+vi.mock('../adapters/vault-rows.js', async (real) => ({
+  ...(await real<typeof import('../adapters/vault-rows.js')>()),
+  readVaultRows: async () => []
+}));
+vi.mock('../adapters/session.js', async (real) => ({
+  ...(await real<typeof import('../adapters/session.js')>()),
+  companyNamesFor: async () => new Map()
+}));
 vi.mock('../adapters/account-balances.js', async (real) => ({
   ...(await real<typeof import('../adapters/account-balances.js')>()),
-  askForAccountBalances: async () => accountBalancesFrom(
-    {
-      addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
-      balances: [{ token: 'ab'.repeat(32), amount: '2500000', visibility: 'private' }],
-      read: { private: Date.now(), public: Date.now() },
-    },
-    Date.now(), new StaticAssetRegistry([{ code: 'ab'.repeat(32), symbol: 'PRV', name: 'Private token', decimals: 6, ledger: { shielded: 'ab'.repeat(32), unshielded: null }, enabled: true, sortOrder: 60 }]),
-  ),
+  askForAccountBalances: async () =>
+    accountBalancesFrom(
+      {
+        addresses: { private: `mn_shield-addr_test1${'q'.repeat(60)}` },
+        balances: [{ token: 'ab'.repeat(32), amount: '2500000', visibility: 'private' }],
+        read: { private: Date.now(), public: Date.now() }
+      },
+      Date.now(),
+      new StaticAssetRegistry([
+        {
+          code: 'ab'.repeat(32),
+          symbol: 'PRV',
+          name: 'Private token',
+          decimals: 6,
+          ledger: { shielded: 'ab'.repeat(32), unshielded: null },
+          enabled: true,
+          sortOrder: 60
+        }
+      ])
+    )
 }));
 vi.mock('../adapters/deposit.js', async (real) => ({
   ...(await real<typeof import('../adapters/deposit.js')>()),
-  putMoneyIn: (...args: unknown[]) => { dp.put.push(args); return { of: 'vault-refused', standing: args[7] }; },
+  putMoneyIn: (...args: unknown[]) => {
+    dp.put.push(args);
+    return { of: 'vault-refused', standing: args[7] };
+  },
   depositNow: () => dp.now,
-  watchDeposit: (_vault: string, watcher: () => void) => { dp.watchers.add(watcher); return () => { dp.watchers.delete(watcher); }; },
+  watchDeposit: (_vault: string, watcher: () => void) => {
+    dp.watchers.add(watcher);
+    return () => {
+      dp.watchers.delete(watcher);
+    };
+  },
   companyKeyHeldHere: () => dp.keyHeld,
-  checkMyLastDeposit: async (...args: unknown[]) => { dp.checks.push(args); if (dp.checkGate !== null) await dp.checkGate; return dp.checkAnswer; },
+  checkMyLastDeposit: async (...args: unknown[]) => {
+    dp.checks.push(args);
+    if (dp.checkGate !== null) await dp.checkGate;
+    return dp.checkAnswer;
+  }
 }));
 
 const { PageView } = await import('../app.js');
@@ -82,53 +147,121 @@ const { addressOf } = await import('../router.js');
 const { VIEWS } = await import('../pages.js');
 const { depositSteps } = await import('../adapters/deposit.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const VAULT = 'ab'.repeat(32);
 const company = (): Company => ({
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
-  proposals: { of: 'read', value: [] }, runs: { of: 'read', value: [] }, people: { of: 'read', value: [] },
-  vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },
-  invitations: { of: 'read', value: [] },
+  of: 'open',
+  id: 'c-1',
+  name: 'Northwind',
+  signers: [{ id: 's1', name: 'Priya' }],
+  approvalsNeeded: { of: 'read', value: 1 },
+  proposals: { of: 'read', value: [] },
+  runs: { of: 'read', value: [] },
+  people: { of: 'read', value: [] },
+  vaults: {
+    of: 'read',
+    value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }]
+  },
+  invitations: { of: 'read', value: [] }
 });
 
 async function draw() {
   window.history.replaceState(null, '', addressOf('vault', { vault: VAULT }));
   const session = {
-    person: { id: 'u1', name: 'Priya' }, companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }], company: 'c-1',
-    chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-    choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+    person: { id: 'u1', name: 'Priya' },
+    companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }],
+    company: 'c-1',
+    chooseCompany: vi.fn(),
+    viewer: { signedIn: true, view: VIEWS.company, signs: true },
+    chooseView: vi.fn(),
+    preferences: DEFAULT_PREFERENCES,
+    choose: vi.fn(),
+    signOut: vi.fn(),
+    mac: true,
+    companiesChanged: vi.fn(async () => {})
   };
   const view = render(
     <KitProvider languages={LANGUAGES} pick="en">
-      <SessionProvider session={session}><Shell current="vault"><PageView id="vault" params={{ vault: VAULT }} /></Shell></SessionProvider>
-    </KitProvider>,
+      <SessionProvider session={session}>
+        <Shell current="vault">
+          <PageView id="vault" params={{ vault: VAULT }} />
+        </Shell>
+      </SessionProvider>
+    </KitProvider>
   );
   await untilPageShown(view.container);
-  await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 5));
+  });
   return view.container;
 }
 const q = (c: ParentNode, sel: string) => c.querySelector<HTMLElement>(sel);
-const button = (c: ParentNode, action: string) => q(c, `[data-screen=vault] [data-action=${action}]`) as HTMLButtonElement;
-const settle = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 5)); }); };
+const button = (c: ParentNode, action: string) =>
+  q(c, `[data-screen=vault] [data-action=${action}]`) as HTMLButtonElement;
+const settle = async () => {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 5));
+  });
+};
 const running = (n: number) => {
   const steps = depositSteps('private', true);
-  return { of: 'running', kind: 'private', amount: privateAmount(1_250_000n, 6, 'PRV'), steps, step: steps[n - 1], n, since: Date.now(), proofs: [] };
+  return {
+    of: 'running',
+    kind: 'private',
+    amount: privateAmount(1_250_000n, 6, 'PRV'),
+    steps,
+    step: steps[n - 1],
+    n,
+    since: Date.now(),
+    proofs: []
+  };
 };
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  state.company = company(); state.publicReads = 0; state.companyReads = 0; state.privateReads = 0; state.priv = { of: 'nothing-yet' }; state.pub = { amounts: [], unrecognised: 0 };
-  dp.now = null; dp.watchers.clear(); dp.put = []; dp.checks = []; dp.checkGate = null; dp.keyHeld = true;
-  dp.checkAnswer = { of: 'checked', deposit: 'none', until: null, notYetSpendable: false, named: 0, unnamed: 0, toName: 0, forSupport: '', deposited: null, unshown: null, earlier: [] };
+  state.company = company();
+  state.publicReads = 0;
+  state.companyReads = 0;
+  state.privateReads = 0;
+  state.priv = { of: 'nothing-yet' };
+  state.pub = { amounts: [], unrecognised: 0 };
+  dp.now = null;
+  dp.watchers.clear();
+  dp.put = [];
+  dp.checks = [];
+  dp.checkGate = null;
+  dp.keyHeld = true;
+  dp.checkAnswer = {
+    of: 'checked',
+    deposit: 'none',
+    until: null,
+    notYetSpendable: false,
+    named: 0,
+    unnamed: 0,
+    toName: 0,
+    forSupport: '',
+    deposited: null,
+    unshown: null,
+    earlier: []
+  };
   window.sessionStorage.clear();
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
-describe('the vault page\'s deposit', () => {
+describe("the vault page's deposit", () => {
   /* RED WHEN: Deposit or Check my last deposit is still shown as not built, cannot be pressed, or Deposit does not open the right-hand panel on the ways to put money in. */
   it('shows Deposit and Check my last deposit ready to press, and Deposit opens the panel on the ways to put money in', async () => {
     const c = await draw();
@@ -138,43 +271,77 @@ describe('the vault page\'s deposit', () => {
     }
     expect(button(c, 'deposit').textContent).toBe('Deposit');
     expect(document.querySelector('[data-panel]')).toBeNull();
-    await act(async () => { fireEvent.click(button(c, 'deposit')); });
+    await act(async () => {
+      fireEvent.click(button(c, 'deposit'));
+    });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit-methods]'), 'the ways to put money in');
     expect(document.querySelector('[data-panel]')!.textContent).toContain('Deposit');
     expect(dp.checks).toHaveLength(0);
   });
 
   /* RED WHEN: the vault page does not hand the deposit panel the service's answer about the vault, so a vault the service refuses is still put money into after the press, or the answer's words are not shown. */
-  it('gives the deposit panel the service\'s answer about the vault and shows its words when the press is stopped', async () => {
-    state.company = { ...company(), vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'not-fundable' }] } };
+  it("gives the deposit panel the service's answer about the vault and shows its words when the press is stopped", async () => {
+    state.company = {
+      ...company(),
+      vaults: { of: 'read', value: [{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'not-fundable' }] }
+    };
     const c = await draw();
-    await act(async () => { fireEvent.click(button(c, 'deposit')); });
+    await act(async () => {
+      fireEvent.click(button(c, 'deposit'));
+    });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit-methods]'), 'the ways to put money in');
     const panel = (): HTMLElement => document.querySelector<HTMLElement>('[data-panel]')!;
-    await act(async () => { fireEvent.click(panel().querySelector('[data-action=choose-method]')!); });
-    await act(async () => { fireEvent.click(panel().querySelector('[data-action=show-account-tokens]')!); await new Promise((r) => setTimeout(r, 5)); });
-    await act(async () => { fireEvent.click(panel().querySelector('[data-token-side=private] [data-token-choice]')!); });
-    await act(async () => { fireEvent.change(panel().querySelector('[data-field=deposit-amount]')!, { target: { value: '1' } }); });
-    await act(async () => { fireEvent.click(panel().querySelector('[data-action=put-money-in]')!); });
+    await act(async () => {
+      fireEvent.click(panel().querySelector('[data-action=choose-method]')!);
+    });
+    await act(async () => {
+      fireEvent.click(panel().querySelector('[data-action=show-account-tokens]')!);
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    await act(async () => {
+      fireEvent.click(panel().querySelector('[data-token-side=private] [data-token-choice]')!);
+    });
+    await act(async () => {
+      fireEvent.change(panel().querySelector('[data-field=deposit-amount]')!, { target: { value: '1' } });
+    });
+    await act(async () => {
+      fireEvent.click(panel().querySelector('[data-action=put-money-in]')!);
+    });
     expect(dp.put).toHaveLength(1);
     expect(dp.put[0]![7]).toBe('not-fundable');
-    expect(panel().querySelector('[data-vault-refused=not-fundable]')!.textContent).toContain(EN['vaults.standing.notFundable']);
+    expect(panel().querySelector('[data-vault-refused=not-fundable]')!.textContent).toContain(
+      EN['vaults.standing.notFundable']
+    );
   });
 
   /* RED WHEN: Check my last deposit does not show at once that it was taken, a second press runs a second check, or its answer is not opened in the panel with the words that only private deposits are checked there. */
   it('checks the last deposit once, shows the press as taken, and opens the panel on what was found', async () => {
     let answer!: (v: unknown) => void;
-    dp.checkGate = new Promise((r) => { answer = r; });
+    dp.checkGate = new Promise((r) => {
+      answer = r;
+    });
     const c = await draw();
-    await act(async () => { button(c, 'check-last-deposit').click(); button(c, 'check-last-deposit').click(); await Promise.resolve(); });
+    await act(async () => {
+      button(c, 'check-last-deposit').click();
+      button(c, 'check-last-deposit').click();
+      await Promise.resolve();
+    });
     expect(dp.checks).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), VAULT]]);
     expect(button(c, 'check-last-deposit').disabled).toBe(true);
-    expect(q(c, `[data-action=check-last-deposit] [data-slot=spinner][aria-label="${EN['deposit.check.waiting']}"]`)).not.toBeNull();
+    expect(
+      q(c, `[data-action=check-last-deposit] [data-slot=spinner][aria-label="${EN['deposit.check.waiting']}"]`)
+    ).not.toBeNull();
     expect(document.querySelector('[data-panel]')).toBeNull();
-    await act(async () => { answer(undefined); });
+    await act(async () => {
+      answer(undefined);
+    });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit=checked]'), 'the answer of the check');
-    expect(document.querySelector('[data-panel] [data-check-says]')!.textContent).toBe(EN['deposit.check.nothingWaiting']);
-    expect(document.querySelector('[data-panel] [data-private-only]')!.textContent).toContain('A public deposit is checked in your wallet');
+    expect(document.querySelector('[data-panel] [data-check-says]')!.textContent).toBe(
+      EN['deposit.check.nothingWaiting']
+    );
+    expect(document.querySelector('[data-panel] [data-private-only]')!.textContent).toContain(
+      'A public deposit is checked in your wallet'
+    );
     expect(button(c, 'check-last-deposit').disabled).toBe(false);
     expect(dp.checks).toHaveLength(1);
   });
@@ -183,13 +350,22 @@ describe('the vault page\'s deposit', () => {
   it('names the wallet window before Check my last deposit opens it, in a tab that holds no company key, and checks only on the next press', async () => {
     dp.keyHeld = false;
     const c = await draw();
-    await act(async () => { button(c, 'check-last-deposit').click(); await Promise.resolve(); });
+    await act(async () => {
+      button(c, 'check-last-deposit').click();
+      await Promise.resolve();
+    });
     expect(dp.checks).toHaveLength(0);
-    await untilShown(() => document.querySelector('[data-panel] [data-wallet-window-named]'), 'the naming of the wallet window');
-    expect(document.querySelector('[data-panel] [data-wallet-window-named]')!.textContent).toBe(
-      "Your wallet opens first, to open your company's records on this device. Nothing is paid. In your wallet, press Sign my records key.",
+    await untilShown(
+      () => document.querySelector('[data-panel] [data-wallet-window-named]'),
+      'the naming of the wallet window'
     );
-    await act(async () => { fireEvent.click(document.querySelector('[data-panel] [data-action=check-last-deposit]')!); await Promise.resolve(); });
+    expect(document.querySelector('[data-panel] [data-wallet-window-named]')!.textContent).toBe(
+      "Your wallet opens first, to open your company's records on this device. Nothing is paid. In your wallet, press Sign my records key."
+    );
+    await act(async () => {
+      fireEvent.click(document.querySelector('[data-panel] [data-action=check-last-deposit]')!);
+      await Promise.resolve();
+    });
     await untilShown(() => document.querySelector('[data-panel] [data-deposit=checked]'), 'the answer of the check');
     expect(dp.checks).toEqual([['u1', expect.objectContaining({ company: 'c-1' }), VAULT]]);
   });
@@ -198,35 +374,68 @@ describe('the vault page\'s deposit', () => {
   it('shows a deposit that runs with its step and a way back to the panel, and holds Check my last deposit meanwhile', async () => {
     const c = await draw();
     expect(q(c, '[data-deposit-strip]')).toBeNull();
-    await act(async () => { dp.set(running(1)); });
+    await act(async () => {
+      dp.set(running(1));
+    });
     expect(q(c, '[data-deposit-strip=running]')!.textContent).toContain('Putting money in: step 1 of 2.');
     expect(q(c, '[data-check-waits]')!.textContent).toBe('Check my last deposit opens once this deposit has ended.');
     expect(button(c, 'check-last-deposit').disabled).toBe(true);
-    await act(async () => { dp.set(running(2)); });
+    await act(async () => {
+      dp.set(running(2));
+    });
     expect(q(c, '[data-deposit-strip]')!.textContent).toContain('step 2 of 2');
-    await act(async () => { fireEvent.click(q(c, '[data-action=open-deposit]')!); });
-    await untilShown(() => document.querySelector('[data-panel] [data-deposit=running]'), 'the running deposit in the panel');
+    await act(async () => {
+      fireEvent.click(q(c, '[data-action=open-deposit]')!);
+    });
+    await untilShown(
+      () => document.querySelector('[data-panel] [data-deposit=running]'),
+      'the running deposit in the panel'
+    );
     expect(document.querySelector('[data-panel] [data-step-of]')!.textContent).toBe('Step 2 of 2');
-    await act(async () => { dp.set(null); });
+    await act(async () => {
+      dp.set(null);
+    });
     expect(q(c, '[data-deposit-strip]')).toBeNull();
     expect(button(c, 'check-last-deposit').disabled).toBe(false);
   });
 
   /* RED WHEN: a deposit that ends while the panel is closed leaves the vault's money as it was read, reads it again for a deposit it has already read it for, or loses the ended deposit from the page before it is read. */
-  it('reads the vault\'s money again when a deposit finishes, and keeps the ended deposit on the page', async () => {
+  it("reads the vault's money again when a deposit finishes, and keeps the ended deposit on the page", async () => {
     const c = await draw();
     const before = state.publicReads;
-    await act(async () => { dp.set(running(2)); });
+    await act(async () => {
+      dp.set(running(2));
+    });
     expect(state.publicReads).toBe(before);
-    const done = { of: 'done', kind: 'private', amount: privateAmount(1_250_000n, 6, 'PRV'), chainTransaction: 'ee'.repeat(32), notYetSpendable: false, earlier: null };
-    await act(async () => { dp.set(done); });
+    const done = {
+      of: 'done',
+      kind: 'private',
+      amount: privateAmount(1_250_000n, 6, 'PRV'),
+      chainTransaction: 'ee'.repeat(32),
+      notYetSpendable: false,
+      earlier: null
+    };
+    await act(async () => {
+      dp.set(done);
+    });
     await settle();
     expect(state.publicReads).toBe(before + 1);
     expect(q(c, '[data-deposit-strip=done]')!.textContent).toContain('A deposit has finished.');
-    await act(async () => { dp.set(done); });
+    await act(async () => {
+      dp.set(done);
+    });
     await settle();
     expect(state.publicReads).toBe(before + 1);
-    await act(async () => { dp.set({ of: 'failed', kind: 'private', amount: privateAmount(1n, 6, 'PRV'), mayHaveBeenSent: true, refusal: 'did-not-finish', reasons: ['x'] }); });
+    await act(async () => {
+      dp.set({
+        of: 'failed',
+        kind: 'private',
+        amount: privateAmount(1n, 6, 'PRV'),
+        mayHaveBeenSent: true,
+        refusal: 'did-not-finish',
+        reasons: ['x']
+      });
+    });
     expect(q(c, '[data-deposit-strip=failed]')!.textContent).toContain('A deposit did not finish.');
   });
 });
@@ -237,26 +446,50 @@ describe('a public deposit the wallet signed and this page did not send', () => 
     const c = await draw();
     await act(async () => {
       dp.set({
-        of: 'failed', kind: 'public', amount: publicAmount(4_000_000n, 6, 'NIGHT'), mayHaveBeenSent: true, refusal: 'did-not-finish',
-        reasons: ['not as built'], until: Date.now() + 3_600_000, signedNotSent: true,
+        of: 'failed',
+        kind: 'public',
+        amount: publicAmount(4_000_000n, 6, 'NIGHT'),
+        mayHaveBeenSent: true,
+        refusal: 'did-not-finish',
+        reasons: ['not as built'],
+        until: Date.now() + 3_600_000,
+        signedNotSent: true
       });
     });
-    await act(async () => { fireEvent.click(q(c, '[data-action=open-deposit]')!); });
-    const words = await untilShown(() => document.querySelector('[data-panel] [data-deposit=failed] [data-failed-words]'), 'the failed deposit in the panel');
-    expect(words!.textContent).toMatch(/^This page did not send this public deposit\. Your wallet already signed it, so until /u);
+    await act(async () => {
+      fireEvent.click(q(c, '[data-action=open-deposit]')!);
+    });
+    const words = await untilShown(
+      () => document.querySelector('[data-panel] [data-deposit=failed] [data-failed-words]'),
+      'the failed deposit in the panel'
+    );
+    expect(words!.textContent).toMatch(
+      /^This page did not send this public deposit\. Your wallet already signed it, so until /u
+    );
     expect(words!.textContent).not.toContain('may have been sent');
-    expect(document.querySelector('[data-panel] [data-details]')!.textContent).toBe('Details for support: not as built.');
+    expect(document.querySelector('[data-panel] [data-details]')!.textContent).toBe(
+      'Details for support: not as built.'
+    );
   });
 });
 
 describe('the page is told once that a deposit finished', () => {
-  const done = { of: 'done', kind: 'private', amount: privateAmount(1_250_000n, 6, 'PRV'), chainTransaction: 'ee'.repeat(32), notYetSpendable: false, earlier: null };
+  const done = {
+    of: 'done',
+    kind: 'private',
+    amount: privateAmount(1_250_000n, 6, 'PRV'),
+    chainTransaction: 'ee'.repeat(32),
+    notYetSpendable: false,
+    earlier: null
+  };
 
   /* RED WHEN: a finished deposit is told to the page again when the vault page is drawn again, so the vault's money is read one more time for a deposit it was already read for. */
-  it('does not read the vault\'s money again when the page is drawn again with the same finished deposit', async () => {
+  it("does not read the vault's money again when the page is drawn again with the same finished deposit", async () => {
     const first = await draw();
     const mount = state.publicReads;
-    await act(async () => { dp.set(done); });
+    await act(async () => {
+      dp.set(done);
+    });
     await settle();
     expect(state.publicReads).toBe(mount + 1);
     expect(q(first, '[data-deposit-strip=done]')).not.toBeNull();
@@ -268,35 +501,57 @@ describe('the page is told once that a deposit finished', () => {
   });
 
   /* RED WHEN: one deposit that finishes while the panel is open reads the company's records again as well as the vault's money. */
-  it('reads the vault\'s money once, and not the company\'s records, for a deposit that finishes with the panel open', async () => {
+  it("reads the vault's money once, and not the company's records, for a deposit that finishes with the panel open", async () => {
     const c = await draw();
-    await act(async () => { dp.set(running(2)); });
-    await act(async () => { fireEvent.click(q(c, '[data-action=open-deposit]')!); });
-    await untilShown(() => document.querySelector('[data-panel] [data-deposit=running]'), 'the running deposit in the panel');
+    await act(async () => {
+      dp.set(running(2));
+    });
+    await act(async () => {
+      fireEvent.click(q(c, '[data-action=open-deposit]')!);
+    });
+    await untilShown(
+      () => document.querySelector('[data-panel] [data-deposit=running]'),
+      'the running deposit in the panel'
+    );
     const money = state.publicReads;
     const records = state.companyReads;
-    await act(async () => { dp.set({ ...done }); });
+    await act(async () => {
+      dp.set({ ...done });
+    });
     await settle();
-    await untilShown(() => document.querySelector('[data-panel] [data-deposit=done]'), 'the finished deposit in the panel');
+    await untilShown(
+      () => document.querySelector('[data-panel] [data-deposit=done]'),
+      'the finished deposit in the panel'
+    );
     expect(state.publicReads).toBe(money + 1);
     expect(state.companyReads).toBe(records);
   });
 });
 
 describe('the money held, and its tabs', () => {
-  const tabs = (c: ParentNode) => Object.fromEntries([...c.querySelectorAll<HTMLElement>('[data-part=money] [data-slot=tabs-list] [data-filter]')].map((t) => [t.dataset.filter, t.querySelector('[data-slot=count-pill]')?.textContent ?? null]));
+  const tabs = (c: ParentNode) =>
+    Object.fromEntries(
+      [...c.querySelectorAll<HTMLElement>('[data-part=money] [data-slot=tabs-list] [data-filter]')].map((t) => [
+        t.dataset.filter,
+        t.querySelector('[data-slot=count-pill]')?.textContent ?? null
+      ])
+    );
 
   /* RED WHEN: the private side stays unread for want of the company's key after the wallet released that key (by Check my last deposit), or a release for another company reads this vault again. */
-  it('reads what the vault holds privately again once the wallet releases the company\'s key to this tab', async () => {
+  it("reads what the vault holds privately again once the wallet releases the company's key to this tab", async () => {
     state.priv = { of: 'unreadable', why: 'no-keys' };
     const c = await draw();
     expect(q(c, '[data-unreadable=private]')).not.toBeNull();
     const before = state.privateReads;
-    await act(async () => { for (const w of [...state.released]) w('c-2'); });
+    await act(async () => {
+      for (const w of [...state.released]) w('c-2');
+    });
     await settle();
     expect(state.privateReads).toBe(before);
     state.priv = { of: 'held', amounts: [privateAmount(1_500_000n, 6, 'PRV')], unrecognised: 0 };
-    await act(async () => { for (const w of [...state.released]) w('c-1'); });
+    await act(async () => {
+      for (const w of [...state.released]) w('c-1');
+    });
     await settle();
     expect(state.privateReads).toBe(before + 1);
     expect(q(c, '[data-unreadable=private]')).toBeNull();

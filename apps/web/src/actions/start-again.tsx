@@ -27,12 +27,16 @@ function say(next: Said | null): void {
 }
 function watch(l: () => void): () => void {
   listeners.add(l);
-  return () => { listeners.delete(l); };
+  return () => {
+    listeners.delete(l);
+  };
 }
 const nowSaid = (): Said | null => said;
 
 /** Forgets what was said (the person has gone on to a new company). */
-export function forgetWhatStartAgainSaid(): void { say(null); }
+export function forgetWhatStartAgainSaid(): void {
+  say(null);
+}
 
 const sendIsGoingOut = (): boolean => lane.carrying !== null || lane.pressing !== null || lane.holding !== null;
 
@@ -62,9 +66,28 @@ export function StartAgain({ companyId }: { companyId: string | null }) {
   return (
     <div className="flex flex-col gap-2" data-start-again>
       {asking ? (
-        <ConfirmInYourAccount summary={t('setup.again.confirm')} onConfirm={() => { void confirm(); }} onCancel={cancel} busy={busy} />
+        <ConfirmInYourAccount
+          summary={t('setup.again.confirm')}
+          onConfirm={() => {
+            void confirm();
+          }}
+          onCancel={cancel}
+          busy={busy}
+        />
       ) : (
-        <div><Button variant="outline" disabled={busy} onClick={() => { say(null); setAsking(true); }} data-action="start-again">{t('setup.createCompany.again')}</Button></div>
+        <div>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              say(null);
+              setAsking(true);
+            }}
+            data-action="start-again"
+          >
+            {t('setup.createCompany.again')}
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -88,19 +111,37 @@ export function StartAgainWords({ shown, onStartNew }: { shown: string | null; o
   if (now.of === NOW.queued) words = t('setup.again.queued');
   else if (now.of === NOW.working) words = t('setup.again.working');
   else if (now.of === NOW.cancelled) words = t('setup.again.cancelled');
-  else if (now.came.of === ACTED.done) { words = t('setup.again.dropped'); over = true; }
-  else if (now.came.of === AGAIN.nothing) { words = t('setup.again.nothing'); over = true; }
-  else if (now.came.of === AGAIN.landed) words = t('setup.again.landed');
+  else if (now.came.of === ACTED.done) {
+    words = t('setup.again.dropped');
+    over = true;
+  } else if (now.came.of === AGAIN.nothing) {
+    words = t('setup.again.nothing');
+    over = true;
+  } else if (now.came.of === AGAIN.landed) words = t('setup.again.landed');
   else if (now.came.of === AGAIN.wait) words = t('setup.again.wait', { minutes: now.came.minutes });
   else if (now.came.of === ACTED.refused) why = now.came.why;
   else words = t('setup.again.unsure');
 
   return (
     <div className="flex flex-col gap-2" data-start-again-said={now.of === NOW.came ? now.came.of : now.of}>
-      {words === null ? null : <Alert data-start-again-kept><AlertDescription>{words}</AlertDescription></Alert>}
+      {words === null ? null : (
+        <Alert data-start-again-kept>
+          <AlertDescription>{words}</AlertDescription>
+        </Alert>
+      )}
       {why === null ? null : <ActRefused why={why} />}
       {over && onStartNew !== undefined ? (
-        <div><Button onClick={() => { forgetWhatStartAgainSaid(); onStartNew(); }} data-action="start-new-company">{t('setup.again.new')}</Button></div>
+        <div>
+          <Button
+            onClick={() => {
+              forgetWhatStartAgainSaid();
+              onStartNew();
+            }}
+            data-action="start-new-company"
+          >
+            {t('setup.again.new')}
+          </Button>
+        </div>
       ) : null}
     </div>
   );

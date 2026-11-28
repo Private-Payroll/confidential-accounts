@@ -8,31 +8,52 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * at the company only says what the screen shows.
  */
 type Read = {
-  company: string | null; standing: string | null; awaitingSecondPress: boolean; kept: boolean; confirmedFinished: boolean; mark: string | null;
+  company: string | null;
+  standing: string | null;
+  awaitingSecondPress: boolean;
+  kept: boolean;
+  confirmedFinished: boolean;
+  mark: string | null;
 };
 const kr = vi.hoisted(() => ({
-  who: null as { id: string } | null, open: true, calls: [] as string[],
+  who: null as { id: string } | null,
+  open: true,
+  calls: [] as string[],
   awaiting: null as { accountId: string } | null,
   /** What the action in the wallet comes to. */
   ended: { of: 'done' } as Record<string, unknown> | Error,
   steps: [] as Array<{ step: number; steps: number }>,
-  gate: null as Promise<void> | null, forgetFails: null as Error | null,
+  gate: null as Promise<void> | null,
+  forgetFails: null as Error | null,
   /** Whether a creation set aside is there to take up. */
   aside: false,
-  reads: [] as Read[], read: 0,
+  reads: [] as Read[],
+  read: 0
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.who,
-  forgetLocally: () => { kr.who = null; },
-  resumeSession: async () => { kr.who = { id: 'u1' }; return kr.who; },
+  forgetLocally: () => {
+    kr.who = null;
+  },
+  resumeSession: async () => {
+    kr.who = { id: 'u1' };
+    return kr.who;
+  },
   canOpenCompanies: () => kr.open,
-  openKeysWithWallet: async () => { kr.calls.push('open-keys'); kr.open = true; },
+  openKeysWithWallet: async () => {
+    kr.calls.push('open-keys');
+    kr.open = true;
+  }
 }));
 vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   companyAwaitingItsSecondPress: () => kr.awaiting,
-  finishCompanyInTheWallet: async (id: string, _origin: string, opts: { onStep?: (at: { step: number; steps: number }) => void }) => {
+  finishCompanyInTheWallet: async (
+    id: string,
+    _origin: string,
+    opts: { onStep?: (at: { step: number; steps: number }) => void }
+  ) => {
     kr.calls.push(`act ${id}`);
     for (const at of kr.steps) opts.onStep?.(at);
     if (kr.gate !== null) await kr.gate;
@@ -49,7 +70,7 @@ vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
     kr.calls.push(`forget-finished ${id}`);
     if (kr.forgetFails !== null) throw kr.forgetFails;
     return true;
-  },
+  }
 }));
 vi.mock('./creation-standing.js', async (real) => ({
   ...(await real<typeof import('./creation-standing.js')>()),
@@ -59,11 +80,20 @@ vi.mock('./creation-standing.js', async (real) => ({
     kr.read += 1;
     return { ...r, company: r.company === undefined ? company : r.company };
   },
-  creationChanged: () => { kr.calls.push('changed'); },
+  creationChanged: () => {
+    kr.calls.push('changed');
+  }
 }));
 
-const standing = (s: string | null, over: Partial<Read> = {}): Read =>
-  ({ company: 'c1', standing: s, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null, ...over });
+const standing = (s: string | null, over: Partial<Read> = {}): Read => ({
+  company: 'c1',
+  standing: s,
+  awaitingSecondPress: false,
+  kept: false,
+  confirmedFinished: false,
+  mark: null,
+  ...over
+});
 const kept = (s: string | null): Read => standing(s, { kept: true, awaitingSecondPress: true });
 /** The calls that act on the company, without the reads and the dropped caches between them. */
 const acts = () => kr.calls.filter((c) => c !== 'read' && c !== 'changed');
@@ -76,17 +106,38 @@ async function load(origin = 'http://wallet.localhost:5180') {
 
 beforeEach(() => {
   Object.assign(kr, {
-    who: { id: 'u1' }, open: true, calls: [], awaiting: { accountId: 'c1' }, ended: { of: 'done' }, steps: [], gate: null,
-    forgetFails: null, reads: [kept('not-created')], read: 0, aside: false,
+    who: { id: 'u1' },
+    open: true,
+    calls: [],
+    awaiting: { accountId: 'c1' },
+    ended: { of: 'done' },
+    steps: [],
+    gate: null,
+    forgetFails: null,
+    reads: [kept('not-created')],
+    read: 0,
+    aside: false
   });
 });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('finishing a company', () => {
   /* RED WHEN: a look at the company builds, proves or sends anything, at any standing: the pay-record key's proofs or the account's second step run with no press. */
   it('looks without acting, at every standing a company can be in', async () => {
     const m = await load();
-    for (const s of ['not-created', 'deploy-sent', 'deploy-expired', 'finish-owed', 'finish-expired', 'finish-sent', 'pay-key-owed', 'finished', 'unknown']) {
+    for (const s of [
+      'not-created',
+      'deploy-sent',
+      'deploy-expired',
+      'finish-owed',
+      'finish-expired',
+      'finish-sent',
+      'pay-key-owed',
+      'finished',
+      'unknown'
+    ]) {
       for (const read of [kept(s), standing(s)]) {
         kr.reads = [read];
         kr.read = 0;
@@ -98,7 +149,7 @@ describe('finishing a company', () => {
   });
 
   /* RED WHEN: a company the service calls finished is said finished before the wallet's own read confirms it. */
-  it('is finished only when the wallet\'s own read confirms it, and drops what was kept then', async () => {
+  it("is finished only when the wallet's own read confirms it, and drops what was kept then", async () => {
     const m = await load();
     kr.reads = [standing('finished')];
     expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'waiting', companyId: 'c1', stage: 'shown' });
@@ -111,9 +162,19 @@ describe('finishing a company', () => {
   /* RED WHEN: a kept company nothing was sent for is not one press away, or a company sent before a reload shows as waiting for nothing instead of interrupted at its step. */
   it('says a kept company is one press away, or interrupted at the step its standing shows', async () => {
     const m = await load();
-    const look = async (s: string) => { kr.reads = [kept(s)]; kr.read = 0; return m.carryOn('u1', 'c1'); };
+    const look = async (s: string) => {
+      kr.reads = [kept(s)];
+      kr.read = 0;
+      return m.carryOn('u1', 'c1');
+    };
     expect(await look('not-created')).toEqual({ of: 'press', companyId: 'c1' });
-    for (const [s, step] of [['deploy-sent', 2], ['deploy-expired', 2], ['finish-owed', 2], ['finish-sent', 2], ['pay-key-owed', 3]] as const) {
+    for (const [s, step] of [
+      ['deploy-sent', 2],
+      ['deploy-expired', 2],
+      ['finish-owed', 2],
+      ['finish-sent', 2],
+      ['pay-key-owed', 3]
+    ] as const) {
       expect(await look(s), s).toEqual({ of: 'interrupted', companyId: 'c1', step, steps: m.FINISH_STEPS });
     }
   });
@@ -154,7 +215,12 @@ describe('finishing a company', () => {
     for (const s of ['deploy-sent', 'finish-owed', 'finish-sent']) {
       kr.reads = [standing(s)];
       kr.read = 0;
-      expect(await m.carryOn('u1', 'c1'), s).toEqual({ of: 'interrupted', companyId: 'c1', step: 2, steps: m.FINISH_STEPS });
+      expect(await m.carryOn('u1', 'c1'), s).toEqual({
+        of: 'interrupted',
+        companyId: 'c1',
+        step: 2,
+        steps: m.FINISH_STEPS
+      });
     }
     kr.reads = [standing('unknown')];
     kr.read = 0;
@@ -166,9 +232,16 @@ describe('finishing a company', () => {
   /* RED WHEN: the press does more than one action in the wallet, opens anything first while the keys are open, or loses the steps the wallet reports. */
   it('runs the whole of it as one action in the wallet, and hands on the step the wallet is on', async () => {
     const m = await load();
-    kr.steps = [{ step: 1, steps: 5 }, { step: 4, steps: 5 }];
+    kr.steps = [
+      { step: 1, steps: 5 },
+      { step: 4, steps: 5 }
+    ];
     const seen: string[] = [];
-    expect(await m.openYourWallet('u1', 'c1', (step, steps) => { seen.push(`${step}/${steps}`); })).toEqual({ of: 'done' });
+    expect(
+      await m.openYourWallet('u1', 'c1', (step, steps) => {
+        seen.push(`${step}/${steps}`);
+      })
+    ).toEqual({ of: 'done' });
     expect(acts()).toEqual(['act c1']);
     expect(seen).toEqual(['1/5', '4/5']);
   });
@@ -195,10 +268,14 @@ describe('finishing a company', () => {
   it('makes two presses at once one action, and a look while it runs says it waits', async () => {
     const m = await load();
     let release!: () => void;
-    kr.gate = new Promise<void>((r) => { release = r; });
+    kr.gate = new Promise<void>((r) => {
+      release = r;
+    });
     const one = m.openYourWallet('u1', 'c1');
     const two = m.openYourWallet('u1', 'c1');
-    await new Promise((r) => { setTimeout(r, 0); });
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
     kr.reads = [kept('deploy-sent')];
     expect(await m.carryOn('u1', 'c1')).toEqual({ of: 'waiting', companyId: 'c1', stage: 'deploy' });
     release();
@@ -208,7 +285,7 @@ describe('finishing a company', () => {
   });
 
   /* RED WHEN: a refusal is lost, or the press runs with no wallet set up or nobody signed in. */
-  it('refuses by the refusal\'s kind, and runs nothing when the wallet is not set up or nobody is signed in', async () => {
+  it("refuses by the refusal's kind, and runs nothing when the wallet is not set up or nobody is signed in", async () => {
     let m = await load();
     kr.ended = new Error('the page had already closed this request');
     const refused = await m.openYourWallet('u1', 'c1');

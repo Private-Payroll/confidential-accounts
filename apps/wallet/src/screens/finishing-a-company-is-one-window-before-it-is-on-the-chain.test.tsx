@@ -11,13 +11,15 @@ import { IDBFactory } from 'fake-indexeddb';
  * window it shows before the passkey. Only the passkey call and its verification are stood in for.
  */
 
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -49,8 +51,16 @@ const COMPANY = 'acc_0123456789ab';
 const LABEL = drawCompanyLabel();
 
 const passkeyFixture = (credentialId: string): Passkey => ({
-  credentialId, personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7, signCount: 0,
-  provenBySignIn: false, rpId: 'localhost', syncsToACloud: false, backedUpNow: false, transports: [],
+  credentialId,
+  personHandle: 'person-1',
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  algorithm: -7,
+  signCount: 0,
+  provenBySignIn: false,
+  rpId: 'localhost',
+  syncsToACloud: false,
+  backedUpNow: false,
+  transports: []
 });
 const putWallet = async (): Promise<void> => {
   const secret = newSecret();
@@ -63,17 +73,29 @@ const putWallet = async (): Promise<void> => {
 function thePagesAsk(): { view: Openable; asked: Promise<Record<string, unknown>> } {
   let handler: ((e: MessageEvent) => void) | null = null;
   let got: (m: Record<string, unknown>) => void = () => {};
-  const asked = new Promise<Record<string, unknown>>((r) => { got = r; });
-  const tab = { postMessage: (m: unknown) => { got(m as Record<string, unknown>); }, closed: false, close: () => {} };
+  const asked = new Promise<Record<string, unknown>>((r) => {
+    got = r;
+  });
+  const tab = {
+    postMessage: (m: unknown) => {
+      got(m as Record<string, unknown>);
+    },
+    closed: false,
+    close: () => {}
+  };
   const view = {
     open: () => tab,
     addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
       handler = h;
-      queueMicrotask(() => handler?.({ origin: WALLET, source: tab, data: { schema: READY_PING } } as unknown as MessageEvent));
+      queueMicrotask(() =>
+        handler?.({ origin: WALLET, source: tab, data: { schema: READY_PING } } as unknown as MessageEvent)
+      );
     },
-    removeEventListener: () => { handler = null; },
+    removeEventListener: () => {
+      handler = null;
+    },
     setTimeout: () => 0,
-    clearTimeout: () => {},
+    clearTimeout: () => {}
   } as unknown as Openable;
   return { view, asked };
 }
@@ -84,10 +106,14 @@ const theServiceAtStepTwo = (): void => {
     const route = `${String(init?.method ?? 'GET')} ${url}`;
     const json = (status: number, b: unknown) => ({ ok: status < 400, status, json: async () => b }) as Response;
     switch (route) {
-      case `POST /api/accounts/${COMPANY}/unlock`: return json(200, { company: LABEL, account: null });
-      case 'GET /api/me/keys': return json(200, { keyBundle: null, version: 0 });
-      case 'GET /api/accounts': return json(200, []);
-      default: return json(404, { error: `no route for ${route}` });
+      case `POST /api/accounts/${COMPANY}/unlock`:
+        return json(200, { company: LABEL, account: null });
+      case 'GET /api/me/keys':
+        return json(200, { keyBundle: null, version: 0 });
+      case 'GET /api/accounts':
+        return json(200, []);
+      default:
+        return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
 };
@@ -100,11 +126,15 @@ const opener = {
       const sending = asking;
       setTimeout(() => {
         const event = new Event('message');
-        Object.defineProperties(event, { data: { value: sending }, origin: { value: PAGE }, source: { value: opener } });
+        Object.defineProperties(event, {
+          data: { value: sending },
+          origin: { value: PAGE },
+          source: { value: opener }
+        });
         window.dispatchEvent(event);
       }, 0);
     }
-  },
+  }
 };
 
 const realFetch = globalThis.fetch;
@@ -125,30 +155,51 @@ describe('finishing a company not yet on the chain', () => {
   it('opens the one Finish window, whose Approve can be pressed, and not a window that waits for the chain', async () => {
     await putWallet();
     theServiceAtStepTwo();
-    keyring.signedInByAnotherScreen({ user: { id: 'usr_a', email: null, name: 'Priya' }, address: ADDRESS, created: true, session: {} });
+    keyring.signedInByAnotherScreen({
+      user: { id: 'usr_a', email: null, name: 'Priya' },
+      address: ADDRESS,
+      created: true,
+      session: {}
+    });
     const page = thePagesAsk();
     void creation.finishCompanyInTheWallet(COMPANY, WALLET, {}, page.view, PAGE).catch(() => {});
     asking = await page.asked;
     expect([asking['kind'], (asking['intent'] as Record<string, unknown>)['name']]).toEqual(['act', 'finish-company']);
 
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await waitFor(() => expect(document.querySelector('[data-ask-window="act"]')).not.toBeNull());
-    await waitFor(() => expect(document.querySelector('[data-what-it-does], [data-act-shown], [data-shown-from]')).not.toBeNull());
+    await waitFor(() =>
+      expect(document.querySelector('[data-what-it-does], [data-act-shown], [data-shown-from]')).not.toBeNull()
+    );
     /* RED WHEN: the window before the passkey holds the Finish action to a check of the company's account on the chain, which Finish itself deploys, so it can never be approved. */
     expect(document.querySelector('[data-no-account-yet]')).toBeNull();
-    await waitFor(() => expect((document.querySelector('[data-approve-window]') as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() =>
+      expect((document.querySelector('[data-approve-window]') as HTMLButtonElement).disabled).toBe(false)
+    );
   });
 
-  it('still holds an action on a company named by its account to the chain\'s word, which this one cannot give', async () => {
+  it("still holds an action on a company named by its account to the chain's word, which this one cannot give", async () => {
     await putWallet();
     globalThis.fetch = (async () => ({ ok: false, status: 503, json: async () => ({}) }) as Response) as typeof fetch;
     asking = {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { name: 'Payroll', rdns: 'example.payroll' },
-      purpose: 'To give your seat the keys to the company\'s vaults.', nonce: 'act-vault-keys', expiresAt: Date.now() + 20 * 60_000,
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'act',
+      requester: { name: 'Payroll', rdns: 'example.payroll' },
+      purpose: "To give your seat the keys to the company's vaults.",
+      nonce: 'act-vault-keys',
+      expiresAt: Date.now() + 20 * 60_000,
       progress: PROGRESS_SCHEMA,
-      intent: { name: 'give-vault-keys', record: COMPANY, company: LABEL, account: 'c0'.repeat(32) },
+      intent: { name: 'give-vault-keys', record: COMPANY, company: LABEL, account: 'c0'.repeat(32) }
     };
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await waitFor(() => expect(document.querySelector('[data-ask-window="act"]')).not.toBeNull());
     await waitFor(() => expect(document.querySelector('[data-company-check="checking"]')).toBeNull());
     /* RED WHEN: the window lets an action on a company that names its account be approved without reading that account's label on the chain. */

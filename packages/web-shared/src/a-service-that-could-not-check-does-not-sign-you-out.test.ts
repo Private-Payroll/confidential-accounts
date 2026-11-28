@@ -16,19 +16,26 @@ import { ServiceNotReached } from './hand-over.js';
  */
 let answers: Array<() => Response | Promise<Response>> = [];
 let asked = 0;
-const reply = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const reply = (status: number, body: unknown) => () =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const couldNotCheck = reply(503, { error: 'the service could not check your sign-in', code: 'could-not-check' });
 const ME = reply(200, { user: { id: 'u1', email: null, name: 'Priya' } });
 
 beforeEach(() => {
   asked = 0;
-  vi.stubGlobal('fetch', vi.fn(async () => {
-    const next = answers[Math.min(asked, answers.length - 1)]!;
-    asked += 1;
-    return next();
-  }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      const next = answers[Math.min(asked, answers.length - 1)]!;
+      asked += 1;
+      return next();
+    })
+  );
 });
-afterEach(() => { vi.unstubAllGlobals(); keyring.forgetLocally(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  keyring.forgetLocally();
+});
 
 const signedIn = async () => {
   answers = [ME];
@@ -59,7 +66,9 @@ describe('resuming a sign-in', () => {
   it('asks again after 0.6, 1.5 and 4 seconds, takes the good answer, and is signed in', async () => {
     answers = [couldNotCheck, couldNotCheck, ME];
     const waited: number[] = [];
-    const me = await keyring.resumeSession(null, async (ms) => { waited.push(ms); });
+    const me = await keyring.resumeSession(null, async (ms) => {
+      waited.push(ms);
+    });
     expect(me?.id).toBe('u1');
     expect(waited).toEqual([600, 1500]);
   });
@@ -68,7 +77,11 @@ describe('resuming a sign-in', () => {
     await signedIn();
     answers = [couldNotCheck];
     const waited: number[] = [];
-    await expect(keyring.resumeSession(null, async (ms) => { waited.push(ms); })).rejects.toBeInstanceOf(transport.CouldNotCheckError);
+    await expect(
+      keyring.resumeSession(null, async (ms) => {
+        waited.push(ms);
+      })
+    ).rejects.toBeInstanceOf(transport.CouldNotCheckError);
     expect(waited).toEqual([...keyring.RESUME_BACKOFF_MS]);
     expect(asked).toBe(4);
     expect(keyring.currentUser()?.id).toBe('u1');
@@ -76,7 +89,11 @@ describe('resuming a sign-in', () => {
 
   it('a network failure is asked again the same way and signs nobody out', async () => {
     await signedIn();
-    answers = [() => { throw new TypeError('Failed to fetch'); }];
+    answers = [
+      () => {
+        throw new TypeError('Failed to fetch');
+      }
+    ];
     /* RED WHEN: a request that got no answer, which the page's transport says as not reached, is not asked again, or signs the person out. */
     await expect(keyring.resumeSession(null, async () => {})).rejects.toBeInstanceOf(ServiceNotReached);
     expect(asked).toBe(4);
@@ -85,7 +102,11 @@ describe('resuming a sign-in', () => {
 
   it('a 401 is nobody, at once, with no second ask', async () => {
     answers = [reply(401, { error: 'not signed in' })];
-    expect(await keyring.resumeSession(null, async () => { throw new Error('must not wait'); })).toBeNull();
+    expect(
+      await keyring.resumeSession(null, async () => {
+        throw new Error('must not wait');
+      })
+    ).toBeNull();
     expect(asked).toBe(1);
   });
 });

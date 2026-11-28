@@ -34,7 +34,13 @@ export interface VaultRebuildAsked {
 
 /** A rebuild's answer: each held note with its held and output commitments, the chain notes nothing named, the sealed copy, and what was said. */
 export interface VaultRebuilt {
-  readonly held: ReadonlyArray<{ readonly nonce: string; readonly token: string; readonly value: string; readonly held: string; readonly output: string }>;
+  readonly held: ReadonlyArray<{
+    readonly nonce: string;
+    readonly token: string;
+    readonly value: string;
+    readonly held: string;
+    readonly output: string;
+  }>;
   readonly unexplained: readonly string[];
   readonly copy: readonly string[] | null;
   readonly said: readonly string[];

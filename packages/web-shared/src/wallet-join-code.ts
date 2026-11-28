@@ -15,8 +15,8 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
 const JOIN_CODE_WINDOW_MS = 10 * 60_000;
 
 const JOIN_CODE_PURPOSE =
-  'So the company can add you without sending you a link: your wallet signs the public parts of what you join with, and '
-  + 'shows you the fingerprint to read to the person adding you.';
+  'So the company can add you without sending you a link: your wallet signs the public parts of what you join with, and ' +
+  'shows you the fingerprint to read to the person adding you.';
 
 /** Thrown when the wallet did not hand back the code asked for; nothing was shown or sent. */
 export class WalletDidNotMakeTheCode extends Error {
@@ -43,31 +43,43 @@ interface JoinCodeAsked {
 const samePartsAsAsked = (signed: unknown, asked: AskedParts): boolean => {
   const read = readJoinParts(signed);
   if (read === null) return false;
-  return asked.kind === 'reader' ? read.kind === 'reader' : JSON.stringify(read) === JSON.stringify(readJoinParts(asked));
+  return asked.kind === 'reader'
+    ? read.kind === 'reader'
+    : JSON.stringify(read) === JSON.stringify(readJoinParts(asked));
 };
 
 /** The code the wallet made, checked as the one asked for. */
 export async function askWalletForAJoinCode(
-  view: Openable, walletOrigin: string, ask: JoinCodeAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: JoinCodeAsked,
+  dialog?: WalletDialog
 ): Promise<JoinCode> {
   const now = ask.now ?? (() => Date.now());
-  const answer = await askWallet(view, walletOrigin, Object.freeze({
-    schema: REQUEST_SCHEMA,
-    kind: 'join-code' as const,
-    requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
-    purpose: JOIN_CODE_PURPOSE,
-    nonce: toHex(randomBytes(16)),
-    expiresAt: now() + JOIN_CODE_WINDOW_MS,
-    company: ask.company,
-    account: ask.account,
-    person: ask.person,
-    parts: ask.parts,
-  }), dialog);
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    Object.freeze({
+      schema: REQUEST_SCHEMA,
+      kind: 'join-code' as const,
+      requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
+      purpose: JOIN_CODE_PURPOSE,
+      nonce: toHex(randomBytes(16)),
+      expiresAt: now() + JOIN_CODE_WINDOW_MS,
+      company: ask.company,
+      account: ask.account,
+      person: ask.person,
+      parts: ask.parts
+    }),
+    dialog
+  );
   const code = answer as JoinCode;
-  if (!joinCodeSignedBy(code)) throw new WalletDidNotMakeTheCode('The wallet\'s answer is not a code it signed, so nothing is shown.');
-  if (code.company !== ask.company || code.person !== ask.person
-    || !samePartsAsAsked(code.parts, ask.parts)) {
-    throw new WalletDidNotMakeTheCode('The wallet signed a code for something other than what this page asked, so nothing is shown.');
+  if (!joinCodeSignedBy(code))
+    throw new WalletDidNotMakeTheCode("The wallet's answer is not a code it signed, so nothing is shown.");
+  if (code.company !== ask.company || code.person !== ask.person || !samePartsAsAsked(code.parts, ask.parts)) {
+    throw new WalletDidNotMakeTheCode(
+      'The wallet signed a code for something other than what this page asked, so nothing is shown.'
+    );
   }
   return code;
 }

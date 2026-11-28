@@ -20,7 +20,10 @@ export function staleIdentityLib(packageRoot: string): string[] {
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const p = join(dir, name);
-      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (statSync(p).isDirectory()) {
+        walk(p);
+        continue;
+      }
       if (!name.endsWith('.ts') || NOT_BUILT.test(name) || relative(src, p) === 'test-setup.ts') continue;
       const built = join(lib, relative(src, p)).replace(/\.ts$/u, '.js');
       if (!existsSync(built) || statSync(built).mtimeMs < statSync(p).mtimeMs) stale.push(relative(src, p));
@@ -35,7 +38,8 @@ export function assertIdentityLibFresh(packageRoot: string): void {
   const stale = staleIdentityLib(packageRoot);
   if (stale.length === 0) return;
   throw new Error(
-    `packages/identity/lib is older than its source for ${stale.length} file(s) (${stale.slice(0, 5).join(', ')}`
-    + `${stale.length > 5 ? ', ...' : ''}), so these tests would run the code from before the change. Rebuild it with `
-    + '`npm run identity:build` and run them again.');
+    `packages/identity/lib is older than its source for ${stale.length} file(s) (${stale.slice(0, 5).join(', ')}` +
+      `${stale.length > 5 ? ', ...' : ''}), so these tests would run the code from before the change. Rebuild it with ` +
+      '`npm run identity:build` and run them again.'
+  );
 }

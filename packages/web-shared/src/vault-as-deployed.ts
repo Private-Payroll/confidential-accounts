@@ -17,7 +17,7 @@ import type { WorkerDeps } from './vault-worker-entry.js';
 export const vaultAsDeployed = async (
   d: Pick<WorkerDeps, 'ledger' | 'runtimeState' | 'vault' | 'vaultKeys'>,
   ask: { vault: string; account: string; holders: Committee; again?: boolean },
-  source: Pick<import('./vault-on-chain-here.js').VaultChainSource, 'deployState' | 'contractState'>,
+  source: Pick<import('./vault-on-chain-here.js').VaultChainSource, 'deployState' | 'contractState'>
 ): Promise<string | null> => {
   const what = 'a vault this company can use';
   const initialState = await source.deployState(ask.vault);
@@ -25,13 +25,24 @@ export const vaultAsDeployed = async (
     return `this is not ${what} yet: the chain holds no deploy at this vault's address. Nothing was sent.`;
   }
   const now = ask.again === true ? await source.contractState(ask.vault) : undefined;
-  if (now === null) return `this is not ${what} yet: the chain holds no state at this vault's address. Nothing was sent. Press again in a minute.`;
+  if (now === null)
+    return `this is not ${what} yet: the chain holds no state at this vault's address. Nothing was sent. Press again in a minute.`;
   const verifierKeys = new Map(await d.vaultKeys.getVerifierKeys(VAULT_CIRCUITS));
-  return vaultBornHeldRefusal(initialState, {
-    account: ask.account, holders: ask.holders, verifierKeys,
-    startingLedgerOf: (state) => startingLedgerFrom(
-      d.vault.ledger((d.runtimeState.deserialize((state as { serialize(): Uint8Array }).serialize()) as { data: unknown }).data),
-      d.vault.pureCircuits.copiesWrittenKey()),
-  }, what, now === undefined ? undefined : { state: now });
+  return vaultBornHeldRefusal(
+    initialState,
+    {
+      account: ask.account,
+      holders: ask.holders,
+      verifierKeys,
+      startingLedgerOf: (state) =>
+        startingLedgerFrom(
+          d.vault.ledger(
+            (d.runtimeState.deserialize((state as { serialize(): Uint8Array }).serialize()) as { data: unknown }).data
+          ),
+          d.vault.pureCircuits.copiesWrittenKey()
+        )
+    },
+    what,
+    now === undefined ? undefined : { state: now }
+  );
 };
-

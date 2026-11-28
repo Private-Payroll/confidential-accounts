@@ -21,15 +21,33 @@ import { keyringSealKeyFor } from './seal-key.js';
 const PAGE = 'https://app.payroll.example';
 const secret = newSecret();
 const identity = identityFromSecret(secret);
-const ask = (over: Partial<KeyringRequest> = {}): KeyringRequest => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'keyring', requester: { origin: PAGE, name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'x', nonce: 'k1', expiresAt: Date.now() + 600_000, person: 'usr_a', signedInAs: null, company: null, account: null, drawLabel: true,
-  founding: { name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' } }, keyring: { sealed: null, version: 0 }, ...over,
-} as KeyringRequest);
+const ask = (over: Partial<KeyringRequest> = {}): KeyringRequest =>
+  ({
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind: 'keyring',
+    requester: { origin: PAGE, name: 'Payroll', rdns: 'example.payroll' },
+    purpose: 'x',
+    nonce: 'k1',
+    expiresAt: Date.now() + 600_000,
+    person: 'usr_a',
+    signedInAs: null,
+    company: null,
+    account: null,
+    drawLabel: true,
+    founding: { name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' } },
+    keyring: { sealed: null, version: 0 },
+    ...over
+  }) as KeyringRequest;
 const KEY = toHex(keyringSealKeyFor(identity, ask()));
 const marks = (): KeyringMarks & { seen: Map<string, KeyringMark> } => {
   const seen = new Map<string, KeyringMark>();
-  return { seen, markOf: (p) => seen.get(p) ?? null, raise: (p, m) => { seen.set(p, m); } };
+  return {
+    seen,
+    markOf: (p) => seen.get(p) ?? null,
+    raise: (p, m) => {
+      seen.set(p, m);
+    }
+  };
 };
 
 describe('A COMPANY IS FOUNDED IN THE WALLET', () => {
@@ -40,25 +58,57 @@ describe('A COMPANY IS FOUNDED IN THE WALLET', () => {
     const words = seatKeysFor(identity, label, 0);
     const seat = await foundingSeatOf(identity, label);
     expect(seat.signingSecret).toBe(toHex(words.signingSecret));
-    expect(done.founded.seat).toMatchObject({ signingPublicKey: seat.signingPublicKey, wrappingPublicKey: seat.wrappingPublicKey, leaf: seat.leaf });
+    expect(done.founded.seat).toMatchObject({
+      signingPublicKey: seat.signingPublicKey,
+      wrappingPublicKey: seat.wrappingPublicKey,
+      leaf: seat.leaf
+    });
     expect(verifiedCompanyFiler(done.founded.roster)).toBe(seat.signingPublicKey);
     expect(foundingStateRefusal(done.founded.state, done.accountId, seat.signingPublicKey)).toBeNull();
     const companyKey = unwrapKey(done.founded.account.wrappedKeys[0] as never, seat.wrappingSecret);
-    expect(String(openStateRecord(done.founded.state, companyKey as never).blinding.payRecordKey)).toMatch(/^[0-9a-f]{64}$/u);
+    expect(String(openStateRecord(done.founded.state, companyKey as never).blinding.payRecordKey)).toMatch(
+      /^[0-9a-f]{64}$/u
+    );
     const kept = openKeyring(done.sealed as never, KEY as never);
-    expect(kept.accounts[done.accountId]).toMatchObject({ signerId: done.founded.seat.signerId, signingSecret: seat.signingSecret, blinding: seat.blinding });
+    expect(kept.accounts[done.accountId]).toMatchObject({
+      signerId: done.founded.seat.signerId,
+      signingSecret: seat.signingSecret,
+      blinding: seat.blinding
+    });
     expect(kept.creations?.[done.accountId]).toMatchObject({
-      label, person: 'usr_a', made: false, deploy: null, signed: null, recorded: false,
-      foundingKey: { tag: 'schnorr', value: String(committeeKeyFor(identity, label).value).toLowerCase() },
+      label,
+      person: 'usr_a',
+      made: false,
+      deploy: null,
+      signed: null,
+      recorded: false,
+      foundingKey: { tag: 'schnorr', value: String(committeeKeyFor(identity, label).value).toLowerCase() }
     });
     expect(done.ifVersion).toBe(0);
   });
 
   /* RED WHEN: a founding seals over the saved keys handed in instead of beside what they hold, or ignores the version they were handed at. */
   it('writes the new seat beside every seat already kept, one write on, over the version handed in', async () => {
-    const held = sealKeyring({ accounts: { acc_old: { signerId: 's', signingSecret: '11'.repeat(32), wrappingSecret: '22'.repeat(32), blinding: '33'.repeat(32), scope: '44'.repeat(32) } }, counter: 4 } as never, KEY as never);
+    const held = sealKeyring(
+      {
+        accounts: {
+          acc_old: {
+            signerId: 's',
+            signingSecret: '11'.repeat(32),
+            wrappingSecret: '22'.repeat(32),
+            blinding: '33'.repeat(32),
+            scope: '44'.repeat(32)
+          }
+        },
+        counter: 4
+      } as never,
+      KEY as never
+    );
     const done = await foundTheCompanyInTheWallet({
-      identity, request: ask({ keyring: { sealed: held.sealed as never, version: 7 } }), label: drawCompanyLabel(), marks: marks(),
+      identity,
+      request: ask({ keyring: { sealed: held.sealed as never, version: 7 } }),
+      label: drawCompanyLabel(),
+      marks: marks()
     });
     const kept = openKeyring(done.sealed as never, KEY as never);
     expect(Object.keys(kept.accounts).sort()).toEqual(['acc_old', done.accountId].sort());
@@ -72,7 +122,9 @@ describe('A COMPANY IS FOUNDED IN THE WALLET', () => {
     const { founding: _f, ...noFounding } = ask();
     const { keyring: _k, ...noKeys } = ask();
     for (const request of [noFounding, noKeys] as KeyringRequest[]) {
-      await expect(foundTheCompanyInTheWallet({ identity, request, label: drawCompanyLabel(), marks: marks() })).rejects.toBeInstanceOf(NotFoundedHere);
+      await expect(
+        foundTheCompanyInTheWallet({ identity, request, label: drawCompanyLabel(), marks: marks() })
+      ).rejects.toBeInstanceOf(NotFoundedHere);
     }
   });
 
@@ -81,8 +133,13 @@ describe('A COMPANY IS FOUNDED IN THE WALLET', () => {
     const m = marks();
     m.raise('usr_a', { counter: 9, digest: 'ab'.repeat(32) as never });
     const held = sealKeyring({ accounts: {}, counter: 2 } as never, KEY as never);
-    await expect(foundTheCompanyInTheWallet({
-      identity, request: ask({ keyring: { sealed: held.sealed as never, version: 1 } }), label: drawCompanyLabel(), marks: m,
-    })).rejects.toThrow(/older copy/u);
+    await expect(
+      foundTheCompanyInTheWallet({
+        identity,
+        request: ask({ keyring: { sealed: held.sealed as never, version: 1 } }),
+        label: drawCompanyLabel(),
+        marks: m
+      })
+    ).rejects.toThrow(/older copy/u);
   });
 });

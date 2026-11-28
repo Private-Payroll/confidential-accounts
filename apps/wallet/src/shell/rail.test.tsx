@@ -38,7 +38,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -72,7 +72,7 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 /**
@@ -102,7 +102,11 @@ async function seedOneWallet(): Promise<void> {
 async function mountAndUnlock(): Promise<void> {
   vi.mocked(usePasskey).mockResolvedValue({ credentialId: 'cred-1' } as never);
   vi.mocked(verifyAssertion).mockResolvedValue({ passkey: passkeyFixture('cred-1') } as never);
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
   fireEvent.click(screen.getByText('Unlock with your passkey'));
   await screen.findByText('Every wallet');
 }
@@ -115,14 +119,10 @@ async function unlocked(): Promise<void> {
 
 /** The rail, which is the wide navigation — the bar carries the same accessible
  * name, so they are told apart by the attribute only the rail has. */
-const rail = (): HTMLElement | null =>
-  document.querySelector('nav[aria-label="Places"][data-collapsed]');
-const bar = (): HTMLElement | null =>
-  document.querySelector('nav[aria-label="Places"]:not([data-collapsed])');
-const foldButton = (): HTMLElement =>
-  screen.getByLabelText(/the sidebar/i);
-const railLink = (route: string): HTMLElement | null =>
-  rail()?.querySelector(`a[data-place="${route}"]`) ?? null;
+const rail = (): HTMLElement | null => document.querySelector('nav[aria-label="Places"][data-collapsed]');
+const bar = (): HTMLElement | null => document.querySelector('nav[aria-label="Places"]:not([data-collapsed])');
+const foldButton = (): HTMLElement => screen.getByLabelText(/the sidebar/i);
+const railLink = (route: string): HTMLElement | null => rail()?.querySelector(`a[data-place="${route}"]`) ?? null;
 
 beforeEach(() => {
   cleanup();
@@ -189,8 +189,10 @@ describe('a folded link is still a named link', () => {
     fireEvent.click(foldButton());
     await waitFor(() => expect(rail()?.getAttribute('data-collapsed')).toBe('true'));
     for (const [route, name] of [
-      ['home', 'Home'], ['activity', 'Activity'],
-      ['explore', 'Explore'], ['settings', 'Settings'],
+      ['home', 'Home'],
+      ['activity', 'Activity'],
+      ['explore', 'Explore'],
+      ['settings', 'Settings']
     ] as const) {
       const link = railLink(route);
       expect(link, route).not.toBeNull();
@@ -221,7 +223,9 @@ describe('a folded link is still a named link', () => {
     await unlocked();
     const unfolded = railLink('home') as HTMLElement;
     fireEvent.focus(unfolded);
-    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
     expect(screen.queryByRole('tooltip')).toBeNull();
     fireEvent.blur(unfolded);
 
@@ -229,7 +233,10 @@ describe('a folded link is still a named link', () => {
     await waitFor(() => expect(rail()?.getAttribute('data-collapsed')).toBe('true'));
 
     for (const [route, name] of [
-      ['home', 'Home'], ['activity', 'Activity'], ['explore', 'Explore'], ['settings', 'Settings'],
+      ['home', 'Home'],
+      ['activity', 'Activity'],
+      ['explore', 'Explore'],
+      ['settings', 'Settings']
     ] as const) {
       const link = railLink(route) as HTMLElement;
       fireEvent.focus(link);
@@ -274,8 +281,9 @@ describe('the theme picker is the list, not a toggle', () => {
     fireEvent.pointerDown(trigger as HTMLElement, { button: 0, ctrlKey: false });
     fireEvent.click(trigger as HTMLElement);
     await screen.findByText('Follow this machine');
-    const offered = [...document.querySelectorAll('[data-theme-option]')]
-      .map((item) => item.getAttribute('data-theme-option'));
+    const offered = [...document.querySelectorAll('[data-theme-option]')].map((item) =>
+      item.getAttribute('data-theme-option')
+    );
     expect(offered).toEqual([...THEMES.map((theme) => theme.id), 'system']);
   });
 
@@ -296,7 +304,7 @@ describe('the theme picker is the list, not a toggle', () => {
    * chosen by that attribute alone. RED WHEN: following the machine stores a
    * choice, or leaves the root without the machine's theme. This test's
    * machine has no colour-scheme query, so the machine's theme is dark. */
-  it('following the machine stores nothing and writes the machine\'s theme', async () => {
+  it("following the machine stores nothing and writes the machine's theme", async () => {
     await unlocked();
     const open = async (): Promise<void> => {
       const trigger = document.querySelector('[data-theme-choice]');
@@ -329,10 +337,16 @@ describe('the theme picker is the list, not a toggle', () => {
     const listeners = new Set<() => void>();
     const was = window.matchMedia;
     window.matchMedia = ((query: string) => ({
-      get matches() { return query.includes('light') ? light : !light; },
+      get matches() {
+        return query.includes('light') ? light : !light;
+      },
       media: query,
-      addEventListener: (_: string, f: () => void) => { listeners.add(f); },
-      removeEventListener: (_: string, f: () => void) => { listeners.delete(f); },
+      addEventListener: (_: string, f: () => void) => {
+        listeners.add(f);
+      },
+      removeEventListener: (_: string, f: () => void) => {
+        listeners.delete(f);
+      }
     })) as unknown as typeof window.matchMedia;
     try {
       await unlocked();

@@ -19,7 +19,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -40,7 +40,12 @@ import { emptyProfile } from 'midnight-identity/profile/model';
 import { browserPort, recordNameFor, save } from 'midnight-identity/profile/store';
 import { ORIGINAL_SLOT, forgetOpenWallet, heldWallets, openWalletId } from './accounts/wallets-held.js';
 import {
-  allPasskeys, loadSecret, savePasskey, saveSecret, saveSecuredSetup, saveWalletName,
+  allPasskeys,
+  loadSecret,
+  savePasskey,
+  saveSecret,
+  saveSecuredSetup,
+  saveWalletName
 } from './accounts/storage.js';
 
 const mockCreatePasskey = vi.mocked(createPasskey);
@@ -59,19 +64,26 @@ const passkeyFixture = (credentialId: string, extra: Partial<Passkey> = {}): Pas
   syncsToACloud: false,
   backedUpNow: false,
   transports: [],
-  ...extra,
+  ...extra
 });
 
 /* The ceremony's raw output is opaque to the session — it hands it straight
  * to the (mocked) verifier — so a minimal object is enough. */
 const registrationFixture = {
-  credentialId: 'cred-1', personHandle: 'cGVyc29uLTE', clientDataJSON: new Uint8Array(),
-  authenticatorData: new Uint8Array(), publicKeySpki: new Uint8Array([1, 2, 3]),
-  publicKeyAlgorithm: -7, transports: [],
+  credentialId: 'cred-1',
+  personHandle: 'cGVyc29uLTE',
+  clientDataJSON: new Uint8Array(),
+  authenticatorData: new Uint8Array(),
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  publicKeyAlgorithm: -7,
+  transports: []
 };
 const assertionFixture = (credentialId: string) => ({
-  credentialId, clientDataJSON: new Uint8Array(), authenticatorData: new Uint8Array(),
-  signature: new Uint8Array(), userHandle: 'cGVyc29uLTE',
+  credentialId,
+  clientDataJSON: new Uint8Array(),
+  authenticatorData: new Uint8Array(),
+  signature: new Uint8Array(),
+  userHandle: 'cGVyc29uLTE'
 });
 
 function Probe(): ReactNode {
@@ -80,36 +92,73 @@ function Probe(): ReactNode {
     <div>
       <div data-testid="phase">{session.phase.name}</div>
       <div data-testid="error">{session.error ?? ''}</div>
-      <div data-testid="broken-message">
-        {session.phase.name === 'broken' ? session.phase.message : ''}
-      </div>
+      <div data-testid="broken-message">{session.phase.name === 'broken' ? session.phase.message : ''}</div>
       {/* "opens the SAME account" is asserted against the UNLOCKED
-        * secret, not against what storage happens to hold — a mutation that
-        * swaps in a fresh secret writes the very record a storage assertion
-        * would read, and passes it. */}
+       * secret, not against what storage happens to hold — a mutation that
+       * swaps in a fresh secret writes the very record a storage assertion
+       * would read, and passes it. */}
       <div data-testid="secret-fp">
-        {session.phase.name === 'unlocked'
-          ? toBase64Url(fingerprintOf(session.phase.secret))
-          : ''}
+        {session.phase.name === 'unlocked' ? toBase64Url(fingerprintOf(session.phase.secret)) : ''}
       </div>
-      <button type="button" onClick={() => { void session.createAccount(); }}>create</button>
-      <button type="button" onClick={() => { void session.unlock(); }}>unlock</button>
-      <button type="button" onClick={() => { void session.adoptPasskey(); }}>adopt</button>
-      <button type="button" onClick={() => { void session.startFresh(); }}>fresh</button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.createAccount();
+        }}
+      >
+        create
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.unlock();
+        }}
+      >
+        unlock
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.adoptPasskey();
+        }}
+      >
+        adopt
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.startFresh();
+        }}
+      >
+        fresh
+      </button>
       {/* The list, the switch and the removal, as data and buttons. The
-        * list is rendered as one string so a test can assert the ORDER and the
-        * open one in a single comparison. */}
+       * list is rendered as one string so a test can assert the ORDER and the
+       * open one in a single comparison. */}
       <div data-testid="wallets">
-        {session.wallets.map((w) => `${w.name ?? '(unnamed)'}${w.current ? '*' : ''}`)
-          .join(' | ')}
+        {session.wallets.map((w) => `${w.name ?? '(unnamed)'}${w.current ? '*' : ''}`).join(' | ')}
       </div>
       {session.wallets.map((w, i) => (
         <button key={w.id} type="button" onClick={() => session.switchTo(w.id)}>
           {`switch-${i}`}
         </button>
       ))}
-      <button type="button" onClick={() => { session.lock(); }}>lock</button>
-      <button type="button" onClick={() => { session.startOver(); }}>forget</button>
+      <button
+        type="button"
+        onClick={() => {
+          session.lock();
+        }}
+      >
+        lock
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          session.startOver();
+        }}
+      >
+        forget
+      </button>
     </div>
   );
 }
@@ -118,7 +167,7 @@ const mount = (challenges?: ChallengeStore): void => {
   render(
     <SessionProvider {...(challenges ? { challenges } : {})}>
       <Probe />
-    </SessionProvider>,
+    </SessionProvider>
   );
 };
 
@@ -189,9 +238,10 @@ describe('creating an account', () => {
     mount();
     fireEvent.click(screen.getByText('create'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    const stamp = JSON.parse(
-      localStorage.getItem('midnight-identity:created') ?? 'null') as
-      { fingerprint: string; at: number } | null;
+    const stamp = JSON.parse(localStorage.getItem('midnight-identity:created') ?? 'null') as {
+      fingerprint: string;
+      at: number;
+    } | null;
     expect(stamp).not.toBeNull();
     /* Fingerprint-bound exactly as `ArrivalRecord` is, so it cannot be
      * read over a different account, and dated. */
@@ -249,8 +299,11 @@ describe('unlocking', () => {
     await seedAccount();
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-2'));
     mockVerifyAssertion.mockResolvedValue({
-      personHandle: 'person-1', signCount: 7, userVerified: true, backedUpNow: false,
-      passkey: passkeyFixture('cred-2', { signCount: 7, provenBySignIn: true }),
+      personHandle: 'person-1',
+      signCount: 7,
+      userVerified: true,
+      backedUpNow: false,
+      passkey: passkeyFixture('cred-2', { signCount: 7, provenBySignIn: true })
     });
     mount();
     fireEvent.click(screen.getByText('unlock'));
@@ -262,8 +315,11 @@ describe('unlocking', () => {
     await seedAccount();
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-2'));
     mockVerifyAssertion.mockResolvedValue({
-      personHandle: 'person-1', signCount: 7, userVerified: true, backedUpNow: false,
-      passkey: passkeyFixture('cred-2', { signCount: 7, provenBySignIn: true }),
+      personHandle: 'person-1',
+      signCount: 7,
+      userVerified: true,
+      backedUpNow: false,
+      passkey: passkeyFixture('cred-2', { signCount: 7, provenBySignIn: true })
     });
     mount();
     fireEvent.click(screen.getByText('unlock'));
@@ -279,8 +335,7 @@ describe('unlocking', () => {
     mockVerifyAssertion.mockRejectedValue(new Error('the signature did not verify.'));
     mount();
     fireEvent.click(screen.getByText('unlock'));
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).toBe('the signature did not verify.'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toBe('the signature did not verify.'));
     /* `instanceof StorageError` weakened to `if (e)` sends this to the
      * tombstone screen; the person retries a cancelled Touch ID, they do not
      * recover an account. */
@@ -292,8 +347,11 @@ describe('the StorageError seam — both codes, by state not sentence', () => {
   const passCeremony = (): void => {
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-1'));
     mockVerifyAssertion.mockResolvedValue({
-      personHandle: 'person-1', signCount: 1, userVerified: true, backedUpNow: false,
-      passkey: passkeyFixture('cred-1', { signCount: 1 }),
+      personHandle: 'person-1',
+      signCount: 1,
+      userVerified: true,
+      backedUpNow: false,
+      passkey: passkeyFixture('cred-1', { signCount: 1 })
     });
   };
 
@@ -316,8 +374,7 @@ describe('the StorageError seam — both codes, by state not sentence', () => {
     mount();
     fireEvent.click(screen.getByText('unlock'));
     await waitFor(() => expect(phase()).toBe('broken'));
-    expect(screen.getByTestId('broken-message').textContent)
-      .toContain('the key that opens it is gone');
+    expect(screen.getByTestId('broken-message').textContent).toContain('the key that opens it is gone');
   });
 
   it('a damaged PASSKEY record is a state with doors, not "your account is elsewhere"', async () => {
@@ -340,7 +397,7 @@ describe('the one-use challenge, pinned through the injectable store', () => {
    * spent. The session must refuse BEFORE verification ever runs. */
   const spentStore: ChallengeStore = {
     issue: () => Promise.resolve('Y2hhbGxlbmdl'),
-    take: () => Promise.resolve(false),
+    take: () => Promise.resolve(false)
   };
 
   it('a spent sign-in challenge is refused, before verification', async () => {
@@ -349,8 +406,7 @@ describe('the one-use challenge, pinned through the injectable store', () => {
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-1'));
     mount(spentStore);
     fireEvent.click(screen.getByText('unlock'));
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).toContain('challenge expired'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toContain('challenge expired'));
     expect(phase()).toBe('locked');
     expect(mockVerifyAssertion).not.toHaveBeenCalled();
   });
@@ -359,8 +415,7 @@ describe('the one-use challenge, pinned through the injectable store', () => {
     mockCreatePasskey.mockResolvedValue(registrationFixture);
     mount(spentStore);
     fireEvent.click(screen.getByText('create'));
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).toContain('challenge expired'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toContain('challenge expired'));
     expect(phase()).toBe('welcome');
     expect(mockVerifyRegistration).not.toHaveBeenCalled();
     expect(localStorage.getItem('midnight-identity:keyring')).toBeNull();
@@ -401,8 +456,7 @@ describe('the half-states a partial clear leaves behind', () => {
     expect(phase()).toBe('account-no-passkey');
     fireEvent.click(screen.getByText('adopt'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(secret)));
     expect(allPasskeys(ORIGINAL_SLOT).map((p) => p.credentialId)).toEqual(['cred-new']);
   });
 
@@ -412,14 +466,16 @@ describe('the half-states a partial clear leaves behind', () => {
     await saveSecret(secret);
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-1'));
     mockVerifyAssertion.mockResolvedValue({
-      personHandle: 'person-1', signCount: 1, userVerified: true, backedUpNow: false,
-      passkey: passkeyFixture('cred-1', { signCount: 1 }),
+      personHandle: 'person-1',
+      signCount: 1,
+      userVerified: true,
+      backedUpNow: false,
+      passkey: passkeyFixture('cred-1', { signCount: 1 })
     });
     mount();
     fireEvent.click(screen.getByText('unlock'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(secret)));
   });
 
   it('a refused ceremony during adoption is a red line, and the account stays put', async () => {
@@ -427,8 +483,7 @@ describe('the half-states a partial clear leaves behind', () => {
     mockCreatePasskey.mockRejectedValue(new Error('the passkey was not created — it was cancelled, or it timed out.'));
     mount();
     fireEvent.click(screen.getByText('adopt'));
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).toContain('cancelled'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toContain('cancelled'));
     expect(phase()).toBe('account-no-passkey');
     expect(localStorage.getItem('midnight-identity:keyring')).not.toBeNull();
   });
@@ -438,10 +493,18 @@ describe('the half-states a partial clear leaves behind', () => {
     /* A stale secured record from the vanished account: the map the copy gate
      * on the SCREEN makes the person copy before this can be clicked. */
     const gone = newSecret();
-    await saveSecuredSetup(gone, await splitSecret(gone, [
-      { label: 'My Google account', holder: 'google:me' },
-      { label: 'Printed card', holder: 'paper' },
-    ], 2), { 'google:me': 'never', paper: null });
+    await saveSecuredSetup(
+      gone,
+      await splitSecret(
+        gone,
+        [
+          { label: 'My Google account', holder: 'google:me' },
+          { label: 'Printed card', holder: 'paper' }
+        ],
+        2
+      ),
+      { 'google:me': 'never', paper: null }
+    );
     mockCreatePasskey.mockResolvedValue(registrationFixture);
     mockVerifyRegistration.mockResolvedValue(passkeyFixture('cred-new'));
     mount();
@@ -473,8 +536,7 @@ describe('damaged public data over a live account is a doorway, never a gravesto
     mount();
     fireEvent.click(screen.getByText('adopt'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(secret)));
     /* The unreadable record was replaced by the door the person pressed. */
     expect(allPasskeys(ORIGINAL_SLOT).map((p) => p.credentialId)).toEqual(['cred-new']);
   });
@@ -489,14 +551,15 @@ describe('damaged public data over a live account is a doorway, never a gravesto
     expect(phase()).toBe('locked');
     fireEvent.click(screen.getByText('adopt'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(secret)));
     /* From a HEALTHY store the record is appended, never replaced — and the
      * ceremony was told about the stored credential. */
-    expect(allPasskeys(ORIGINAL_SLOT).map((p) => p.credentialId).sort())
-      .toEqual(['cred-gone-from-keychain', 'cred-new']);
-    expect(mockCreatePasskey.mock.calls[0]?.[0]?.existing)
-      .toEqual(['cred-gone-from-keychain']);
+    expect(
+      allPasskeys(ORIGINAL_SLOT)
+        .map((p) => p.credentialId)
+        .sort()
+    ).toEqual(['cred-gone-from-keychain', 'cred-new']);
+    expect(mockCreatePasskey.mock.calls[0]?.[0]?.existing).toEqual(['cred-gone-from-keychain']);
   });
 });
 
@@ -508,8 +571,7 @@ describe('the promise on the screen is kept before anything is minted', () => {
     mount();
     /* The background probe flips the screen to the true state on its own… */
     await waitFor(() => expect(phase()).toBe('broken'));
-    expect(screen.getByTestId('broken-message').textContent)
-      .toContain('the key that opens it is gone');
+    expect(screen.getByTestId('broken-message').textContent).toContain('the key that opens it is gone');
     /* …and no credential was bought with a biometric along the way. */
     expect(mockCreatePasskey).not.toHaveBeenCalled();
     expect(localStorage.getItem('midnight-identity:passkeys')).toBeNull();
@@ -539,25 +601,22 @@ describe('the promise on the screen is kept before anything is minted', () => {
 describe('THE ORDER — nothing is forgotten until the new secret has landed', () => {
   const PLACEMENTS = [
     { label: 'My Google account', holder: 'google:me' },
-    { label: 'Printed card', holder: 'paper' },
+    { label: 'Printed card', holder: 'paper' }
   ];
 
   async function seedStaleWithMap(): Promise<void> {
     savePasskey(passkeyFixture('cred-stale'), ORIGINAL_SLOT);
     const gone = newSecret();
-    await saveSecuredSetup(gone, await splitSecret(gone, PLACEMENTS, 2),
-      { 'google:me': 'never', paper: null });
+    await saveSecuredSetup(gone, await splitSecret(gone, PLACEMENTS, 2), { 'google:me': 'never', paper: null });
   }
 
   it('a cancelled ceremony costs nothing — the map is intact', async () => {
     await seedStaleWithMap();
-    mockCreatePasskey.mockRejectedValue(
-      new Error('the passkey was not created — it was cancelled, or it timed out.'));
+    mockCreatePasskey.mockRejectedValue(new Error('the passkey was not created — it was cancelled, or it timed out.'));
     mount();
     expect(phase()).toBe('passkey-no-account');
     fireEvent.click(screen.getByText('fresh'));
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).toContain('cancelled'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toContain('cancelled'));
     /* Still on the screen, map still on record, stale records untouched. */
     expect(phase()).toBe('passkey-no-account');
     expect(localStorage.getItem('midnight-identity:secured')).not.toBeNull();
@@ -608,11 +667,10 @@ describe('the replacement credentials are tellable from the original', () => {
     mockCreatePasskey.mockResolvedValue(registrationFixture);
     mount({
       issue: () => Promise.resolve('Y2hhbGxlbmdl'),
-      take: () => Promise.resolve(false),
+      take: () => Promise.resolve(false)
     });
     fireEvent.click(screen.getByText('adopt'));
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).toContain('challenge expired'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).toContain('challenge expired'));
     expect(mockVerifyRegistration).not.toHaveBeenCalled();
     expect(localStorage.getItem('midnight-identity:passkeys')).toBeNull();
   });
@@ -671,8 +729,7 @@ describe('a wallet that landed in another window stops a stale press', () => {
     /* THE ASSERTION THE GUARD IS FOR: no ceremony ran. Without the re-read
      * this is where it fails — the prompt opens and a credential is minted
      * before anything looks at what is on disk. */
-    await waitFor(() =>
-      expect(screen.getByTestId('error').textContent).not.toBe(''));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).not.toBe(''));
     expect(mockCreatePasskey).not.toHaveBeenCalled();
 
     /* And it is the RIGHT refusal: it names the wallet that is already here,
@@ -684,54 +741,55 @@ describe('a wallet that landed in another window stops a stale press', () => {
 
     /* Nothing was replaced: the keyring still opens to the wallet that landed. */
     const held = await loadSecret(ORIGINAL_SLOT);
-    expect(toBase64Url(fingerprintOf(held as Uint8Array)))
-      .toBe(toBase64Url(fingerprintOf(landed)));
+    expect(toBase64Url(fingerprintOf(held as Uint8Array))).toBe(toBase64Url(fingerprintOf(landed)));
     /* And the screen is no longer the one that offered to create. */
     expect(phase()).toBe('account-no-passkey');
   });
 
-  it('START FRESH is refused the same way, and the map it would have removed stays',
-    async () => {
-      mockCreatePasskey.mockResolvedValue(registrationFixture);
-      mockVerifyRegistration.mockResolvedValue(passkeyFixture('cred-new'));
-      /* The stale window, in the other absent-keyring phase: a passkey record
-       * with nothing behind it. */
-      savePasskey(passkeyFixture('cred-stale'), ORIGINAL_SLOT);
-      const gone = newSecret();
-      await saveSecuredSetup(
+  it('START FRESH is refused the same way, and the map it would have removed stays', async () => {
+    mockCreatePasskey.mockResolvedValue(registrationFixture);
+    mockVerifyRegistration.mockResolvedValue(passkeyFixture('cred-new'));
+    /* The stale window, in the other absent-keyring phase: a passkey record
+     * with nothing behind it. */
+    savePasskey(passkeyFixture('cred-stale'), ORIGINAL_SLOT);
+    const gone = newSecret();
+    await saveSecuredSetup(
+      gone,
+      await splitSecret(
         gone,
-        await splitSecret(gone, [
+        [
           { label: 'My Google account', holder: 'google:me' },
-          { label: 'Printed card', holder: 'paper' },
-        ], 2),
-        { 'google:me': 'never', paper: null });
-      mount();
-      expect(phase()).toBe('passkey-no-account');
+          { label: 'Printed card', holder: 'paper' }
+        ],
+        2
+      ),
+      { 'google:me': 'never', paper: null }
+    );
+    mount();
+    expect(phase()).toBe('passkey-no-account');
 
-      const landed = newSecret();
-      await saveSecret(landed);
-      saveWalletName(landed, 'Company');
+    const landed = newSecret();
+    await saveSecret(landed);
+    saveWalletName(landed, 'Company');
 
-      fireEvent.click(screen.getByText('fresh'));
+    fireEvent.click(screen.getByText('fresh'));
 
-      await waitFor(() =>
-        expect(screen.getByTestId('error').textContent).not.toBe(''));
-      expect(mockCreatePasskey).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId('error').textContent).not.toBe(''));
+    expect(mockCreatePasskey).not.toHaveBeenCalled();
 
-      const said = screen.getByTestId('error').textContent ?? '';
-      expect(said).toMatch(/arrived in this browser/);
-      expect(said).toMatch(/since this screen was drawn/);
-      expect(said).toContain('Company');
+    const said = screen.getByTestId('error').textContent ?? '';
+    expect(said).toMatch(/arrived in this browser/);
+    expect(said).toMatch(/since this screen was drawn/);
+    expect(said).toContain('Company');
 
-      /* `startFresh` replaces the passkey record and removes the piece map.
-       * A refusal must reach neither — that order is only safe while the
-       * ceremony that triggers it actually happened. */
-      expect(allPasskeys(ORIGINAL_SLOT).map((p) => p.credentialId)).toEqual(['cred-stale']);
-      expect(localStorage.getItem('midnight-identity:secured')).not.toBeNull();
-      const held = await loadSecret(ORIGINAL_SLOT);
-      expect(toBase64Url(fingerprintOf(held as Uint8Array)))
-        .toBe(toBase64Url(fingerprintOf(landed)));
-    });
+    /* `startFresh` replaces the passkey record and removes the piece map.
+     * A refusal must reach neither — that order is only safe while the
+     * ceremony that triggers it actually happened. */
+    expect(allPasskeys(ORIGINAL_SLOT).map((p) => p.credentialId)).toEqual(['cred-stale']);
+    expect(localStorage.getItem('midnight-identity:secured')).not.toBeNull();
+    const held = await loadSecret(ORIGINAL_SLOT);
+    expect(toBase64Url(fingerprintOf(held as Uint8Array))).toBe(toBase64Url(fingerprintOf(landed)));
+  });
 });
 
 /*
@@ -787,8 +845,7 @@ describe('a browser that holds several wallets', () => {
     }
     expect(new Set(held.map((h) => toBase64Url(h as Uint8Array))).size).toBe(4);
     /* And each carries its own name, in the order they were taken on. */
-    expect(wallets())
-      .toBe('Founder | Signer two | Signer three | Employee*');
+    expect(wallets()).toBe('Founder | Signer two | Signer three | Employee*');
   });
 
   it('TURNING TO ANOTHER WALLET LOCKS: the open secret leaves memory', async () => {
@@ -800,8 +857,7 @@ describe('a browser that holds several wallets', () => {
 
     /* Employee is unlocked and its secret is in the provider. */
     expect(phase()).toBe('unlocked');
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(second)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(second)));
 
     fireEvent.click(screen.getByText('switch-0'));
 
@@ -826,94 +882,88 @@ describe('a browser that holds several wallets', () => {
      * FOUNDER's credential out of the browser's chooser anyway. */
     expect(wallets()).toBe('Founder | Employee*');
     mockUsePasskey.mockResolvedValue(assertionFixture('cred-founder'));
-    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) =>
-      Promise.resolve({ passkey }) as never);
+    mockVerifyAssertion.mockImplementation((_a: unknown, passkey: unknown) => Promise.resolve({ passkey }) as never);
     fireEvent.click(screen.getByText('unlock'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
 
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(founder)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(founder)));
     expect(wallets()).toBe('Founder* | Employee');
     void employee;
   });
 
-  it('A PASSKEY THAT OPENS NO WALLET IS REFUSED, and the refusal says what is here',
-    async () => {
-      mount();
-      await createOne('Founder', 'cred-founder');
-      fireEvent.click(screen.getByText('lock'));
-      await waitFor(() => expect(phase()).toBe('locked'));
+  it('A PASSKEY THAT OPENS NO WALLET IS REFUSED, and the refusal says what is here', async () => {
+    mount();
+    await createOne('Founder', 'cred-founder');
+    fireEvent.click(screen.getByText('lock'));
+    await waitFor(() => expect(phase()).toBe('locked'));
 
-      /* The state a password manager leaves: a credential this origin still
-       * offers, with nothing behind it in this browser. */
-      mockUsePasskey.mockResolvedValue(assertionFixture('cred-from-a-cleared-browser'));
-      fireEvent.click(screen.getByText('unlock'));
-      await waitFor(() =>
-        expect(screen.getByTestId('error').textContent).not.toBe(''));
+    /* The state a password manager leaves: a credential this origin still
+     * offers, with nothing behind it in this browser. */
+    mockUsePasskey.mockResolvedValue(assertionFixture('cred-from-a-cleared-browser'));
+    fireEvent.click(screen.getByText('unlock'));
+    await waitFor(() => expect(screen.getByTestId('error').textContent).not.toBe(''));
 
-      const said = screen.getByTestId('error').textContent ?? '';
-      expect(said).toMatch(/does not open any wallet in this browser/);
-      /* A REASON A PERSON CAN ACT ON: what this browser does hold, by name,
-       * and the two ways to bring a wallet that is elsewhere onto it. */
-      expect(said).toContain('Founder');
-      expect(said).toMatch(/recovery pieces/);
-      /* Nothing was verified and nothing opened. */
-      expect(mockVerifyAssertion).not.toHaveBeenCalled();
-      expect(phase()).toBe('locked');
-    });
+    const said = screen.getByTestId('error').textContent ?? '';
+    expect(said).toMatch(/does not open any wallet in this browser/);
+    /* A REASON A PERSON CAN ACT ON: what this browser does hold, by name,
+     * and the two ways to bring a wallet that is elsewhere onto it. */
+    expect(said).toContain('Founder');
+    expect(said).toMatch(/recovery pieces/);
+    /* Nothing was verified and nothing opened. */
+    expect(mockVerifyAssertion).not.toHaveBeenCalled();
+    expect(phase()).toBe('locked');
+  });
 
-  it('A RELOAD OPENS INTO THE WALLET THAT WAS LAST OPEN, not a list to choose from',
-    async () => {
-      mount();
-      await createOne('Founder', 'cred-founder');
-      fireEvent.click(screen.getByText('lock'));
-      await waitFor(() => expect(phase()).toBe('locked'));
-      await createOne('Employee', 'cred-employee');
-      const employeeSlot = openWalletId();
-      fireEvent.click(screen.getByText('lock'));
-      await waitFor(() => expect(phase()).toBe('locked'));
+  it('A RELOAD OPENS INTO THE WALLET THAT WAS LAST OPEN, not a list to choose from', async () => {
+    mount();
+    await createOne('Founder', 'cred-founder');
+    fireEvent.click(screen.getByText('lock'));
+    await waitFor(() => expect(phase()).toBe('locked'));
+    await createOne('Employee', 'cred-employee');
+    const employeeSlot = openWalletId();
+    fireEvent.click(screen.getByText('lock'));
+    await waitFor(() => expect(phase()).toBe('locked'));
 
-      /* THE RELOAD, both halves of it. Everything this window held in memory
-       * goes — the unmount, and this module's note of which wallet is open —
-       * and `localStorage` stays. */
-      cleanup();
-      forgetOpenWallet();
-      mount();
+    /* THE RELOAD, both halves of it. Everything this window held in memory
+     * goes — the unmount, and this module's note of which wallet is open —
+     * and `localStorage` stays. */
+    cleanup();
+    forgetOpenWallet();
+    mount();
 
-      /* **NOT A CHOOSER.** The locked screen for the wallet they were using,
-       * because the answer is read off the disk: `wallets-held.ts`'s directory
-       * record carries `openId` and `openWalletId` falls back to it whenever
-       * this window has no note of its own. A reload costs an unlock, which it
-       * always did. It must never cost a person a DECISION about which of
-       * their wallets they were in the middle of using. */
-      expect(phase()).toBe('locked');
-      expect(openWalletId()).toBe(employeeSlot);
-      expect(wallets()).toBe('Founder | Employee*');
-    });
+    /* **NOT A CHOOSER.** The locked screen for the wallet they were using,
+     * because the answer is read off the disk: `wallets-held.ts`'s directory
+     * record carries `openId` and `openWalletId` falls back to it whenever
+     * this window has no note of its own. A reload costs an unlock, which it
+     * always did. It must never cost a person a DECISION about which of
+     * their wallets they were in the middle of using. */
+    expect(phase()).toBe('locked');
+    expect(openWalletId()).toBe(employeeSlot);
+    expect(wallets()).toBe('Founder | Employee*');
+  });
 
-  it('REMOVING one takes it off this browser and leaves the other exactly as it was',
-    async () => {
-      mount();
-      const founder = await createOne('Founder', 'cred-founder');
-      const founderSlot = openWalletId();
-      fireEvent.click(screen.getByText('lock'));
-      await waitFor(() => expect(phase()).toBe('locked'));
-      await createOne('Employee', 'cred-employee');
-      const employeeSlot = openWalletId();
+  it('REMOVING one takes it off this browser and leaves the other exactly as it was', async () => {
+    mount();
+    const founder = await createOne('Founder', 'cred-founder');
+    const founderSlot = openWalletId();
+    fireEvent.click(screen.getByText('lock'));
+    await waitFor(() => expect(phase()).toBe('locked'));
+    await createOne('Employee', 'cred-employee');
+    const employeeSlot = openWalletId();
 
-      /* The control removes the wallet THIS WINDOW HAS OPEN — Employee. */
-      fireEvent.click(screen.getByText('forget'));
-      await waitFor(() => expect(heldWallets()).toHaveLength(1));
+    /* The control removes the wallet THIS WINDOW HAS OPEN — Employee. */
+    fireEvent.click(screen.getByText('forget'));
+    await waitFor(() => expect(heldWallets()).toHaveLength(1));
 
-      expect(await loadSecret(employeeSlot)).toBeNull();
-      expect(wallets()).toBe('Founder*');
-      /* And the wallet that stayed is untouched: same secret, same name, and
-       * its passkey still names it. */
-      expect([...(await loadSecret(founderSlot))!]).toEqual([...founder]);
-      expect(allPasskeys(founderSlot).map((k) => k.credentialId)).toEqual(['cred-founder']);
-    });
+    expect(await loadSecret(employeeSlot)).toBeNull();
+    expect(wallets()).toBe('Founder*');
+    /* And the wallet that stayed is untouched: same secret, same name, and
+     * its passkey still names it. */
+    expect([...(await loadSecret(founderSlot))!]).toEqual([...founder]);
+    expect(allPasskeys(founderSlot).map((k) => k.credentialId)).toEqual(['cred-founder']);
+  });
 
-  it('REMOVING one clears the details it saved about its owner, and not the other wallet\'s', async () => {
+  it("REMOVING one clears the details it saved about its owner, and not the other wallet's", async () => {
     mount();
     const founder = await createOne('Founder', 'cred-founder');
     fireEvent.click(screen.getByText('lock'));

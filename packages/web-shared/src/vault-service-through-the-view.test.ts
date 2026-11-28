@@ -11,32 +11,66 @@ import { vaultServiceThrough } from './vault-service-through-the-view.js';
 import { ourServiceTookNothing } from './hand-over.js';
 
 const VAULT = 'ab'.repeat(32);
-const HOLDERS = { seats: ['aa'], approvals: 1, adoptedVaults: [VAULT], threshold: 1, committee: [], vaultThresholds: [], policyBar: null };
+const HOLDERS = {
+  seats: ['aa'],
+  approvals: 1,
+  adoptedVaults: [VAULT],
+  threshold: 1,
+  committee: [],
+  vaultThresholds: [],
+  policyBar: null
+};
 
 const aCompany = () => {
   const asked: string[] = [];
-  const state = { directory: 0, refuse: false, down: null as null | { readonly status?: number; readonly code?: string } };
+  const state = {
+    directory: 0,
+    refuse: false,
+    down: null as null | { readonly status?: number; readonly code?: string }
+  };
   const call: ServiceCall = async (path, init) => {
     const method = init?.method ?? 'GET';
     asked.push(`${method} ${path}`);
     if (path.endsWith('/directory')) return { filings: state.directory === 0 ? [] : [{ version: state.directory }] };
-    if (path.endsWith('/manifest/newest')) return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => 0) };
+    if (path.endsWith('/manifest/newest'))
+      return { versions: (JSON.parse(String(init?.body)) as { records: unknown[] }).records.map(() => 0) };
     if (state.refuse && method === 'POST') throw new Error('the fee payer could not pay. Nothing was sent.');
-    if (state.down !== null && method === 'POST') throw Object.assign(new Error('our service took nothing. Nothing was sent.'), { nothingWasSent: true, ...state.down });
+    if (state.down !== null && method === 'POST')
+      throw Object.assign(new Error('our service took nothing. Nothing was sent.'), {
+        nothingWasSent: true,
+        ...state.down
+      });
     if (method === 'POST') return { txRef: `ref ${path.split('/').at(-1)}`, transactionHash: null, vault: VAULT };
     return { vault: VAULT, at: path.split('/').at(-1) };
   };
-  const held = viewHeldOver((from) => companyViewFor(serviceSource(call, 'acc_1'), {
-    holders: async () => HOLDERS, onChain: async () => { throw new Error('no anchors here'); },
-    builder: { anchorHeads: async () => { throw new Error('no heads here'); } }, kept: () => treeKeptInMemory(),
-  }, async () => { throw new Error('no held read here'); }, from));
+  const held = viewHeldOver((from) =>
+    companyViewFor(
+      serviceSource(call, 'acc_1'),
+      {
+        holders: async () => HOLDERS,
+        onChain: async () => {
+          throw new Error('no anchors here');
+        },
+        builder: {
+          anchorHeads: async () => {
+            throw new Error('no heads here');
+          }
+        },
+        kept: () => treeKeptInMemory()
+      },
+      async () => {
+        throw new Error('no held read here');
+      },
+      from
+    )
+  );
   return { asked, state, service: vaultServiceThrough(held) };
 };
 
 const posts = (asked: readonly string[]) => asked.filter((a) => a.startsWith('POST /api/accounts/acc_1/vaults'));
 
-describe('A VAULT\'S ROUTES GO THROUGH THE COMPANY\'S VIEW', () => {
-  it('sends each act to its vault\'s own route, the company read again once just before each', async () => {
+describe("A VAULT'S ROUTES GO THROUGH THE COMPANY'S VIEW", () => {
+  it("sends each act to its vault's own route, the company read again once just before each", async () => {
     const c = aCompany();
     await c.service.deploy('t0');
     await c.service.deposit(VAULT as never, 't1');
@@ -46,8 +80,11 @@ describe('A VAULT\'S ROUTES GO THROUGH THE COMPANY\'S VIEW', () => {
     await c.service.payoutPublicly(VAULT as never, 't5');
     await c.service.handover(VAULT as never, 't6');
     /* RED WHEN: a vault's send goes to another route than its own, or around the view. */
-    expect(posts(c.asked)).toEqual(['', '/deposit', '/public-deposit', '/payout', '/merge', '/public-payout', '/handover']
-      .map((r, n) => `POST /api/accounts/acc_1/vaults${n === 0 ? '' : `/${VAULT}${r}`}`));
+    expect(posts(c.asked)).toEqual(
+      ['', '/deposit', '/public-deposit', '/payout', '/merge', '/public-payout', '/handover'].map(
+        (r, n) => `POST /api/accounts/acc_1/vaults${n === 0 ? '' : `/${VAULT}${r}`}`
+      )
+    );
     /*
      * RED WHEN: a send is checked twice, or not at all, or leaves the view as it was: one read of the directory to begin,
      * one before each send, and one more for each send after the first, the send having ended the view it went through.
@@ -64,14 +101,14 @@ describe('A VAULT\'S ROUTES GO THROUGH THE COMPANY\'S VIEW', () => {
     expect(posts(c.asked)).toEqual([]);
   });
 
-  it('keeps the service\'s mark that nothing was sent on a refused send', async () => {
+  it("keeps the service's mark that nothing was sent on a refused send", async () => {
     const c = aCompany();
     c.state.refuse = true;
     /* RED WHEN: a refusal loses whether anything was sent, so the act cannot say it is safe to try again. */
     await expect(c.service.payout(VAULT as never, 't3')).rejects.toMatchObject({ nothingWasSent: true });
   });
 
-  it('keeps the service\'s status and code on a send it took nothing of, so the hand-over goes to the chain', async () => {
+  it("keeps the service's status and code on a send it took nothing of, so the hand-over goes to the chain", async () => {
     for (const down of [{ status: 503 }, { status: 502 }, { code: 'fee-not-paid' }]) {
       const c = aCompany();
       c.state.down = down;
@@ -81,7 +118,7 @@ describe('A VAULT\'S ROUTES GO THROUGH THE COMPANY\'S VIEW', () => {
     }
   });
 
-  it('reads a vault\'s chain and payout state through the view, once each until a send', async () => {
+  it("reads a vault's chain and payout state through the view, once each until a send", async () => {
     const c = aCompany();
     await c.service.chain(VAULT as never);
     await c.service.chain(VAULT as never);

@@ -16,17 +16,38 @@
  * other difference still stops the step.
  */
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
-import { companyViewFor, THE_STEP_SENT, viewHeldOver, type CompanyView, type HeldReader, type ViewHeld } from '../../../../packages/web-shared/src/company-view.js';
-import { adopts, CompanyChangedMeanwhile, holdersStandingOf, VaultNotAdopted, type HoldersMove } from '../../../../packages/web-shared/src/company-view-probe.js';
+import {
+  companyViewFor,
+  THE_STEP_SENT,
+  viewHeldOver,
+  type CompanyView,
+  type HeldReader,
+  type ViewHeld
+} from '../../../../packages/web-shared/src/company-view.js';
+import {
+  adopts,
+  CompanyChangedMeanwhile,
+  holdersStandingOf,
+  VaultNotAdopted,
+  type HoldersMove
+} from '../../../../packages/web-shared/src/company-view-probe.js';
 import type { ViewDoors } from '../../../../packages/web-shared/src/company-view-doors.js';
-import { serviceCallOf, serviceSource, type AnsweredCall, type RecordSource, type RecordWrite, type ServiceCall } from '../../../../packages/web-shared/src/records-source.js';
+import {
+  serviceCallOf,
+  serviceSource,
+  type AnsweredCall,
+  type RecordSource,
+  type RecordWrite,
+  type ServiceCall
+} from '../../../../packages/web-shared/src/records-source.js';
 import type { Words } from './definition.js';
 
 /** The company as this wallet reads it for a step. */
 export type WalletView = CompanyView<AccountHoldersRead>;
 
 /** The doors every view this wallet opens is given: the device's own stores, how it believes the directory and its own reads of the company on the chain included. */
-export type WalletViewDoors = ViewDoors<AccountHoldersRead> & Required<Pick<ViewDoors<AccountHoldersRead>, 'kept' | 'directory' | 'chain'>>;
+export type WalletViewDoors = ViewDoors<AccountHoldersRead> &
+  Required<Pick<ViewDoors<AccountHoldersRead>, 'kept' | 'directory' | 'chain'>>;
 
 /** How a step gets its view of `company`: its doors, and how the view reads which records the company's anchor holds. */
 export type ViewFor = (company: string, doors: WalletViewDoors, held: HeldReader) => ViewHeld<AccountHoldersRead>;
@@ -37,7 +58,9 @@ export { VaultNotAdopted };
 export const COMPANY_CHANGED: Words = Object.freeze({ key: 'act.reach.why.company-changed' });
 
 /** The same, once the action had already handed something over: what was sent stands, and nothing more was sent. */
-export const COMPANY_CHANGED_AFTER_SENDING: Words = Object.freeze({ key: 'act.reach.why.company-changed-after-sending' });
+export const COMPANY_CHANGED_AFTER_SENDING: Words = Object.freeze({
+  key: 'act.reach.why.company-changed-after-sending'
+});
 
 /** What the person is told when a vault money was to go into is no longer the company's. */
 export const VAULT_NOT_ADOPTED: Words = Object.freeze({ key: 'act.reach.why.vault-not-adopted' });
@@ -52,8 +75,15 @@ export interface StraightDoor {
 
 /** Whether a call's answer says it sent nothing, so the step's views need not be read again after it. */
 export const answeredNothingSent = (out: unknown): boolean => {
-  const answer = out as { readonly status?: unknown; readonly body?: { readonly nothingWasSent?: unknown } | null } | null;
-  return typeof answer?.status === 'number' && (answer.status < 200 || answer.status >= 300) && answer.body?.nothingWasSent === true;
+  const answer = out as {
+    readonly status?: unknown;
+    readonly body?: { readonly nothingWasSent?: unknown } | null;
+  } | null;
+  return (
+    typeof answer?.status === 'number' &&
+    (answer.status < 200 || answer.status >= 300) &&
+    answer.body?.nothingWasSent === true
+  );
 };
 
 /**
@@ -62,9 +92,18 @@ export const answeredNothingSent = (out: unknown): boolean => {
  * (`nothingWasSent`) only when nothing of it was handed over before.
  */
 export const gateRefusal = (e: unknown, handedOver: number) => {
-  const words = e instanceof VaultNotAdopted ? VAULT_NOT_ADOPTED
-    : e instanceof CompanyChangedMeanwhile ? (handedOver === 0 ? COMPANY_CHANGED : COMPANY_CHANGED_AFTER_SENDING) : null;
-  return { words, marks: { thisSendNotSent: true as const, ...(handedOver === 0 ? { nothingWasSent: true as const } : {}) } };
+  const words =
+    e instanceof VaultNotAdopted
+      ? VAULT_NOT_ADOPTED
+      : e instanceof CompanyChangedMeanwhile
+        ? handedOver === 0
+          ? COMPANY_CHANGED
+          : COMPANY_CHANGED_AFTER_SENDING
+        : null;
+  return {
+    words,
+    marks: { thisSendNotSent: true as const, ...(handedOver === 0 ? { nothingWasSent: true as const } : {}) }
+  };
 };
 
 /**
@@ -79,15 +118,28 @@ export const serviceCallOver = (call: AnsweredCall): ServiceCall =>
  * A send a step says moves who holds the company, named exactly: a proposal's step or a vault's start written through
  * the view, a call by its path, or a call sent straight to the chain.
  */
-export type MovingSend = { readonly proposal: string } | { readonly start: string } | { readonly path: string } | { readonly circuit: string; readonly contract: string };
+export type MovingSend =
+  | { readonly proposal: string }
+  | { readonly start: string }
+  | { readonly path: string }
+  | { readonly circuit: string; readonly contract: string };
 
 const keyOf = (s: MovingSend): string =>
-  ('proposal' in s ? `proposal ${s.proposal}` : 'start' in s ? `start ${s.start.toLowerCase()}` : 'path' in s ? `path ${s.path}`
-    : `chain ${s.circuit} ${s.contract.toLowerCase()}`);
+  'proposal' in s
+    ? `proposal ${s.proposal}`
+    : 'start' in s
+      ? `start ${s.start.toLowerCase()}`
+      : 'path' in s
+        ? `path ${s.path}`
+        : `chain ${s.circuit} ${s.contract.toLowerCase()}`;
 
 /* The declared send a write through the view is, when it is one: a proposal's step, or the account's call of a vault's start. */
 const movingWrite = (w: RecordWrite): MovingSend | undefined =>
-  (w.to === 'proposal' ? { proposal: w.id } : w.to === 'vault-start' && w.step === 'account' ? { start: w.vault } : undefined);
+  w.to === 'proposal'
+    ? { proposal: w.id }
+    : w.to === 'vault-start' && w.step === 'account'
+      ? { start: w.vault }
+      : undefined;
 
 /** One view the step holds, with the holders its last read found and the standing its next opening starts from. */
 interface Held {
@@ -97,7 +149,10 @@ interface Held {
 }
 
 /** One move a step declared, under every send that may carry it out: the first of them to go takes it, and the rest drop it. */
-interface Moving { readonly move: HoldersMove; readonly keys: string[] }
+interface Moving {
+  readonly move: HoldersMove;
+  readonly keys: string[];
+}
 
 /**
  * The views one step opened, and the gate its sends pass. `inTurn` is the step's call to the service as its views make
@@ -138,7 +193,7 @@ export class StepViews {
           throw e;
         }
       },
-      movesOf: (w) => this.take(movingWrite(w)) ?? undefined,
+      movesOf: (w) => this.take(movingWrite(w)) ?? undefined
     };
   }
 
@@ -178,9 +233,12 @@ export class StepViews {
 
   /** What the moves declared for `sends` do together, in order, without taking them: null when none was declared. */
   private movesFor(sends: readonly MovingSend[]): HoldersMove | null {
-    const entries = [...new Set(sends.map((s) => this.moving.get(keyOf(s))).filter((e): e is Moving => e !== undefined))];
+    const entries = [
+      ...new Set(sends.map((s) => this.moving.get(keyOf(s))).filter((e): e is Moving => e !== undefined))
+    ];
     if (entries.length === 0) return null;
-    return (<H extends Parameters<HoldersMove>[0]>(before: H): H => entries.reduce((h, e) => e.move(h), before)) as HoldersMove;
+    return (<H extends Parameters<HoldersMove>[0]>(before: H): H =>
+      entries.reduce((h, e) => e.move(h), before)) as HoldersMove;
   }
 
   /**
@@ -202,10 +260,13 @@ export class StepViews {
       at.checked = holders;
       checked += 1;
       const after = moved === null ? holders : moved(holders);
-      for (const { vault } of into) if (!adopts(holders, vault) || !adopts(after, vault)) throw new VaultNotAdopted(vault);
+      for (const { vault } of into)
+        if (!adopts(holders, vault) || !adopts(after, vault)) throw new VaultNotAdopted(vault);
     }
     if (checked === 0 && (into.length > 0 || this.held.length > 0)) {
-      throw into.length > 0 ? new VaultNotAdopted(into[0]!.vault) : new CompanyChangedMeanwhile(['no view of the company was left to check this send against']);
+      throw into.length > 0
+        ? new VaultNotAdopted(into[0]!.vault)
+        : new CompanyChangedMeanwhile(['no view of the company was left to check this send against']);
     }
   }
 
@@ -215,8 +276,11 @@ export class StepViews {
    */
   sent(sends: readonly MovingSend[] = []): void {
     const taken = sends.map((s) => this.take(s)).filter((m): m is HoldersMove => m !== null);
-    const declared = taken.length === 0 ? null
-      : (<H extends Parameters<HoldersMove>[0]>(before: H): H => taken.reduce((h, m) => m(h), before)) as HoldersMove;
+    const declared =
+      taken.length === 0
+        ? null
+        : ((<H extends Parameters<HoldersMove>[0]>(before: H): H =>
+            taken.reduce((h, m) => m(h), before)) as HoldersMove);
     for (const { view, at } of this.held) {
       const now = view.current();
       if (now.ended !== null) continue;

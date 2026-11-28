@@ -186,7 +186,21 @@ export const PROGRESS_SCHEMA = 'midnight-identity/wallet-progress/v1';
  * shape for the three kinds that were there before it. `act` is appended for
  * the same reason.
  */
-export const ASK_KINDS = ['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances', 'act'] as const;
+export const ASK_KINDS = [
+  'disclosure',
+  'sign-in',
+  'unlock',
+  'join',
+  'keyring',
+  'balance',
+  'committee',
+  'records-key',
+  'holders',
+  'creation',
+  'join-code',
+  'addresses-and-balances',
+  'act'
+] as const;
 export type AskKind = (typeof ASK_KINDS)[number];
 
 /** One thing an application is asking for. */
@@ -392,7 +406,13 @@ export interface KeyringRequest extends Asking {
 export interface ServedHandedIn {
   readonly accountId: string;
   readonly inboxPublicKey: string;
-  readonly wrappedKeys: ReadonlyArray<{ readonly signerId: string; readonly iv: string; readonly tag: string; readonly body: string; readonly ephemeral: string }>;
+  readonly wrappedKeys: ReadonlyArray<{
+    readonly signerId: string;
+    readonly iv: string;
+    readonly tag: string;
+    readonly body: string;
+    readonly ephemeral: string;
+  }>;
 }
 
 /** A change to one creation kept in the saved keys: set it aside (kept, reversible), or drop one nothing was signed for. */
@@ -486,7 +506,7 @@ export function readFoundingAsked(value: unknown): FoundingAsked | null {
   if (!(SIGNER_ROLES as readonly unknown[]).includes(role)) return null;
   return Object.freeze({
     name: v['name'] as string,
-    signer: Object.freeze({ name: w['name'] as string, role: role as FoundingAsked['signer']['role'] }),
+    signer: Object.freeze({ name: w['name'] as string, role: role as FoundingAsked['signer']['role'] })
   });
 }
 
@@ -596,10 +616,17 @@ export interface HandOverRequest extends CommitteeAsking {
  */
 export interface SuperAdminChangeOnTheWire {
   readonly kind: 'super-admins';
-  readonly from: { readonly committee: readonly { readonly tag: string; readonly value: string }[]; readonly threshold: number };
+  readonly from: {
+    readonly committee: readonly { readonly tag: string; readonly value: string }[];
+    readonly threshold: number;
+  };
   readonly committee: readonly { readonly tag: string; readonly value: string }[];
   readonly threshold: number;
-  readonly contracts: ReadonlyArray<{ readonly contract: 'account' | 'vault'; readonly address: string; readonly counter: string }>;
+  readonly contracts: ReadonlyArray<{
+    readonly contract: 'account' | 'vault';
+    readonly address: string;
+    readonly counter: string;
+  }>;
 }
 
 /** A joining key's own signature over a change's bytes: the key, and the signature's sixty-four bytes in hex. */
@@ -941,8 +968,19 @@ export interface ActRequest extends Asking {
 
 /** What an application may open this wallet with. */
 export type Ask =
-  | DisclosureRequest | SignInRequest | UnlockRequest | JoinRequest | KeyringRequest | BalanceRequest | CommitteeAsk
-  | RecordsKeyRequest | HoldersRequest | CreationRequest | JoinCodeRequest | AddressesAndBalancesRequest | ActRequest;
+  | DisclosureRequest
+  | SignInRequest
+  | UnlockRequest
+  | JoinRequest
+  | KeyringRequest
+  | BalanceRequest
+  | CommitteeAsk
+  | RecordsKeyRequest
+  | HoldersRequest
+  | CreationRequest
+  | JoinCodeRequest
+  | AddressesAndBalancesRequest
+  | ActRequest;
 
 /**
  * THE KINDS THAT CARRY A LIST OF THINGS ASKED FOR.
@@ -1123,7 +1161,9 @@ const isText = (value: unknown, max = MAX_TEXT): value is string =>
  * been shown to them* and mean it.
  */
 function common(
-  raw: unknown, observedOrigin: string, now: number,
+  raw: unknown,
+  observedOrigin: string,
+  now: number
 ): { readonly body: Record<string, unknown>; readonly asking: Asking } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new RequestError('not-a-request', 'that is not a request this wallet understands.');
@@ -1132,8 +1172,8 @@ function common(
   if (body['schema'] !== REQUEST_SCHEMA) {
     throw new RequestError(
       'wrong-schema',
-      `this wallet answers '${REQUEST_SCHEMA}' and that says `
-      + `'${String(body['schema'] ?? 'nothing')}'.`);
+      `this wallet answers '${REQUEST_SCHEMA}' and that says ` + `'${String(body['schema'] ?? 'nothing')}'.`
+    );
   }
   if (!usableOrigin(observedOrigin)) {
     /*
@@ -1167,15 +1207,17 @@ function common(
   if ('origin' in who) {
     throw new RequestError(
       'claims-its-own-origin',
-      'this request names its own origin. A wallet takes that from the browser and never '
-      + 'from the message, because anything that can name its own origin can name '
-      + 'somebody else\'s. Nothing has been shown to them.');
+      'this request names its own origin. A wallet takes that from the browser and never ' +
+        'from the message, because anything that can name its own origin can name ' +
+        "somebody else's. Nothing has been shown to them."
+    );
   }
   if ('origin' in body) {
     throw new RequestError(
       'claims-its-own-origin',
-      'this request names its own origin. A wallet takes that from the browser and never '
-      + 'from the message. Nothing has been shown to them.');
+      'this request names its own origin. A wallet takes that from the browser and never ' +
+        'from the message. Nothing has been shown to them.'
+    );
   }
 
   if (!isText(who['name'], 120)) {
@@ -1185,8 +1227,7 @@ function common(
     throw new RequestError('malformed-field', 'the request carries no stable identifier.');
   }
   if (!isText(body['purpose'])) {
-    throw new RequestError(
-      'malformed-field', 'the request does not say what it wants the details for.');
+    throw new RequestError('malformed-field', 'the request does not say what it wants the details for.');
   }
   if (!isText(body['nonce'], 200)) {
     throw new RequestError('malformed-field', 'the request carries no nonce.');
@@ -1196,8 +1237,7 @@ function common(
     throw new RequestError('malformed-field', 'the request carries no deadline.');
   }
   if (now >= expiresAt) {
-    throw new RequestError(
-      'expired', 'this request has expired. Ask the application to send a new one.');
+    throw new RequestError('expired', 'this request has expired. Ask the application to send a new one.');
   }
 
   return {
@@ -1207,13 +1247,13 @@ function common(
       requester: Object.freeze({
         origin: observedOrigin,
         name: who['name'],
-        rdns: who['rdns'],
+        rdns: who['rdns']
       }),
       purpose: body['purpose'],
       nonce: body['nonce'],
       expiresAt,
-      ...(body['progress'] === PROGRESS_SCHEMA ? { hearsProgress: true as const } : {}),
-    },
+      ...(body['progress'] === PROGRESS_SCHEMA ? { hearsProgress: true as const } : {})
+    }
   };
 }
 
@@ -1248,10 +1288,11 @@ function kindOf(body: Record<string, unknown>): AskKind {
   if (known !== undefined) return known as AskKind;
   throw new RequestError(
     'unknown-kind',
-    `this wallet answers ${namedKinds()}, and that asks `
-    + `for '${String(kind)}'. It is refused rather than treated as one of them, because a `
-    + 'wallet guessing which kind of thing it is approving is a wallet approving the wrong '
-    + 'thing behind the right screen. Nothing has been shown to them.');
+    `this wallet answers ${namedKinds()}, and that asks ` +
+      `for '${String(kind)}'. It is refused rather than treated as one of them, because a ` +
+      'wallet guessing which kind of thing it is approving is a wallet approving the wrong ' +
+      'thing behind the right screen. Nothing has been shown to them.'
+  );
 }
 
 /** The `wants` of a disclosure. Never empty — that is `nothing-asked-for`. */
@@ -1261,8 +1302,7 @@ function wantsOf(body: Record<string, unknown>): readonly Want[] {
     throw new RequestError('nothing-asked-for', 'the request asks for nothing.');
   }
   if (wants.length > MAX_WANTS) {
-    throw new RequestError(
-      'malformed-field', `a request asks for at most ${MAX_WANTS} things.`);
+    throw new RequestError('malformed-field', `a request asks for at most ${MAX_WANTS} things.`);
   }
   const parsed: Want[] = [];
   const seen = new Set<string>();
@@ -1277,8 +1317,9 @@ function wantsOf(body: Record<string, unknown>): readonly Want[] {
     if (typeof w['required'] !== 'boolean') {
       throw new RequestError(
         'malformed-field',
-        `'${String(w['attribute'])}' does not say whether it is required. Required and `
-        + 'optional are shown differently and the difference is not the wallet\'s to guess.');
+        `'${String(w['attribute'])}' does not say whether it is required. Required and ` +
+          "optional are shown differently and the difference is not the wallet's to guess."
+      );
     }
     const attribute = w['attribute'] as AttributeName;
     /*
@@ -1295,22 +1336,25 @@ function wantsOf(body: Record<string, unknown>): readonly Want[] {
       if (key === 'attribute' || key === 'required' || key === 'reason') continue;
       throw new RequestError(
         'a-want-proposes-a-value',
-        `'${attribute}' is asked for with a '${key}' beside it. A request says what it wants `
-        + 'and never what the answer is: a receiving address is worked out from this '
-        + 'person\'s own keys and from the wallet they choose, so a value arriving with the '
-        + 'question could only be somebody else\'s idea of where their money goes. It is '
-        + 'refused rather than ignored. Nothing has been shown to them.');
+        `'${attribute}' is asked for with a '${key}' beside it. A request says what it wants ` +
+          'and never what the answer is: a receiving address is worked out from this ' +
+          "person's own keys and from the wallet they choose, so a value arriving with the " +
+          "question could only be somebody else's idea of where their money goes. It is " +
+          'refused rather than ignored. Nothing has been shown to them.'
+      );
     }
     if (seen.has(attribute)) {
       throw new RequestError('malformed-field', `'${attribute}' is asked for twice.`);
     }
     seen.add(attribute);
     const reason = w['reason'];
-    parsed.push(Object.freeze({
-      attribute,
-      required: w['required'],
-      ...(isText(reason) ? { reason } : {}),
-    }));
+    parsed.push(
+      Object.freeze({
+        attribute,
+        required: w['required'],
+        ...(isText(reason) ? { reason } : {})
+      })
+    );
   }
   return Object.freeze(parsed);
 }
@@ -1332,9 +1376,10 @@ const labelIn = (value: unknown, asks: string, nothing: string): CompanyLabel =>
   if (label === null) {
     throw new RequestError(
       'not-a-company-label',
-      `${asks} and does not name a company this wallet can make sense of. A company is named by `
-      + 'its label - co_ and sixty-four lower-case characters - and an account\'s address is not '
-      + `one. ${nothing}`);
+      `${asks} and does not name a company this wallet can make sense of. A company is named by ` +
+        "its label - co_ and sixty-four lower-case characters - and an account's address is not " +
+        `one. ${nothing}`
+    );
   }
   return label;
 };
@@ -1344,9 +1389,10 @@ const accountIn = (value: unknown, asks: string, nothing: string): AccountAddres
   if (account === null) {
     throw new RequestError(
       'not-an-account-address',
-      `${asks} and does not name the company's account by an address this wallet can make sense of. `
-      + 'An account is named by its sixty-four character address on the chain, and a company\'s label '
-      + `is not one. ${nothing}`);
+      `${asks} and does not name the company's account by an address this wallet can make sense of. ` +
+        "An account is named by its sixty-four character address on the chain, and a company's label " +
+        `is not one. ${nothing}`
+    );
   }
   return account;
 };
@@ -1355,11 +1401,12 @@ const accountIn = (value: unknown, asks: string, nothing: string): AccountAddres
 const accountMaybeIn = (value: unknown, asks: string, nothing: string): AccountAddress | null =>
   value === undefined || value === null ? null : accountIn(value, asks, nothing);
 
-
-const notACommitteeChange = (why: string): RequestError => new RequestError(
-  'not-a-committee-change',
-  `this asks your wallet to sign a change to who holds a company's rules, and ${why}. Nothing has been shown to `
-  + 'them and nothing has been signed.');
+const notACommitteeChange = (why: string): RequestError =>
+  new RequestError(
+    'not-a-committee-change',
+    `this asks your wallet to sign a change to who holds a company's rules, and ${why}. Nothing has been shown to ` +
+      'them and nothing has been signed.'
+  );
 
 /**
  * A committee as this wire carries it, folded to lower case: keys a wallet
@@ -1377,10 +1424,14 @@ function committeeOnTheWire(value: unknown, which: string, heldNow = false): Com
     throw notACommitteeChange(`${which} lists no keys, or more than ${MAX_COMMITTEE}`);
   }
   /* The one rule judges every key, so this wallet signs exactly what every other door would install. */
-  const refused = committeeInstallRefusals(keys, threshold)
-    .filter((r) => !(heldNow && r.code === 'repeated-committee-member'))[0];
-  if (refused !== undefined) throw notACommitteeChange(`${which} is not a committee a contract may hold: ${refused.why.replace(/\.$/u, '')}`);
-  const committee = keys.map((k: { value: string }) => Object.freeze({ tag: 'schnorr' as const, value: k.value.toLowerCase() }));
+  const refused = committeeInstallRefusals(keys, threshold).filter(
+    (r) => !(heldNow && r.code === 'repeated-committee-member')
+  )[0];
+  if (refused !== undefined)
+    throw notACommitteeChange(`${which} is not a committee a contract may hold: ${refused.why.replace(/\.$/u, '')}`);
+  const committee = keys.map((k: { value: string }) =>
+    Object.freeze({ tag: 'schnorr' as const, value: k.value.toLowerCase() })
+  );
   return Object.freeze({ committee: Object.freeze(committee), threshold: threshold as number });
 }
 
@@ -1396,24 +1447,28 @@ const PRESSES: Readonly<Record<CommitteeAsk['press'], readonly (typeof PRESS_FIE
   'hand-over': ['to'],
   'super-admins': ['change', 'salt', 'changeBytes', 'joined'],
   join: ['change', 'salt', 'changeBytes', 'joining'],
-  request: ['record', 'user'],
+  request: ['record', 'user']
 };
 
 function pressOf(body: Record<string, unknown>): CommitteeAsk['press'] {
   const present = PRESS_FIELDS.filter((f) => body[f] !== undefined);
-  const found = (Object.keys(PRESSES) as CommitteeAsk['press'][])
-    .find((p) => PRESSES[p].length === present.length && PRESSES[p].every((f) => present.includes(f)));
+  const found = (Object.keys(PRESSES) as CommitteeAsk['press'][]).find(
+    (p) => PRESSES[p].length === present.length && PRESSES[p].every((f) => present.includes(f))
+  );
   if (found === undefined) {
-    throw notACommitteeChange('it is none of the four things this wallet signs for a committee - a hand-over, a change of the '
-      + 'super admins, a joining key\'s own signature, or a super admin\'s request to the company\'s service - but a mixture of '
-      + 'them, or one with a part missing');
+    throw notACommitteeChange(
+      'it is none of the four things this wallet signs for a committee - a hand-over, a change of the ' +
+        "super admins, a joining key's own signature, or a super admin's request to the company's service - but a mixture of " +
+        'them, or one with a part missing'
+    );
   }
   return found;
 }
 
 /** A list read whole: refused when it is not a list, is longer than `most`, or has a gap in it. */
 function denseList(value: unknown, most: number, which: string): readonly unknown[] {
-  if (!Array.isArray(value) || value.length > most) throw notACommitteeChange(`${which} are not a list of at most ${most}`);
+  if (!Array.isArray(value) || value.length > most)
+    throw notACommitteeChange(`${which} are not a list of at most ${most}`);
   for (let i = 0; i < value.length; i += 1) {
     if (!(i in value)) throw notACommitteeChange(`${which} have a gap in them`);
   }
@@ -1429,8 +1484,15 @@ function denseList(value: unknown, most: number, which: string): readonly unknow
  * calling the account's own address a vault is refused, so the account's rule
  * cannot be skipped by the name an entry gives itself.
  */
-function contractEntryOf(c: unknown, account: AccountAddress, seen: Set<string>): {
-  contract: 'account' | 'vault'; address: AccountAddress | VaultAddress; counter: string; entry: Record<string, unknown>;
+function contractEntryOf(
+  c: unknown,
+  account: AccountAddress,
+  seen: Set<string>
+): {
+  contract: 'account' | 'vault';
+  address: AccountAddress | VaultAddress;
+  counter: string;
+  entry: Record<string, unknown>;
 } {
   const entry = c as Record<string, unknown> | null;
   if (typeof entry !== 'object' || entry === null) throw notACommitteeChange('one of the contracts is not readable');
@@ -1438,7 +1500,7 @@ function contractEntryOf(c: unknown, account: AccountAddress, seen: Set<string>)
   const address = entry['address'];
   const counter = entry['counter'];
   if (contract !== 'account' && contract !== 'vault') {
-    throw notACommitteeChange('one of the contracts is neither the company\'s account nor one of its vaults');
+    throw notACommitteeChange("one of the contracts is neither the company's account nor one of its vaults");
   }
   if (typeof address !== 'string' || !CONTRACT_ADDRESS.test(address)) {
     throw notACommitteeChange('one of the contracts is not named by a sixty-four character address');
@@ -1447,70 +1509,108 @@ function contractEntryOf(c: unknown, account: AccountAddress, seen: Set<string>)
   /* The company's account is the one the ask names beside the label, and no
    * other: the label is read off that account before anything is signed. */
   if (contract === 'account' && folded !== account) {
-    throw notACommitteeChange('the account it changes is not the account it names as carrying the company\'s label');
+    throw notACommitteeChange("the account it changes is not the account it names as carrying the company's label");
   }
   if (contract === 'vault' && folded === account) {
-    throw notACommitteeChange('it calls the company\'s account a vault, so the account\'s own rules would be skipped');
+    throw notACommitteeChange("it calls the company's account a vault, so the account's own rules would be skipped");
   }
   if (typeof counter !== 'string' || !COUNTER.test(counter) || BigInt(counter) < (contract === 'vault' ? 0n : 1n)) {
-    throw notACommitteeChange(contract === 'vault'
-      ? 'one of the vaults names no counter it can be at'
-      : 'the company\'s account is not finished being created, so who holds it cannot be changed yet');
+    throw notACommitteeChange(
+      contract === 'vault'
+        ? 'one of the vaults names no counter it can be at'
+        : "the company's account is not finished being created, so who holds it cannot be changed yet"
+    );
   }
   if (seen.has(folded)) throw notACommitteeChange('it names one contract twice');
   seen.add(folded);
   return {
     contract,
-    address: (contract === 'account' ? readAccountAddress(folded) : readVaultAddress(folded)) as AccountAddress | VaultAddress,
+    address: (contract === 'account' ? readAccountAddress(folded) : readVaultAddress(folded)) as
+      AccountAddress | VaultAddress,
     counter: BigInt(counter).toString(),
-    entry,
+    entry
   };
 }
 
 /** The contracts a hand-over or a change of the super admins asks to be signed: never empty, no address twice, at most one account. */
-function contractsAskedOf<T>(value: unknown, account: AccountAddress, read: (e: ReturnType<typeof contractEntryOf>) => T): readonly T[] {
-  if (!Array.isArray(value) || value.length === 0) throw notACommitteeChange(`it names no contract to change, or more than ${MAX_CONTRACTS}`);
+function contractsAskedOf<T>(
+  value: unknown,
+  account: AccountAddress,
+  read: (e: ReturnType<typeof contractEntryOf>) => T
+): readonly T[] {
+  if (!Array.isArray(value) || value.length === 0)
+    throw notACommitteeChange(`it names no contract to change, or more than ${MAX_CONTRACTS}`);
   const seen = new Set<string>();
-  const parsed = denseList(value, MAX_CONTRACTS, 'the contracts it names').map((c) => contractEntryOf(c, account, seen));
-  if (parsed.filter((c) => c.contract === 'account').length > 1) throw notACommitteeChange('it names more than one company account');
+  const parsed = denseList(value, MAX_CONTRACTS, 'the contracts it names').map((c) =>
+    contractEntryOf(c, account, seen)
+  );
+  if (parsed.filter((c) => c.contract === 'account').length > 1)
+    throw notACommitteeChange('it names more than one company account');
   return Object.freeze(parsed.map(read));
 }
 
 /** A change of the super admins, read whole: both committees, and each contract it moves, the account first and only first. */
-function superAdminChangeOf(value: unknown, account: AccountAddress): { change: SuperAdminChangeOnTheWire; to: CommitteeOnTheWire } {
+function superAdminChangeOf(
+  value: unknown,
+  account: AccountAddress
+): { change: SuperAdminChangeOnTheWire; to: CommitteeOnTheWire } {
   if (typeof value !== 'object' || value === null) throw notACommitteeChange('the change it names is not readable');
   const v = value as Record<string, unknown>;
-  if (v['kind'] !== 'super-admins') throw notACommitteeChange('the change it names is not a change of the super admins');
+  if (v['kind'] !== 'super-admins')
+    throw notACommitteeChange('the change it names is not a change of the super admins');
   const from = committeeOnTheWire(v['from'], 'the committee the change replaces', true);
-  const to = committeeOnTheWire({ committee: v['committee'], threshold: v['threshold'] }, 'the committee the change installs');
-  if (!Array.isArray(v['contracts']) || v['contracts'].length === 0) throw notACommitteeChange('the change names no contract it moves');
+  const to = committeeOnTheWire(
+    { committee: v['committee'], threshold: v['threshold'] },
+    'the committee the change installs'
+  );
+  if (!Array.isArray(v['contracts']) || v['contracts'].length === 0)
+    throw notACommitteeChange('the change names no contract it moves');
   const seen = new Set<string>();
   const contracts = denseList(v['contracts'], MAX_CONTRACTS, 'the contracts the change moves').map((c, i) => {
     const e = contractEntryOf(c, account, seen);
-    if ((e.contract === 'account') !== (i === 0)) throw notACommitteeChange('the change does not name the company\'s account first, and only first');
+    if ((e.contract === 'account') !== (i === 0))
+      throw notACommitteeChange("the change does not name the company's account first, and only first");
     return Object.freeze({ contract: e.contract, address: e.address as string, counter: e.counter });
   });
   return {
-    change: Object.freeze({ kind: 'super-admins' as const, from, committee: to.committee, threshold: to.threshold, contracts: Object.freeze(contracts) }),
-    to,
+    change: Object.freeze({
+      kind: 'super-admins' as const,
+      from,
+      committee: to.committee,
+      threshold: to.threshold,
+      contracts: Object.freeze(contracts)
+    }),
+    to
   };
 }
 
 /** Every joining key's own signature an ask carries: a schnorr key and sixty-four bytes of signature, no key twice. */
 function joinedOf(value: unknown): readonly JoiningSignatureOnTheWire[] {
   const seen = new Set<string>();
-  return Object.freeze(denseList(value, MAX_COMMITTEE, 'its joining keys\' signatures').map((j) => {
-    const e = j as { key?: { tag?: unknown; value?: unknown } | null; signature?: unknown } | null;
-    const key = typeof e === 'object' && e !== null ? e.key : null;
-    if (typeof key !== 'object' || key === null || key.tag !== 'schnorr' || typeof key.value !== 'string' || !COMMITTEE_KEY.test(key.value)
-      || typeof e!.signature !== 'string' || !SIGNATURE_HEX.test(e!.signature)) {
-      throw notACommitteeChange('one of its joining keys\' signatures is not a schnorr key and a signature');
-    }
-    const folded = key.value.toLowerCase();
-    if (seen.has(folded)) throw notACommitteeChange('it carries two signatures for one joining key');
-    seen.add(folded);
-    return Object.freeze({ key: Object.freeze({ tag: 'schnorr' as const, value: folded }), signature: (e!.signature as string).toLowerCase() });
-  }));
+  return Object.freeze(
+    denseList(value, MAX_COMMITTEE, "its joining keys' signatures").map((j) => {
+      const e = j as { key?: { tag?: unknown; value?: unknown } | null; signature?: unknown } | null;
+      const key = typeof e === 'object' && e !== null ? e.key : null;
+      if (
+        typeof key !== 'object' ||
+        key === null ||
+        key.tag !== 'schnorr' ||
+        typeof key.value !== 'string' ||
+        !COMMITTEE_KEY.test(key.value) ||
+        typeof e!.signature !== 'string' ||
+        !SIGNATURE_HEX.test(e!.signature)
+      ) {
+        throw notACommitteeChange("one of its joining keys' signatures is not a schnorr key and a signature");
+      }
+      const folded = key.value.toLowerCase();
+      if (seen.has(folded)) throw notACommitteeChange('it carries two signatures for one joining key');
+      seen.add(folded);
+      return Object.freeze({
+        key: Object.freeze({ tag: 'schnorr' as const, value: folded }),
+        signature: (e!.signature as string).toLowerCase()
+      });
+    })
+  );
 }
 
 /**
@@ -1525,18 +1625,20 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   if ('wants' in body) {
     throw new RequestError(
       'attributes-on-a-committee-change',
-      'this asks your wallet to sign a change to who holds a company\'s rules, and it also carries a list of '
-      + 'details to hand over. Those are two different powers and this wallet will not approve them behind one '
-      + 'press, so the whole request is refused. Nothing has been shown to them and nothing has been signed.');
+      "this asks your wallet to sign a change to who holds a company's rules, and it also carries a list of " +
+        'details to hand over. Those are two different powers and this wallet will not approve them behind one ' +
+        'press, so the whole request is refused. Nothing has been shown to them and nothing has been signed.'
+    );
   }
   if ('inboxPublicKey' in body) {
     throw new RequestError(
       'inbox-key-on-a-committee-change',
-      'this asks your wallet to sign a change to who holds a company\'s rules, and it also names a key to seal an '
-      + 'answer to. The signatures are handed back to the page that asked, so the key is refused rather than '
-      + 'ignored. Nothing has been shown to them and nothing has been signed.');
+      "this asks your wallet to sign a change to who holds a company's rules, and it also names a key to seal an " +
+        'answer to. The signatures are handed back to the page that asked, so the key is refused rather than ' +
+        'ignored. Nothing has been shown to them and nothing has been signed.'
+    );
   }
-  const committeeAsks = 'this asks your wallet to sign a change to who holds a company\'s rules';
+  const committeeAsks = "this asks your wallet to sign a change to who holds a company's rules";
   const committeeNothing = 'Nothing has been shown to them and nothing has been signed.';
   const company = labelIn(body['company'], committeeAsks, committeeNothing);
   const account = accountIn(body['account'], committeeAsks, committeeNothing);
@@ -1544,32 +1646,42 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
   const head = { ...asking, kind: 'committee' as const, company, account };
   if (press === 'request') return superAdminRequestOf(body, head);
   if ((press === 'join') !== (body['contracts'] === undefined)) {
-    throw notACommitteeChange(press === 'join'
-      ? 'a joining key\'s own signature names no contract to sign, and this one does'
-      : `it names no contract to change, or more than ${MAX_CONTRACTS}`);
+    throw notACommitteeChange(
+      press === 'join'
+        ? "a joining key's own signature names no contract to sign, and this one does"
+        : `it names no contract to change, or more than ${MAX_CONTRACTS}`
+    );
   }
   if (press === 'hand-over') {
     const to = committeeOnTheWire(body['to'], 'the committee to install');
-    const contracts = contractsAskedOf(body['contracts'], account, (e) => Object.freeze({
-      contract: e.contract, address: e.address, counter: e.counter,
-      now: committeeOnTheWire(e.entry['now'], 'the committee a contract is held by now', true),
-    }));
+    const contracts = contractsAskedOf(body['contracts'], account, (e) =>
+      Object.freeze({
+        contract: e.contract,
+        address: e.address,
+        counter: e.counter,
+        now: committeeOnTheWire(e.entry['now'], 'the committee a contract is held by now', true)
+      })
+    );
     return Object.freeze({ ...head, press, to, contracts });
   }
   const { change, to } = superAdminChangeOf(body['change'], account);
   const salt = body['salt'];
-  if (typeof salt !== 'string' || !SALT_HEX.test(salt)) throw notACommitteeChange('the change\'s salt is not thirty-two bytes of hex');
+  if (typeof salt !== 'string' || !SALT_HEX.test(salt))
+    throw notACommitteeChange("the change's salt is not thirty-two bytes of hex");
   const changeBytes = typeof body['changeBytes'] === 'string' ? body['changeBytes'].toLowerCase() : null;
   if (changeBytes === null || !BYTES_HEX.test(changeBytes) || changeBytes.length > 2 * MOST_CHANGE_BYTES) {
-    throw notACommitteeChange('the change\'s bytes are not bytes in hex');
+    throw notACommitteeChange("the change's bytes are not bytes in hex");
   }
   const named = { ...head, change, salt: salt.toLowerCase(), changeBytes, to };
   if (press === 'join') {
-    if (body['joining'] !== true) throw notACommitteeChange('it does not say plainly that it asks for a joining key\'s own signature');
+    if (body['joining'] !== true)
+      throw notACommitteeChange("it does not say plainly that it asks for a joining key's own signature");
     return Object.freeze({ ...named, press });
   }
   const joined = joinedOf(body['joined']);
-  const contracts = contractsAskedOf(body['contracts'], account, (e) => Object.freeze({ contract: e.contract, address: e.address, counter: e.counter }));
+  const contracts = contractsAskedOf(body['contracts'], account, (e) =>
+    Object.freeze({ contract: e.contract, address: e.address, counter: e.counter })
+  );
   if (contracts.some((c) => !change.contracts.some((n) => n.address === c.address && n.contract === c.contract))) {
     throw notACommitteeChange('it asks for a signature on a contract the change does not name');
   }
@@ -1581,11 +1693,14 @@ function committeeChangeOf(body: Record<string, unknown>, asking: Asking): Commi
  * no contract, so nothing on the chain changes by it.
  */
 function superAdminRequestOf(body: Record<string, unknown>, head: CommitteeAsking): SuperAdminRequestAsk {
-  if (body['contracts'] !== undefined) throw notACommitteeChange('a request to the company\'s service names no contract to sign, and this one does');
+  if (body['contracts'] !== undefined)
+    throw notACommitteeChange("a request to the company's service names no contract to sign, and this one does");
   const record = body['record'];
   const user = body['user'];
-  if (typeof record !== 'string' || !RECORD_ID.test(record)) throw notACommitteeChange('it does not name the company as the service records it');
-  if (typeof user !== 'string' || !PERSON.test(user)) throw notACommitteeChange('it does not name the person signed in at the service');
+  if (typeof record !== 'string' || !RECORD_ID.test(record))
+    throw notACommitteeChange('it does not name the company as the service records it');
+  if (typeof user !== 'string' || !PERSON.test(user))
+    throw notACommitteeChange('it does not name the person signed in at the service');
   return Object.freeze({ ...head, press: 'request' as const, record, user });
 }
 
@@ -1608,31 +1723,60 @@ const HEX128 = /^[0-9a-f]{128}$/u;
 /** The inviting signer an ask hands over, read whole: a schnorr committee key, a signed entry and the inviter's own opening, every part lower-case hex. */
 function invitedByIn(value: unknown, asks: string, nothing: string): InvitedBy {
   const v = value as {
-    committeeKey?: { tag?: unknown; value?: unknown }; statement?: Record<string, unknown>; opening?: Record<string, unknown>;
+    committeeKey?: { tag?: unknown; value?: unknown };
+    statement?: Record<string, unknown>;
+    opening?: Record<string, unknown>;
   } | null;
   const s = v?.statement;
   const o = v?.opening;
   const hex64 = (x: unknown): x is string => typeof x === 'string' && SEAT.test(x);
   const wallet = o?.['walletKey'] as { tag?: unknown; value?: unknown } | undefined;
-  if (typeof v !== 'object' || v === null || v.committeeKey?.tag !== 'schnorr' || !hex64(v.committeeKey.value)
-    || typeof s !== 'object' || s === null || !hex64(s['account']) || !hex64(s['signingKey']) || !hex64(s['wrappingKey'])
-    || !hex64(s['seat']) || typeof s['signature'] !== 'string' || !HEX128.test(s['signature'])
-    || typeof o !== 'object' || o === null || !hex64(o['publicKey']) || !hex64(o['scope']) || !hex64(o['blinding'])
-    || !hex64(o['salt']) || typeof wallet !== 'object' || wallet === null || wallet.tag !== 'schnorr' || !hex64(wallet.value)) {
+  if (
+    typeof v !== 'object' ||
+    v === null ||
+    v.committeeKey?.tag !== 'schnorr' ||
+    !hex64(v.committeeKey.value) ||
+    typeof s !== 'object' ||
+    s === null ||
+    !hex64(s['account']) ||
+    !hex64(s['signingKey']) ||
+    !hex64(s['wrappingKey']) ||
+    !hex64(s['seat']) ||
+    typeof s['signature'] !== 'string' ||
+    !HEX128.test(s['signature']) ||
+    typeof o !== 'object' ||
+    o === null ||
+    !hex64(o['publicKey']) ||
+    !hex64(o['scope']) ||
+    !hex64(o['blinding']) ||
+    !hex64(o['salt']) ||
+    typeof wallet !== 'object' ||
+    wallet === null ||
+    wallet.tag !== 'schnorr' ||
+    !hex64(wallet.value)
+  ) {
     throw new RequestError(
       'malformed-field',
-      `${asks} and what it hands over as the invitation you joined by is not a signer's committee key, the entry their `
-      + `wallet signed and their own seat's opening. ${nothing}`);
+      `${asks} and what it hands over as the invitation you joined by is not a signer's committee key, the entry their ` +
+        `wallet signed and their own seat's opening. ${nothing}`
+    );
   }
   return Object.freeze({
     committeeKey: Object.freeze({ tag: 'schnorr' as const, value: v.committeeKey.value }),
     statement: Object.freeze({
-      account: s['account'], signingKey: s['signingKey'], wrappingKey: s['wrappingKey'], seat: s['seat'], signature: s['signature'],
+      account: s['account'],
+      signingKey: s['signingKey'],
+      wrappingKey: s['wrappingKey'],
+      seat: s['seat'],
+      signature: s['signature']
     }),
     opening: Object.freeze({
-      publicKey: o['publicKey'], scope: o['scope'], blinding: o['blinding'], salt: o['salt'],
-      walletKey: Object.freeze({ tag: 'schnorr' as const, value: wallet.value }),
-    }),
+      publicKey: o['publicKey'],
+      scope: o['scope'],
+      blinding: o['blinding'],
+      salt: o['salt'],
+      walletKey: Object.freeze({ tag: 'schnorr' as const, value: wallet.value })
+    })
   });
 }
 
@@ -1644,13 +1788,22 @@ function invitedByIn(value: unknown, asks: string, nothing: string): InvitedBy {
  * shown a list the page did not mean.
  */
 function firstSecretIn(value: unknown, asks: string, nothing: string): FirstSecretShown {
-  const malformed = (): RequestError => new RequestError(
-    'malformed-field',
-    `${asks} and says who will hold the secret of the vault it names by something that is not a list of keys, each with `
-    + `at most a name. ${nothing}`);
+  const malformed = (): RequestError =>
+    new RequestError(
+      'malformed-field',
+      `${asks} and says who will hold the secret of the vault it names by something that is not a list of keys, each with ` +
+        `at most a name. ${nothing}`
+    );
   const readers = (value as { readers?: unknown } | null)?.readers;
-  if (typeof value !== 'object' || value === null || Array.isArray(value) || !Array.isArray(readers)
-    || readers.length === 0 || readers.length > MOST_SECRET_READERS) throw malformed();
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    !Array.isArray(readers) ||
+    readers.length === 0 ||
+    readers.length > MOST_SECRET_READERS
+  )
+    throw malformed();
   const seen = new Set<string>();
   const shown: SecretReaderShown[] = [];
   for (let i = 0; i < readers.length; i += 1) {
@@ -1668,16 +1821,18 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
   if ('wants' in body) {
     throw new RequestError(
       'attributes-on-a-records-key',
-      'this asks your wallet to sign your records key for your seat on a company\'s account, and it also carries a list '
-      + 'of details to hand over. Those are two different powers and this wallet will not approve them behind one '
-      + 'press, so the whole request is refused. Nothing has been shown to them and nothing has been signed.');
+      "this asks your wallet to sign your records key for your seat on a company's account, and it also carries a list " +
+        'of details to hand over. Those are two different powers and this wallet will not approve them behind one ' +
+        'press, so the whole request is refused. Nothing has been shown to them and nothing has been signed.'
+    );
   }
   if ('inboxPublicKey' in body) {
     throw new RequestError(
       'inbox-key-on-a-records-key',
-      'this asks your wallet to sign your records key, and it also names a key to seal an answer to. The answer is '
-      + 'handed back to the page that asked, so the key is refused rather than ignored. Nothing has been shown to '
-      + 'them and nothing has been signed.');
+      'this asks your wallet to sign your records key, and it also names a key to seal an answer to. The answer is ' +
+        'handed back to the page that asked, so the key is refused rather than ignored. Nothing has been shown to ' +
+        'them and nothing has been signed.'
+    );
   }
   const asks = 'this asks your wallet to sign your records key for a company';
   const nothing = 'Nothing has been shown to them and nothing has been signed.';
@@ -1687,7 +1842,8 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
   if (typeof seat !== 'string' || !SEAT.test(seat)) {
     throw new RequestError(
       'not-a-seat',
-      `${asks} and names your seat on its account by something that is not one (64 lower-case hex characters). ${nothing}`);
+      `${asks} and names your seat on its account by something that is not one (64 lower-case hex characters). ${nothing}`
+    );
   }
   let signingKey: string | undefined;
   if ('signingKey' in body) {
@@ -1695,17 +1851,21 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
     if (typeof k !== 'string' || !SEAT.test(k)) {
       throw new RequestError(
         'malformed-field',
-        `${asks} and names the key your filings are signed with by something that is not one (64 lower-case hex characters). ${nothing}`);
+        `${asks} and names the key your filings are signed with by something that is not one (64 lower-case hex characters). ${nothing}`
+      );
     }
     signingKey = k;
   }
   const withKey = {
     ...(signingKey === undefined ? {} : { signingKey }),
-    ...('invitedBy' in body ? { invitedBy: invitedByIn(body['invitedBy'], asks, nothing) } : {}),
+    ...('invitedBy' in body ? { invitedBy: invitedByIn(body['invitedBy'], asks, nothing) } : {})
   };
   if (!('vault' in body)) {
     if ('firstSecret' in body) {
-      throw new RequestError('malformed-field', `${asks}, and names who will hold a vault's secret but no vault. ${nothing}`);
+      throw new RequestError(
+        'malformed-field',
+        `${asks}, and names who will hold a vault's secret but no vault. ${nothing}`
+      );
     }
     return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, ...withKey });
   }
@@ -1713,10 +1873,21 @@ function recordsKeyAskOf(body: Record<string, unknown>, asking: Asking): Records
   if (vault === null || String(vault) === String(account)) {
     throw new RequestError(
       'not-a-vault-address',
-      `${asks} and names one of its vaults by something that is not a vault's address on the chain. ${nothing}`);
+      `${asks} and names one of its vaults by something that is not a vault's address on the chain. ${nothing}`
+    );
   }
-  const forFirstSecret = 'firstSecret' in body ? { firstSecret: firstSecretIn(body['firstSecret'], asks, nothing) } : {};
-  return Object.freeze({ ...asking, kind: 'records-key' as const, company, account, seat, vault, ...withKey, ...forFirstSecret });
+  const forFirstSecret =
+    'firstSecret' in body ? { firstSecret: firstSecretIn(body['firstSecret'], asks, nothing) } : {};
+  return Object.freeze({
+    ...asking,
+    kind: 'records-key' as const,
+    company,
+    account,
+    seat,
+    vault,
+    ...withKey,
+    ...forFirstSecret
+  });
 }
 
 /** The most keys one creation inserts, and the most characters one of them may take. */
@@ -1726,27 +1897,36 @@ const CIRCUIT = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
 /** A creation, read whole: a label, the account the deploy creates, the deploy and the keys to insert. */
 function creationAskOf(body: Record<string, unknown>, asking: Asking): CreationRequest {
-  const asks = 'this asks your wallet to finish creating a company\'s account';
+  const asks = "this asks your wallet to finish creating a company's account";
   const nothing = 'Nothing has been shown to them and nothing has been signed.';
   if ('wants' in body) {
     throw new RequestError(
       'attributes-on-a-creation',
-      `${asks}, and it also carries a list of details to hand over. Those are two different powers and this wallet will `
-      + `not approve them behind one press, so the whole request is refused. ${nothing}`);
+      `${asks}, and it also carries a list of details to hand over. Those are two different powers and this wallet will ` +
+        `not approve them behind one press, so the whole request is refused. ${nothing}`
+    );
   }
   if ('inboxPublicKey' in body) {
     throw new RequestError(
       'inbox-key-on-a-creation',
-      `${asks}, and it also names a key to seal an answer to. The answer is handed back to the page that asked, so the `
-      + `key is refused rather than ignored. ${nothing}`);
+      `${asks}, and it also names a key to seal an answer to. The answer is handed back to the page that asked, so the ` +
+        `key is refused rather than ignored. ${nothing}`
+    );
   }
   const company = labelIn(body['company'], asks, nothing);
   const account = accountIn(body['account'], asks, nothing);
   const notOne = (why: string) => new RequestError('not-a-creation', `${asks} and ${why}. ${nothing}`);
   const deploy = body['deploy'];
-  if (typeof deploy !== 'string' || deploy.length === 0 || deploy.length > MAX_TRANSACTION || deploy.length % 4 !== 0
-    || !TRANSACTION.test(deploy)) {
-    throw notOne(`what it sent as the deploy is not one this wallet can read: it must be base64, and no longer than ${MAX_TRANSACTION} characters`);
+  if (
+    typeof deploy !== 'string' ||
+    deploy.length === 0 ||
+    deploy.length > MAX_TRANSACTION ||
+    deploy.length % 4 !== 0 ||
+    !TRANSACTION.test(deploy)
+  ) {
+    throw notOne(
+      `what it sent as the deploy is not one this wallet can read: it must be base64, and no longer than ${MAX_TRANSACTION} characters`
+    );
   }
   const insert = body['insert'];
   if (!Array.isArray(insert) || insert.length === 0 || insert.length > MAX_INSERTED) {
@@ -1758,10 +1938,17 @@ function creationAskOf(body: Record<string, unknown>, asking: Asking): CreationR
     const e = entry as Record<string, unknown>;
     const circuit = e['circuit'];
     const key = e['key'];
-    if (typeof circuit !== 'string' || !CIRCUIT.test(circuit)) throw notOne('one of the keys to insert names no circuit');
+    if (typeof circuit !== 'string' || !CIRCUIT.test(circuit))
+      throw notOne('one of the keys to insert names no circuit');
     if (seen.has(circuit)) throw notOne('it names one circuit twice');
     seen.add(circuit);
-    if (typeof key !== 'string' || key.length === 0 || key.length > MAX_KEY || key.length % 4 !== 0 || !TRANSACTION.test(key)) {
+    if (
+      typeof key !== 'string' ||
+      key.length === 0 ||
+      key.length > MAX_KEY ||
+      key.length % 4 !== 0 ||
+      !TRANSACTION.test(key)
+    ) {
       throw notOne(`the key for ${circuit} is not base64 of a key file`);
     }
     return Object.freeze({ circuit, key });
@@ -1771,7 +1958,16 @@ function creationAskOf(body: Record<string, unknown>, asking: Asking): CreationR
 
 /** Every field a join-code ask may carry: the ones every ask carries, then its own four. */
 const JOIN_CODE_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'person', 'parts',
+  'schema',
+  'kind',
+  'requester',
+  'purpose',
+  'nonce',
+  'expiresAt',
+  'company',
+  'account',
+  'person',
+  'parts'
 ]);
 
 /** A join-code ask, read whole: a label, the account that carries it, the person's sign-in, and the parts to sign. */
@@ -1782,7 +1978,8 @@ function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeR
   if (extra.length > 0) {
     throw new RequestError(
       'not-a-join-code',
-      `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}, which is refused. ${nothing}`);
+      `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}, which is refused. ${nothing}`
+    );
   }
   const company = labelIn(body['company'], asks, nothing);
   const account = accountIn(body['account'], asks, nothing);
@@ -1792,14 +1989,22 @@ function joinCodeAskOf(body: Record<string, unknown>, asking: Asking): JoinCodeR
   }
   const parts = readAskedParts(body['parts']);
   if (parts === null) {
-    throw new RequestError('not-a-join-code', `${asks} and what it asks to be signed is not a signer's keys, a payee's, or a reader's with no key named. ${nothing}`);
+    throw new RequestError(
+      'not-a-join-code',
+      `${asks} and what it asks to be signed is not a signer's keys, a payee's, or a reader's with no key named. ${nothing}`
+    );
   }
   return Object.freeze({ ...asking, kind: 'join-code' as const, company, account, person, parts });
 }
 
 /** Every field an addresses-and-balances ask may carry: the ones every ask carries, and nothing of its own. */
 const ADDRESSES_AND_BALANCES_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt',
+  'schema',
+  'kind',
+  'requester',
+  'purpose',
+  'nonce',
+  'expiresAt'
 ]);
 
 /** An addresses-and-balances ask, read whole: nothing of its own, so anything more is refused by name. */
@@ -1808,9 +2013,10 @@ function addressesAndBalancesAskOf(body: Record<string, unknown>, asking: Asking
   if (extra.length > 0) {
     throw new RequestError(
       'more-than-addresses-and-balances',
-      'this asks your wallet for the addresses one of your wallets receives at and what it holds, and it also carries '
-      + `${extra.map((k) => `'${k}'`).join(', ')}. Which wallet answers is yours to choose on the screen, so anything `
-      + 'more is refused rather than ignored. Nothing has been shown to them.');
+      'this asks your wallet for the addresses one of your wallets receives at and what it holds, and it also carries ' +
+        `${extra.map((k) => `'${k}'`).join(', ')}. Which wallet answers is yours to choose on the screen, so anything ` +
+        'more is refused rather than ignored. Nothing has been shown to them.'
+    );
   }
   return Object.freeze({ ...asking, kind: 'addresses-and-balances' as const });
 }
@@ -1818,7 +2024,17 @@ function addressesAndBalancesAskOf(body: Record<string, unknown>, asking: Asking
 /** Every field a holders ask may carry: the ones every ask carries, then its own four. */
 /** Everything an `act` ask may carry. Anything else is refused, never ignored. */
 const ACT_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'progress', 'intent', 'person', 'keyring', 'served',
+  'schema',
+  'kind',
+  'requester',
+  'purpose',
+  'nonce',
+  'expiresAt',
+  'progress',
+  'intent',
+  'person',
+  'keyring',
+  'served'
 ]);
 
 /** An amount on the wire: a whole number of a token's smallest unit, written in decimal, with no sign and no leading zero. */
@@ -1835,26 +2051,32 @@ export const HAND_OVER_FIELD = 'path';
  * an id or an amount the wallet checks on its own; there is no kind for bytes.
  */
 function intentFieldOf(kind: IntentFieldKind, value: unknown, field: string, asks: string, nothing: string): string {
-  const notOne = (what: string) => new RequestError('not-an-act', `${asks}, and its '${field}' is not ${what}. ${nothing}`);
+  const notOne = (what: string) =>
+    new RequestError('not-an-act', `${asks}, and its '${field}' is not ${what}. ${nothing}`);
   switch (kind) {
-    case 'company': return labelIn(value, asks, nothing);
-    case 'account': return accountIn(value, asks, nothing);
+    case 'company':
+      return labelIn(value, asks, nothing);
+    case 'account':
+      return accountIn(value, asks, nothing);
     case 'vault': {
       const vault = readVaultAddress(value);
-      if (vault === null) throw notOne('a vault\'s sixty-four character address');
+      if (vault === null) throw notOne("a vault's sixty-four character address");
       return vault;
     }
     case 'seat':
       if (typeof value !== 'string' || !SEAT.test(value)) throw notOne('a seat: sixty-four lower-case hex characters');
       return value;
     case 'amount':
-      if (typeof value !== 'string' || !AMOUNT.test(value)) throw notOne('an amount: a whole number written in decimal');
+      if (typeof value !== 'string' || !AMOUNT.test(value))
+        throw notOne('an amount: a whole number written in decimal');
       return value;
     case 'token':
-      if (typeof value !== 'string' || !SEAT.test(value)) throw notOne('a private token: sixty-four lower-case hex characters');
+      if (typeof value !== 'string' || !SEAT.test(value))
+        throw notOne('a private token: sixty-four lower-case hex characters');
       return value;
     case 'record':
-      if (typeof value !== 'string' || !RECORD_ID.test(value)) throw notOne('the name of a record: up to sixty-four letters, digits, - or _');
+      if (typeof value !== 'string' || !RECORD_ID.test(value))
+        throw notOne('the name of a record: up to sixty-four letters, digits, - or _');
       return value;
     case 'join-code':
       if (typeof value !== 'string' || !JOIN_CODE_TEXT.test(value)) throw notOne('a join code as a wallet writes it');
@@ -1864,7 +2086,8 @@ function intentFieldOf(kind: IntentFieldKind, value: unknown, field: string, ask
         throw notOne(`a short text: at most ${MOST_WORDS} characters, with no control characters but a new line`);
       }
       return value;
-    default: throw notOne('a field this wallet can read');
+    default:
+      throw notOne('a field this wallet can read');
   }
 }
 
@@ -1880,8 +2103,9 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
   if (extra.length > 0) {
     throw new RequestError(
       'more-than-an-act',
-      `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}. An action names what it acts on and `
-      + `nothing else, because this wallet builds everything it signs itself, so anything more is refused. ${nothing}`);
+      `${asks}, and it also carries ${extra.map((k) => `'${k}'`).join(', ')}. An action names what it acts on and ` +
+        `nothing else, because this wallet builds everything it signs itself, so anything more is refused. ${nothing}`
+    );
   }
   const intent = body['intent'];
   if (typeof intent !== 'object' || intent === null || Array.isArray(intent)) {
@@ -1890,12 +2114,14 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
   const named = intent as Record<string, unknown>;
   const name = named['name'];
   const shapes = ACT_INTENTS as Readonly<Record<string, IntentShape>>;
-  const shape = typeof name === 'string' && Object.prototype.hasOwnProperty.call(shapes, name) ? shapes[name] : undefined;
+  const shape =
+    typeof name === 'string' && Object.prototype.hasOwnProperty.call(shapes, name) ? shapes[name] : undefined;
   if (shape === undefined) {
     throw new RequestError(
       'unknown-intent',
-      `${asks}, and '${String(name)}' is not an action this wallet runs. It is refused rather than run as one it `
-      + `does, because a wallet guessing what it is doing is a wallet doing the wrong thing behind the right screen. ${nothing}`);
+      `${asks}, and '${String(name)}' is not an action this wallet runs. It is refused rather than run as one it ` +
+        `does, because a wallet guessing what it is doing is a wallet doing the wrong thing behind the right screen. ${nothing}`
+    );
   }
   const wanted = Object.keys(shape.fields);
   const given = Object.keys(named).filter((k) => k !== 'name' && k !== HAND_OVER_FIELD);
@@ -1903,14 +2129,16 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
   if (unasked.length > 0) {
     throw new RequestError(
       'not-an-act',
-      `${asks}, and it carries ${unasked.map((k) => `'${k}'`).join(', ')}, which that action does not take, so it is refused. ${nothing}`);
+      `${asks}, and it carries ${unasked.map((k) => `'${k}'`).join(', ')}, which that action does not take, so it is refused. ${nothing}`
+    );
   }
   const optional = new Set(shape.optional ?? []);
   const missing = wanted.filter((k) => !given.includes(k) && !optional.has(k));
   if (missing.length > 0) {
     throw new RequestError(
       'not-an-act',
-      `${asks}, and it does not name ${missing.map((k) => `'${k}'`).join(', ')}, which that action needs. ${nothing}`);
+      `${asks}, and it does not name ${missing.map((k) => `'${k}'`).join(', ')}, which that action needs. ${nothing}`
+    );
   }
   const fields: Record<string, string> = {};
   for (const field of wanted) {
@@ -1924,7 +2152,8 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
     if (s === null || s.length > 1) {
       throw new RequestError(
         'not-an-act',
-        `${asks}, and it names a company's keys ${keys.keyring === undefined ? 'without your saved keys' : 'in a form this wallet does not read, or more than its own'}. ${nothing}`);
+        `${asks}, and it names a company's keys ${keys.keyring === undefined ? 'without your saved keys' : 'in a form this wallet does not read, or more than its own'}. ${nothing}`
+      );
     }
     served = s;
   }
@@ -1934,7 +2163,7 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
     hearsProgress: true as const,
     intent: Object.freeze({ name: name as ActIntentName, fields: Object.freeze(fields) }),
     ...keys,
-    ...(served === undefined ? {} : { served }),
+    ...(served === undefined ? {} : { served })
   });
 }
 
@@ -1944,63 +2173,94 @@ function actAskOf(body: Record<string, unknown>, asking: Asking): ActRequest {
  * keys of the size this wallet reads, are refused rather than dropped: an
  * action that needs them would otherwise run on none.
  */
-function savedKeysIn(body: Record<string, unknown>, asks: string, nothing: string): { person?: string; keyring?: KeyringHandedIn } {
+function savedKeysIn(
+  body: Record<string, unknown>,
+  asks: string,
+  nothing: string
+): { person?: string; keyring?: KeyringHandedIn } {
   const hasPerson = 'person' in body;
   const hasKeys = 'keyring' in body;
   if (!hasPerson && !hasKeys) return {};
   if (!hasPerson || !hasKeys) {
     throw new RequestError(
       'not-an-act',
-      `${asks}, and it carries ${hasPerson ? 'a person without their saved keys' : 'saved keys without the person they are for'}. `
-      + `The two go together or not at all, so it is refused. ${nothing}`);
+      `${asks}, and it carries ${hasPerson ? 'a person without their saved keys' : 'saved keys without the person they are for'}. ` +
+        `The two go together or not at all, so it is refused. ${nothing}`
+    );
   }
   const person = body['person'];
   if (typeof person !== 'string' || !PERSON.test(person)) {
-    throw new RequestError('not-a-person', `${asks}, and it does not name you in a way this wallet can use. ${nothing}`);
+    throw new RequestError(
+      'not-a-person',
+      `${asks}, and it does not name you in a way this wallet can use. ${nothing}`
+    );
   }
   const keyring = readKeyringHandedIn(body['keyring']);
   if (keyring === null) {
     throw new RequestError(
       'not-an-act',
-      `${asks}, and what it carries as your saved keys is not sealed saved keys this wallet reads. ${nothing}`);
+      `${asks}, and what it carries as your saved keys is not sealed saved keys this wallet reads. ${nothing}`
+    );
   }
   return { person, keyring };
 }
 
 const HOLDERS_FIELDS: ReadonlySet<string> = new Set([
-  'schema', 'kind', 'requester', 'purpose', 'nonce', 'expiresAt', 'company', 'account', 'movements', 'roles',
+  'schema',
+  'kind',
+  'requester',
+  'purpose',
+  'nonce',
+  'expiresAt',
+  'company',
+  'account',
+  'movements',
+  'roles'
 ]);
 
 const ENTRY = /^[0-9a-f]{64}$/u;
 
 /** A holders ask, read whole: a label and the account that carries it. */
 function holdersAskOf(body: Record<string, unknown>, asking: Asking): HoldersRequest {
-  const asks = 'this asks your wallet who holds a company\'s account';
+  const asks = "this asks your wallet who holds a company's account";
   const nothing = 'Nothing has been shown to them.';
   const extra = Object.keys(body).filter((k) => !HOLDERS_FIELDS.has(k));
   if (extra.length > 0) {
     throw new RequestError(
       'more-than-holders',
-      `${asks}, which is answered without a press because it hands over only what the chain shows, and it also `
-      + `carries ${extra.map((k) => `'${k}'`).join(', ')}. Anything more than that is refused rather than ignored. ${nothing}`);
+      `${asks}, which is answered without a press because it hands over only what the chain shows, and it also ` +
+        `carries ${extra.map((k) => `'${k}'`).join(', ')}. Anything more than that is refused rather than ignored. ${nothing}`
+    );
   }
   const company = labelIn(body['company'], asks, nothing);
   const account = accountIn(body['account'], asks, nothing);
   const entries = (field: string, most: number, what: string): readonly string[] | undefined => {
     const asked = body[field];
     if (asked === undefined) return undefined;
-    if (!Array.isArray(asked) || asked.length === 0 || asked.length > most
-      || !asked.every((e) => typeof e === 'string' && ENTRY.test(e)) || new Set(asked).size !== asked.length) {
-      throw new RequestError('malformed-field', `${asks} and ${what}, and the entries it names are `
-        + `not between 1 and ${most} different entries of 64 lower-case hex characters. ${nothing}`);
+    if (
+      !Array.isArray(asked) ||
+      asked.length === 0 ||
+      asked.length > most ||
+      !asked.every((e) => typeof e === 'string' && ENTRY.test(e)) ||
+      new Set(asked).size !== asked.length
+    ) {
+      throw new RequestError(
+        'malformed-field',
+        `${asks} and ${what}, and the entries it names are ` +
+          `not between 1 and ${most} different entries of 64 lower-case hex characters. ${nothing}`
+      );
     }
-    return Object.freeze([...asked as string[]]);
+    return Object.freeze([...(asked as string[])]);
   };
   const movements = entries('movements', MOST_ENTRIES_ASKED, 'which payments its account records');
   const roles = entries('roles', MOST_ROLES_ASKED, 'what its account holds under some of its roles');
   return Object.freeze({
-    ...asking, kind: 'holders' as const, company, account,
-    ...(movements === undefined ? {} : { movements }), ...(roles === undefined ? {} : { roles }),
+    ...asking,
+    kind: 'holders' as const,
+    company,
+    account,
+    ...(movements === undefined ? {} : { movements }),
+    ...(roles === undefined ? {} : { roles })
   });
 }
 
@@ -2029,10 +2289,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if ('address' in body) {
     throw new RequestError(
       'proposes-an-address',
-      'this request names an address. A wallet works out where its owner is paid from '
-      + 'their own keys and from the wallet they choose on this screen — a request that '
-      + 'brought one along is telling somebody where their own money goes, so it is refused '
-      + 'rather than ignored. Nothing has been shown to them.');
+      'this request names an address. A wallet works out where its owner is paid from ' +
+        'their own keys and from the wallet they choose on this screen — a request that ' +
+        'brought one along is telling somebody where their own money goes, so it is refused ' +
+        'rather than ignored. Nothing has been shown to them.'
+    );
   }
   const kind = kindOf(body);
 
@@ -2043,12 +2304,16 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * one and was answered with something else would be entitled to believe the
    * wallet had read it.
    */
-  if (kind !== 'keyring' && ('signedInAs' in body || 'drawLabel' in body || (kind !== 'join-code' && kind !== 'act' && 'person' in body))) {
+  if (
+    kind !== 'keyring' &&
+    ('signedInAs' in body || 'drawLabel' in body || (kind !== 'join-code' && kind !== 'act' && 'person' in body))
+  ) {
     throw new RequestError(
       'keyring-fields-on-another-kind',
-      `this is a '${kind}' and it names a person, the address a page signed in as, or asks to start a company. Those `
-      + 'belong only to an ask for the key your saved keys at a site are sealed under, so '
-      + 'they are refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it names a person, the address a page signed in as, or asks to start a company. Those ` +
+        'belong only to an ask for the key your saved keys at a site are sealed under, so ' +
+        'they are refused rather than ignored. Nothing has been shown to them.'
+    );
   }
 
   /*
@@ -2058,13 +2323,16 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * requester that sent one and was answered with something else would be
    * entitled to believe the wallet had read it.
    */
-  if ((kind !== 'balance' && 'transaction' in body)
-    || (kind !== 'balance' && kind !== 'records-key' && 'vault' in body)) {
+  if (
+    (kind !== 'balance' && 'transaction' in body) ||
+    (kind !== 'balance' && kind !== 'records-key' && 'vault' in body)
+  ) {
     throw new RequestError(
       'balance-fields-on-another-kind',
-      `this is a '${kind}' and it carries a transaction or names a vault. A transaction belongs only to `
-      + 'a request to pay for one, and a vault only to that or to a request to sign your records key, so '
-      + 'they are refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it carries a transaction or names a vault. A transaction belongs only to ` +
+        'a request to pay for one, and a vault only to that or to a request to sign your records key, so ' +
+        'they are refused rather than ignored. Nothing has been shown to them.'
+    );
   }
 
   /*
@@ -2072,12 +2340,16 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * COMMITTEE CHANGE AND TO NOTHING ELSE**, refused by presence on every other
    * kind for the keyring fields' reason.
    */
-  if (kind !== 'committee' && ['to', 'contracts', 'change', 'salt', 'changeBytes', 'joined', 'joining', 'record', 'user'].some((f) => f in body)) {
+  if (
+    kind !== 'committee' &&
+    ['to', 'contracts', 'change', 'salt', 'changeBytes', 'joined', 'joining', 'record', 'user'].some((f) => f in body)
+  ) {
     throw new RequestError(
       'committee-fields-on-another-kind',
-      `this is a '${kind}' and it names a committee or the contracts a committee holds. Those belong only to a `
-      + 'request to sign a change to who holds a company\'s rules, so they are refused rather than ignored. '
-      + 'Nothing has been shown to them.');
+      `this is a '${kind}' and it names a committee or the contracts a committee holds. Those belong only to a ` +
+        "request to sign a change to who holds a company's rules, so they are refused rather than ignored. " +
+        'Nothing has been shown to them.'
+    );
   }
 
   /*
@@ -2085,11 +2357,15 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
    * filing key, an invitation and a first secret's readers: each is refused by
    * presence on every other kind for the keyring fields' reason.
    */
-  if (kind !== 'records-key' && ('seat' in body || 'signingKey' in body || 'invitedBy' in body || 'firstSecret' in body)) {
+  if (
+    kind !== 'records-key' &&
+    ('seat' in body || 'signingKey' in body || 'invitedBy' in body || 'firstSecret' in body)
+  ) {
     throw new RequestError(
       'records-key-fields-on-another-kind',
-      `this is a '${kind}' and it names a seat on a company's account, an invitation, who will hold a vault's secret, or a filing key. Those belong only to a `
-      + 'request to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it names a seat on a company's account, an invitation, who will hold a vault's secret, or a filing key. Those belong only to a ` +
+        'request to sign your records key for your seat, so they are refused rather than ignored. Nothing has been shown to them.'
+    );
   }
 
   /*
@@ -2099,8 +2375,9 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if (kind !== 'creation' && ('deploy' in body || 'insert' in body)) {
     throw new RequestError(
       'creation-fields-on-another-kind',
-      `this is a '${kind}' and it carries a deploy or keys to insert. Those belong only to a request to finish creating `
-      + 'a company\'s account, so they are refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it carries a deploy or keys to insert. Those belong only to a request to finish creating ` +
+        "a company's account, so they are refused rather than ignored. Nothing has been shown to them."
+    );
   }
 
   /*
@@ -2110,7 +2387,8 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if (kind !== 'join-code' && 'parts' in body) {
     throw new RequestError(
       'join-code-fields-on-another-kind',
-      `this is a '${kind}' and it carries the parts of a join code, which are refused. Nothing has been shown to them.`);
+      `this is a '${kind}' and it carries the parts of a join code, which are refused. Nothing has been shown to them.`
+    );
   }
 
   /*
@@ -2120,8 +2398,9 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if (kind !== 'act' && 'intent' in body) {
     throw new RequestError(
       'act-fields-on-another-kind',
-      `this is a '${kind}' and it names an action for your wallet to run. That belongs only to a request to run one, `
-      + 'so it is refused rather than ignored. Nothing has been shown to them.');
+      `this is a '${kind}' and it names an action for your wallet to run. That belongs only to a request to run one, ` +
+        'so it is refused rather than ignored. Nothing has been shown to them.'
+    );
   }
 
   if (kind === 'act') return actAskOf(body, asking);
@@ -2136,17 +2415,19 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if ('wants' in body) {
       throw new RequestError(
         'attributes-on-a-balance',
-        'this asks your wallet to pay for a transaction, and it also carries a list of details '
-        + 'to hand over. Those are two different powers and this wallet will not approve them '
-        + 'behind one press, so the whole request is refused. Nothing has been shown to them '
-        + 'and nothing has been paid.');
+        'this asks your wallet to pay for a transaction, and it also carries a list of details ' +
+          'to hand over. Those are two different powers and this wallet will not approve them ' +
+          'behind one press, so the whole request is refused. Nothing has been shown to them ' +
+          'and nothing has been paid.'
+      );
     }
     if ('inboxPublicKey' in body) {
       throw new RequestError(
         'inbox-key-on-a-balance',
-        'this asks your wallet to pay for a transaction, and it also names a key to seal an '
-        + 'answer to. A paid transaction is handed back to the page that asked, so the key is '
-        + 'refused rather than ignored. Nothing has been shown to them and nothing has been paid.');
+        'this asks your wallet to pay for a transaction, and it also names a key to seal an ' +
+          'answer to. A paid transaction is handed back to the page that asked, so the key is ' +
+          'refused rather than ignored. Nothing has been shown to them and nothing has been paid.'
+      );
     }
     const balanceAsks = 'this asks your wallet to pay into a company';
     const balanceNothing = 'Nothing has been shown to them and nothing has been paid.';
@@ -2156,19 +2437,25 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if (vault === null) {
       throw new RequestError(
         'not-a-vault-address',
-        'this asks your wallet to pay into a vault and does not name one this wallet can make '
-        + 'sense of. A vault is named by its own sixty-four character address on the chain. '
-        + 'Nothing has been shown to them and nothing has been paid.');
+        'this asks your wallet to pay into a vault and does not name one this wallet can make ' +
+          'sense of. A vault is named by its own sixty-four character address on the chain. ' +
+          'Nothing has been shown to them and nothing has been paid.'
+      );
     }
     const transaction = body['transaction'];
-    if (typeof transaction !== 'string' || transaction.length === 0
-      || transaction.length > MAX_TRANSACTION || transaction.length % 4 !== 0
-      || !TRANSACTION.test(transaction)) {
+    if (
+      typeof transaction !== 'string' ||
+      transaction.length === 0 ||
+      transaction.length > MAX_TRANSACTION ||
+      transaction.length % 4 !== 0 ||
+      !TRANSACTION.test(transaction)
+    ) {
       throw new RequestError(
         'not-a-transaction',
-        'this asks your wallet to pay for a transaction and what it sent is not one this wallet '
-        + `can read: it must be base64, and no longer than ${MAX_TRANSACTION} characters. `
-        + 'Nothing has been shown to them and nothing has been paid.');
+        'this asks your wallet to pay for a transaction and what it sent is not one this wallet ' +
+          `can read: it must be base64, and no longer than ${MAX_TRANSACTION} characters. ` +
+          'Nothing has been shown to them and nothing has been paid.'
+      );
     }
     return Object.freeze({
       ...asking,
@@ -2176,7 +2463,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       company,
       account,
       vault,
-      transaction,
+      transaction
     });
   }
 
@@ -2184,75 +2471,85 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if ('wants' in body) {
       throw new RequestError(
         'attributes-on-a-keyring',
-        'this asks for the key your saved keys at this site are sealed under, and it also '
-        + 'carries a list of details to hand over. Those are two different powers and this '
-        + 'wallet will not approve them behind one press, so the whole request is refused. '
-        + 'Nothing has been shown to them and nothing has been released.');
+        'this asks for the key your saved keys at this site are sealed under, and it also ' +
+          'carries a list of details to hand over. Those are two different powers and this ' +
+          'wallet will not approve them behind one press, so the whole request is refused. ' +
+          'Nothing has been shown to them and nothing has been released.'
+      );
     }
     if ('inboxPublicKey' in body) {
       throw new RequestError(
         'inbox-key-on-a-keyring',
-        'this asks for the key your saved keys at this site are sealed under, and it also '
-        + 'names a key to seal an answer to. A release is not sealed to anybody, so the '
-        + 'request is refused rather than half honoured. Nothing has been shown to them and '
-        + 'nothing has been released.');
+        'this asks for the key your saved keys at this site are sealed under, and it also ' +
+          'names a key to seal an answer to. A release is not sealed to anybody, so the ' +
+          'request is refused rather than half honoured. Nothing has been shown to them and ' +
+          'nothing has been released.'
+      );
     }
     const person = body['person'];
     if (typeof person !== 'string' || !PERSON.test(person)) {
       throw new RequestError(
         'not-a-person',
-        'this asks for the key your saved keys at a site are sealed under and does not name '
-        + 'you in a way this wallet can use. Nothing has been shown to them and nothing has '
-        + 'been given.');
+        'this asks for the key your saved keys at a site are sealed under and does not name ' +
+          'you in a way this wallet can use. Nothing has been shown to them and nothing has ' +
+          'been given.'
+      );
     }
     const signedInAs = body['signedInAs'];
-    if (signedInAs !== undefined && signedInAs !== null
-      && (typeof signedInAs !== 'string' || signedInAs.length > 300
-        || !SIGNED_IN_ADDRESS.test(signedInAs))) {
+    if (
+      signedInAs !== undefined &&
+      signedInAs !== null &&
+      (typeof signedInAs !== 'string' || signedInAs.length > 300 || !SIGNED_IN_ADDRESS.test(signedInAs))
+    ) {
       throw new RequestError(
         'not-a-signed-in-address',
-        'this names the wallet address the page signed in as, and what it names is not an '
-        + 'address. Nothing has been shown to them and nothing has been given.');
+        'this names the wallet address the page signed in as, and what it names is not an ' +
+          'address. Nothing has been shown to them and nothing has been given.'
+      );
     }
     const keyringAsks = 'this also asks for the key to a company';
     const keyringNothing = 'Nothing has been shown to them and nothing has been given.';
     const rawCompany = body['company'];
-    const company = rawCompany === undefined || rawCompany === null
-      ? null : labelIn(rawCompany, keyringAsks, keyringNothing);
+    const company =
+      rawCompany === undefined || rawCompany === null ? null : labelIn(rawCompany, keyringAsks, keyringNothing);
     const account = accountMaybeIn(body['account'], keyringAsks, keyringNothing);
     const drawLabel = body['drawLabel'];
     if (drawLabel !== undefined && typeof drawLabel !== 'boolean') {
       throw new RequestError(
         'malformed-field',
-        'this says whether your wallet should start a new company, and says it as something other than '
-        + `yes or no. ${keyringNothing}`);
+        'this says whether your wallet should start a new company, and says it as something other than ' +
+          `yes or no. ${keyringNothing}`
+      );
     }
     /* A new company has no label yet and no account, so an ask to start one
      * that also names either is two questions behind one press. */
     if (drawLabel === true && (company !== null || account !== null)) {
       throw new RequestError(
         'malformed-field',
-        'this asks your wallet to start a new company and also names a company or an account. A new '
-        + `company has neither yet. ${keyringNothing}`);
+        'this asks your wallet to start a new company and also names a company or an account. A new ' +
+          `company has neither yet. ${keyringNothing}`
+      );
     }
     if (company === null && account !== null) {
-      throw new RequestError(
-        'malformed-field',
-        `this names a company's account and no company. ${keyringNothing}`);
+      throw new RequestError('malformed-field', `this names a company's account and no company. ${keyringNothing}`);
     }
     const companyIfOnChain = body['companyIfOnChain'];
-    if (companyIfOnChain !== undefined
-      && (companyIfOnChain !== true || company === null || account === null || drawLabel === true || !('keyring' in body))) {
+    if (
+      companyIfOnChain !== undefined &&
+      (companyIfOnChain !== true || company === null || account === null || drawLabel === true || !('keyring' in body))
+    ) {
       throw new RequestError(
         'malformed-field',
-        'this asks your wallet to open a company beside your saved keys, and does not name that company, its account '
-          + `and your saved keys with it. ${keyringNothing}`);
+        'this asks your wallet to open a company beside your saved keys, and does not name that company, its account ' +
+          `and your saved keys with it. ${keyringNothing}`
+      );
     }
     /* What a new company is founded with belongs to starting one and to nothing else. */
     if (drawLabel !== true && 'founding' in body) {
       throw new RequestError(
         'malformed-field',
-        `this carries what a new company is founded with, and does not ask your wallet to start one. ${keyringNothing}`);
+        `this carries what a new company is founded with, and does not ask your wallet to start one. ${keyringNothing}`
+      );
     }
     let founding: FoundingAsked | undefined;
     let handedIn: KeyringHandedIn | undefined;
@@ -2261,8 +2558,9 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       if (read === null) {
         throw new RequestError(
           'malformed-field',
-          'this names the new company and its founding signer in a form this wallet does not read: a name for '
-          + `each, of 1 to ${MOST_FOUNDING_NAME} characters, and one of the four roles. ${keyringNothing}`);
+          'this names the new company and its founding signer in a form this wallet does not read: a name for ' +
+            `each, of 1 to ${MOST_FOUNDING_NAME} characters, and one of the four roles. ${keyringNothing}`
+        );
       }
       founding = read;
     }
@@ -2271,7 +2569,8 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       if (read === null) {
         throw new RequestError(
           'malformed-field',
-          `this carries your saved keys in a form this wallet does not read. ${keyringNothing}`);
+          `this carries your saved keys in a form this wallet does not read. ${keyringNothing}`
+        );
       }
       handedIn = read;
     }
@@ -2281,14 +2580,16 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       if (handedIn === undefined) {
         throw new RequestError(
           'malformed-field',
-          `this names companies' keys or changes to your saved keys, and hands no saved keys in. ${keyringNothing}`);
+          `this names companies' keys or changes to your saved keys, and hands no saved keys in. ${keyringNothing}`
+        );
       }
       const s = 'served' in body ? readServedHandedIn(body['served']) : Object.freeze([]);
       const t = 'tidy' in body ? readTidyAsked(body['tidy']) : Object.freeze([]);
       if (s === null || t === null) {
         throw new RequestError(
           'malformed-field',
-          `this names companies' keys, or changes to your saved keys, in a form this wallet does not read. ${keyringNothing}`);
+          `this names companies' keys, or changes to your saved keys, in a form this wallet does not read. ${keyringNothing}`
+        );
       }
       served = s;
       tidy = t;
@@ -2305,7 +2606,7 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
       ...(founding === undefined ? {} : { founding }),
       ...(handedIn === undefined ? {} : { keyring: handedIn }),
       ...(served === undefined ? {} : { served }),
-      ...(tidy === undefined ? {} : { tidy }),
+      ...(tidy === undefined ? {} : { tidy })
     });
   }
 
@@ -2322,26 +2623,29 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if ('company' in body || 'account' in body) {
       throw new RequestError(
         'company-on-a-sign-in',
-        'this is a sign-in and it names a company whose records to open. Signing in opens '
-        + 'nothing, so the name is refused rather than ignored. Nothing has been shown to '
-        + 'them.');
+        'this is a sign-in and it names a company whose records to open. Signing in opens ' +
+          'nothing, so the name is refused rather than ignored. Nothing has been shown to ' +
+          'them.'
+      );
     }
     if ('wants' in body) {
       throw new RequestError(
         'attributes-on-a-sign-in',
-        'this is a sign-in and it carries a list of details to hand over. A sign-in asks '
-        + 'one question and asks for nothing, so the list is refused rather than ignored — '
-        + 'ignoring it would leave whoever sent it believing it had been honoured. Nothing '
-        + 'has been shown to them.');
+        'this is a sign-in and it carries a list of details to hand over. A sign-in asks ' +
+          'one question and asks for nothing, so the list is refused rather than ignored — ' +
+          'ignoring it would leave whoever sent it believing it had been honoured. Nothing ' +
+          'has been shown to them.'
+      );
     }
     /* A SIGN-IN SENDS NOTHING, SO THERE IS NOTHING TO SEAL. Refused by
      * presence, like the two above it and for the same reason. */
     if ('inboxPublicKey' in body) {
       throw new RequestError(
         'inbox-key-on-a-sign-in',
-        'this is a sign-in and it names a key to seal an answer to. A sign-in sends '
-        + 'nothing that could be sealed, so the key is refused rather than ignored. '
-        + 'Nothing has been shown to them.');
+        'this is a sign-in and it names a key to seal an answer to. A sign-in sends ' +
+          'nothing that could be sealed, so the key is refused rather than ignored. ' +
+          'Nothing has been shown to them.'
+      );
     }
     return Object.freeze({ ...asking, kind });
   }
@@ -2359,10 +2663,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if ('wants' in body) {
       throw new RequestError(
         'attributes-on-an-unlock',
-        'this asks for the key to what this site holds for you, and it also carries a list '
-        + 'of details to hand over. Those are two different powers and this wallet will not '
-        + 'approve them behind one press, so the whole request is refused rather than half '
-        + 'of it honoured. Nothing has been shown to them and nothing has been released.');
+        'this asks for the key to what this site holds for you, and it also carries a list ' +
+          'of details to hand over. Those are two different powers and this wallet will not ' +
+          'approve them behind one press, so the whole request is refused rather than half ' +
+          'of it honoured. Nothing has been shown to them and nothing has been released.'
+      );
     }
     /*
      * **THE ONE CLAIMED VALUE, AND ITS SHAPE IS THE WHOLE OF WHAT CAN BE
@@ -2380,10 +2685,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if ('inboxPublicKey' in body) {
       throw new RequestError(
         'inbox-key-on-an-unlock',
-        'this asks for the key to what this site holds for you, and it also names a key '
-        + 'to seal an answer to. A release is not sealed to anybody, so the second key is '
-        + 'refused rather than ignored. Nothing has been shown to them and nothing has '
-        + 'been released.');
+        'this asks for the key to what this site holds for you, and it also names a key ' +
+          'to seal an answer to. A release is not sealed to anybody, so the second key is ' +
+          'refused rather than ignored. Nothing has been shown to them and nothing has ' +
+          'been released.'
+      );
     }
     return Object.freeze({ ...asking, kind, company, account });
   }
@@ -2399,10 +2705,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if ('company' in body || 'account' in body) {
       throw new RequestError(
         'company-on-a-join',
-        'this is an invitation and it also names a company whose records to open. Those '
-        + 'are two different things and this wallet will not answer both behind one press, '
-        + 'so the whole request is refused rather than half of it honoured. Nothing has '
-        + 'been shown to them.');
+        'this is an invitation and it also names a company whose records to open. Those ' +
+          'are two different things and this wallet will not answer both behind one press, ' +
+          'so the whole request is refused rather than half of it honoured. Nothing has ' +
+          'been shown to them.'
+      );
     }
     /*
      * **THE SHAPE IS THE WHOLE OF WHAT CAN BE CHECKED HERE, AND SAYING SO IS
@@ -2416,10 +2723,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if (typeof inbox !== 'string' || !INBOX_PUBLIC_KEY.test(inbox)) {
       throw new RequestError(
         'not-an-inbox-key',
-        'this invitation does not name a key this wallet can seal an answer to. It is '
-        + 'sixty-four characters of hex, and what arrived is not. Nothing would be able '
-        + 'to open what was sent, so nothing has been shown to them and nothing has been '
-        + 'sent.');
+        'this invitation does not name a key this wallet can seal an answer to. It is ' +
+          'sixty-four characters of hex, and what arrived is not. Nothing would be able ' +
+          'to open what was sent, so nothing has been shown to them and nothing has been ' +
+          'sent.'
+      );
     }
     const wants = wantsOf(body);
     /*
@@ -2459,11 +2767,12 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
     if (!wants.some((w) => w.attribute === RECEIVING_ADDRESS && w.required)) {
       throw new RequestError(
         'not-an-invitation',
-        `this calls itself an invitation and never asks for '${RECEIVING_ADDRESS}' as `
-        + 'something it requires. Accepting an invitation is handing a company somewhere '
-        + 'to pay you, so one that does not ask for that is asking for something else and '
-        + 'is refused rather than shown as an invitation. Ask for it as an ordinary '
-        + 'request for details instead. Nothing has been shown to them.');
+        `this calls itself an invitation and never asks for '${RECEIVING_ADDRESS}' as ` +
+          'something it requires. Accepting an invitation is handing a company somewhere ' +
+          'to pay you, so one that does not ask for that is asking for something else and ' +
+          'is refused rather than shown as an invitation. Ask for it as an ordinary ' +
+          'request for details instead. Nothing has been shown to them.'
+      );
     }
     /* The canonical spelling, from here inward. */
     return Object.freeze({ ...asking, kind, inboxPublicKey: inbox.toLowerCase(), wants });
@@ -2473,10 +2782,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if ('company' in body || 'account' in body) {
     throw new RequestError(
       'company-on-a-disclosure',
-      'this asks for details about you and also names a company whose records to open. '
-      + 'Those are two different things and this wallet will not answer both behind one '
-      + 'press, so the whole request is refused rather than half of it honoured. Nothing '
-      + 'has been shown to them.');
+      'this asks for details about you and also names a company whose records to open. ' +
+        'Those are two different things and this wallet will not answer both behind one ' +
+        'press, so the whole request is refused rather than half of it honoured. Nothing ' +
+        'has been shown to them.'
+    );
   }
   /*
    * **A DISCLOSURE ANSWERS IN THE CLEAR OVER THE CHANNEL, SO IT HAS
@@ -2494,10 +2804,11 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
   if ('inboxPublicKey' in body) {
     throw new RequestError(
       'inbox-key-on-a-disclosure',
-      'this asks for details about you and also names a key to seal the answer to. A '
-      + 'disclosure is answered over the channel to the page that asked, so the key is '
-      + 'refused rather than ignored -- ignoring it would leave whoever sent it believing '
-      + 'their answer had been sealed. Nothing has been shown to them.');
+      'this asks for details about you and also names a key to seal the answer to. A ' +
+        'disclosure is answered over the channel to the page that asked, so the key is ' +
+        'refused rather than ignored -- ignoring it would leave whoever sent it believing ' +
+        'their answer had been sealed. Nothing has been shown to them.'
+    );
   }
   return Object.freeze({ ...asking, kind, wants: wantsOf(body) });
 }
@@ -2511,14 +2822,10 @@ export function parseAsk(raw: unknown, observedOrigin: string, now: number): Ask
  * rather than by returning something with an empty list, which is the whole
  * argument of this change in one function.
  */
-export function parseRequest(
-  raw: unknown, observedOrigin: string, now: number,
-): DisclosureRequest {
+export function parseRequest(raw: unknown, observedOrigin: string, now: number): DisclosureRequest {
   const ask = parseAsk(raw, observedOrigin, now);
   if (ask.kind !== 'disclosure') {
-    throw new RequestError(
-      'not-a-disclosure',
-      `that is a '${ask.kind}', and this asked for a request for details.`);
+    throw new RequestError('not-a-disclosure', `that is a '${ask.kind}', and this asked for a request for details.`);
   }
   return ask;
 }
@@ -2537,6 +2844,11 @@ export interface Asked {
 }
 
 export const asked = (request: Wanting, registry: Registry): readonly Asked[] =>
-  Object.freeze(request.wants.map((want) => Object.freeze({
-    want, known: registry.knows(want.attribute),
-  })));
+  Object.freeze(
+    request.wants.map((want) =>
+      Object.freeze({
+        want,
+        known: registry.knows(want.attribute)
+      })
+    )
+  );

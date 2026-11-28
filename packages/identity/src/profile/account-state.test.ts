@@ -7,7 +7,8 @@ vi.mock('./contract-authority.js', async (original) => {
 });
 
 const { authorityIn } = await import('./contract-authority.js');
-const { authorityIn: realAuthorityIn } = await vi.importActual<typeof import('./contract-authority.js')>('./contract-authority.js');
+const { authorityIn: realAuthorityIn } =
+  await vi.importActual<typeof import('./contract-authority.js')>('./contract-authority.js');
 const { SIGNER_LEAVES_FIELD, seatsInAccountState } = await import('./account-state.js');
 
 /*
@@ -28,7 +29,11 @@ const accountHeldBy = (committee: string[], threshold: number): Uint8Array => {
   fields = fields.arrayPush(StateValue.newMap(new StateMap().insert(leaf as never, StateValue.newNull())));
   const state = new ContractState();
   state.data = new (Object.getPrototypeOf(state.data).constructor)(fields);
-  state.maintenanceAuthority = new ContractMaintenanceAuthority(committee.map((value) => ({ tag: 'schnorr', value })) as never, threshold, 0n);
+  state.maintenanceAuthority = new ContractMaintenanceAuthority(
+    committee.map((value) => ({ tag: 'schnorr', value })) as never,
+    threshold,
+    0n
+  );
   return state.serialize();
 };
 
@@ -42,11 +47,16 @@ describe('who holds an account, from its serialised state', () => {
   it('lists the seats, the committee and the threshold', () => {
     /* RED WHEN: the committee, the threshold or the seats are dropped or changed on the way out. */
     expect(seatsInAccountState(accountHeldBy([KEY_A, KEY_B], 2))).toEqual({
-      committee: [{ tag: 'schnorr', value: KEY_A }, { tag: 'schnorr', value: KEY_B }], threshold: 2, seats: [LEAF],
+      committee: [
+        { tag: 'schnorr', value: KEY_A },
+        { tag: 'schnorr', value: KEY_B }
+      ],
+      threshold: 2,
+      seats: [LEAF]
     });
   });
 
-  it('reads the committee and the threshold through the one reader of a contract\'s authority', () => {
+  it("reads the committee and the threshold through the one reader of a contract's authority", () => {
     const asked = vi.mocked(authorityIn);
     asked.mockClear();
     seatsInAccountState(accountHeldBy([KEY_A], 1));
@@ -64,10 +74,13 @@ describe('who holds an account, from its serialised state', () => {
   });
 
   it('refuses a state whose authority cannot be read, saying what was missing', () => {
-    vi.mocked(authorityIn).mockReturnValueOnce({ why: 'the contract\'s threshold is not a whole number of at least zero.' });
+    vi.mocked(authorityIn).mockReturnValueOnce({
+      why: "the contract's threshold is not a whole number of at least zero."
+    });
     /* RED WHEN: an authority the reader refused is read anyway, or is refused without saying why. */
-    expect(() => seatsInAccountState(accountHeldBy([KEY_A], 1)))
-      .toThrow(/not laid out as a company's account: the contract's threshold is not a whole number/u);
+    expect(() => seatsInAccountState(accountHeldBy([KEY_A], 1))).toThrow(
+      /not laid out as a company's account: the contract's threshold is not a whole number/u
+    );
   });
 
   it('refuses bytes that are not laid out as an account', () => {

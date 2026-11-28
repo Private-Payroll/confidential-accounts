@@ -43,9 +43,7 @@ export interface WhatCanBeSeen {
   readonly seenForMs: number;
 }
 
-export type Consent =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly says: string };
+export type Consent = { readonly ok: true } | { readonly ok: false; readonly says: string };
 
 /**
  * **THE VISIBILITY GUARD. A PURE RULE, SO EVERY REFUSAL IN IT CAN BE WATCHED FAILING.**
@@ -83,8 +81,9 @@ export function consentFor(seen: WhatCanBeSeen): Consent {
   if (seen.width < MIN_FRAME_WIDTH || seen.height < MIN_FRAME_HEIGHT) {
     return {
       ok: false,
-      says: 'this wallet is being shown too small to read what you would be approving. Make the '
-        + 'window larger, or open your wallet in its own tab.',
+      says:
+        'this wallet is being shown too small to read what you would be approving. Make the ' +
+        'window larger, or open your wallet in its own tab.'
     };
   }
   if (seen.seenForMs < DWELL_MS) {
@@ -114,9 +113,11 @@ export function quietConsentFor(framing: Framing): Consent {
  * the guard and the asker check can never disagree about where the wallet is.
  */
 export function useConsent(framing: Framing = FRAMING, request: unknown = null): Consent {
-  const [consent, setConsent] = useState<Consent>(() => (framing.of === 'top'
-    ? { ok: true }
-    : { ok: false, says: 'this wallet has only just appeared. Read it, then press.' }));
+  const [consent, setConsent] = useState<Consent>(() =>
+    framing.of === 'top'
+      ? { ok: true }
+      : { ok: false, says: 'this wallet has only just appeared. Read it, then press.' }
+  );
 
   useEffect(() => {
     if (framing.of === 'top') {
@@ -131,7 +132,7 @@ export function useConsent(framing: Framing = FRAMING, request: unknown = null):
         framing,
         width: window.innerWidth,
         height: window.innerHeight,
-        documentVisible: document.visibilityState === 'visible',
+        documentVisible: document.visibilityState === 'visible'
       };
       const holds = consentFor({ ...base, seenForMs: Number.POSITIVE_INFINITY }).ok;
       const now = performance.now();

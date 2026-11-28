@@ -51,11 +51,7 @@ describe('splitShortAddress', () => {
   });
 
   it('reassembles to exactly what it was given', () => {
-    for (const short of [
-      'mn_shield-addr_testnet1wsswq8lg…kgluvmmw',
-      'mn_shield-addr_undeployed1aaaa…bbbb',
-      'plain',
-    ]) {
+    for (const short of ['mn_shield-addr_testnet1wsswq8lg…kgluvmmw', 'mn_shield-addr_undeployed1aaaa…bbbb', 'plain']) {
       const parts = splitShortAddress(short);
       const whole = parts.network + parts.head + (parts.tail === null ? '' : `…${parts.tail}`);
       expect(whole).toBe(short);

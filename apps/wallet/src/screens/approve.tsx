@@ -22,8 +22,15 @@ import { useAtOnce } from './approve-at-once.js';
 import { approveView } from './approve-view.js';
 
 export function Approve({
-  identity, secret, registry = REGISTRY, port = browserPort(), view, now = Date.now,
-  embedder = EMBEDDER, readLabel = liveLabelReader, readChain,
+  identity,
+  secret,
+  registry = REGISTRY,
+  port = browserPort(),
+  view,
+  now = Date.now,
+  embedder = EMBEDDER,
+  readLabel = liveLabelReader,
+  readChain
 }: {
   readonly identity: Identity;
   readonly secret: Secret;
@@ -49,5 +56,16 @@ export function Approve({
   const kept = useWalletRecord({ ...inputs, ...state });
   const keyringAnswer = useKeyringAnswer({ ...inputs, ...state, ...asked, ...held });
   const standing = useAtOnce({ ...inputs, ...state, ...asked, ...answers, ...unlockAnswer, ...held, ...keyringAnswer });
-  return approveView({ ...inputs, ...state, ...asked, ...entry, ...answers, ...unlockAnswer, ...held, ...kept, ...keyringAnswer, ...standing });
+  return approveView({
+    ...inputs,
+    ...state,
+    ...asked,
+    ...entry,
+    ...answers,
+    ...unlockAnswer,
+    ...held,
+    ...kept,
+    ...keyringAnswer,
+    ...standing
+  });
 }

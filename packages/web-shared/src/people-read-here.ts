@@ -7,10 +7,20 @@
  * is done in the wallet (`admitHere`, `setStatusHere`, `changePersonHere`).
  */
 import { canonical, type Hex } from '../../../src/core/crypto.js';
-import { madeByRefusal, openPerson, peopleServed, personVersionsRefusal, whyNotPayable } from '../../../src/core/person-record.js';
+import {
+  madeByRefusal,
+  openPerson,
+  peopleServed,
+  personVersionsRefusal,
+  whyNotPayable
+} from '../../../src/core/person-record.js';
 import type { RosterEmployee } from '../../../src/core/types.js';
 import type { NetworkName } from '../../../src/midnight/network.js';
-import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  verifiedCompanyFiler,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry } from '../../../src/midnight/record-manifest.js';
 import { judgeIn, kindAsked, namedHere, type DirectoryRead } from './vault-page-doors.js';
@@ -18,7 +28,10 @@ import { keysByPurpose } from './keys-by-purpose.js';
 import type { InvitingCompany } from './invitation-on-device.js';
 import type { CompanyView } from './company-view.js';
 import {
-  readAddressClaim, typedAddressIsShielded, type AddressClaimFor, type UnshieldedAddressClaim,
+  readAddressClaim,
+  typedAddressIsShielded,
+  type AddressClaimFor,
+  type UnshieldedAddressClaim
 } from 'midnight-identity/profile/address-claim';
 
 /**
@@ -51,10 +64,14 @@ export type PeopleReader = PeopleReadWith & ListsReach;
 /** What a claim of the address a person or vendor was added by answers: their company, their record, their payslip key and that address. */
 export const claimFor = (
   d: { readonly company: Pick<InvitingCompany, 'label'>; readonly network: NetworkName },
-  person: { readonly id: string; readonly invitedAddress?: string | null }, payslipKey: string,
+  person: { readonly id: string; readonly invitedAddress?: string | null },
+  payslipKey: string
 ): AddressClaimFor => ({
-  company: d.company.label, person: person.id, payslipKey: payslipKey.toLowerCase(),
-  address: person.invitedAddress as string, network: d.network,
+  company: d.company.label,
+  person: person.id,
+  payslipKey: payslipKey.toLowerCase(),
+  address: person.invitedAddress as string,
+  network: d.network
 });
 
 /**
@@ -64,14 +81,33 @@ export const claimFor = (
  * must not turn somebody added by address into somebody payable wherever a wallet signs.
  */
 export async function typedAddressOf(
-  d: PeopleReader, id: string, newest: SealedCompanyRecord | null, judge: ReturnType<typeof judgeIn>,
+  d: PeopleReader,
+  id: string,
+  newest: SealedCompanyRecord | null,
+  judge: ReturnType<typeof judgeIn>
 ): Promise<{ readonly typed: string | null } | { readonly refused: string }> {
   const first = newest !== null && newest.version === 1 ? newest : await firstVersionOf(d, id);
-  if (first === null || judge(verifiedCompanyFiler(first), 'person', companyRecordKey('person', id), companyRecordEntry(first), false, first.keyEpoch) !== null) {
-    return { refused: 'the first version of their record is not one this device believes was filed by a seat, so this device cannot tell how this person was added and will not pay them. Ask a signer to file their record again' };
+  if (
+    first === null ||
+    judge(
+      verifiedCompanyFiler(first),
+      'person',
+      companyRecordKey('person', id),
+      companyRecordEntry(first),
+      false,
+      first.keyEpoch
+    ) !== null
+  ) {
+    return {
+      refused:
+        'the first version of their record is not one this device believes was filed by a seat, so this device cannot tell how this person was added and will not pay them. Ask a signer to file their record again'
+    };
   }
   const opened = personOpened(d, first);
-  return 'why' in opened ? { refused: `the first version of their record does not open here (${opened.why}), so this device cannot tell how this person was added and will not pay them. Filing it again leaves the first version as it is: they are paid from a seat's device that opens it` }
+  return 'why' in opened
+    ? {
+        refused: `the first version of their record does not open here (${opened.why}), so this device cannot tell how this person was added and will not pay them. Filing it again leaves the first version as it is: they are paid from a seat's device that opens it`
+      }
     : { typed: opened.person.invitedAddress ?? null };
 }
 
@@ -85,7 +121,10 @@ export async function typedAddressOf(
  * instead).
  */
 async function addedByAddressRefusal(
-  d: PeopleReader, rec: SealedCompanyRecord, person: RosterEmployee, judge: ReturnType<typeof judgeIn>,
+  d: PeopleReader,
+  rec: SealedCompanyRecord,
+  person: RosterEmployee,
+  judge: ReturnType<typeof judgeIn>
 ): Promise<string | null> {
   const first = await typedAddressOf(d, rec.id, rec, judge);
   if ('refused' in first) return first.refused;
@@ -96,7 +135,8 @@ async function addedByAddressRefusal(
   }
   if (first.typed === null || typedAddressIsShielded(first.typed)) return null;
   const claim = readAddressClaim(person.addressClaim);
-  if (claim === null) return 'their record carries no claim, signed with the key of the address they were added by, that their wallet holds it';
+  if (claim === null)
+    return 'their record carries no claim, signed with the key of the address they were added by, that their wallet holds it';
   const why = await d.claimRefusal(claim, claimFor(d, person, person.wrappingPublicKey ?? ''));
   return why === null ? null : `their claim of the address they were added by is refused: ${why}`;
 }
@@ -104,7 +144,10 @@ async function addedByAddressRefusal(
 /** Version 1 of a person's record, as the service holds it, or null when it holds none. Believed only once judged. */
 async function firstVersionOf(d: PeopleReader, id: string): Promise<SealedCompanyRecord | null> {
   const { versions } = await everyVersionAsked(d, 'person', id);
-  const first = Array.isArray(versions) && versions.length > 0 ? fromCompanyWire(versions[0], { company: d.company.id, kind: 'person', id }).sealed : null;
+  const first =
+    Array.isArray(versions) && versions.length > 0
+      ? fromCompanyWire(versions[0], { company: d.company.id, kind: 'person', id }).sealed
+      : null;
   return first !== null && first.version === 1 ? first : null;
 }
 
@@ -121,7 +164,11 @@ type VersionsReader = Pick<PeopleReadWith, 'company'> & ListsReach;
  * Every version of one of the company's people or vendors, as the service answers them: through the company's view,
  * joined with every other record asked in the same turn.
  */
-export const everyVersionAsked = async (d: VersionsReader, kind: 'person' | 'vendor', id: string): Promise<Record<string, unknown>> => {
+export const everyVersionAsked = async (
+  d: VersionsReader,
+  kind: 'person' | 'vendor',
+  id: string
+): Promise<Record<string, unknown>> => {
   return ((await d.view.records([{ kind, id, every: true }]))[0] ?? {}) as Record<string, unknown>;
 };
 
@@ -129,7 +176,11 @@ export const everyVersionAsked = async (d: VersionsReader, kind: 'person' | 'ven
  * Asks the view, in one request, for every version of each record named, and waits for its answer, so the reads of
  * them one by one that follow are answered from it. A failure is left to the read of each record, which says why.
  */
-export const versionsAskedTogether = async (d: VersionsReader, kind: 'person' | 'vendor', ids: readonly string[]): Promise<void> => {
+export const versionsAskedTogether = async (
+  d: VersionsReader,
+  kind: 'person' | 'vendor',
+  ids: readonly string[]
+): Promise<void> => {
   if (ids.length === 0) return;
   await Promise.allSettled([d.view.records(ids.map((id) => ({ kind, id, every: true })))]);
 };
@@ -148,7 +199,10 @@ export interface PeopleHere {
  * A person's record opened with the key this device holds for the company's people, or why it does not open: a
  * record sealed under another key (another purpose, or an epoch this device cannot reach) is never read as no person.
  */
-const personOpened = (d: Pick<PeopleReader, 'company'>, rec: SealedCompanyRecord): { readonly person: RosterEmployee } | { readonly why: string } => {
+const personOpened = (
+  d: Pick<PeopleReader, 'company'>,
+  rec: SealedCompanyRecord
+): { readonly person: RosterEmployee } | { readonly why: string } => {
   try {
     return { person: openPerson(rec, keysByPurpose(d.company.viewingKey).at(rec.keyEpoch)) };
   } catch (e) {
@@ -173,7 +227,7 @@ const personOpened = (d: Pick<PeopleReader, 'company'>, rec: SealedCompanyRecord
  * else is still read.
  */
 export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
-  const answer = (await d.view.list('people') ?? {}) as Record<string, unknown>;
+  const answer = ((await d.view.list('people')) ?? {}) as Record<string, unknown>;
   const here = await d.directory(kindAsked('company', 'person'));
   const judge = judgeIn(here);
   const people: PersonHere[] = [];
@@ -184,10 +238,23 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
   for (const { id } of refused) notBelieved.push(id);
   /* A person the company's records name and the service did not give is not believed, never left out unseen. */
   const given = new Set([...served.map(({ rec }) => rec.id), ...refused.map(({ id }) => id)]);
-  await versionsAskedTogether(d, 'person', served.flatMap(({ rec }) => (rec.version > 1 ? [rec.id] : [])));
+  await versionsAskedTogether(
+    d,
+    'person',
+    served.flatMap(({ rec }) => (rec.version > 1 ? [rec.id] : []))
+  );
   for (const id of namedHere(here, 'company', 'person')) if (!given.has(id)) notBelieved.push(id);
   for (const { rec, handedOver } of served) {
-    if (judge(verifiedCompanyFiler(rec), 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), true, rec.keyEpoch) !== null) {
+    if (
+      judge(
+        verifiedCompanyFiler(rec),
+        'person',
+        companyRecordKey('person', rec.id),
+        companyRecordEntry(rec),
+        true,
+        rec.keyEpoch
+      ) !== null
+    ) {
       notBelieved.push(rec.id);
       continue;
     }
@@ -198,13 +265,22 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
       continue;
     }
     const here: PersonHere = { person: opened.person, version: rec.version, handedOver };
-    if (madeByRefusal(here.person, verifiedCompanyFiler(rec)) !== null || (rec.version > 1 && !(await historyKeptHere(d, rec, judge)))) {
+    if (
+      madeByRefusal(here.person, verifiedCompanyFiler(rec)) !== null ||
+      (rec.version > 1 && !(await historyKeptHere(d, rec, judge)))
+    ) {
       notBelieved.push(rec.id);
       continue;
     }
-    const why = here.person.status === 'pending' || (here.person.status === 'leaver' && !here.person.address) ? null
-      : whyNotPayable({ ...here.person, status: 'active' }, d.company.label) ?? await addedByAddressRefusal(d, rec, here.person, judge);
-    if (why !== null) { notPayable.push({ here, why }); continue; }
+    const why =
+      here.person.status === 'pending' || (here.person.status === 'leaver' && !here.person.address)
+        ? null
+        : (whyNotPayable({ ...here.person, status: 'active' }, d.company.label) ??
+          (await addedByAddressRefusal(d, rec, here.person, judge)));
+    if (why !== null) {
+      notPayable.push({ here, why });
+      continue;
+    }
     people.push(here);
   }
   return { people, notBelieved, refused, notPayable };
@@ -215,7 +291,11 @@ export async function readPeopleHere(d: PeopleReader): Promise<PeopleHere> {
  * before it made (`personVersionsRefusal`): one read of their versions, made for each person filed more than once
  * each time the people are read. Their first version must be believed.
  */
-async function historyKeptHere(d: PeopleReader, newest: SealedCompanyRecord, judge: ReturnType<typeof judgeIn>): Promise<boolean> {
+async function historyKeptHere(
+  d: PeopleReader,
+  newest: SealedCompanyRecord,
+  judge: ReturnType<typeof judgeIn>
+): Promise<boolean> {
   let recs: SealedCompanyRecord[];
   try {
     const b = await everyVersionAsked(d, 'person', newest.id);
@@ -230,13 +310,25 @@ async function historyKeptHere(d: PeopleReader, newest: SealedCompanyRecord, jud
     const filer = verifiedCompanyFiler(rec);
     if (rec.version !== i + 1) return false;
     /* A version no seat this device believes filed is not part of the company's history: passed over, unless it is the first. */
-    if (judge(filer, 'person', companyRecordKey('person', rec.id), companyRecordEntry(rec), i === recs.length - 1, rec.keyEpoch) !== null) {
+    if (
+      judge(
+        filer,
+        'person',
+        companyRecordKey('person', rec.id),
+        companyRecordEntry(rec),
+        i === recs.length - 1,
+        rec.keyEpoch
+      ) !== null
+    ) {
       if (i === 0) return false;
       continue;
     }
     /* A later version that does not open here (an epoch this device cannot reach) is passed over; a first one refuses the person. */
     const version = personOpened(d, rec);
-    if ('why' in version) { if (i === 0) return false; continue; }
+    if ('why' in version) {
+      if (i === 0) return false;
+      continue;
+    }
     opened.push({ person: version.person, filer });
   }
   return personVersionsRefusal(opened) === null;

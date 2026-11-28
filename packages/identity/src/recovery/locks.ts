@@ -82,29 +82,27 @@ export function recoveryKeypair(identity: Identity, index = 0): RecoveryKeypair 
   const secretKey = identity.authority(Purposes.Recovery, index);
   return Object.freeze({
     publicKey: toBase64Url(x25519.getPublicKey(secretKey)),
-    secretKey,
+    secretKey
   });
 }
 
 /** What somebody publishes so a piece can be locked to their wallet. */
-export const recoveryKeyOf = (identity: Identity, index = 0): string =>
-  recoveryKeypair(identity, index).publicKey;
+export const recoveryKeyOf = (identity: Identity, index = 0): string => recoveryKeypair(identity, index).publicKey;
 
 function readPublicKey(published: string): Uint8Array {
   let bytes: Uint8Array;
   try {
     bytes = fromBase64Url(published.trim());
   } catch (e) {
-    throw new LockError(
-      'not-a-recovery-key',
-      `that is not a recovery key: ${(e as Error).message}`);
+    throw new LockError('not-a-recovery-key', `that is not a recovery key: ${(e as Error).message}`);
   }
   if (bytes.length !== EPHEMERAL_BYTES) {
     throw new LockError(
       'not-a-recovery-key',
-      `a recovery key is ${EPHEMERAL_BYTES} bytes; that one is ${bytes.length}. `
-      + 'A payment address is not a recovery key — they are different things and '
-      + 'nothing should ever be paid to this one.');
+      `a recovery key is ${EPHEMERAL_BYTES} bytes; that one is ${bytes.length}. ` +
+        'A payment address is not a recovery key — they are different things and ' +
+        'nothing should ever be paid to this one.'
+    );
   }
   return bytes;
 }
@@ -116,9 +114,7 @@ function readPublicKey(published: string): Uint8Array {
  * produces two different values** and nobody watching a storage location can
  * tell that the same piece was written again.
  */
-export function lockPiece(
-  piece: Uint8Array, toRecoveryKey: string, ownRecoveryKey: string,
-): Uint8Array {
+export function lockPiece(piece: Uint8Array, toRecoveryKey: string, ownRecoveryKey: string): Uint8Array {
   /*
    * THE OWNER'S KEY IS A REQUIRED ARGUMENT, not something a caller may pass to
    * a separate checker it might forget, for the fourth time:
@@ -167,12 +163,14 @@ export function unlockPiece(locked: Uint8Array, keypair: RecoveryKeypair): Uint8
   if (locked.length <= HEADER) {
     throw new LockError(
       'not-sealed-by-this-library',
-      `a locked piece is at least ${HEADER + 1} bytes; that one is ${locked.length}.`);
+      `a locked piece is at least ${HEADER + 1} bytes; that one is ${locked.length}.`
+    );
   }
   if (locked[0] !== VERSION) {
     throw new LockError(
       'not-sealed-by-this-library',
-      `this was locked in format ${locked[0]} and this library reads format ${VERSION}.`);
+      `this was locked in format ${locked[0]} and this library reads format ${VERSION}.`
+    );
   }
 
   const ephemeralPublic = locked.slice(1, 1 + EPHEMERAL_BYTES);
@@ -193,9 +191,10 @@ export function unlockPiece(locked: Uint8Array, keypair: RecoveryKeypair): Uint8
      */
     throw new LockError(
       'wrong-key',
-      'this piece does not open with this wallet. Either it was locked for a '
-      + 'different one, or it has been altered since — the seal cannot tell those '
-      + 'apart, and either way it will not open.');
+      'this piece does not open with this wallet. Either it was locked for a ' +
+        'different one, or it has been altered since — the seal cannot tell those ' +
+        'apart, and either way it will not open.'
+    );
   }
 }
 
@@ -209,17 +208,16 @@ export function unlockPiece(locked: Uint8Array, keypair: RecoveryKeypair): Uint8
  * `recoveryKeyOf(yourself)` can only be opened by holding the secret it exists
  * to recover, and it passes every other check there is.
  */
-export function checkLockPlan(
-  lockedTo: readonly (string | null | undefined)[], ownRecoveryKey: string,
-): void {
+export function checkLockPlan(lockedTo: readonly (string | null | undefined)[], ownRecoveryKey: string): void {
   const own = ownRecoveryKey.trim();
   for (const key of lockedTo) {
     if (key && key.trim() === own) {
       throw new LockError(
         'locked-to-itself',
-        'this piece would be locked to the account it is meant to recover, so the '
-        + 'only thing that could open it is the thing being recovered. Lock it to '
-        + 'somebody else, or to nothing at all.');
+        'this piece would be locked to the account it is meant to recover, so the ' +
+          'only thing that could open it is the thing being recovered. Lock it to ' +
+          'somebody else, or to nothing at all.'
+      );
     }
   }
 }
@@ -241,8 +239,9 @@ export function checkLockPlan(
  * what a set-up screen can ask them to do.
  */
 export async function proveStoredPieceOpens(
-  stored: Uint8Array, expected: Uint8Array,
-  open: (locked: Uint8Array) => Promise<Uint8Array> | Uint8Array,
+  stored: Uint8Array,
+  expected: Uint8Array,
+  open: (locked: Uint8Array) => Promise<Uint8Array> | Uint8Array
 ): Promise<void> {
   let opened: Uint8Array;
   try {
@@ -250,15 +249,15 @@ export async function proveStoredPieceOpens(
   } catch (e) {
     throw new LockError(
       'will-not-open-where-it-is',
-      `this piece does not open where it has been put: ${(e as Error).message}`);
+      `this piece does not open where it has been put: ${(e as Error).message}`
+    );
   }
-  const same = opened.length === expected.length
-    && opened.every((byte, i) => byte === expected[i]);
+  const same = opened.length === expected.length && opened.every((byte, i) => byte === expected[i]);
   if (!same) {
     throw new LockError(
       'will-not-open-where-it-is',
-      'this piece opens into something that is not the piece that was cut. It has '
-      + 'not been recorded as placed.');
+      'this piece opens into something that is not the piece that was cut. It has ' + 'not been recorded as placed.'
+    );
   }
 }
 

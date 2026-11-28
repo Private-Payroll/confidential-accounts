@@ -6,8 +6,12 @@ import { Buffer as PolyfillBuffer } from 'buffer/';
 import { identityFromSecret, newSecret, splitSecret } from 'midnight-identity';
 import type { Placement, Secret } from 'midnight-identity';
 import {
-  forgetEverything, loadSecuredSetup, loadSubwallets, saveLastUsedWallet, saveSecuredSetup,
-  saveSubwalletName,
+  forgetEverything,
+  loadSecuredSetup,
+  loadSubwallets,
+  saveLastUsedWallet,
+  saveSecuredSetup,
+  saveSubwalletName
 } from '../accounts/storage.js';
 import { ORIGINAL_SLOT } from '../accounts/wallets-held.js';
 import { mapAsText } from '../components/piece-map.js';
@@ -63,8 +67,7 @@ const barName = (container: HTMLElement): string | null =>
   container.querySelector('[data-wallet-name]')?.textContent ?? null;
 const ownerName = (container: HTMLElement): string | null =>
   container.querySelector('.wallet-owner strong')?.textContent ?? null;
-const hero = (container: HTMLElement): HTMLElement =>
-  container.querySelector('[data-hero]') as HTMLElement;
+const hero = (container: HTMLElement): HTMLElement => container.querySelector('[data-hero]') as HTMLElement;
 
 function openReceive(): void {
   fireEvent.click(screen.getByText('Receive'));
@@ -82,13 +85,12 @@ function inReceive<T>(read: () => T): T {
 
 /* The SHIELDED short form — the popup shows two addresses, so the
  * helpers say which one they read rather than trusting document order. */
-const shortAddress = (): string => inReceive(
-  () => document.querySelector('[data-addr="shielded"] .address-short')?.textContent ?? '');
-const shortNightAddress = (): string => inReceive(
-  () => document.querySelector('[data-addr="unshielded"] .address-short')?.textContent ?? '');
+const shortAddress = (): string =>
+  inReceive(() => document.querySelector('[data-addr="shielded"] .address-short')?.textContent ?? '');
+const shortNightAddress = (): string =>
+  inReceive(() => document.querySelector('[data-addr="unshielded"] .address-short')?.textContent ?? '');
 
-const rows = (): readonly HTMLElement[] =>
-  [...document.querySelectorAll<HTMLElement>('[data-wallet-row]')];
+const rows = (): readonly HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[data-wallet-row]')];
 
 function openPicker(): void {
   fireEvent.click(screen.getByText('Switch wallet'));
@@ -114,7 +116,8 @@ beforeEach(() => {
   writeText.mockClear();
   (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
   Object.defineProperty(globalThis.navigator, 'clipboard', {
-    value: { writeText }, configurable: true,
+    value: { writeText },
+    configurable: true
   });
 });
 
@@ -180,8 +183,19 @@ describe('the slots always exist and are always offered — §2.3', () => {
     /* The exact accounts on offer: 0 and 2–11. Never 1 — the authority
      * compartment is not a wallet, and no rearrangement of this list may
      * put a button in front of it. */
-    expect(all.map((r) => r.getAttribute('data-account')))
-      .toEqual(['0', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11']);
+    expect(all.map((r) => r.getAttribute('data-account'))).toEqual([
+      '0',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+      '11'
+    ]);
   });
 
   it('the tenth slot works like the first', () => {
@@ -204,7 +218,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
 
     fireEvent.click(screen.getByLabelText('Name this wallet'));
     fireEvent.change(screen.getByLabelText('A name for subwallet 1'), {
-      target: { value: '  Client money  ' },
+      target: { value: '  Client money  ' }
     });
     fireEvent.click(screen.getByText('Save the name'));
 
@@ -221,7 +235,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
      * fixed name and stays exactly where it was. */
     fireEvent.click(screen.getByLabelText('Rename this wallet'));
     fireEvent.change(screen.getByLabelText('A name for subwallet 1'), {
-      target: { value: '' },
+      target: { value: '' }
     });
     fireEvent.click(screen.getByText('Save the name'));
     expect(barName(container)).toBe('Subwallet 1');
@@ -233,7 +247,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
     switchTo('Subwallet 2');
     fireEvent.click(screen.getByLabelText('Name this wallet'));
     fireEvent.change(screen.getByLabelText('A name for subwallet 2'), {
-      target: { value: 'Rent' },
+      target: { value: 'Rent' }
     });
     fireEvent.click(screen.getByText('Save the name'));
 
@@ -257,8 +271,7 @@ describe('names are decoration — §2.3, and they travel with the address — �
 
     /* The unshielded block holds the same rule for ITS string. */
     fireEvent.click(screen.getByText('Copy the unshielded address'));
-    expect(await screen.findByText('Copied: the unshielded address of Rent (subwallet 2)'))
-      .toBeTruthy();
+    expect(await screen.findByText('Copied: the unshielded address of Rent (subwallet 2)')).toBeTruthy();
     const unshielded = document.querySelector('[data-addr="unshielded"] .address-full')?.textContent;
     expect(writeText).toHaveBeenCalledWith(unshielded);
     expect(unshielded).toMatch(new RegExp(`^mn_addr_${NETWORK}1`));
@@ -298,7 +311,7 @@ describe('another account’s record is not this one’s', () => {
     switchTo('Subwallet 1');
     fireEvent.click(screen.getByLabelText('Name this wallet'));
     fireEvent.change(screen.getByLabelText('A name for subwallet 1'), {
-      target: { value: 'Groceries' },
+      target: { value: 'Groceries' }
     });
     fireEvent.click(screen.getByText('Save the name'));
     expect(barName(container)).toBe('Groceries');
@@ -313,8 +326,7 @@ describe('another account’s record is not this one’s', () => {
     const raw = JSON.parse(localStorage.getItem('midnight-identity:subwallets')!) as {
       lastUsed: number;
     };
-    localStorage.setItem('midnight-identity:subwallets',
-      JSON.stringify({ ...raw, lastUsed: 1 }));
+    localStorage.setItem('midnight-identity:subwallets', JSON.stringify({ ...raw, lastUsed: 1 }));
     expect(loadSubwallets(secret)).toEqual({ names: {}, lastUsed: 0 });
   });
 
@@ -332,7 +344,7 @@ describe('securing is about the secret, and the screen says so — §4', () => {
   const PLACEMENTS: readonly Placement[] = [
     { label: 'My Google account', holder: 'google:me' },
     { label: 'Printed card', holder: 'paper' },
-    { label: 'Old laptop', holder: 'device:old' },
+    { label: 'Old laptop', holder: 'device:old' }
   ];
 
   it('the standing notice says one set of pieces covers every subwallet', () => {
@@ -345,7 +357,9 @@ describe('securing is about the secret, and the screen says so — §4', () => {
   it('the tick stays one tick — per secret, never per subwallet — and says it covers them all', async () => {
     const secret = newSecret();
     await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), {
-      'google:me': 'never', paper: null, 'device:old': 'never',
+      'google:me': 'never',
+      paper: null,
+      'device:old': 'never'
     });
     renderHome(secret);
     switchTo('Subwallet 1');
@@ -373,20 +387,16 @@ describe('two wallets, one name, on the screen', () => {
     nameCurrent('Savings');
     openReceive();
     fireEvent.click(screen.getByText('Copy the shielded address'));
-    expect(await screen.findByText('Copied: the shielded address of Savings (subwallet 1)'))
-      .toBeTruthy();
-    const first = document.querySelector('[data-addr="shielded"] .address-full')?.textContent
-      ?? '';
+    expect(await screen.findByText('Copied: the shielded address of Savings (subwallet 1)')).toBeTruthy();
+    const first = document.querySelector('[data-addr="shielded"] .address-full')?.textContent ?? '';
     closeReceive();
 
     switchTo('Subwallet 2');
     nameCurrent('Savings');
     openReceive();
     fireEvent.click(screen.getByText('Copy the shielded address'));
-    expect(await screen.findByText('Copied: the shielded address of Savings (subwallet 2)'))
-      .toBeTruthy();
-    expect(document.querySelector('[data-addr="shielded"] .address-full')?.textContent)
-      .not.toBe(first);
+    expect(await screen.findByText('Copied: the shielded address of Savings (subwallet 2)')).toBeTruthy();
+    expect(document.querySelector('[data-addr="shielded"] .address-full')?.textContent).not.toBe(first);
   });
 
   it('the owner line on the card carries the slot whenever the name is personal', () => {
@@ -404,7 +414,7 @@ describe('the sheet is a snapshot, and renaming says so — the honest half (a)'
   const PLACEMENTS: readonly Placement[] = [
     { label: 'My Google account', holder: 'google:me' },
     { label: 'Printed card', holder: 'paper' },
-    { label: 'Old laptop', holder: 'device:old' },
+    { label: 'Old laptop', holder: 'device:old' }
   ];
   const VERIFICATION = { 'google:me': 'never', paper: null, 'device:old': 'never' } as const;
 
@@ -415,7 +425,7 @@ describe('the sheet is a snapshot, and renaming says so — the honest half (a)'
     switchTo('Subwallet 1');
     fireEvent.click(screen.getByLabelText('Name this wallet'));
     fireEvent.change(screen.getByLabelText('A name for subwallet 1'), {
-      target: { value: 'Invoices' },
+      target: { value: 'Invoices' }
     });
     fireEvent.click(screen.getByText('Save the name'));
 
@@ -430,7 +440,7 @@ describe('the sheet is a snapshot, and renaming says so — the honest half (a)'
     switchTo('Subwallet 1');
     fireEvent.click(screen.getByLabelText('Name this wallet'));
     fireEvent.change(screen.getByLabelText('A name for subwallet 1'), {
-      target: { value: 'Invoices' },
+      target: { value: 'Invoices' }
     });
     fireEvent.click(screen.getByText('Save the name'));
     expect(screen.queryByText(/out of date/)).toBeNull();
@@ -485,7 +495,9 @@ describe('the confirmation is about the value that was copied', () => {
     fireEvent.click(screen.getByText('Copy the shielded address'));
     expect(await screen.findByText('Copied: the shielded address of Main wallet')).toBeTruthy();
 
-    act(() => { switchWallet(secret, 2); });
+    act(() => {
+      switchWallet(secret, 2);
+    });
     expect(screen.queryByText(/Copied: the/)).toBeNull();
     expect(screen.getByText('Copy the shielded address')).toBeTruthy();
   });

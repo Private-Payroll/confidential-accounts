@@ -16,7 +16,7 @@ export interface ReadsStale {
 export const STALE = {
   signInEnded: 'the sign-in ended',
   signedIn: 'somebody signed in',
-  actedInTheWallet: 'an action in the wallet ran on the company',
+  actedInTheWallet: 'an action in the wallet ran on the company'
 } as const;
 
 const watching = new Set<(stale: ReadsStale) => void>();
@@ -24,12 +24,18 @@ const watching = new Set<(stale: ReadsStale) => void>();
 /** Calls `watch` each time something read of a company is stale; returns the way to stop. */
 export const watchReadsStale = (watch: (stale: ReadsStale) => void): (() => void) => {
   watching.add(watch);
-  return () => { watching.delete(watch); };
+  return () => {
+    watching.delete(watch);
+  };
 };
 
 /** Tells every watcher; one that throws stops neither what happened nor the others, and its error is reported. */
 export const readsAreStale = (stale: ReadsStale): void => {
   for (const watch of [...watching]) {
-    try { watch(stale); } catch (e) { console.error(e); }
+    try {
+      watch(stale);
+    } catch (e) {
+      console.error(e);
+    }
   }
 };

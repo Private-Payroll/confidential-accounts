@@ -23,8 +23,10 @@ async function main() {
   const plan = pageStartsFor(process.env);
   if ('refusals' in plan) {
     throw new Error(
-      'the product cannot be started:\n\n  ' + plan.refusals.join(';\n\n  ')
-      + '.\n\nThese settings are declared by the development script; start the product with it.');
+      'the product cannot be started:\n\n  ' +
+        plan.refusals.join(';\n\n  ') +
+        '.\n\nThese settings are declared by the development script; start the product with it.'
+    );
   }
 
   const { said, port } = await startTheServer(ROOT);

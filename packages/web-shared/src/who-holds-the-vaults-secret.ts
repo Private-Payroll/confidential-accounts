@@ -34,7 +34,7 @@ export async function secretMustChange(input: {
  * the chain's counts alone. `set` is read only once the chain has counted any removal, since it asks the chain's history.
  */
 export async function removedSinceSet(chainRemovals: number, set: () => Promise<number>): Promise<boolean> {
-  return chainRemovals > 0 && chainRemovals > await set();
+  return chainRemovals > 0 && chainRemovals > (await set());
 }
 
 /** The account's removal count before each vault's secret was set, by indexer, vault and commitment: it never changes. */
@@ -47,17 +47,32 @@ const setPoints = new Map<string, number>();
  * chain names no secret for.
  */
 export async function whenTheSecretWasSetHere(
-  doors: { readonly builder: Pick<VaultBuilderClient, 'secretSetAt'>; readonly account: string; readonly indexer: () => Promise<{ readonly indexerUri: string; readonly indexerWsUri: string } | null> },
-  vault: Hex, commitment: Hex,
+  doors: {
+    readonly builder: Pick<VaultBuilderClient, 'secretSetAt'>;
+    readonly account: string;
+    readonly indexer: () => Promise<{ readonly indexerUri: string; readonly indexerWsUri: string } | null>;
+  },
+  vault: Hex,
+  commitment: Hex
 ): Promise<number> {
-  if (doors.builder.secretSetAt === undefined) throw new Error('this page cannot read when the vault\'s secret was set on the chain. Reload it to get the current version.');
-  if (!/^[0-9a-f]{64}$/u.test(lower(commitment)) || /^0+$/u.test(commitment)) throw new Error('the chain names no secret for this vault, so nothing was done. Start the vault\'s secret first.');
+  if (doors.builder.secretSetAt === undefined)
+    throw new Error(
+      "this page cannot read when the vault's secret was set on the chain. Reload it to get the current version."
+    );
+  if (!/^[0-9a-f]{64}$/u.test(lower(commitment)) || /^0+$/u.test(commitment))
+    throw new Error("the chain names no secret for this vault, so nothing was done. Start the vault's secret first.");
   const indexer = await doors.indexer();
-  if (indexer === null) throw new Error('your wallet names no indexer, so when the vault\'s secret was set was not read. Nothing was done.');
+  if (indexer === null)
+    throw new Error("your wallet names no indexer, so when the vault's secret was set was not read. Nothing was done.");
   const key = `${indexer.indexerUri}|${lower(vault)}|${lower(commitment)}`;
   const known = setPoints.get(key);
   if (known !== undefined) return known;
-  const set = await doors.builder.secretSetAt({ vault, account: lower(doors.account), commitment: lower(commitment), indexer: { indexerUri: indexer.indexerUri, indexerWsUri: indexer.indexerWsUri } });
+  const set = await doors.builder.secretSetAt({
+    vault,
+    account: lower(doors.account),
+    commitment: lower(commitment),
+    indexer: { indexerUri: indexer.indexerUri, indexerWsUri: indexer.indexerWsUri }
+  });
   setPoints.set(key, set);
   return set;
 }

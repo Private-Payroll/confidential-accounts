@@ -60,9 +60,19 @@ export interface Route {
  * exactly the orphan the pin exists to catch, wearing the pin's own clothes.
  */
 export const KNOWN: readonly RouteName[] = [
-  'home', 'activity', 'explore', 'settings',
-  'send', 'secure', 'recover', 'add-device', 'advanced', 'address-book', 'kit',
-  'profile', 'approve',
+  'home',
+  'activity',
+  'explore',
+  'settings',
+  'send',
+  'secure',
+  'recover',
+  'add-device',
+  'advanced',
+  'address-book',
+  'kit',
+  'profile',
+  'approve'
 ];
 
 /** `#/secure` → `{name: 'secure'}`. Empty, `#` and `#/` are home. */

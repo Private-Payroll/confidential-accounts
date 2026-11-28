@@ -8,10 +8,18 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import { VaultNotReadHere, VaultNotTheCompanys } from './vault-start-stops.js';
 import { type ChainHereDoors, type VaultChainView } from './vault-doors.js';
-import { CIRCUITS_UNSAID, NOT_PINNED_WHY, NO_VAULT_YET, type VaultStandingHere, vaultStandingHere } from './vault-read-here.js';
-const NOT_STARTED_WHY = 'this vault has not been started: its first secret is not set, or not every signer\'s sealed copy is written.';
-const RETIRED_WHY = 'this vault has been retired, so it takes no more money: the vault itself refuses a deposit once it is retired, even '
-  + 'after it is adopted again. Nothing was sent and no money moved. Put the money into another of your company\'s vaults.';
+import {
+  CIRCUITS_UNSAID,
+  NOT_PINNED_WHY,
+  NO_VAULT_YET,
+  type VaultStandingHere,
+  vaultStandingHere
+} from './vault-read-here.js';
+const NOT_STARTED_WHY =
+  "this vault has not been started: its first secret is not set, or not every signer's sealed copy is written.";
+const RETIRED_WHY =
+  'this vault has been retired, so it takes no more money: the vault itself refuses a deposit once it is retired, even ' +
+  "after it is adopted again. Nothing was sent and no money moved. Put the money into another of your company's vaults.";
 
 /**
  * **WHETHER MONEY MAY GO IN OR OUT OF A VAULT, AS THIS DEVICE READS IT.** One
@@ -36,20 +44,32 @@ type VaultFundableHere =
   | { readonly of: 'not-adopted'; readonly why: string }
   | { readonly of: 'unreadable'; readonly why: string }
   | {
-    readonly of: 'not-this-build'; readonly why: string; readonly contract: 'vault' | 'account';
-    readonly circuit: string | null; readonly view: VaultChainView;
-  }
+      readonly of: 'not-this-build';
+      readonly why: string;
+      readonly contract: 'vault' | 'account';
+      readonly circuit: string | null;
+      readonly view: VaultChainView;
+    }
   | { readonly of: 'pinned-elsewhere'; readonly why: string; readonly view: VaultChainView }
   | { readonly of: 'not-started'; readonly why: string; readonly view: VaultChainView };
 
 /** The verdict on one read; the only place that says whether a vault may take or pay out money. */
 function fundableFrom(standing: VaultStandingHere, forADoor = false): VaultFundableHere {
   if (!standing.onChain) return { of: 'not-on-chain', why: standing.view.why ?? NO_VAULT_YET };
-  if (standing.unread !== null) return { of: 'unreadable', why: forADoor ? standing.unread.refuses : standing.unread.says };
-  const circuits = standing.circuits === undefined
-    ? { contract: 'vault' as const, circuit: null, why: CIRCUITS_UNSAID('the vault\'s') } : standing.circuits;
+  if (standing.unread !== null)
+    return { of: 'unreadable', why: forADoor ? standing.unread.refuses : standing.unread.says };
+  const circuits =
+    standing.circuits === undefined
+      ? { contract: 'vault' as const, circuit: null, why: CIRCUITS_UNSAID("the vault's") }
+      : standing.circuits;
   if (circuits !== null) {
-    return { of: 'not-this-build', why: circuits.why, contract: circuits.contract, circuit: circuits.circuit, view: standing.view };
+    return {
+      of: 'not-this-build',
+      why: circuits.why,
+      contract: circuits.contract,
+      circuit: circuits.circuit,
+      view: standing.view
+    };
   }
   if (!standing.pinned) return { of: 'pinned-elsewhere', why: NOT_PINNED_WHY, view: standing.view };
   if (!standing.started) return { of: 'not-started', why: NOT_STARTED_WHY, view: standing.view };
@@ -73,9 +93,13 @@ export async function fundableOrThrow(doors: ChainHereDoors, vault: Hex, forADoo
  * answer from the same one read, except that a vault whose own ledger carries its retired mark is `retired`, whatever
  * the company's account says of it now. Throws as `fundableOrThrow` does.
  */
-export async function takesDepositsOrThrow(doors: ChainHereDoors, vault: Hex): Promise<VaultFundableHere | ClosedToDeposits> {
+export async function takesDepositsOrThrow(
+  doors: ChainHereDoors,
+  vault: Hex
+): Promise<VaultFundableHere | ClosedToDeposits> {
   const standing = await vaultStandingHere(doors, vault, true);
-  if (standing.onChain && standing.unread === null && standing.retired) return { of: 'retired', why: RETIRED_WHY, view: standing.view };
+  if (standing.onChain && standing.unread === null && standing.retired)
+    return { of: 'retired', why: RETIRED_WHY, view: standing.view };
   return fundableFrom(standing, true);
 }
 

@@ -5,7 +5,11 @@ import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-relea
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { HeldKeyring } from '../keyring/held-keyring.js';
 import type { StepViews, StraightDoor, ViewFor } from './step-views.js';
-import type { CreationSource, FeeSource, InvitationSource } from '../../../../packages/web-shared/src/records-source.js';
+import type {
+  CreationSource,
+  FeeSource,
+  InvitationSource
+} from '../../../../packages/web-shared/src/records-source.js';
 
 /**
  * WHAT ONE ACTION IS, FOR THE WALLET THAT RUNS IT.
@@ -160,7 +164,9 @@ export interface StepContext {
    * them; a deposit is sent only into a vault the account adopts both as read and as those calls move it.
    */
   sendStraight<T>(
-    send: (door: StraightDoor) => Promise<T>, into?: readonly { readonly vault: string }[], calls?: readonly { readonly circuit: string; readonly contract: string }[],
+    send: (door: StraightDoor) => Promise<T>,
+    into?: readonly { readonly vault: string }[],
+    calls?: readonly { readonly circuit: string; readonly contract: string }[]
   ): Promise<T>;
   /**
    * Says that this wallet has itself handed one transaction to the chain or to the company's own service, without the

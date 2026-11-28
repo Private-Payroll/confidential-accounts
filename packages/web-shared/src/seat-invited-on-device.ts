@@ -18,14 +18,29 @@ import { NotOpenedOnThisDevice } from './round-opened-here.js';
 import { addSignerByAddressIn, addSignerInvitationRefusalIn } from '../../../src/core/proposal-filing.js';
 import { believedSeatingsUnder, rosterHere, sameInvitation, seatingOf, type RosterDoors } from './roster-here.js';
 import { invitationByAddressRefusal, NOT_APPROVED_SAID } from './invitation-signed-by-a-seat.js';
-import { approvedInvitationRefusal, seatByAddressChangeOf, type Inviter, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import {
+  approvedInvitationRefusal,
+  seatByAddressChangeOf,
+  type Inviter,
+  type SignedSeatInvitation
+} from '../../../src/core/invitation.js';
 import { addressReadsOf, addressSeatedOrInvitedRefusal, type InviteAddressOf } from './address-seated-or-invited.js';
 import { kindAsked } from './vault-page-doors.js';
-import { type GovernanceDoors, type GovernedOutcome, governOnDevice, InvitationNotBound, proposalIdentityOn } from './company-change-on-device.js';
+import {
+  type GovernanceDoors,
+  type GovernedOutcome,
+  governOnDevice,
+  InvitationNotBound,
+  proposalIdentityOn
+} from './company-change-on-device.js';
 import { ApprovalNotOwed } from './proposal-approved-on-device.js';
 
 /** An inviter record as a proposal carries it: the wallet key, the signed entry and the opening, and nothing else. */
-const inviterRecordOf = (x: Inviter): Inviter => ({ committeeKey: { tag: x.committeeKey.tag, value: x.committeeKey.value }, statement: x.statement, opening: x.opening });
+const inviterRecordOf = (x: Inviter): Inviter => ({
+  committeeKey: { tag: x.committeeKey.tag, value: x.committeeKey.value },
+  statement: x.statement,
+  opening: x.opening
+});
 
 /**
  * An invitation by address as its raise needs it: the signed invitation, the salt its proposal is raised under, and
@@ -55,35 +70,52 @@ export interface SeatInvitationToRaise {
  * (`approveOnly`, the proposal's identity on the chain), it raises nothing.
  */
 export async function raiseSeatInvitationOnDevice(
-  doors: GovernanceDoors & { readonly roster: RosterDoors }, input: { readonly viewingKey: KeysHeld } & SeatInvitationToRaise,
-  inviteAddressOf?: InviteAddressOf, o: { readonly approveOnly?: string } = {},
+  doors: GovernanceDoors & { readonly roster: RosterDoors },
+  input: { readonly viewingKey: KeysHeld } & SeatInvitationToRaise,
+  inviteAddressOf?: InviteAddressOf,
+  o: { readonly approveOnly?: string } = {}
 ): Promise<GovernedOutcome> {
   const t = input.invited.terms;
   if (t.invite === undefined || t.proposal === undefined || t.leaf !== undefined) {
-    throw new InvitationNotBound('This invitation is not one made by address, naming the proposal raised for it, so nothing was raised.');
+    throw new InvitationNotBound(
+      'This invitation is not one made by address, naming the proposal raised for it, so nothing was raised.'
+    );
   }
   const invite = t.invite;
   const coin = input.coinPublicKey?.toLowerCase() as Hex | undefined;
   if (coin !== undefined) {
     if (inviteAddressOf === undefined) {
-      throw new InvitationNotBound('This device cannot check the address this invitation commits to, so nothing was raised. Reload the page.');
+      throw new InvitationNotBound(
+        'This device cannot check the address this invitation commits to, so nothing was raised. Reload the page.'
+      );
     }
-    if (String(inviteAddressOf(coin, invite.salt.toLowerCase() as Hex)).toLowerCase() !== invite.address.toLowerCase()) {
-      throw new InvitationNotBound('The coin key given is not the one the invitation\'s address commits to, so nothing was raised. '
-        + 'Invite the person again.');
+    if (
+      String(inviteAddressOf(coin, invite.salt.toLowerCase() as Hex)).toLowerCase() !== invite.address.toLowerCase()
+    ) {
+      throw new InvitationNotBound(
+        "The coin key given is not the one the invitation's address commits to, so nothing was raised. " +
+          'Invite the person again.'
+      );
     }
   }
   return raiseTheSeatHere(doors, {
-    viewingKey: input.viewingKey, invited: input.invited, salt: input.proposalSalt, name: input.name, byItsProposal: true,
-    ...(input.inviter === undefined ? {} : { inviter: input.inviter }), ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
+    viewingKey: input.viewingKey,
+    invited: input.invited,
+    salt: input.proposalSalt,
+    name: input.name,
+    byItsProposal: true,
+    ...(input.inviter === undefined ? {} : { inviter: input.inviter }),
+    ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
     body: coin === undefined ? {} : { coinPublicKey: coin },
     /* Only a raise reaches this with no round opened: a proposal raised without the coin key hides a wallet invited twice. */
     before: async (opened) => {
       if (opened === undefined && coin === undefined) {
-        throw new InvitationNotBound('This invitation is raised without the coin key of the address it invites, so nothing was raised. '
-          + 'Invite the person again from the device that typed the address.');
+        throw new InvitationNotBound(
+          'This invitation is raised without the coin key of the address it invites, so nothing was raised. ' +
+            'Invite the person again from the device that typed the address.'
+        );
       }
-    },
+    }
   });
 }
 
@@ -103,33 +135,49 @@ export async function raiseSeatInvitationOnDevice(
 export async function raiseTheSeatHere(
   doors: GovernanceDoors & { readonly roster: RosterDoors },
   input: {
-    readonly viewingKey: KeysHeld; readonly invited: SignedSeatInvitation; readonly salt: string; readonly name: string; readonly inviter?: Inviter;
-    readonly byItsProposal: boolean; readonly approveOnly?: string; readonly body: Readonly<Record<string, unknown>>;
+    readonly viewingKey: KeysHeld;
+    readonly invited: SignedSeatInvitation;
+    readonly salt: string;
+    readonly name: string;
+    readonly inviter?: Inviter;
+    readonly byItsProposal: boolean;
+    readonly approveOnly?: string;
+    readonly body: Readonly<Record<string, unknown>>;
     readonly before: (opened?: OpenedRound) => Promise<void>;
-  },
+  }
 ): Promise<GovernedOutcome> {
   const t = input.invited.terms;
-  if (t.invite === undefined) throw new InvitationNotBound(`${NOT_APPROVED_SAID['not-raised']}, so nothing was raised. Invite the person again.`);
+  if (t.invite === undefined)
+    throw new InvitationNotBound(`${NOT_APPROVED_SAID['not-raised']}, so nothing was raised. Invite the person again.`);
   const seats = seatingOf(await rosterHere(doors.roster), doors.roster.reads).seats;
   const refused = invitationByAddressRefusal(doors.roster.accountId, input.invited, t.invite, seats);
   if (refused !== null) throw new InvitationNotBound(refused);
   const change = seatByAddressChangeOf(t.invite);
   const identity = await proposalIdentityOn(doors.builder)(change, input.salt);
   const unbound = approvedInvitationRefusal(input.invited, { salt: input.salt, chainId: identity.chainId });
-  if (unbound !== null) throw new InvitationNotBound(`${NOT_APPROVED_SAID[unbound]}, so nothing was raised. Invite the person again.`);
-  return governOnDevice({ ...doors, filing: { ...doors.filing, salt: () => input.salt }, leaves: doors.roster.reads.leaves }, {
-    viewingKey: input.viewingKey,
-    change,
-    ...(input.byItsProposal ? { proposal: t.proposal! } : {}),
-    summary: change.threshold === undefined ? `Add ${input.name} as a signer` : `Add ${input.name} as a signer, then need ${change.threshold} approvals`,
-    body: {
-      ...input.body, invite: { address: change.address, scope: change.scope }, invited: input.invited,
-      ...(input.inviter === undefined ? {} : { inviter: inviterRecordOf(input.inviter) }),
-    },
-    before: input.before,
-    ...(input.approveOnly === undefined ? {} : { approveOnly: input.approveOnly }),
-    seatRights: invitedSeatRightsOf(t, change.scope),
-  });
+  if (unbound !== null)
+    throw new InvitationNotBound(`${NOT_APPROVED_SAID[unbound]}, so nothing was raised. Invite the person again.`);
+  return governOnDevice(
+    { ...doors, filing: { ...doors.filing, salt: () => input.salt }, leaves: doors.roster.reads.leaves },
+    {
+      viewingKey: input.viewingKey,
+      change,
+      ...(input.byItsProposal ? { proposal: t.proposal! } : {}),
+      summary:
+        change.threshold === undefined
+          ? `Add ${input.name} as a signer`
+          : `Add ${input.name} as a signer, then need ${change.threshold} approvals`,
+      body: {
+        ...input.body,
+        invite: { address: change.address, scope: change.scope },
+        invited: input.invited,
+        ...(input.inviter === undefined ? {} : { inviter: inviterRecordOf(input.inviter) })
+      },
+      before: input.before,
+      ...(input.approveOnly === undefined ? {} : { approveOnly: input.approveOnly }),
+      seatRights: invitedSeatRightsOf(t, change.scope)
+    }
+  );
 }
 
 /** What the person approving a seat by address was shown before they approved: the proposal, and what it invites. */
@@ -161,61 +209,111 @@ export interface SeatInvitationShown {
  */
 export async function approveSeatInvitationOnDevice(
   doors: GovernanceDoors & { readonly roster: RosterDoors },
-  input: { readonly viewingKey: KeysHeld; readonly shown: SeatInvitationShown; readonly chainTime?: () => Promise<number> },
-  inviteAddressOf: InviteAddressOf,
+  input: {
+    readonly viewingKey: KeysHeld;
+    readonly shown: SeatInvitationShown;
+    readonly chainTime?: () => Promise<number>;
+  },
+  inviteAddressOf: InviteAddressOf
 ): Promise<GovernedOutcome> {
   const low = (x: unknown): string => String(x).toLowerCase();
   const { shown } = input;
   if (!doors.service.sealedProposals) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s proposals, so it cannot approve this one. Reload the page '
-      + 'to get the current version. Nothing was sent.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's proposals, so it cannot approve this one. Reload the page " +
+        'to get the current version. Nothing was sent.'
+    );
   }
-  const rec = (await doors.service.sealedProposals(doors.accountId) as readonly SealedProposal[]).find((p) => p.id === shown.proposal);
+  const rec = ((await doors.service.sealedProposals(doors.accountId)) as readonly SealedProposal[]).find(
+    (p) => p.id === shown.proposal
+  );
   const body = rec === undefined ? null : addSignerByAddressIn(rec, doors.accountId, input.viewingKey);
   if (body === null) {
-    throw new InvitationNotBound((rec === undefined ? null : addSignerInvitationRefusalIn(rec, doors.accountId, input.viewingKey)) ?? 'The company holds no proposal to add a seat by address under that name that this device can open, '
-      + 'so nothing was approved. Nothing was sent. Reload the page.');
+    throw new InvitationNotBound(
+      (rec === undefined ? null : addSignerInvitationRefusalIn(rec, doors.accountId, input.viewingKey)) ??
+        'The company holds no proposal to add a seat by address under that name that this device can open, ' +
+          'so nothing was approved. Nothing was sent. Reload the page.'
+    );
   }
   const invite = body.invited.terms.invite!;
-  if (body.invited.terms.name !== shown.name || low(invite.address) !== low(shown.address) || low(invite.scope) !== low(shown.scope)
-    || body.coinPublicKey === null || body.coinPublicKey !== low(shown.coinPublicKey)) {
-    throw new InvitationNotBound('The proposal the company holds under that name invites another person, address or rights than the '
-      + 'ones shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.');
+  if (
+    body.invited.terms.name !== shown.name ||
+    low(invite.address) !== low(shown.address) ||
+    low(invite.scope) !== low(shown.scope) ||
+    body.coinPublicKey === null ||
+    body.coinPublicKey !== low(shown.coinPublicKey)
+  ) {
+    throw new InvitationNotBound(
+      'The proposal the company holds under that name invites another person, address or rights than the ' +
+        'ones shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.'
+    );
   }
   /* The threshold the seat sets once taken is the signed invitation's, and must be the one shown: none and "0" both keep the one in force. */
   if ((invite.threshold ?? '0') !== (shown.threshold === undefined || shown.threshold === '' ? '0' : shown.threshold)) {
-    throw new InvitationNotBound(`The proposal the company holds under that name sets the approvals needed to ${invite.threshold ?? 'what they are now'} `
-      + `once the seat is taken, not to ${shown.threshold === undefined || shown.threshold === '' || shown.threshold === '0' ? 'what they are now' : shown.threshold} `
-      + 'as shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.');
+    throw new InvitationNotBound(
+      `The proposal the company holds under that name sets the approvals needed to ${invite.threshold ?? 'what they are now'} ` +
+        `once the seat is taken, not to ${shown.threshold === undefined || shown.threshold === '' || shown.threshold === '0' ? 'what they are now' : shown.threshold} ` +
+        'as shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.'
+    );
   }
   if (body.invited.terms.role !== shown.role) {
-    throw new InvitationNotBound(`The proposal the company holds under that name invites this person as ${body.invited.terms.role}, `
-      + `not as ${String(shown.role)} as shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.`);
+    throw new InvitationNotBound(
+      `The proposal the company holds under that name invites this person as ${body.invited.terms.role}, ` +
+        `not as ${String(shown.role)} as shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.`
+    );
   }
   if (low(inviteAddressOf(body.coinPublicKey, low(invite.salt) as Hex)) !== low(invite.address)) {
-    throw new InvitationNotBound('The coin key this proposal carries is not the one its invitation\'s address commits to, so nothing '
-      + 'was approved. Nothing was sent. Do not approve it.');
+    throw new InvitationNotBound(
+      "The coin key this proposal carries is not the one its invitation's address commits to, so nothing " +
+        'was approved. Nothing was sent. Do not approve it.'
+    );
   }
   /* Where the proposal stands is read from the chain, never the service's status: closed by being carried out, it owes no approval. */
   if (doors.records?.roundsOnChain !== undefined) {
-    const [standing] = await standingOnChainHere(doors.records, [{ id: rec!.id, chainId: body.chainId, status: rec!.status }]);
+    const [standing] = await standingOnChainHere(doors.records, [
+      { id: rec!.id, chainId: body.chainId, status: rec!.status }
+    ]);
     if (standing?.status === 'executed') throw new ApprovalNotOwed('carried-out');
   }
-  const held = await addressSeatedOrInvitedRefusal(addressReadsOf(doors, input.chainTime), doors.accountId, input.viewingKey,
-    inviteAddressOf, body.coinPublicKey, body.chainId);
+  const held = await addressSeatedOrInvitedRefusal(
+    addressReadsOf(doors, input.chainTime),
+    doors.accountId,
+    input.viewingKey,
+    inviteAddressOf,
+    body.coinPublicKey,
+    body.chainId
+  );
   if (held !== null) throw new InvitationNotBound(`This proposal was not approved, and nothing was sent: ${held}.`);
   const seats = seatingOf(await rosterHere(doors.roster), doors.roster.reads).seats;
-  const beside = await believedSeatingsUnder(await doors.records!.directory(kindAsked('proposal')), await doors.records!.proposals!(),
-    doors.accountId, input.viewingKey, body.chainId, seats, proposalIdentityOn(doors.builder));
+  const beside = await believedSeatingsUnder(
+    await doors.records!.directory(kindAsked('proposal')),
+    await doors.records!.proposals!(),
+    doors.accountId,
+    input.viewingKey,
+    body.chainId,
+    seats,
+    proposalIdentityOn(doors.builder)
+  );
   if (beside.some((x) => !sameInvitation(x.invited, body.invited))) {
-    throw new InvitationNotBound('Another proposal the company holds under the same id on the network carries another invitation, '
-      + 'filed and signed by a seat that may invite, so the person could take the seat and never be admitted. Nothing was approved. '
-      + 'Nothing was sent. Do not approve it: ask the seats that raised them to withdraw both, and invite the person again.');
+    throw new InvitationNotBound(
+      'Another proposal the company holds under the same id on the network carries another invitation, ' +
+        'filed and signed by a seat that may invite, so the person could take the seat and never be admitted. Nothing was approved. ' +
+        'Nothing was sent. Do not approve it: ask the seats that raised them to withdraw both, and invite the person again.'
+    );
   }
-  return raiseSeatInvitationOnDevice(doors, {
-    viewingKey: input.viewingKey, invited: body.invited, proposalSalt: body.proposalSalt, name: body.invited.terms.name,
-    coinPublicKey: body.coinPublicKey, ...(body.inviter === undefined ? {} : { inviter: body.inviter }),
-  }, inviteAddressOf, { approveOnly: body.chainId });
+  return raiseSeatInvitationOnDevice(
+    doors,
+    {
+      viewingKey: input.viewingKey,
+      invited: body.invited,
+      proposalSalt: body.proposalSalt,
+      name: body.invited.terms.name,
+      coinPublicKey: body.coinPublicKey,
+      ...(body.inviter === undefined ? {} : { inviter: body.inviter })
+    },
+    inviteAddressOf,
+    { approveOnly: body.chainId }
+  );
 }
 
 /**
@@ -227,15 +325,26 @@ export async function approveSeatInvitationOnDevice(
  * checks the coin key against the commitment before the proposal carries it.
  */
 export const signerByAddressDoorsOf = (
-  doors: GovernanceDoors & { readonly roster: RosterDoors }, viewingKey: KeysHeld,
-  network: SignerByAddressDoors['network'], commitments: SignerByAddressDoors['commitments'], keep: SignerByAddressDoors['keep'],
-  chainTime?: () => Promise<number>,
+  doors: GovernanceDoors & { readonly roster: RosterDoors },
+  viewingKey: KeysHeld,
+  network: SignerByAddressDoors['network'],
+  commitments: SignerByAddressDoors['commitments'],
+  keep: SignerByAddressDoors['keep'],
+  chainTime?: () => Promise<number>
 ): SignerByAddressDoors => ({
   keep,
   network,
   commitments,
-  held: (coinPublicKey, except) => addressSeatedOrInvitedRefusal(addressReadsOf(doors, chainTime), doors.accountId, viewingKey,
-    (c, salt) => commitments.inviteAddressOf(c, salt), coinPublicKey, except),
+  held: (coinPublicKey, except) =>
+    addressSeatedOrInvitedRefusal(
+      addressReadsOf(doors, chainTime),
+      doors.accountId,
+      viewingKey,
+      (c, salt) => commitments.inviteAddressOf(c, salt),
+      coinPublicKey,
+      except
+    ),
   identity: async (change, salt) => proposalIdentityOn(doors.builder)(change, salt),
-  raise: (input) => raiseSeatInvitationOnDevice(doors, { viewingKey, ...input }, (c, salt) => commitments.inviteAddressOf(c, salt)),
+  raise: (input) =>
+    raiseSeatInvitationOnDevice(doors, { viewingKey, ...input }, (c, salt) => commitments.inviteAddressOf(c, salt))
 });

@@ -21,7 +21,8 @@ import { LANDED_EVERY_MS, LANDED_WITHIN_MS } from './watched-on-the-chain.js';
 import { servedFactsOf, type RecordSource, type RecordWrite, type ServedFact } from './records-source.js';
 
 /** What the person is told when the check finds the company changed: the step sent nothing, and is run again. */
-export const ANOTHER_SIGNER_CHANGED = 'Another signer changed the company while this ran, so nothing was written or sent. Run it again.';
+export const ANOTHER_SIGNER_CHANGED =
+  'Another signer changed the company while this ran, so nothing was written or sent. Run it again.';
 
 /** Why a view the check found changed was ended: a step that sees its view ended for this stops, whatever caught the refusal. */
 export const ENDED_BY_ANOTHER_SIGNER = 'another signer changed the company';
@@ -47,10 +48,16 @@ const asSet = (items: readonly string[]): readonly string[] => [...new Set(items
  * rule every view checks by, whoever reads the holders for it. The order a read lists seats, vaults or committee keys
  * in, and the case of their hex, move nothing.
  */
-export const holdersStandingOf = (held: HoldersStanding): string => JSON.stringify([
-  asSet(held.seats), held.approvals, asSet(held.adoptedVaults), held.threshold, asSet(held.committee.map((c) => `${c.tag}:${c.value}`)),
-  asSet(held.vaultThresholds.map((v) => `${v.vault}:${v.threshold}`)), held.policyBar,
-]);
+export const holdersStandingOf = (held: HoldersStanding): string =>
+  JSON.stringify([
+    asSet(held.seats),
+    held.approvals,
+    asSet(held.adoptedVaults),
+    held.threshold,
+    asSet(held.committee.map((c) => `${c.tag}:${c.value}`)),
+    asSet(held.vaultThresholds.map((v) => `${v.vault}:${v.threshold}`)),
+    held.policyBar
+  ]);
 
 /** How a send moves who holds the company: the holders it leaves, from the holders read just before it. */
 export type HoldersMove = <H extends HoldersStanding>(before: H) => H;
@@ -81,10 +88,15 @@ export class CompanyChangedMeanwhile extends Error {
 const nameOnly = (name: RecordName): RecordName => ({ store: name.store, kind: name.kind, id: name.id });
 
 /** The company's read grants, which every check asks about whether or not the view served them. */
-export const GRANTS_NAME: RecordName = Object.freeze({ store: 'company', kind: GRANTS_RECORD.kind, id: GRANTS_RECORD.id });
+export const GRANTS_NAME: RecordName = Object.freeze({
+  store: 'company',
+  kind: GRANTS_RECORD.kind,
+  id: GRANTS_RECORD.id
+});
 
 /** The newest version of the directory: its newest filing's version, or 0 for none. */
-export const directoryVersionOf = (filings: readonly DirectoryFiling[]): number => filings.reduce((n, f) => Math.max(n, f.version), 0);
+export const directoryVersionOf = (filings: readonly DirectoryFiling[]): number =>
+  filings.reduce((n, f) => Math.max(n, f.version), 0);
 
 /**
  * What the view read, as the check compares it. The view takes the directory's version, who holds the company and the
@@ -137,7 +149,10 @@ export class Baseline {
   readBefore(name: RecordName, version: number): void {
     const key = recordKeyOf(name);
     const there = this.records.get(key);
-    this.records.set(key, { name: nameOnly(name), version: there === undefined ? version : Math.min(there.version, version) });
+    this.records.set(key, {
+      name: nameOnly(name),
+      version: there === undefined ? version : Math.min(there.version, version)
+    });
   }
 
   /** The facts of an answer with no version, as first served under `key`; a later read of it keeps the first. */
@@ -151,7 +166,9 @@ export class Baseline {
   }
 
   /** Every answer with no version served, and its facts. */
-  factsServed(): readonly (readonly [string, string])[] { return [...this.facts]; }
+  factsServed(): readonly (readonly [string, string])[] {
+    return [...this.facts];
+  }
 
   /** Every record whose newest version the check asks for: the read grants first, then every record served. */
   names(): readonly RecordName[] {
@@ -159,7 +176,9 @@ export class Baseline {
     return [GRANTS_NAME, ...[...this.records].filter(([k]) => k !== grants).map(([, r]) => r.name)];
   }
 
-  versionOf(name: RecordName): number | undefined { return this.records.get(recordKeyOf(name))?.version; }
+  versionOf(name: RecordName): number | undefined {
+    return this.records.get(recordKeyOf(name))?.version;
+  }
 
   /**
    * Moves the baseline by one of the view's own writes, and only by a step it alone can account for: a directory
@@ -171,9 +190,11 @@ export class Baseline {
    * jumps is not taken as the view's own, so the next check stops on it.
    */
   acknowledged(w: RecordWrite, filer: string | null = null): void {
-    if (w.to === 'directory' && this.directory !== null && w.filing.version === this.directory + 1) this.directory = w.filing.version;
+    if (w.to === 'directory' && this.directory !== null && w.filing.version === this.directory + 1)
+      this.directory = w.filing.version;
     if (w.to !== 'entries' && w.to !== 'header') return;
-    const own = (e: ManifestEntry): boolean => w.to === 'entries' || (filer !== null && e.filedBy.publicKey.toLowerCase() === filer.toLowerCase());
+    const own = (e: ManifestEntry): boolean =>
+      w.to === 'entries' || (filer !== null && e.filedBy.publicKey.toLowerCase() === filer.toLowerCase());
     for (const e of [...(w.entries ?? [])].filter(own).sort((a, b) => a.version - b.version)) {
       const there = this.records.get(recordKeyOf(e));
       if (there === undefined || e.version <= there.version) continue;
@@ -199,10 +220,18 @@ const paused = (ms: number): Promise<void> => new Promise((done) => setTimeout(d
  * the chain (`watched-on-the-chain.ts`), until it shows the move. Still not shown after that, the read stands, and the
  * check stops on it; shown, the reading before the send is no longer taken for the indexer's lag.
  */
-async function holdersCaughtUp<H extends HoldersStanding>(reads: ProbeReads<H>, base: Baseline, first: H): Promise<{ readonly holders: H; readonly waited: boolean }> {
+async function holdersCaughtUp<H extends HoldersStanding>(
+  reads: ProbeReads<H>,
+  base: Baseline,
+  first: H
+): Promise<{ readonly holders: H; readonly waited: boolean }> {
   let now = first;
   let waited = 0;
-  for (; base.lagging !== null && holdersStandingOf(now) === base.lagging && waited < LANDED_WITHIN_MS; waited += LANDED_EVERY_MS) {
+  for (
+    ;
+    base.lagging !== null && holdersStandingOf(now) === base.lagging && waited < LANDED_WITHIN_MS;
+    waited += LANDED_EVERY_MS
+  ) {
     await (reads.pause ?? paused)(LANDED_EVERY_MS);
     now = await reads.holdersNow();
   }
@@ -212,45 +241,68 @@ async function holdersCaughtUp<H extends HoldersStanding>(reads: ProbeReads<H>, 
 
 /** The key the view keeps an answer with no version under, and the facts the check compares of it, by what it is. */
 export const FACT_KEY = Object.freeze({
-  account: 'account', invites: 'list:invites',
-  handover: (person: string): string => `handover:${person}`, vendorHandover: (vendor: string): string => `vendor-handover:${vendor}`,
+  account: 'account',
+  invites: 'list:invites',
+  handover: (person: string): string => `handover:${person}`,
+  vendorHandover: (vendor: string): string => `vendor-handover:${vendor}`
 });
 
 const HANDOVER = 'handover:';
 const VENDOR_HANDOVER = 'vendor-handover:';
 
 /** What the check calls an answer with no version that moved. */
-const factMoved = (key: string): string => (key === FACT_KEY.account ? 'the company\'s account'
-  : key === FACT_KEY.invites ? 'the company\'s invitations'
-    : key.startsWith(HANDOVER) ? `what ${key.slice(HANDOVER.length)} handed over` : `what the vendor ${key.slice(VENDOR_HANDOVER.length)} handed over`);
+const factMoved = (key: string): string =>
+  key === FACT_KEY.account
+    ? "the company's account"
+    : key === FACT_KEY.invites
+      ? "the company's invitations"
+      : key.startsWith(HANDOVER)
+        ? `what ${key.slice(HANDOVER.length)} handed over`
+        : `what the vendor ${key.slice(VENDOR_HANDOVER.length)} handed over`;
 
 /**
  * The facts of every answer with no version served, read again from the source itself and never from an answer the
  * view keeps: the account and the invitations in one ask each, the handovers in asks of `READ_AT_ONCE`, and nothing
  * for what was not served.
  */
-async function factsNow(source: RecordSource, served: readonly (readonly [string, string])[]): Promise<ReadonlyMap<string, string>> {
+async function factsNow(
+  source: RecordSource,
+  served: readonly (readonly [string, string])[]
+): Promise<ReadonlyMap<string, string>> {
   const keys = served.map(([key]) => key);
   const people = keys.filter((k) => k.startsWith(HANDOVER)).map((k) => k.slice(HANDOVER.length));
   const vendors = keys.filter((k) => k.startsWith(VENDOR_HANDOVER)).map((k) => k.slice(VENDOR_HANDOVER.length));
-  const ofOne = async (key: string, fact: ServedFact, read: () => Promise<unknown>): Promise<readonly (readonly [string, string])[]> =>
-    (keys.includes(key) ? [[key, servedFactsOf(fact, await read())]] : []);
+  const ofOne = async (
+    key: string,
+    fact: ServedFact,
+    read: () => Promise<unknown>
+  ): Promise<readonly (readonly [string, string])[]> =>
+    keys.includes(key) ? [[key, servedFactsOf(fact, await read())]] : [];
   const [account, invites, handed, vendorsHanded] = await Promise.all([
     ofOne(FACT_KEY.account, 'account', () => source.account()),
     ofOne(FACT_KEY.invites, 'invites', () => source.list('invites')),
     inParts(people, (part) => source.handovers(part)),
-    inParts(vendors, (part) => source.vendorHandovers(part)),
+    inParts(vendors, (part) => source.vendorHandovers(part))
   ]);
   return new Map([
-    ...account, ...invites,
+    ...account,
+    ...invites,
     ...people.map((p, i) => [FACT_KEY.handover(p), servedFactsOf('handover', handed[i])] as const),
-    ...vendors.map((v, i) => [FACT_KEY.vendorHandover(v), servedFactsOf('vendor-handover', vendorsHanded[i])] as const),
+    ...vendors.map((v, i) => [FACT_KEY.vendorHandover(v), servedFactsOf('vendor-handover', vendorsHanded[i])] as const)
   ]);
 }
 
 /** The directory's filings, the newest version of each record named and the facts of every answer served, read now. */
-const readNow = <H extends HoldersStanding>(reads: ProbeReads<H>, names: readonly RecordName[], served: readonly (readonly [string, string])[]) =>
-  Promise.all([reads.source.filings(), inParts(names, (part) => reads.source.newest(part)), factsNow(reads.source, served)]);
+const readNow = <H extends HoldersStanding>(
+  reads: ProbeReads<H>,
+  names: readonly RecordName[],
+  served: readonly (readonly [string, string])[]
+) =>
+  Promise.all([
+    reads.source.filings(),
+    inParts(names, (part) => reads.source.newest(part)),
+    factsNow(reads.source, served)
+  ]);
 
 /**
  * Reads again the directory, who holds the company, the newest version of every record served and the facts of every
@@ -262,14 +314,15 @@ const readNow = <H extends HoldersStanding>(reads: ProbeReads<H>, names: readonl
  * read it.
  */
 export async function probe<H extends HoldersStanding>(reads: ProbeReads<H>, base: Baseline): Promise<H> {
-  if (base.directory === null || base.holders === null) throw new Error('the company was not read before this check, so nothing is written or sent');
+  if (base.directory === null || base.holders === null)
+    throw new Error('the company was not read before this check, so nothing is written or sent');
   const names = base.names();
   const served = base.factsServed();
   const [first, read] = await Promise.all([readNow(reads, names, served), reads.holdersNow()]);
   const { holders, waited } = await holdersCaughtUp(reads, base, read);
   const [filings, newest, facts] = waited ? await readNow(reads, names, served) : first;
   const moved: string[] = [];
-  if (base.directory !== directoryVersionOf(filings)) moved.push('the company\'s directory');
+  if (base.directory !== directoryVersionOf(filings)) moved.push("the company's directory");
   if (base.holders !== holdersStandingOf(holders)) moved.push('who holds the company on the chain');
   names.forEach((name, i) => {
     const was = base.versionOf(name);

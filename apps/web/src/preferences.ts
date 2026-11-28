@@ -26,7 +26,7 @@ export interface Preferences {
 export const MODE_NAMES: Readonly<Record<Mode, (t: (key: string) => string) => string>> = {
   light: (t) => t('appearance.mode.light'),
   dark: (t) => t('appearance.mode.dark'),
-  system: (t) => t('appearance.mode.system'),
+  system: (t) => t('appearance.mode.system')
 };
 
 /** The language choice that follows the browser's language, which is no language tag. */
@@ -39,50 +39,69 @@ const KEPT = {
   mode: 'private-vaults.mode',
   base: 'private-vaults.base',
   language: 'private-vaults.language',
-  darkComputer: '(prefers-color-scheme: dark)',
+  darkComputer: '(prefers-color-scheme: dark)'
 } as const;
 
 /** What is kept, read back, with anything unreadable or unknown taken as not chosen. */
 export function readPreferences(storage: Pick<Storage, 'getItem'> | null): Preferences {
-  const read = (key: string): string | null => { try { return storage?.getItem(key) ?? null; } catch { return null; } };
+  const read = (key: string): string | null => {
+    try {
+      return storage?.getItem(key) ?? null;
+    } catch {
+      return null;
+    }
+  };
   const mode = read(KEPT.mode);
   const base = read(KEPT.base);
   const modes: readonly (string | null)[] = MODES;
   return {
-    mode: modes.includes(mode) ? mode as Mode : DEFAULT_PREFERENCES.mode,
-    base: (BASE_COLORS as readonly (string | null)[]).includes(base) ? base as BaseColor : DEFAULT_PREFERENCES.base,
-    language: read(KEPT.language),
+    mode: modes.includes(mode) ? (mode as Mode) : DEFAULT_PREFERENCES.mode,
+    base: (BASE_COLORS as readonly (string | null)[]).includes(base) ? (base as BaseColor) : DEFAULT_PREFERENCES.base,
+    language: read(KEPT.language)
   };
 }
 
 /** Keep the choices; a browser that will not keep them still shows them until the tab closes. */
-export function keepPreferences(storage: Pick<Storage, 'setItem' | 'removeItem'> | null, preferences: Preferences): void {
+export function keepPreferences(
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | null,
+  preferences: Preferences
+): void {
   try {
     storage?.setItem(KEPT.mode, preferences.mode);
     storage?.setItem(KEPT.base, preferences.base);
     if (preferences.language === null) storage?.removeItem(KEPT.language);
     else storage?.setItem(KEPT.language, preferences.language);
-  } catch { /* kept for this tab only */ }
+  } catch {
+    /* kept for this tab only */
+  }
 }
 
 /** The browser's storage, or null where the page may not use it. */
 export function browserStorage(): Storage | null {
-  try { return window.localStorage; } catch { return null; }
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether the computer is set to dark. */
-export const computerIsDark = (): boolean => typeof window.matchMedia === 'function' && window.matchMedia(KEPT.darkComputer).matches;
+export const computerIsDark = (): boolean =>
+  typeof window.matchMedia === 'function' && window.matchMedia(KEPT.darkComputer).matches;
 
 /** Follow the computer's setting as it changes; returns the way to stop. */
 export function followComputer(changed: () => void): () => void {
   if (typeof window.matchMedia !== 'function') return () => {};
   const query = window.matchMedia(KEPT.darkComputer);
   query.onchange = changed;
-  return () => { query.onchange = null; };
+  return () => {
+    query.onchange = null;
+  };
 }
 
 /** The theme shown for a mode. */
-export const themeFor = (mode: Mode, dark: boolean): Theme => (mode === MODES[2] ? (dark ? THEMES[1] : THEMES[0]) : mode);
+export const themeFor = (mode: Mode, dark: boolean): Theme =>
+  mode === MODES[2] ? (dark ? THEMES[1] : THEMES[0]) : mode;
 
 /** Show a theme and a colour: the kit's stylesheet reads them from the root element. */
 export function showAppearance(root: HTMLElement, theme: Theme, base: BaseColor): void {

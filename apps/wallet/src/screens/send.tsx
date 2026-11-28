@@ -72,10 +72,7 @@ import { TermsCard } from './send-terms.js';
  * confirmation (`send-confirm.tsx`) — and no accessor was added.
  */
 
-export function Send({ identity, secret }: {
-  readonly identity: Identity;
-  readonly secret: Secret;
-}): ReactNode {
+export function Send({ identity, secret }: { readonly identity: Identity; readonly secret: Secret }): ReactNode {
   const wiring = useContext(SendContext);
   const { account, owned } = usePayingWallet(identity, secret);
 
@@ -90,21 +87,20 @@ export function Send({ identity, secret }: {
   /* Leaving the screen stops the listening, never an in-flight submission
    * (a transaction on its way to a network cannot be recalled), and ends
    * the rehearsal chain behind the doors. */
-  useEffect(() => () => {
-    engine.current?.detach();
-    void doors.stop?.();
-  }, [doors]);
+  useEffect(
+    () => () => {
+      engine.current?.detach();
+      void doors.stop?.();
+    },
+    [doors]
+  );
 
-  const {
-    recipientText, setRecipientText, amountText, setAmountText, recipientInfo, amountInfo, ready,
-  } = useSendForm();
+  const { recipientText, setRecipientText, amountText, setAmountText, recipientInfo, amountInfo, ready } =
+    useSendForm();
 
   const begin = (): void => {
     if (!recipientInfo?.ok || !amountInfo?.ok) return;
-    engine.current = wiring.start(
-      doors,
-      { recipient: recipientInfo.value, stars: amountInfo.value },
-      setEngineState);
+    engine.current = wiring.start(doors, { recipient: recipientInfo.value, stars: amountInfo.value }, setEngineState);
   };
 
   const reset = (): void => {
@@ -121,11 +117,12 @@ export function Send({ identity, secret }: {
   /* A send is IN FLIGHT while it can still change the world: working,
    * awaiting the person, or in the unknown middle. The terminal states —
    * cancelled, refused, sent — release the scenario picker again. */
-  const inFlight = engineState !== null
-    && engineState.name !== 'cancelled'
-    && engineState.name !== 'refused'
-    && engineState.name !== 'failed'
-    && engineState.name !== 'sent';
+  const inFlight =
+    engineState !== null &&
+    engineState.name !== 'cancelled' &&
+    engineState.name !== 'refused' &&
+    engineState.name !== 'failed' &&
+    engineState.name !== 'sent';
 
   /*
    * THE WAKE LOCK IS HELD FOR THE PROOF AND FOR NOTHING ELSE, AND THE LINE IS
@@ -154,18 +151,25 @@ export function Send({ identity, secret }: {
 
       {mode === 'rehearsal' && (
         <RehearsalNotice
-          inFlight={inFlight} scenario={scenario} setScenario={setScenario}
-          wiring={wiring} switchMode={switchMode}
+          inFlight={inFlight}
+          scenario={scenario}
+          setScenario={setScenario}
+          wiring={wiring}
+          switchMode={switchMode}
         />
       )}
 
       {/* ------------------------------------------------- who, and how much */}
       {!inFlight && (
         <SendForm
-          recipientText={recipientText} setRecipientText={setRecipientText}
+          recipientText={recipientText}
+          setRecipientText={setRecipientText}
           recipientInfo={recipientInfo}
-          amountText={amountText} setAmountText={setAmountText} amountInfo={amountInfo}
-          ready={ready} begin={begin}
+          amountText={amountText}
+          setAmountText={setAmountText}
+          amountInfo={amountInfo}
+          ready={ready}
+          begin={begin}
         />
       )}
 

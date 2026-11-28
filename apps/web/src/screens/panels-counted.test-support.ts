@@ -7,8 +7,25 @@
 import { createElement, type ReactElement } from 'react';
 import { fireEvent } from '@testing-library/react';
 import { withPin } from 'vaults-web-shared/keyring-blob.js';
-import { openPanel, openScreen, openScreenAnd, servedAs, type CompanyHeld, type CompanyOpened, type Served, type ScreenCount, type Step } from './company-harness.test-support.js';
-import { buttonNamed, joined, opensOnTheRoot, pressesThenSees, rootOf, seesTheRoot } from './panel-steps.test-support.js';
+import {
+  openPanel,
+  openScreen,
+  openScreenAnd,
+  servedAs,
+  type CompanyHeld,
+  type CompanyOpened,
+  type Served,
+  type ScreenCount,
+  type Step
+} from './company-harness.test-support.js';
+import {
+  buttonNamed,
+  joined,
+  opensOnTheRoot,
+  pressesThenSees,
+  rootOf,
+  seesTheRoot
+} from './panel-steps.test-support.js';
 import { Deposit } from '../actions/deposit.js';
 import { InvitePeople } from '../actions/invite.js';
 import { OneOffPayment } from '../actions/one-off.js';
@@ -16,7 +33,12 @@ import { RetireVault } from '../actions/retire-vault.js';
 import { Signers } from '../actions/signers.js';
 import { untilShown } from '../page-shown.test-support.js';
 import { readsOf, type PageId, type Reads } from './screen-counts.test-support.js';
-import { askedBeyondWhatGrew, askedKindsChanged, carriedNotAsHeldIn, type Called } from './screen-carried.test-support.js';
+import {
+  askedBeyondWhatGrew,
+  askedKindsChanged,
+  carriedNotAsHeldIn,
+  type Called
+} from './screen-carried.test-support.js';
 
 /** The person a panel is drawn for: the company's founding seat. */
 export const founderOf = (company: CompanyOpened): string => company.seats()[0]!.person;
@@ -30,19 +52,27 @@ export const panelsOn = (company: CompanyOpened): Readonly<Record<string, () => 
   invite: () => createElement(InvitePeople, {}),
   'one-off': () => createElement(OneOffPayment, { vault: company.vaults()[0]! }),
   'retire-vault': () => createElement(RetireVault, { vault: company.vaults()[0]! }),
-  signers: () => createElement(Signers, {}),
+  signers: () => createElement(Signers, {})
 });
 
 /* The words each of those panels draws and the frame it is drawn in does not. */
 export const DRAWS: Readonly<Record<string, string>> = Object.freeze({
-  deposit: 'Ways to put money in', invite: 'Invite', 'one-off': 'Propose payment', 'retire-vault': 'Retiring takes this vault off your company\'s list.', signers: 'Add from code',
+  deposit: 'Ways to put money in',
+  invite: 'Invite',
+  'one-off': 'Propose payment',
+  'retire-vault': "Retiring takes this vault off your company's list.",
+  signers: 'Add from code'
 });
 
 /* The words a panel draws when it could not read what it needs, which a panel drawn ready does not. */
-export const NOT_READ = /could not be (read|loaded|checked)|did not finish|not finished being created|not set up|Checking who holds|could not check who holds|has no vault to pay from yet/u;
+export const NOT_READ =
+  /could not be (read|loaded|checked)|did not finish|not finished being created|not set up|Checking who holds|could not check who holds|has no vault to pay from yet/u;
 
 /** The screen that draws a panel, by its file and the panel's name in it, so a claim of where a panel is drawn is read from the screen. */
-export interface DrawnBy { readonly screen: string; readonly component: string }
+export interface DrawnBy {
+  readonly screen: string;
+  readonly component: string;
+}
 
 /** What a person does on a screen to open a panel there, and what they do on the panel to press it, as steps each counted apart. */
 export interface InItsScreen {
@@ -64,45 +94,102 @@ export interface InItsScreen {
 /* The panels the page hands the company's read, each opened inside its own screen: what the screen draws and what a person does there. */
 export const inItsScreenOn = (company: CompanyOpened): Readonly<Record<string, InItsScreen>> => ({
   'change-threshold': {
-    by: { screen: 'vault.tsx', component: 'ChangeThreshold' }, page: 'vault', params: () => ({ vault: company.vaults()[0]! }), root: 'change-threshold',
+    by: { screen: 'vault.tsx', component: 'ChangeThreshold' },
+    page: 'vault',
+    params: () => ({ vault: company.vaults()[0]! }),
+    root: 'change-threshold',
     opens: opensOnTheRoot(buttonNamed(/^Change approvals$/u), 'Change approvals', 'change-threshold'),
     draws: 'Approvals this vault asks for',
     press: [
-      async () => { fireEvent.click(await untilShown(() => document.querySelector<HTMLElement>('[data-action="threshold-fewer"]'), 'fewer approvals', 30_000)); },
-      pressesThenSees(() => document.querySelector<HTMLElement>('[data-action="raise-threshold"]'), 'Ask for this number', /Raised\./u, 'change-threshold'),
-    ],
+      async () => {
+        fireEvent.click(
+          await untilShown(
+            () => document.querySelector<HTMLElement>('[data-action="threshold-fewer"]'),
+            'fewer approvals',
+            30_000
+          )
+        );
+      },
+      pressesThenSees(
+        () => document.querySelector<HTMLElement>('[data-action="raise-threshold"]'),
+        'Ask for this number',
+        /Raised\./u,
+        'change-threshold'
+      )
+    ]
   },
   'committee-change': {
-    by: { screen: 'super-admins.tsx', component: 'CommitteeChange' }, page: 'settingsSuperAdmins', params: () => ({}), root: 'committee-change', opens: null,
-    served: { committee: 'change-owed' }, draws: 'Signatures so far',
+    by: { screen: 'super-admins.tsx', component: 'CommitteeChange' },
+    page: 'settingsSuperAdmins',
+    params: () => ({}),
+    root: 'committee-change',
+    opens: null,
+    served: { committee: 'change-owed' },
+    draws: 'Signatures so far',
     press: [
-      async () => { fireEvent.click(await untilShown(() => document.querySelector<HTMLElement>('[data-action="sign-change"]'), 'sign the change', 30_000)); },
+      async () => {
+        fireEvent.click(
+          await untilShown(
+            () => document.querySelector<HTMLElement>('[data-action="sign-change"]'),
+            'sign the change',
+            30_000
+          )
+        );
+      },
       async () => {
         fireEvent.click(await untilShown(buttonNamed(/^Confirm$/u), 'Confirm', 30_000));
         await untilShown(() => document.querySelector('[data-acted="sign-change"]'), 'the change signed', 30_000);
         return () => rootOf('committee-change')?.textContent ?? '';
-      },
-    ],
+      }
+    ]
   },
   'create-vault': {
-    by: { screen: 'vaults.tsx', component: 'CreateVault' }, page: 'vaults', params: () => ({}), root: 'create-vault',
+    by: { screen: 'vaults.tsx', component: 'CreateVault' },
+    page: 'vaults',
+    params: () => ({}),
+    root: 'create-vault',
     opens: opensOnTheRoot(buttonNamed(/^Create a vault$/u), 'Create a vault', 'create-vault'),
     draws: 'Enter a name to create the vault.',
     press: [
       async () => {
         /* The founding seat's wallet holds the company as the one it created, as the wallet that created the company does. */
         const founder = company.wallet(founderOf(company));
-        founder.kept = withPin(founder.kept, company.fields.company, company.fields.account, 'created', '2026-01-01T00:00:00.000Z');
-        fireEvent.change(await untilShown(() => document.querySelector<HTMLElement>('[data-field="vault-name"]'), 'the vault name', 30_000), { target: { value: 'Operations' } });
+        founder.kept = withPin(
+          founder.kept,
+          company.fields.company,
+          company.fields.account,
+          'created',
+          '2026-01-01T00:00:00.000Z'
+        );
+        fireEvent.change(
+          await untilShown(
+            () => document.querySelector<HTMLElement>('[data-field="vault-name"]'),
+            'the vault name',
+            30_000
+          ),
+          { target: { value: 'Operations' } }
+        );
       },
-      async () => { fireEvent.click(await untilShown(() => document.querySelector<HTMLElement>('[data-action="create-vault-now"]:not([disabled])'), 'create the vault', 30_000)); },
+      async () => {
+        fireEvent.click(
+          await untilShown(
+            () => document.querySelector<HTMLElement>('[data-action="create-vault-now"]:not([disabled])'),
+            'create the vault',
+            30_000
+          )
+        );
+      },
       async () => {
         fireEvent.click(await untilShown(buttonNamed(/^Confirm$/u), 'Confirm', 30_000));
-        await untilShown(() => document.querySelector('[data-outcome] [data-result], [data-outcome] [data-created]'), 'the vault created', 120_000);
+        await untilShown(
+          () => document.querySelector('[data-outcome] [data-result], [data-outcome] [data-created]'),
+          'the vault created',
+          120_000
+        );
         return () => rootOf('create-vault')?.textContent ?? '';
-      },
-    ],
-  },
+      }
+    ]
+  }
 });
 
 /*
@@ -122,25 +209,47 @@ export interface Branch {
 export const COMMITTEE_CHANGE_READ = 'route GET /api/accounts/:id/committee-change (no action declares it)';
 export const branchesOn = (company: CompanyOpened): Readonly<Record<string, Branch>> => ({
   'the vaults page, with a vault holding public money beside one holding none': {
-    page: 'vaults', served: { publicMoney: 'second' }, shows: /This vault holds none of the tokens this app shows\..*This vault holds 1 token this app does not know/u, differs: {},
+    page: 'vaults',
+    served: { publicMoney: 'second' },
+    shows: /This vault holds none of the tokens this app shows\..*This vault holds 1 token this app does not know/u,
+    differs: {}
   },
   'the home page, with a vault holding public money beside one holding none': {
-    page: 'home', served: { publicMoney: 'second' }, shows: /This vault holds none of the tokens this app shows\..*This vault holds 1 token this app does not know/u, differs: {},
+    page: 'home',
+    served: { publicMoney: 'second' },
+    shows: /This vault holds none of the tokens this app shows\..*This vault holds 1 token this app does not know/u,
+    differs: {}
   },
   'the page of a vault holding public money': {
-    page: 'vault', served: { publicMoney: 'second' }, params: () => ({ vault: company.vaults()[1]! }), shows: /This vault holds 1 token this app does not know/u, differs: {},
+    page: 'vault',
+    served: { publicMoney: 'second' },
+    params: () => ({ vault: company.vaults()[1]! }),
+    shows: /This vault holds 1 token this app does not know/u,
+    differs: {}
   },
   'the vaults page, with no vault holding public money': {
-    page: 'vaults', served: {}, shows: /holds none of the tokens this app shows\..*holds none of the tokens this app shows\./u, differs: {},
+    page: 'vaults',
+    served: {},
+    shows: /holds none of the tokens this app shows\..*holds none of the tokens this app shows\./u,
+    differs: {}
   },
-  'the home page, with the pay key not committed': { page: 'home', served: { payKey: 'not-committed' }, shows: /3 of 5 steps done/u, differs: {} },
+  'the home page, with the pay key not committed': {
+    page: 'home',
+    served: { payKey: 'not-committed' },
+    shows: /3 of 5 steps done/u,
+    differs: {}
+  },
   'the super admins page, with a change of the committee owed': {
-    page: 'settingsSuperAdmins', served: { committee: 'change-owed' }, shows: /0 of 2 signed/u, differs: { [COMMITTEE_CHANGE_READ]: 1 },
-  },
+    page: 'settingsSuperAdmins',
+    served: { committee: 'change-owed' },
+    shows: /0 of 2 signed/u,
+    differs: { [COMMITTEE_CHANGE_READ]: 1 }
+  }
 });
 
 /** What a count's calls carried that breaks the rule a list and a read are held to. */
-export const heldToTheRule = (where: string, c: { readonly calls: readonly Called[] }): string[] => carriedNotAsHeldIn(where, c.calls);
+export const heldToTheRule = (where: string, c: { readonly calls: readonly Called[] }): string[] =>
+  carriedNotAsHeldIn(where, c.calls);
 
 /**
  * The counts of the panels, the openings inside their screens and presses, and the branches, on `company`: each count
@@ -152,20 +261,42 @@ export const panelCountsOn = (company: CompanyOpened) => {
   const inItsScreen = inItsScreenOn(company);
   /* What the company held when each count's calls were made, by the calls. */
   const HELD = new WeakMap<readonly Called[], CompanyHeld>();
-  const heldWhen = (calls: readonly Called[]): readonly Called[] => { HELD.set(calls, company.held()); return calls; };
-  const counted = async (element: () => ReactElement): Promise<{ reads: Reads; text: string; calls: readonly Called[] }> => {
+  const heldWhen = (calls: readonly Called[]): readonly Called[] => {
+    HELD.set(calls, company.held());
+    return calls;
+  };
+  const counted = async (
+    element: () => ReactElement
+  ): Promise<{ reads: Reads; text: string; calls: readonly Called[] }> => {
     await openPanel(company, FOUNDER, element());
     const c = await openPanel(company, FOUNDER, element());
     return { reads: readsOf(c), text: c.text, calls: heldWhen(c.calls) };
   };
   /* What a count's reads asked at the grown company beyond the first size's count of the same kind, by call, held as `page` is where it names one. */
-  const askedAtTwice = (where: string, was: { readonly calls: readonly Called[] }, now: { readonly calls: readonly Called[] }, page?: string): string[] =>
-    askedBeyondWhatGrew(where, was.calls, now.calls, [HELD.get(was.calls)!, HELD.get(now.calls)!], ['at the first size', 'grown'], page);
+  const askedAtTwice = (
+    where: string,
+    was: { readonly calls: readonly Called[] },
+    now: { readonly calls: readonly Called[] },
+    page?: string
+  ): string[] =>
+    askedBeyondWhatGrew(
+      where,
+      was.calls,
+      now.calls,
+      [HELD.get(was.calls)!, HELD.get(now.calls)!],
+      ['at the first size', 'grown'],
+      page
+    );
   /* The same for a press, which files records of its own: only the kinds its reads asked are held, not how many. */
-  const pressAskedAtTwice = (where: string, was: { readonly calls: readonly Called[] }, now: { readonly calls: readonly Called[] }): string[] =>
-    askedKindsChanged(where, was.calls, now.calls, ['at the first size', 'grown']);
+  const pressAskedAtTwice = (
+    where: string,
+    was: { readonly calls: readonly Called[] },
+    now: { readonly calls: readonly Called[] }
+  ): string[] => askedKindsChanged(where, was.calls, now.calls, ['at the first size', 'grown']);
   /* What opening a panel in its screen read, and what pressing it read, on the company as it stands. */
-  const countsInItsScreen = async (name: string): Promise<{ readonly opened: ScreenCount; readonly pressed: ScreenCount }> => {
+  const countsInItsScreen = async (
+    name: string
+  ): Promise<{ readonly opened: ScreenCount; readonly pressed: ScreenCount }> => {
     const c = inItsScreen[name]!;
     servedAs(c.served ?? {});
     const steps: Step[] = [c.opens ?? seesTheRoot(c.root), joined(c.press)];
